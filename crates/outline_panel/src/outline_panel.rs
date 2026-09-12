@@ -1,7 +1,7 @@
 mod outline_panel_settings;
 
 use anyhow::Context as _;
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet, IndexMap};
 use db::kvp::KeyValueStore;
 use editor::{
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, ExcerptRange, MultiBufferSnapshot,
@@ -12,25 +12,23 @@ use editor::{
 };
 use file_icons::FileIcons;
 
-use fuzzy::{CharBag, StringMatch, StringMatchCandidate, match_strings};
-use git::status::FileStatus;
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use git::status::{FileStatus, GitSummary};
 use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context,
     DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
     InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task, TaskExt,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
     uniform_list,
 };
-use itertools::Itertools;
 use language::{Anchor, BufferId, BufferSnapshot, DiskState, OffsetRangeExt, OutlineItem};
 use language::{LanguageAwareStyling, language_settings::LanguageSettings};
 
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use std::{
     cmp,
-    collections::BTreeMap,
     hash::Hash,
     ops::Range,
     path::{Path, PathBuf},
@@ -43,7 +41,7 @@ use std::{
 };
 
 use outline_panel_settings::{DockSide, FolderIndicator, OutlinePanelSettings, ShowIndentGuides};
-use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
+use project::{File, Fs, GitTraversal, Project, ProjectPath};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -61,7 +59,7 @@ use workspace::{
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
 };
-use worktree::{Entry, EntryKind, ProjectEntryId, Worktree, WorktreeId};
+use worktree::WorktreeId;
 
 use crate::outline_panel_settings::OutlinePanelSettingsScrollbarProxy;
 
@@ -124,12 +122,11 @@ pub struct OutlinePanel {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
     pending_serialization: Task<Option<()>>,
-    fs_entries_depth: HashMap<(WorktreeId, ProjectEntryId), usize>,
+
     fs_entries: Vec<FsEntry>,
     fs_children_count: HashMap<WorktreeId, HashMap<Arc<RelPath>, FsChildren>>,
     collapsed_entries: HashSet<CollapsedEntry>,
-    unfolded_dirs: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
-    deleted_entry_ids: DeletedEntryIds,
+    unfolded_dirs: HashMap<WorktreeId, BTreeSet<Arc<RelPath>>>,
     selected_entry: SelectedEntry,
     active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
@@ -342,7 +339,7 @@ struct CachedEntry {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum CollapsedEntry {
-    Dir(WorktreeId, ProjectEntryId),
+    Dir(WorktreeId, Arc<RelPath>),
     File(WorktreeId, BufferId),
     ExternalFile(BufferId),
     Excerpt(ExcerptRange<Anchor>),
@@ -388,8 +385,8 @@ enum OutlineState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FoldedDirsEntry {
     worktree_id: WorktreeId,
-    entries: Vec<GitEntry>,
-    is_deleted: bool,
+    first_buffer_id: BufferId,
+    entries: Vec<FsEntryPath>,
 }
 
 // TODO: collapse the inner enums into panel entry
@@ -434,18 +431,7 @@ impl PartialEq for PanelEntry {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Fs(a), Self::Fs(b)) => a == b,
-            (
-                Self::FoldedDirs(FoldedDirsEntry {
-                    worktree_id: worktree_id_a,
-                    entries: entries_a,
-                    ..
-                }),
-                Self::FoldedDirs(FoldedDirsEntry {
-                    worktree_id: worktree_id_b,
-                    entries: entries_b,
-                    ..
-                }),
-            ) => worktree_id_a == worktree_id_b && entries_a == entries_b,
+            (Self::FoldedDirs(left), Self::FoldedDirs(right)) => left == right,
             (Self::Outline(a), Self::Outline(b)) => a == b,
             (
                 Self::Search(SearchEntry {
@@ -578,9 +564,22 @@ impl OutlineEntry {
 }
 
 #[derive(Debug, Clone, Eq)]
+struct FsEntryPath {
+    path: Arc<RelPath>,
+    git_summary: GitSummary,
+    is_ignored: bool,
+}
+
+impl PartialEq for FsEntryPath {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
+}
+
+#[derive(Debug, Clone, Eq)]
 struct FsEntryFile {
     worktree_id: WorktreeId,
-    entry: GitEntry,
+    entry: FsEntryPath,
     buffer_id: BufferId,
     excerpts: Vec<ExcerptRange<language::Anchor>>,
     is_deleted: bool,
@@ -588,34 +587,34 @@ struct FsEntryFile {
 
 impl PartialEq for FsEntryFile {
     fn eq(&self, other: &Self) -> bool {
-        self.worktree_id == other.worktree_id
-            && self.entry.id == other.entry.id
-            && self.buffer_id == other.buffer_id
+        self.buffer_id == other.buffer_id
     }
 }
 
 impl Hash for FsEntryFile {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.buffer_id, self.entry.id, self.worktree_id).hash(state);
+        self.buffer_id.hash(state);
     }
 }
 
 #[derive(Debug, Clone, Eq)]
 struct FsEntryDirectory {
     worktree_id: WorktreeId,
-    entry: GitEntry,
-    is_deleted: bool,
+    first_buffer_id: BufferId,
+    entry: FsEntryPath,
 }
 
 impl PartialEq for FsEntryDirectory {
     fn eq(&self, other: &Self) -> bool {
-        self.worktree_id == other.worktree_id && self.entry.id == other.entry.id
+        self.worktree_id == other.worktree_id
+            && self.first_buffer_id == other.first_buffer_id
+            && self.entry.path == other.entry.path
     }
 }
 
 impl Hash for FsEntryDirectory {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.worktree_id, self.entry.id).hash(state);
+        (self.worktree_id, self.first_buffer_id, &self.entry.path).hash(state);
     }
 }
 
@@ -637,52 +636,43 @@ impl Hash for FsEntryExternalFile {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq)]
 enum FsEntry {
     ExternalFile(FsEntryExternalFile),
     Directory(FsEntryDirectory),
     File(FsEntryFile),
 }
 
-#[derive(Clone, Debug)]
-struct DeletedEntryIds {
-    ids: HashMap<(WorktreeId, bool, Arc<RelPath>), ProjectEntryId>,
-    next: usize,
-}
-
-impl Default for DeletedEntryIds {
-    fn default() -> Self {
-        Self {
-            ids: HashMap::default(),
-            next: usize::MAX - 1,
+impl PartialEq for FsEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Directory(left), Self::Directory(right)) => left == right,
+            _ => self
+                .buffer_id()
+                .is_some_and(|id| Some(id) == other.buffer_id()),
         }
     }
 }
 
-impl DeletedEntryIds {
-    fn file_id(&mut self, worktree_id: WorktreeId, path: &RelPath) -> ProjectEntryId {
-        self.id(worktree_id, false, path)
-    }
-
-    fn directory_id(&mut self, worktree_id: WorktreeId, path: &RelPath) -> ProjectEntryId {
-        self.id(worktree_id, true, path)
-    }
-
-    fn id(
-        &mut self,
-        worktree_id: WorktreeId,
-        is_directory: bool,
-        path: &RelPath,
-    ) -> ProjectEntryId {
-        let key = (worktree_id, is_directory, Arc::from(path));
-        if let Some(id) = self.ids.get(&key) {
-            return *id;
+impl FsEntry {
+    fn buffer_id(&self) -> Option<BufferId> {
+        match self {
+            Self::File(file) => Some(file.buffer_id),
+            Self::ExternalFile(file) => Some(file.buffer_id),
+            Self::Directory(_) => None,
         }
-        let id = ProjectEntryId::from_usize(self.next);
-        self.next -= 1;
-        self.ids.insert(key, id);
-        id
     }
+}
+
+fn directory_element_id(
+    worktree_id: WorktreeId,
+    first_buffer_id: BufferId,
+    path: &RelPath,
+) -> ElementId {
+    ElementId::from((
+        SharedString::from(format!("directory-{first_buffer_id}-{path}")),
+        worktree_id.to_proto() as usize,
+    ))
 }
 
 fn is_parent_row(entry: &PanelEntry, worktree_id: WorktreeId, parent_path: &RelPath) -> bool {
@@ -701,8 +691,6 @@ fn is_parent_row(entry: &PanelEntry, worktree_id: WorktreeId, parent_path: &RelP
     }
 }
 
-// A file deleted in a commit on the current branch is `DiskState::New`, like a buffer opened on a
-// path that never existed; only the diff's base version tells the two apart.
 fn is_deleted_file(file: &File, status: Option<FileStatus>, has_base_text: bool) -> bool {
     match file.disk_state {
         DiskState::Deleted => true,
@@ -712,33 +700,11 @@ fn is_deleted_file(file: &File, status: Option<FileStatus>, has_base_text: bool)
     }
 }
 
-fn deleted_entry(id: ProjectEntryId, kind: EntryKind, path: Arc<RelPath>) -> Entry {
-    Entry {
-        id,
-        kind,
-        path,
-        inode: 0,
-        mtime: None,
-        canonical_path: None,
-        is_ignored: false,
-        is_hidden: false,
-        is_always_included: false,
-        is_external: false,
-        is_private: false,
-        size: 0,
-        char_bag: CharBag::default(),
-        is_fifo: false,
-    }
-}
-
 struct BufferExcerpts {
     is_new: bool,
     is_folded: bool,
-    excerpts: Vec<ExcerptRange<language::Anchor>>,
-    entry_id: Option<ProjectEntryId>,
-    worktree: Option<worktree::Snapshot>,
-    status: Option<FileStatus>,
-    path: Option<Arc<RelPath>>,
+    excerpts: Vec<ExcerptRange<Anchor>>,
+    file: Option<(worktree::Snapshot, FsEntryPath)>,
     is_deleted: bool,
 }
 
@@ -882,6 +848,8 @@ impl OutlinePanel {
                 cx.observe_global_in::<SettingsStore>(window, move |outline_panel, window, cx| {
                     let new_settings = OutlinePanelSettings::get_global(cx);
                     let new_theme = ThemeSettings::get_global(cx);
+                    let auto_fold_dirs_changed =
+                        outline_panel_settings.auto_fold_dirs != new_settings.auto_fold_dirs;
                     let mut outlines_invalidated = false;
                     if &current_theme != new_theme {
                         outline_panel_settings = *new_settings;
@@ -957,6 +925,10 @@ impl OutlinePanel {
                         }
                     }
 
+                    if auto_fold_dirs_changed && let Some(editor) = outline_panel.active_editor() {
+                        outline_panel.update_fs_entries(editor, Some(UPDATE_DEBOUNCE), window, cx);
+                    }
+
                     if !outlines_invalidated {
                         let new_document_symbols = outline_panel
                             .buffers
@@ -1004,11 +976,9 @@ impl OutlinePanel {
                 focus_handle,
                 filter_editor,
                 fs_entries: Vec::new(),
-                fs_entries_depth: HashMap::default(),
                 fs_children_count: HashMap::default(),
                 collapsed_entries: HashSet::default(),
                 unfolded_dirs: HashMap::default(),
-                deleted_entry_ids: DeletedEntryIds::default(),
                 selected_entry: SelectedEntry::None,
                 context_menu: None,
                 active_item: None,
@@ -1104,7 +1074,7 @@ impl OutlinePanel {
             self.unfolded_dirs
                 .entry(worktree_id)
                 .or_default()
-                .extend(entries.iter().map(|entry| entry.id));
+                .extend(entries.iter().map(|entry| entry.path.clone()));
             self.update_cached_entries(None, window, cx);
         }
     }
@@ -1132,7 +1102,7 @@ impl OutlinePanel {
             return;
         };
 
-        unfolded_dirs.remove(&entry.id);
+        unfolded_dirs.remove(&entry.path);
         self.update_cached_entries(None, window, cx);
     }
 
@@ -1519,40 +1489,16 @@ impl OutlinePanel {
     ) {
         self.select_entry(entry.clone(), true, window, cx);
         let is_root = match &entry {
-            PanelEntry::Fs(FsEntry::File(FsEntryFile {
-                worktree_id, entry, ..
-            }))
-            | PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
-                worktree_id, entry, ..
-            })) => self
-                .project
-                .read(cx)
-                .worktree_for_id(*worktree_id, cx)
-                .map(|worktree| {
-                    worktree.read(cx).root_entry().map(|entry| entry.id) == Some(entry.id)
-                })
-                .unwrap_or(false),
-            PanelEntry::FoldedDirs(FoldedDirsEntry {
-                worktree_id,
-                entries,
-                ..
-            }) => entries
-                .first()
-                .and_then(|entry| {
-                    self.project
-                        .read(cx)
-                        .worktree_for_id(*worktree_id, cx)
-                        .map(|worktree| {
-                            worktree.read(cx).root_entry().map(|entry| entry.id) == Some(entry.id)
-                        })
-                })
-                .unwrap_or(false),
-            PanelEntry::Fs(FsEntry::ExternalFile(..)) => false,
-            PanelEntry::Outline(..) => {
-                cx.notify();
-                return;
+            PanelEntry::Fs(FsEntry::File(FsEntryFile { entry, .. }))
+            | PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory { entry, .. })) => {
+                entry.path.is_empty()
             }
-            PanelEntry::Search(_) => {
+            PanelEntry::FoldedDirs(folded_dirs) => folded_dirs
+                .entries
+                .first()
+                .is_some_and(|entry| entry.path.is_empty()),
+            PanelEntry::Fs(FsEntry::ExternalFile(_)) => false,
+            PanelEntry::Outline(_) | PanelEntry::Search(_) => {
                 cx.notify();
                 return;
             }
@@ -1610,7 +1556,7 @@ impl OutlinePanel {
         if self
             .unfolded_dirs
             .get(&directory_worktree)
-            .is_none_or(|unfolded_dirs| !unfolded_dirs.contains(&directory_entry.id))
+            .is_none_or(|unfolded_dirs| !unfolded_dirs.contains(&directory_entry.path))
         {
             return false;
         }
@@ -1623,22 +1569,6 @@ impl OutlinePanel {
             .unwrap_or_default();
 
         children.may_be_fold_part() && children.dirs > 0
-    }
-
-    fn expand_real_directory(
-        &self,
-        worktree_id: WorktreeId,
-        entry_id: ProjectEntryId,
-        cx: &mut Context<Self>,
-    ) {
-        let task = self.project.update(cx, |project, cx| {
-            let worktree = project.worktree_for_id(worktree_id, cx)?;
-            worktree.read(cx).entry_for_id(entry_id)?;
-            project.expand_entry(worktree_id, entry_id, cx)
-        });
-        if let Some(task) = task {
-            task.detach_and_log_err(cx);
-        }
     }
 
     fn expand_selected_entry(
@@ -1661,13 +1591,13 @@ impl OutlinePanel {
                 ..
             }) => dir_entries.last().map(|entry| {
                 buffers_to_unfold.extend(self.buffers_inside_directory(*worktree_id, entry));
-                CollapsedEntry::Dir(*worktree_id, entry.id)
+                CollapsedEntry::Dir(*worktree_id, entry.path.clone())
             }),
             PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
                 worktree_id, entry, ..
             })) => {
                 buffers_to_unfold.extend(self.buffers_inside_directory(*worktree_id, entry));
-                Some(CollapsedEntry::Dir(*worktree_id, entry.id))
+                Some(CollapsedEntry::Dir(*worktree_id, entry.path.clone()))
             }
             PanelEntry::Fs(FsEntry::File(FsEntryFile {
                 worktree_id,
@@ -1694,10 +1624,6 @@ impl OutlinePanel {
         };
         let expanded = self.collapsed_entries.remove(&collapsed_entry);
         if expanded {
-            if let CollapsedEntry::Dir(worktree_id, dir_entry_id) = collapsed_entry {
-                self.expand_real_directory(worktree_id, dir_entry_id, cx);
-            };
-
             active_editor.update(cx, |editor, cx| {
                 buffers_to_unfold.retain(|buffer_id| editor.is_buffer_folded(*buffer_id, cx));
             });
@@ -1733,7 +1659,7 @@ impl OutlinePanel {
             })) => {
                 if self
                     .collapsed_entries
-                    .insert(CollapsedEntry::Dir(*worktree_id, entry.id))
+                    .insert(CollapsedEntry::Dir(*worktree_id, entry.path.clone()))
                 {
                     buffers_to_fold.extend(self.buffers_inside_directory(*worktree_id, entry));
                     true
@@ -1770,9 +1696,10 @@ impl OutlinePanel {
             PanelEntry::FoldedDirs(folded_dirs) => {
                 let mut folded = false;
                 if let Some(dir_entry) = folded_dirs.entries.last()
-                    && self
-                        .collapsed_entries
-                        .insert(CollapsedEntry::Dir(folded_dirs.worktree_id, dir_entry.id))
+                    && self.collapsed_entries.insert(CollapsedEntry::Dir(
+                        folded_dirs.worktree_id,
+                        dir_entry.path.clone(),
+                    ))
                 {
                     folded = true;
                     buffers_to_fold
@@ -1835,7 +1762,7 @@ impl OutlinePanel {
                 FsEntry::Directory(FsEntryDirectory {
                     worktree_id, entry, ..
                 }) => {
-                    to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, entry.id));
+                    to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, entry.path.clone()));
                 }
             }
         }
@@ -1870,7 +1797,7 @@ impl OutlinePanel {
             }) = &cached.entry
             {
                 if let Some(last) = entries.last() {
-                    to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, last.id));
+                    to_uncollapse.insert(CollapsedEntry::Dir(*worktree_id, last.path.clone()));
                 }
             }
         }
@@ -1907,7 +1834,7 @@ impl OutlinePanel {
                         worktree_id,
                         entry,
                         ..
-                    })) => Some(CollapsedEntry::Dir(*worktree_id, entry.id)),
+                    })) => Some(CollapsedEntry::Dir(*worktree_id, entry.path.clone())),
                     PanelEntry::Fs(FsEntry::File(FsEntryFile {
                         worktree_id,
                         buffer_id,
@@ -1924,7 +1851,10 @@ impl OutlinePanel {
                         worktree_id,
                         entries,
                         ..
-                    }) => Some(CollapsedEntry::Dir(*worktree_id, entries.last()?.id)),
+                    }) => Some(CollapsedEntry::Dir(
+                        *worktree_id,
+                        entries.last()?.path.clone(),
+                    )),
                     PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
                         Some(CollapsedEntry::Excerpt(excerpt.clone()))
                     }
@@ -1958,12 +1888,10 @@ impl OutlinePanel {
                 entry: dir_entry,
                 ..
             })) => {
-                let entry_id = dir_entry.id;
-                let collapsed_entry = CollapsedEntry::Dir(*worktree_id, entry_id);
+                let directory_path = &dir_entry.path;
+                let collapsed_entry = CollapsedEntry::Dir(*worktree_id, directory_path.clone());
                 buffers_to_toggle.extend(self.buffers_inside_directory(*worktree_id, dir_entry));
-                if self.collapsed_entries.remove(&collapsed_entry) {
-                    self.expand_real_directory(*worktree_id, entry_id, cx);
-                } else {
+                if !self.collapsed_entries.remove(&collapsed_entry) {
                     self.collapsed_entries.insert(collapsed_entry);
                     fold = true;
                 }
@@ -1994,13 +1922,11 @@ impl OutlinePanel {
                 ..
             }) => {
                 if let Some(dir_entry) = dir_entries.first() {
-                    let entry_id = dir_entry.id;
-                    let collapsed_entry = CollapsedEntry::Dir(*worktree_id, entry_id);
+                    let directory_path = &dir_entry.path;
+                    let collapsed_entry = CollapsedEntry::Dir(*worktree_id, directory_path.clone());
                     buffers_to_toggle
                         .extend(self.buffers_inside_directory(*worktree_id, dir_entry));
-                    if self.collapsed_entries.remove(&collapsed_entry) {
-                        self.expand_real_directory(*worktree_id, entry_id, cx);
-                    } else {
+                    if !self.collapsed_entries.remove(&collapsed_entry) {
                         self.collapsed_entries.insert(collapsed_entry);
                         fold = true;
                     }
@@ -2152,25 +2078,6 @@ impl OutlinePanel {
         }
     }
 
-    fn deleted_file_entry_for_buffer(
-        &mut self,
-        project: &Project,
-        buffer_id: BufferId,
-        cx: &App,
-    ) -> Option<(Entity<Worktree>, Entry)> {
-        let (worktree, entry) = self.fs_entries.iter().find_map(|fs_entry| match fs_entry {
-            FsEntry::File(file) if file.buffer_id == buffer_id && file.is_deleted => {
-                let worktree = project.worktree_for_id(file.worktree_id, cx)?;
-                Some((worktree, file.entry.entry.clone()))
-            }
-            _ => None,
-        })?;
-        let worktree_id = worktree.read(cx).id();
-        self.collapsed_entries
-            .remove(&CollapsedEntry::File(worktree_id, buffer_id));
-        Some((worktree, entry))
-    }
-
     fn reveal_entry_for_selection(
         &mut self,
         editor: Entity<Editor>,
@@ -2183,172 +2090,73 @@ impl OutlinePanel {
         {
             return;
         }
-        let project = self.project.clone();
         self.reveal_selection_task = cx.spawn_in(window, async move |outline_panel, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
-            let multibuffer_snapshot =
-                editor.read_with(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx));
-            let entry_with_selection =
-                outline_panel.update_in(cx, |outline_panel, window, cx| {
-                    outline_panel.location_for_editor_selection(&editor, window, cx)
-                })?;
-            let Some(entry_with_selection) = entry_with_selection else {
-                outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.update_in(cx, |outline_panel, window, cx| {
+                let Some(entry) = outline_panel.location_for_editor_selection(&editor, window, cx)
+                else {
                     outline_panel.selected_entry = SelectedEntry::None;
                     cx.notify();
-                })?;
-                return Ok(());
-            };
-            let related_buffer_entry = match &entry_with_selection {
-                PanelEntry::Fs(FsEntry::File(FsEntryFile {
-                    worktree_id,
-                    buffer_id,
-                    entry: file_entry,
-                    is_deleted,
-                    ..
-                })) => project.update(cx, |project, cx| {
-                    let entry_id = project
-                        .buffer_for_id(*buffer_id, cx)
-                        .and_then(|buffer| buffer.read(cx).entry_id(cx));
-                    project
-                        .worktree_for_id(*worktree_id, cx)
-                        .zip(entry_id)
-                        .and_then(|(worktree, entry_id)| {
-                            let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
-                            Some((worktree, entry))
-                        })
-                        .or_else(|| {
-                            if !*is_deleted {
-                                return None;
+                    return;
+                };
+                let buffer_id = match &entry {
+                    PanelEntry::Fs(entry) => entry.buffer_id(),
+                    PanelEntry::Outline(outline) => Some(outline.buffer_id()),
+                    PanelEntry::Search(search) => editor
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .snapshot(cx)
+                        .anchor_to_buffer_anchor(search.match_range.start)
+                        .map(|(anchor, _)| anchor.buffer_id),
+                    PanelEntry::FoldedDirs(_) => None,
+                };
+                let Some(buffer_id) = buffer_id else { return };
+                if let PanelEntry::Outline(outline) = &entry {
+                    let range = outline.range();
+                    if let Some(snapshot) = outline_panel.buffer_snapshot_for_id(buffer_id, cx) {
+                        outline_panel.collapsed_entries.retain(|entry| match entry {
+                            CollapsedEntry::Excerpt(excerpt) => {
+                                excerpt.context.start.buffer_id != buffer_id
+                                    || !(excerpt.contains(&range.start, &snapshot)
+                                        || excerpt.contains(&range.end, &snapshot))
                             }
-                            let worktree = project.worktree_for_id(*worktree_id, cx)?;
-                            Some((worktree, file_entry.entry.clone()))
-                        })
-                }),
-                PanelEntry::Outline(outline_entry) => {
-                    let buffer_id = outline_entry.buffer_id();
-                    let outline_range = outline_entry.range();
-                    outline_panel.update(cx, |outline_panel, cx| {
+                            _ => true,
+                        });
+                    }
+                }
+                let file_path = outline_panel
+                    .fs_entries
+                    .iter()
+                    .find_map(|entry| match entry {
+                        FsEntry::File(file) if file.buffer_id == buffer_id => Some(ProjectPath {
+                            worktree_id: file.worktree_id,
+                            path: file.entry.path.clone(),
+                        }),
+                        _ => None,
+                    });
+                let reveal_buffer_contents =
+                    matches!(entry, PanelEntry::Outline(_) | PanelEntry::Search(_));
+                if reveal_buffer_contents {
+                    outline_panel
+                        .collapsed_entries
+                        .remove(&CollapsedEntry::ExternalFile(buffer_id));
+                }
+                if let Some(path) = file_path {
+                    if reveal_buffer_contents {
                         outline_panel
                             .collapsed_entries
-                            .remove(&CollapsedEntry::ExternalFile(buffer_id));
-                        if let Some(buffer_snapshot) =
-                            outline_panel.buffer_snapshot_for_id(buffer_id, cx)
-                        {
-                            outline_panel.collapsed_entries.retain(|entry| match entry {
-                                CollapsedEntry::Excerpt(excerpt_range) => {
-                                    let intersects = excerpt_range.context.start.buffer_id
-                                        == buffer_id
-                                        && (excerpt_range
-                                            .contains(&outline_range.start, &buffer_snapshot)
-                                            || excerpt_range
-                                                .contains(&outline_range.end, &buffer_snapshot));
-                                    !intersects
-                                }
-                                _ => true,
-                            });
-                        }
-                        let project = outline_panel.project.read(cx);
-                        let entry_id = project
-                            .buffer_for_id(buffer_id, cx)
-                            .and_then(|buffer| buffer.read(cx).entry_id(cx));
-
-                        entry_id
-                            .and_then(|entry_id| {
-                                project
-                                    .worktree_for_entry(entry_id, cx)
-                                    .and_then(|worktree| {
-                                        let worktree_id = worktree.read(cx).id();
-                                        outline_panel
-                                            .collapsed_entries
-                                            .remove(&CollapsedEntry::File(worktree_id, buffer_id));
-                                        let entry =
-                                            worktree.read(cx).entry_for_id(entry_id)?.clone();
-                                        Some((worktree, entry))
-                                    })
-                            })
-                            .or_else(|| {
-                                outline_panel.deleted_file_entry_for_buffer(project, buffer_id, cx)
-                            })
-                    })?
-                }
-                PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
-                PanelEntry::Search(SearchEntry { match_range, .. }) => multibuffer_snapshot
-                    .anchor_to_buffer_anchor(match_range.start)
-                    .map(|(anchor, _)| anchor.buffer_id)
-                    .map(|buffer_id| {
-                        outline_panel.update(cx, |outline_panel, cx| {
-                            outline_panel
-                                .collapsed_entries
-                                .remove(&CollapsedEntry::ExternalFile(buffer_id));
-                            let project = project.read(cx);
-                            let entry_id = project
-                                .buffer_for_id(buffer_id, cx)
-                                .and_then(|buffer| buffer.read(cx).entry_id(cx));
-
-                            entry_id
-                                .and_then(|entry_id| {
-                                    project
-                                        .worktree_for_entry(entry_id, cx)
-                                        .and_then(|worktree| {
-                                            let worktree_id = worktree.read(cx).id();
-                                            outline_panel.collapsed_entries.remove(
-                                                &CollapsedEntry::File(worktree_id, buffer_id),
-                                            );
-                                            let entry =
-                                                worktree.read(cx).entry_for_id(entry_id)?.clone();
-                                            Some((worktree, entry))
-                                        })
-                                })
-                                .or_else(|| {
-                                    outline_panel
-                                        .deleted_file_entry_for_buffer(project, buffer_id, cx)
-                                })
-                        })
-                    })
-                    .transpose()?
-                    .flatten(),
-                _ => return anyhow::Ok(()),
-            };
-            if let Some((worktree, buffer_entry)) = related_buffer_entry {
-                outline_panel.update(cx, |outline_panel, cx| {
-                    let worktree_id = worktree.read(cx).id();
-                    let mut dirs_to_expand = Vec::new();
-                    for ancestor in buffer_entry.path.ancestors().skip(1) {
-                        let Some(ancestor_id) =
-                            outline_panel
-                                .fs_entries
-                                .iter()
-                                .find_map(|entry| match entry {
-                                    FsEntry::Directory(directory)
-                                        if directory.worktree_id == worktree_id
-                                            && directory.entry.path.as_ref() == ancestor =>
-                                    {
-                                        Some(directory.entry.id)
-                                    }
-                                    _ => None,
-                                })
-                        else {
-                            continue;
-                        };
-                        if outline_panel
+                            .remove(&CollapsedEntry::File(path.worktree_id, buffer_id));
+                    }
+                    for ancestor in path.path.ancestors().skip(1) {
+                        outline_panel
                             .collapsed_entries
-                            .remove(&CollapsedEntry::Dir(worktree_id, ancestor_id))
-                        {
-                            dirs_to_expand.push(ancestor_id);
-                        }
+                            .remove(&CollapsedEntry::Dir(path.worktree_id, Arc::from(ancestor)));
                     }
-                    for dir_to_expand in dirs_to_expand {
-                        outline_panel.expand_real_directory(worktree_id, dir_to_expand, cx);
-                    }
-                })?
-            }
-
-            outline_panel.update_in(cx, |outline_panel, window, cx| {
-                outline_panel.select_entry(entry_with_selection, false, window, cx);
+                }
+                outline_panel.select_entry(entry, false, window, cx);
                 outline_panel.update_cached_entries(None, window, cx);
             })?;
-
             anyhow::Ok(())
         });
     }
@@ -2495,7 +2303,10 @@ impl OutlinePanel {
         };
         let (item_id, label_element, icon) = match rendered_entry {
             FsEntry::File(FsEntryFile {
-                worktree_id, entry, ..
+                worktree_id,
+                entry,
+                buffer_id,
+                ..
             }) => {
                 let name = self.entry_name(worktree_id, entry, cx);
                 let color =
@@ -2507,7 +2318,7 @@ impl OutlinePanel {
                     None
                 };
                 (
-                    ElementId::from(entry.id.to_proto() as usize),
+                    ElementId::from(("buffer", buffer_id.to_proto())),
                     HighlightedLabel::new(
                         name,
                         string_match
@@ -2527,7 +2338,7 @@ impl OutlinePanel {
 
                 let is_expanded = !self.collapsed_entries.contains(&CollapsedEntry::Dir(
                     directory.worktree_id,
-                    directory.entry.id,
+                    directory.entry.path.clone(),
                 ));
                 let color = entry_git_aware_label_color(
                     directory.entry.git_summary,
@@ -2542,7 +2353,11 @@ impl OutlinePanel {
                     cx,
                 );
                 (
-                    ElementId::from(directory.entry.id.to_proto() as usize),
+                    directory_element_id(
+                        directory.worktree_id,
+                        directory.first_buffer_id,
+                        &directory.entry.path,
+                    ),
                     HighlightedLabel::new(
                         name,
                         string_match
@@ -2574,7 +2389,7 @@ impl OutlinePanel {
                     None => (None, "Unknown buffer".to_string()),
                 };
                 (
-                    ElementId::from(external_file.buffer_id.to_proto() as usize),
+                    ElementId::from(("buffer", external_file.buffer_id.to_proto())),
                     HighlightedLabel::new(
                         name,
                         string_match
@@ -2613,19 +2428,17 @@ impl OutlinePanel {
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
         let is_active = match self.selected_entry() {
-            Some(PanelEntry::FoldedDirs(selected_dirs)) => {
-                selected_dirs.worktree_id == folded_dir.worktree_id
-                    && selected_dirs.entries == folded_dir.entries
-            }
+            Some(PanelEntry::FoldedDirs(selected_dirs)) => selected_dirs == folded_dir,
             _ => false,
         };
         let (item_id, label_element, icon) = {
             let name = self.dir_names_string(&folded_dir.entries, folded_dir.worktree_id, cx);
 
             let is_expanded = folded_dir.entries.iter().all(|dir| {
-                !self
-                    .collapsed_entries
-                    .contains(&CollapsedEntry::Dir(folded_dir.worktree_id, dir.id))
+                !self.collapsed_entries.contains(&CollapsedEntry::Dir(
+                    folded_dir.worktree_id,
+                    dir.path.clone(),
+                ))
             });
             let is_ignored = folded_dir.entries.iter().any(|entry| entry.is_ignored);
             let git_status = folded_dir
@@ -2642,14 +2455,19 @@ impl OutlinePanel {
                 cx,
             );
             (
-                ElementId::from(
-                    folded_dir
-                        .entries
-                        .last()
-                        .map(|entry| entry.id.to_proto())
-                        .unwrap_or_else(|| folded_dir.worktree_id.to_proto())
-                        as usize,
-                ),
+                folded_dir
+                    .entries
+                    .last()
+                    .map(|entry| {
+                        directory_element_id(
+                            folded_dir.worktree_id,
+                            folded_dir.first_buffer_id,
+                            &entry.path,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        ElementId::from(("empty-folded-dirs", folded_dir.worktree_id.to_proto()))
+                    }),
                 HighlightedLabel::new(
                     name,
                     string_match
@@ -2781,8 +2599,6 @@ impl OutlinePanel {
         let settings = OutlinePanelSettings::get_global(cx);
         let is_deleted = match &rendered_entry {
             PanelEntry::Fs(FsEntry::File(file)) => file.is_deleted,
-            PanelEntry::Fs(FsEntry::Directory(directory)) => directory.is_deleted,
-            PanelEntry::FoldedDirs(folded_dirs) => folded_dirs.is_deleted,
             _ => false,
         };
         div()
@@ -2816,8 +2632,6 @@ impl OutlinePanel {
                     .child(
                         h_flex()
                             .child(h_flex().min_w(px(16.)).justify_center().child(icon_element))
-                            // `HighlightedLabel` freezes its text runs from `window.text_style()`,
-                            // so only an ancestor's style reaches them.
                             .child(
                                 h_flex()
                                     .h_6()
@@ -2857,25 +2671,9 @@ impl OutlinePanel {
             )
     }
 
-    fn entry_name(&self, worktree_id: &WorktreeId, entry: &Entry, cx: &App) -> String {
+    fn entry_name(&self, worktree_id: &WorktreeId, entry: &FsEntryPath, cx: &App) -> String {
         match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
-            Some(worktree) => {
-                let worktree = worktree.read(cx);
-                match worktree.snapshot().root_entry() {
-                    Some(root_entry) => {
-                        if root_entry.id == entry.id {
-                            file_name(worktree.abs_path().as_ref())
-                        } else {
-                            let path = worktree.absolutize(entry.path.as_ref());
-                            file_name(&path)
-                        }
-                    }
-                    None => {
-                        let path = worktree.absolutize(entry.path.as_ref());
-                        file_name(&path)
-                    }
-                }
-            }
+            Some(worktree) => file_name(&worktree.read(cx).absolutize(&entry.path)),
             None => file_name(entry.path.as_std_path()),
         }
     }
@@ -2907,11 +2705,7 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.active {
-            return;
-        }
-
-        if debounce.is_some() && self.fs_entries_update_pending {
+        if !self.active || (debounce.is_some() && self.fs_entries_update_pending) {
             return;
         }
         self.fs_entries_update_pending = true;
@@ -2921,533 +2715,274 @@ impl OutlinePanel {
                 cx.background_executor().timer(debounce).await;
             }
 
-            let mut new_collapsed_entries = HashSet::default();
-            let mut new_unfolded_dirs = HashMap::default();
-            let mut root_entries = HashSet::default();
             let mut new_buffers = HashMap::<BufferId, BufferOutlines>::default();
-            let Ok((buffer_excerpts, auto_fold_dirs, repo_snapshots, deleted_entry_ids)) =
-                outline_panel.update(cx, |outline_panel, cx| {
-                    outline_panel.fs_entries_update_pending = false;
-                    let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
-                    let active_multi_buffer = active_editor.read(cx).buffer().clone();
-                    let new_entries = outline_panel.new_entries_for_fs_update.clone();
-                    let repo_snapshots = outline_panel.project.update(cx, |project, cx| {
-                        project.git_store().read(cx).display_repo_snapshots(cx)
-                    });
-                    let git_store = outline_panel.project.read(cx).git_store().clone();
-                    new_collapsed_entries = outline_panel.collapsed_entries.clone();
-                    new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
-                    let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
+            let Ok((
+                buffer_excerpts,
+                auto_fold_dirs,
+                repo_snapshots,
+                mut collapsed_entries,
+                mut unfolded_dirs,
+            )) = outline_panel.update(cx, |outline_panel, cx| {
+                outline_panel.fs_entries_update_pending = false;
+                let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
+                let git_store = outline_panel.project.read(cx).git_store().clone();
+                let repo_snapshots = git_store.read(cx).display_repo_snapshots(cx);
+                let editor = active_editor.read(cx);
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let mut buffer_excerpts = IndexMap::<BufferId, BufferExcerpts>::default();
 
-                    let buffer_excerpts = multi_buffer_snapshot.excerpts().fold(
-                        HashMap::default(),
-                        |mut buffer_excerpts, excerpt_range| {
-                            let Some(buffer_snapshot) = multi_buffer_snapshot
-                                .buffer_for_id(excerpt_range.context.start.buffer_id)
-                            else {
-                                return buffer_excerpts;
-                            };
-                            let buffer_id = buffer_snapshot.remote_id();
-                            let file = File::from_dyn(buffer_snapshot.file());
-                            let entry_id = file.and_then(|file| file.project_entry_id());
-                            let worktree = file.map(|file| file.worktree.read(cx).snapshot());
-                            let path = file.map(|file| file.path.clone());
-                            let is_new = new_entries.contains(&buffer_id)
-                                || !outline_panel.buffers.contains_key(&buffer_id);
-                            let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
+                for excerpt in snapshot.excerpts() {
+                    let buffer_id = excerpt.context.start.buffer_id;
+                    let Some(buffer) = snapshot.buffer_for_id(buffer_id) else {
+                        continue;
+                    };
+                    buffer_excerpts
+                        .entry(buffer_id)
+                        .or_insert_with(|| {
                             let status = git_store
                                 .read(cx)
                                 .display_status_for_buffer_id(buffer_id, cx);
+                            let file = File::from_dyn(buffer.file());
                             let is_deleted = file.is_some_and(|file| {
                                 is_deleted_file(
                                     file,
                                     status,
-                                    multi_buffer_snapshot
+                                    snapshot
                                         .diff_for_buffer_id(buffer_id)
                                         .is_some_and(|diff| diff.base_text_exists()),
                                 )
                             });
-                            buffer_excerpts
-                                .entry(buffer_id)
-                                .or_insert_with(|| BufferExcerpts {
-                                    is_new,
-                                    is_folded,
-                                    excerpts: Vec::new(),
-                                    entry_id,
-                                    worktree,
-                                    status,
-                                    path,
-                                    is_deleted,
-                                })
-                                .excerpts
-                                .push(excerpt_range.clone());
+                            let file = file.and_then(|file| {
+                                let worktree = file.worktree.read(cx).snapshot();
+                                let entry = file
+                                    .project_entry_id()
+                                    .and_then(|id| worktree.entry_for_id(id));
+                                if entry.is_none() && !is_deleted {
+                                    return None;
+                                }
+                                let path_entry = FsEntryPath {
+                                    path: file.path.clone(),
+                                    git_summary: status.map(GitSummary::from).unwrap_or_default(),
+                                    is_ignored: entry.is_some_and(|entry| entry.is_ignored),
+                                };
+                                Some((worktree, path_entry))
+                            });
+                            BufferExcerpts {
+                                is_new: outline_panel
+                                    .new_entries_for_fs_update
+                                    .contains(&buffer_id)
+                                    || !outline_panel.buffers.contains_key(&buffer_id),
+                                is_folded: editor.is_buffer_folded(buffer_id, cx),
+                                excerpts: Vec::new(),
+                                file,
+                                is_deleted,
+                            }
+                        })
+                        .excerpts
+                        .push(excerpt.clone());
 
-                            new_buffers
-                                .entry(buffer_id)
-                                .or_insert_with(|| {
-                                    let outlines = match outline_panel.buffers.get(&buffer_id) {
-                                        Some(old_buffer) => match &old_buffer.outlines {
-                                            OutlineState::Outlines(outlines) => {
-                                                OutlineState::Outlines(outlines.clone())
-                                            }
-                                            OutlineState::Invalidated(_) => {
-                                                OutlineState::NotFetched
-                                            }
-                                            OutlineState::NotFetched => OutlineState::NotFetched,
-                                        },
-                                        None => OutlineState::NotFetched,
-                                    };
-                                    BufferOutlines {
-                                        outlines,
-                                        excerpts: Vec::new(),
-                                    }
-                                })
-                                .excerpts
-                                .push(excerpt_range);
-                            buffer_excerpts
-                        },
-                    );
-                    (
-                        buffer_excerpts,
-                        auto_fold_dirs,
-                        repo_snapshots,
-                        outline_panel.deleted_entry_ids.clone(),
-                    )
-                })
+                    new_buffers
+                        .entry(buffer_id)
+                        .or_insert_with(|| {
+                            let outlines = match outline_panel.buffers.get(&buffer_id) {
+                                Some(BufferOutlines {
+                                    outlines: OutlineState::Outlines(outlines),
+                                    ..
+                                }) => OutlineState::Outlines(outlines.clone()),
+                                _ => OutlineState::NotFetched,
+                            };
+                            BufferOutlines {
+                                outlines,
+                                excerpts: Vec::new(),
+                            }
+                        })
+                        .excerpts
+                        .push(excerpt);
+                }
+                (
+                    buffer_excerpts,
+                    auto_fold_dirs,
+                    repo_snapshots,
+                    outline_panel.collapsed_entries.clone(),
+                    outline_panel.unfolded_dirs.clone(),
+                )
+            })
             else {
                 return;
             };
 
-            let Some((
-                new_collapsed_entries,
-                new_unfolded_dirs,
-                new_fs_entries,
-                new_depth_map,
-                new_children_count,
-                new_deleted_entry_ids,
-            )) = cx
+            let (fs_entries, children_count, collapsed_entries, unfolded_dirs) = cx
                 .background_spawn(async move {
-                    let mut deleted_entry_ids = deleted_entry_ids;
-                    let mut processed_external_buffers = HashSet::default();
-                    let mut new_worktree_entries =
-                        BTreeMap::<WorktreeId, HashMap<ProjectEntryId, GitEntry>>::default();
-                    let mut worktree_excerpts = HashMap::<
-                        WorktreeId,
-                        HashMap<ProjectEntryId, (BufferId, Vec<ExcerptRange<Anchor>>)>,
-                    >::default();
-                    let mut external_excerpts = HashMap::default();
-                    let mut deleted_entries = HashSet::<ProjectEntryId>::default();
-
-                    for (
-                        buffer_id,
-                        BufferExcerpts {
-                            is_new,
-                            is_folded,
-                            excerpts,
-                            entry_id,
-                            worktree,
-                            status,
-                            path,
-                            is_deleted,
-                        },
-                    ) in buffer_excerpts
-                    {
-                        if is_folded {
-                            match &worktree {
-                                Some(worktree) => {
-                                    new_collapsed_entries
-                                        .insert(CollapsedEntry::File(worktree.id(), buffer_id));
-                                }
-                                None => {
-                                    new_collapsed_entries
-                                        .insert(CollapsedEntry::ExternalFile(buffer_id));
-                                }
-                            }
-                        } else if is_new {
-                            match &worktree {
-                                Some(worktree) => {
-                                    new_collapsed_entries
-                                        .remove(&CollapsedEntry::File(worktree.id(), buffer_id));
-                                }
-                                None => {
-                                    new_collapsed_entries
-                                        .remove(&CollapsedEntry::ExternalFile(buffer_id));
-                                }
-                            }
+                    let mut fs_entries = Vec::new();
+                    let mut directories = HashMap::<ProjectPath, FsEntryPath>::default();
+                    let mut parent_paths = Vec::<ProjectPath>::new();
+                    for (buffer_id, buffer) in buffer_excerpts {
+                        let collapsed_entry = match &buffer.file {
+                            Some((worktree, _)) => CollapsedEntry::File(worktree.id(), buffer_id),
+                            None => CollapsedEntry::ExternalFile(buffer_id),
+                        };
+                        if buffer.is_folded {
+                            collapsed_entries.insert(collapsed_entry);
+                        } else if buffer.is_new {
+                            collapsed_entries.remove(&collapsed_entry);
                         }
-
-                        if let Some(worktree) = worktree {
-                            let worktree_id = worktree.id();
-                            let unfolded_dirs = new_unfolded_dirs.entry(worktree_id).or_default();
-
-                            match entry_id.and_then(|id| worktree.entry_for_id(id)).cloned() {
-                                Some(entry) => {
-                                    let entry = GitEntry {
-                                        git_summary: status
-                                            .map(|status| status.summary())
-                                            .unwrap_or_default(),
-                                        entry,
-                                    };
-                                    let mut traversal = GitTraversal::new(
-                                        &repo_snapshots,
-                                        worktree.traverse_from_path(
-                                            true,
-                                            true,
-                                            true,
-                                            entry.path.as_ref(),
-                                        ),
-                                    );
-
-                                    let mut entries_to_add = HashMap::default();
-                                    worktree_excerpts
-                                        .entry(worktree_id)
-                                        .or_default()
-                                        .insert(entry.id, (buffer_id, excerpts));
-                                    let mut current_entry = entry;
-                                    loop {
-                                        if current_entry.is_dir() {
-                                            let is_root =
-                                                worktree.root_entry().map(|entry| entry.id)
-                                                    == Some(current_entry.id);
-                                            if is_root {
-                                                root_entries.insert(current_entry.id);
-                                                if auto_fold_dirs {
-                                                    unfolded_dirs.insert(current_entry.id);
-                                                }
-                                            }
-                                            if is_new {
-                                                new_collapsed_entries.remove(&CollapsedEntry::Dir(
-                                                    worktree_id,
-                                                    current_entry.id,
-                                                ));
-                                            }
-                                        }
-
-                                        let new_entry_added = entries_to_add
-                                            .insert(current_entry.id, current_entry)
-                                            .is_none();
-                                        if new_entry_added
-                                            && traversal.back_to_parent()
-                                            && let Some(parent_entry) = traversal.entry()
-                                        {
-                                            current_entry = parent_entry.to_owned();
-                                            continue;
-                                        }
-                                        break;
-                                    }
-                                    new_worktree_entries
-                                        .entry(worktree_id)
-                                        .or_insert_with(HashMap::default)
-                                        .extend(entries_to_add);
-                                }
-                                None => match path.filter(|_| is_deleted) {
-                                    Some(path) => {
-                                        let file_id = deleted_entry_ids.file_id(worktree_id, &path);
-                                        deleted_entries.insert(file_id);
-                                        worktree_excerpts
-                                            .entry(worktree_id)
-                                            .or_default()
-                                            .insert(file_id, (buffer_id, excerpts));
-
-                                        let mut entries_to_add = HashMap::default();
-                                        entries_to_add.insert(
-                                            file_id,
-                                            GitEntry {
-                                                git_summary: status
-                                                    .map(|status| status.summary())
-                                                    .unwrap_or_default(),
-                                                entry: deleted_entry(
-                                                    file_id,
-                                                    EntryKind::File,
-                                                    path.clone(),
-                                                ),
-                                            },
-                                        );
-
-                                        for ancestor in path.ancestors().skip(1) {
-                                            let (ancestor_id, ancestor_entry) = match worktree
-                                                .entry_for_path(ancestor)
-                                                .filter(|entry| entry.is_dir())
-                                            {
-                                                Some(real_entry) => {
-                                                    let is_root =
-                                                        worktree.root_entry().map(|entry| entry.id)
-                                                            == Some(real_entry.id);
-                                                    if is_root {
-                                                        root_entries.insert(real_entry.id);
-                                                        if auto_fold_dirs {
-                                                            unfolded_dirs.insert(real_entry.id);
-                                                        }
-                                                    }
-                                                    if is_new {
-                                                        new_collapsed_entries.remove(
-                                                            &CollapsedEntry::Dir(
-                                                                worktree_id,
-                                                                real_entry.id,
-                                                            ),
-                                                        );
-                                                    }
-                                                    let git_summary = GitTraversal::new(
-                                                        &repo_snapshots,
-                                                        worktree.traverse_from_path(
-                                                            true, true, true, ancestor,
-                                                        ),
-                                                    )
-                                                    .entry()
-                                                    .map(|entry| entry.git_summary)
-                                                    .unwrap_or_default();
-                                                    (
-                                                        real_entry.id,
-                                                        GitEntry {
-                                                            git_summary,
-                                                            entry: real_entry.clone(),
-                                                        },
-                                                    )
-                                                }
-                                                None if ancestor.is_empty() => continue,
-                                                None => {
-                                                    let dir_id = deleted_entry_ids
-                                                        .directory_id(worktree_id, ancestor);
-                                                    deleted_entries.insert(dir_id);
-                                                    if is_new {
-                                                        new_collapsed_entries.remove(
-                                                            &CollapsedEntry::Dir(
-                                                                worktree_id,
-                                                                dir_id,
-                                                            ),
-                                                        );
-                                                    }
-                                                    (
-                                                        dir_id,
-                                                        GitEntry {
-                                                            git_summary: Default::default(),
-                                                            entry: deleted_entry(
-                                                                dir_id,
-                                                                EntryKind::Dir,
-                                                                ancestor.into(),
-                                                            ),
-                                                        },
-                                                    )
-                                                }
-                                            };
-                                            entries_to_add.insert(ancestor_id, ancestor_entry);
-                                        }
-
-                                        new_worktree_entries
-                                            .entry(worktree_id)
-                                            .or_insert_with(HashMap::default)
-                                            .extend(entries_to_add);
-                                    }
-                                    None => {
-                                        if processed_external_buffers.insert(buffer_id) {
-                                            external_excerpts
-                                                .entry(buffer_id)
-                                                .or_insert_with(Vec::new)
-                                                .extend(excerpts);
-                                        }
-                                    }
-                                },
+                        let Some((worktree, entry)) = buffer.file else {
+                            parent_paths.clear();
+                            fs_entries.push(FsEntry::ExternalFile(FsEntryExternalFile {
+                                buffer_id,
+                                excerpts: buffer.excerpts,
+                            }));
+                            continue;
+                        };
+                        let worktree_id = worktree.id();
+                        let mut ancestors = entry
+                            .path
+                            .ancestors()
+                            .skip(1)
+                            .map(|path| ProjectPath {
+                                worktree_id,
+                                path: Arc::from(path),
+                            })
+                            .collect::<Vec<_>>();
+                        ancestors.reverse();
+                        let shared_depth = ancestors
+                            .iter()
+                            .zip(&parent_paths)
+                            .take_while(|(ancestor, parent)| ancestor == parent)
+                            .count();
+                        parent_paths.truncate(shared_depth);
+                        for (depth, ancestor) in ancestors.into_iter().enumerate() {
+                            if buffer.is_new {
+                                collapsed_entries.remove(&CollapsedEntry::Dir(
+                                    worktree_id,
+                                    ancestor.path.clone(),
+                                ));
                             }
-                        } else if processed_external_buffers.insert(buffer_id) {
-                            external_excerpts
-                                .entry(buffer_id)
-                                .or_insert_with(Vec::new)
-                                .extend(excerpts);
+                            if depth < shared_depth {
+                                continue;
+                            }
+                            let directory =
+                                directories.entry(ancestor.clone()).or_insert_with(|| {
+                                    let indexed_entry = worktree
+                                        .entry_for_path(&ancestor.path)
+                                        .filter(|entry| entry.is_dir());
+                                    let git_summary = indexed_entry
+                                        .and_then(|_| {
+                                            GitTraversal::new(
+                                                &repo_snapshots,
+                                                worktree.traverse_from_path(
+                                                    true,
+                                                    true,
+                                                    true,
+                                                    &ancestor.path,
+                                                ),
+                                            )
+                                            .entry()
+                                            .map(|entry| entry.git_summary)
+                                        })
+                                        .unwrap_or_default();
+                                    FsEntryPath {
+                                        path: ancestor.path.clone(),
+                                        git_summary,
+                                        is_ignored: indexed_entry
+                                            .is_some_and(|entry| entry.is_ignored),
+                                    }
+                                });
+                            fs_entries.push(FsEntry::Directory(FsEntryDirectory {
+                                worktree_id,
+                                first_buffer_id: buffer_id,
+                                entry: directory.clone(),
+                            }));
+                            parent_paths.push(ancestor);
+                        }
+                        fs_entries.push(FsEntry::File(FsEntryFile {
+                            worktree_id,
+                            entry,
+                            buffer_id,
+                            excerpts: buffer.excerpts,
+                            is_deleted: buffer.is_deleted,
+                        }));
+                    }
+                    collapsed_entries.retain(|entry| match entry {
+                        CollapsedEntry::Dir(worktree_id, path) => {
+                            directories.contains_key(&ProjectPath {
+                                worktree_id: *worktree_id,
+                                path: path.clone(),
+                            })
+                        }
+                        _ => true,
+                    });
+                    unfolded_dirs.retain(|worktree_id, paths| {
+                        paths.retain(|path| {
+                            directories.contains_key(&ProjectPath {
+                                worktree_id: *worktree_id,
+                                path: path.clone(),
+                            })
+                        });
+                        !paths.is_empty()
+                    });
+                    let mut children_count =
+                        HashMap::<WorktreeId, HashMap<Arc<RelPath>, FsChildren>>::default();
+                    for directory in directories.keys() {
+                        if let Some(parent) = directory.path.parent() {
+                            children_count
+                                .entry(directory.worktree_id)
+                                .or_default()
+                                .entry(Arc::from(parent))
+                                .or_default()
+                                .dirs += 1;
                         }
                     }
-
-                    let mut new_children_count =
-                        HashMap::<WorktreeId, HashMap<Arc<RelPath>, FsChildren>>::default();
-
-                    let worktree_entries = new_worktree_entries
-                        .into_iter()
-                        .map(|(worktree_id, entries)| {
-                            let mut entries = entries.into_values().collect::<Vec<_>>();
-                            // A file has to precede a directory of the same path: the nesting
-                            // pass below would otherwise pop the directory before its rows arrive.
-                            entries.sort_by(|a, b| {
-                                a.path
-                                    .as_ref()
-                                    .cmp(b.path.as_ref())
-                                    .then_with(|| a.is_dir().cmp(&b.is_dir()))
-                            });
-                            (worktree_id, entries)
-                        })
-                        .flat_map(|(worktree_id, entries)| {
+                    for entry in &fs_entries {
+                        if let FsEntry::File(file) = entry
+                            && let Some(parent) = file.entry.path.parent()
+                        {
+                            children_count
+                                .entry(file.worktree_id)
+                                .or_default()
+                                .entry(Arc::from(parent))
+                                .or_default()
+                                .files += 1;
+                        }
+                    }
+                    if auto_fold_dirs {
+                        for entry in &fs_entries {
+                            let FsEntry::Directory(directory) = entry else {
+                                continue;
+                            };
+                            let unfolded = unfolded_dirs.entry(directory.worktree_id).or_default();
+                            let path = &directory.entry.path;
+                            let children = children_count
+                                .get(&directory.worktree_id)
+                                .and_then(|children| children.get(path))
+                                .copied()
+                                .unwrap_or_default();
+                            let parent_unfolded =
+                                path.parent().is_none_or(|parent| unfolded.contains(parent));
+                            if path.is_empty()
+                                || !children.may_be_fold_part()
+                                || (children.dirs == 0 && parent_unfolded)
                             {
-                                entries
-                                    .into_iter()
-                                    .filter_map(|entry| {
-                                        if auto_fold_dirs && let Some(parent) = entry.path.parent()
-                                        {
-                                            let children = new_children_count
-                                                .entry(worktree_id)
-                                                .or_default()
-                                                .entry(Arc::from(parent))
-                                                .or_default();
-                                            if entry.is_dir() {
-                                                children.dirs += 1;
-                                            } else {
-                                                children.files += 1;
-                                            }
-                                        }
-
-                                        let is_deleted = deleted_entries.contains(&entry.id);
-                                        if entry.is_dir() {
-                                            Some(FsEntry::Directory(FsEntryDirectory {
-                                                worktree_id,
-                                                entry,
-                                                is_deleted,
-                                            }))
-                                        } else {
-                                            let (buffer_id, excerpts) = worktree_excerpts
-                                                .get_mut(&worktree_id)
-                                                .and_then(|worktree_excerpts| {
-                                                    worktree_excerpts.remove(&entry.id)
-                                                })?;
-                                            Some(FsEntry::File(FsEntryFile {
-                                                worktree_id,
-                                                buffer_id,
-                                                entry,
-                                                excerpts,
-                                                is_deleted,
-                                            }))
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
+                                unfolded.insert(path.clone());
                             }
-                        })
-                        .collect::<Vec<_>>();
-
-                    let mut visited_dirs = Vec::new();
-                    let mut new_depth_map = HashMap::default();
-                    let new_visible_entries = external_excerpts
-                        .into_iter()
-                        .sorted_by_key(|(id, _)| *id)
-                        .map(|(buffer_id, excerpts)| {
-                            FsEntry::ExternalFile(FsEntryExternalFile {
-                                buffer_id,
-                                excerpts,
-                            })
-                        })
-                        .chain(worktree_entries)
-                        .filter(|visible_item| {
-                            match visible_item {
-                                FsEntry::Directory(directory) => {
-                                    let parent_id = back_to_common_visited_parent(
-                                        &mut visited_dirs,
-                                        &directory.worktree_id,
-                                        &directory.entry,
-                                    );
-
-                                    let mut depth = 0;
-                                    if !root_entries.contains(&directory.entry.id) {
-                                        if auto_fold_dirs {
-                                            let children = new_children_count
-                                                .get(&directory.worktree_id)
-                                                .and_then(|children_count| {
-                                                    children_count.get(&directory.entry.path)
-                                                })
-                                                .copied()
-                                                .unwrap_or_default();
-
-                                            if !children.may_be_fold_part()
-                                                || (children.dirs == 0
-                                                    && visited_dirs
-                                                        .last()
-                                                        .map(|(parent_dir_id, _)| {
-                                                            new_unfolded_dirs
-                                                                .get(&directory.worktree_id)
-                                                                .is_none_or(|unfolded_dirs| {
-                                                                    unfolded_dirs
-                                                                        .contains(parent_dir_id)
-                                                                })
-                                                        })
-                                                        .unwrap_or(true))
-                                            {
-                                                new_unfolded_dirs
-                                                    .entry(directory.worktree_id)
-                                                    .or_default()
-                                                    .insert(directory.entry.id);
-                                            }
-                                        }
-
-                                        depth = parent_id
-                                            .and_then(|(worktree_id, id)| {
-                                                new_depth_map.get(&(worktree_id, id)).copied()
-                                            })
-                                            .unwrap_or(0)
-                                            + 1;
-                                    };
-                                    visited_dirs
-                                        .push((directory.entry.id, directory.entry.path.clone()));
-                                    new_depth_map
-                                        .insert((directory.worktree_id, directory.entry.id), depth);
-                                }
-                                FsEntry::File(FsEntryFile {
-                                    worktree_id,
-                                    entry: file_entry,
-                                    ..
-                                }) => {
-                                    let parent_id = back_to_common_visited_parent(
-                                        &mut visited_dirs,
-                                        worktree_id,
-                                        file_entry,
-                                    );
-                                    let depth = if root_entries.contains(&file_entry.id) {
-                                        0
-                                    } else {
-                                        parent_id
-                                            .and_then(|(worktree_id, id)| {
-                                                new_depth_map.get(&(worktree_id, id)).copied()
-                                            })
-                                            .unwrap_or(0)
-                                            + 1
-                                    };
-                                    new_depth_map.insert((*worktree_id, file_entry.id), depth);
-                                }
-                                FsEntry::ExternalFile(..) => {
-                                    visited_dirs.clear();
-                                }
-                            }
-
-                            true
-                        })
-                        .collect::<Vec<_>>();
-
-                    anyhow::Ok((
-                        new_collapsed_entries,
-                        new_unfolded_dirs,
-                        new_visible_entries,
-                        new_depth_map,
-                        new_children_count,
-                        deleted_entry_ids,
-                    ))
+                        }
+                    }
+                    (fs_entries, children_count, collapsed_entries, unfolded_dirs)
                 })
-                .await
-                .log_err()
-            else {
-                return;
-            };
+                .await;
 
             outline_panel
                 .update_in(cx, |outline_panel, window, cx| {
                     outline_panel.new_entries_for_fs_update.clear();
                     outline_panel.buffers = new_buffers;
-                    outline_panel.collapsed_entries = new_collapsed_entries;
-                    outline_panel.unfolded_dirs = new_unfolded_dirs;
-                    outline_panel.fs_entries = new_fs_entries;
-                    outline_panel.fs_entries_depth = new_depth_map;
-                    outline_panel.fs_children_count = new_children_count;
-                    outline_panel.deleted_entry_ids = new_deleted_entry_ids;
+                    outline_panel.collapsed_entries = collapsed_entries;
+                    outline_panel.unfolded_dirs = unfolded_dirs;
+                    outline_panel.fs_entries = fs_entries;
+                    outline_panel.fs_children_count = children_count;
                     outline_panel.update_non_fs_items(window, cx);
-
-                    // Only update cached entries if we don't have outlines to fetch
-                    // If we do have outlines to fetch, let fetch_outdated_outlines handle the update
                     if outline_panel.buffers_to_fetch(cx).is_empty() {
                         outline_panel.update_cached_entries(debounce, window, cx);
                     }
-
                     cx.notify();
                 })
                 .ok();
@@ -3516,7 +3051,6 @@ impl OutlinePanel {
         self.unfolded_dirs.clear();
         self.active_item = None;
         self.fs_entries.clear();
-        self.fs_entries_depth.clear();
         self.fs_children_count.clear();
         self.buffers.clear();
         self.cached_entries = Vec::new();
@@ -4027,6 +3561,13 @@ impl OutlinePanel {
                 .update_in(cx, |outline_panel, window, cx| {
                     outline_panel.cached_entries = new_cached_entries;
                     outline_panel.max_width_item_index = max_width_item_index;
+                    if let SelectedEntry::Valid(selected, _) = &outline_panel.selected_entry
+                        && let Some((index, cached)) =
+                            outline_panel.cached_entry_for_selection(selected)
+                    {
+                        outline_panel.selected_entry =
+                            SelectedEntry::Valid(cached.entry.clone(), index);
+                    }
                     if (outline_panel.selected_entry.is_invalidated()
                         || matches!(outline_panel.selected_entry, SelectedEntry::None))
                         && let Some(new_selected_entry) =
@@ -4047,6 +3588,73 @@ impl OutlinePanel {
         });
     }
 
+    fn cached_entry_for_selection(&self, selected: &PanelEntry) -> Option<(usize, &CachedEntry)> {
+        if let Some(entry) = self
+            .cached_entries
+            .iter()
+            .enumerate()
+            .find(|(_, cached)| &cached.entry == selected)
+        {
+            return Some(entry);
+        }
+        let (worktree_id, path, first_buffer_id) = match selected {
+            PanelEntry::Fs(FsEntry::Directory(directory)) => (
+                directory.worktree_id,
+                &directory.entry.path,
+                directory.first_buffer_id,
+            ),
+            PanelEntry::FoldedDirs(group) => (
+                group.worktree_id,
+                &group.entries.last()?.path,
+                group.first_buffer_id,
+            ),
+            _ => return None,
+        };
+        let mut first_section = None;
+        let mut current_section = None;
+        let mut selected_section = None;
+        for entry in &self.fs_entries {
+            match entry {
+                FsEntry::Directory(directory)
+                    if directory.worktree_id == worktree_id && directory.entry.path == *path =>
+                {
+                    first_section.get_or_insert(directory.first_buffer_id);
+                    current_section = Some(directory.first_buffer_id);
+                }
+                FsEntry::File(file) if file.buffer_id == first_buffer_id => {
+                    if file.worktree_id == worktree_id
+                        && file
+                            .entry
+                            .path
+                            .parent()
+                            .is_some_and(|parent| parent.starts_with(path))
+                    {
+                        selected_section = current_section;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let selected_section = selected_section.or(first_section)?;
+        self.cached_entries
+            .iter()
+            .enumerate()
+            .find(|(_, cached)| match &cached.entry {
+                PanelEntry::Fs(FsEntry::Directory(directory)) => {
+                    directory.worktree_id == worktree_id
+                        && directory.first_buffer_id == selected_section
+                        && directory.entry.path == *path
+                }
+                PanelEntry::FoldedDirs(group) => {
+                    group.worktree_id == worktree_id
+                        && group.first_buffer_id == selected_section
+                        && group.entries.iter().any(|entry| entry.path == *path)
+                }
+                _ => false,
+            })
+    }
+
     fn generate_cached_entries(
         &self,
         is_singleton: bool,
@@ -4054,7 +3662,6 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<(Vec<CachedEntry>, Option<usize>)> {
-        let project = self.project.clone();
         let Some(active_editor) = self.active_editor() else {
             return Task::ready((Vec::new(), None));
         };
@@ -4073,7 +3680,7 @@ impl OutlinePanel {
                     folded: bool,
                     expanded: bool,
                     depth: usize,
-                    is_deleted: bool,
+                    worktree_id: WorktreeId,
                 }
 
                 let search_precomputed = if hide_symbols {
@@ -4136,40 +3743,28 @@ impl OutlinePanel {
                     let (depth, should_add) = match &entry {
                         FsEntry::Directory(directory_entry) => {
                             let mut should_add = true;
-                            let is_root = project
-                                .read(cx)
-                                .worktree_for_id(directory_entry.worktree_id, cx)
-                                .is_some_and(|worktree| {
-                                    worktree.read(cx).root_entry() == Some(&directory_entry.entry)
-                                });
+                            let is_root = directory_entry.entry.path.is_empty();
                             let folded = auto_fold_dirs
                                 && !is_root
                                 && outline_panel
                                     .unfolded_dirs
                                     .get(&directory_entry.worktree_id)
                                     .is_none_or(|unfolded_dirs| {
-                                        !unfolded_dirs.contains(&directory_entry.entry.id)
+                                        !unfolded_dirs.contains(&directory_entry.entry.path)
                                     });
-                            let fs_depth = outline_panel
-                                .fs_entries_depth
-                                .get(&(directory_entry.worktree_id, directory_entry.entry.id))
-                                .copied()
-                                .unwrap_or(0);
+                            let fs_depth = directory_entry.entry.path.components().count();
                             while let Some(parent) = parent_dirs.last() {
-                                if !is_root && directory_entry.entry.path.starts_with(&parent.path)
+                                if !is_root
+                                    && parent.worktree_id == directory_entry.worktree_id
+                                    && directory_entry.entry.path.starts_with(&parent.path)
                                 {
                                     break;
                                 }
                                 parent_dirs.pop();
                             }
-                            let deletion_state_matches_parent =
-                                parent_dirs.last().is_none_or(|parent| {
-                                    parent.is_deleted == directory_entry.is_deleted
-                                });
                             let auto_fold = match parent_dirs.last() {
                                 Some(parent) => {
                                     parent.folded
-                                        && deletion_state_matches_parent
                                         && Some(parent.path.as_ref())
                                             == directory_entry.entry.path.parent()
                                         && outline_panel
@@ -4187,8 +3782,7 @@ impl OutlinePanel {
                             let folded = folded || auto_fold;
                             let (depth, parent_expanded, parent_folded) = match parent_dirs.last() {
                                 Some(parent) => {
-                                    let parent_folded =
-                                        parent.folded && deletion_state_matches_parent;
+                                    let parent_folded = parent.folded;
                                     let parent_expanded = parent.expanded;
                                     let new_depth = if parent_folded {
                                         parent.depth
@@ -4196,21 +3790,21 @@ impl OutlinePanel {
                                         parent.depth + 1
                                     };
                                     parent_dirs.push(ParentStats {
+                                        worktree_id: directory_entry.worktree_id,
                                         path: directory_entry.entry.path.clone(),
                                         folded,
                                         expanded: parent_expanded && is_expanded,
                                         depth: new_depth,
-                                        is_deleted: directory_entry.is_deleted,
                                     });
                                     (new_depth, parent_expanded, parent_folded)
                                 }
                                 None => {
                                     parent_dirs.push(ParentStats {
+                                        worktree_id: directory_entry.worktree_id,
                                         path: directory_entry.entry.path.clone(),
                                         folded,
                                         expanded: is_expanded,
                                         depth: fs_depth,
-                                        is_deleted: directory_entry.is_deleted,
                                     });
                                     (fs_depth, true, false)
                                 }
@@ -4220,7 +3814,6 @@ impl OutlinePanel {
                             {
                                 if folded
                                     && directory_entry.worktree_id == folded_dirs.worktree_id
-                                    && directory_entry.is_deleted == folded_dirs.is_deleted
                                     && directory_entry.entry.path.parent()
                                         == folded_dirs
                                             .entries
@@ -4266,8 +3859,8 @@ impl OutlinePanel {
                                             depth,
                                             FoldedDirsEntry {
                                                 worktree_id: directory_entry.worktree_id,
+                                                first_buffer_id: directory_entry.first_buffer_id,
                                                 entries: vec![directory_entry.entry.clone()],
-                                                is_deleted: directory_entry.is_deleted,
                                             },
                                         ))
                                     };
@@ -4277,8 +3870,8 @@ impl OutlinePanel {
                                     depth,
                                     FoldedDirsEntry {
                                         worktree_id: directory_entry.worktree_id,
+                                        first_buffer_id: directory_entry.first_buffer_id,
                                         entries: vec![directory_entry.entry.clone()],
-                                        is_deleted: directory_entry.is_deleted,
                                     },
                                 ));
                             }
@@ -4335,13 +3928,15 @@ impl OutlinePanel {
                                 }
                             }
 
-                            let fs_depth = outline_panel
-                                .fs_entries_depth
-                                .get(&(file.worktree_id, file.entry.id))
-                                .copied()
-                                .unwrap_or(0);
+                            let fs_depth = file.entry.path.components().count();
                             while let Some(parent) = parent_dirs.last() {
-                                if file.entry.path.starts_with(&parent.path) {
+                                if parent.worktree_id == file.worktree_id
+                                    && file
+                                        .entry
+                                        .path
+                                        .parent()
+                                        .is_some_and(|path| path.starts_with(&parent.path))
+                                {
                                     break;
                                 }
                                 parent_dirs.pop();
@@ -4525,8 +4120,8 @@ impl OutlinePanel {
                 }
                 1 => PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
                     worktree_id: folded_dirs_entry.worktree_id,
+                    first_buffer_id: folded_dirs_entry.first_buffer_id,
                     entry: folded_dirs_entry.entries[0].clone(),
-                    is_deleted: folded_dirs_entry.is_deleted,
                 })),
                 _ => entry,
             }
@@ -4591,7 +4186,12 @@ impl OutlinePanel {
         });
     }
 
-    fn dir_names_string(&self, entries: &[GitEntry], worktree_id: WorktreeId, cx: &App) -> String {
+    fn dir_names_string(
+        &self,
+        entries: &[FsEntryPath],
+        worktree_id: WorktreeId,
+        cx: &App,
+    ) -> String {
         let dir_names_segment = entries
             .iter()
             .map(|entry| self.entry_name(&worktree_id, entry, cx))
@@ -4620,7 +4220,7 @@ impl OutlinePanel {
             }) => CollapsedEntry::File(*worktree_id, *buffer_id),
             FsEntry::Directory(FsEntryDirectory {
                 worktree_id, entry, ..
-            }) => CollapsedEntry::Dir(*worktree_id, entry.id),
+            }) => CollapsedEntry::Dir(*worktree_id, entry.path.clone()),
         };
         !self.collapsed_entries.contains(&entry_to_check)
     }
@@ -5333,35 +4933,19 @@ impl OutlinePanel {
 
     fn buffers_inside_directory(
         &self,
-        dir_worktree: WorktreeId,
-        dir_entry: &GitEntry,
+        worktree_id: WorktreeId,
+        directory: &FsEntryPath,
     ) -> HashSet<BufferId> {
-        if !dir_entry.is_dir() {
-            debug_panic!("buffers_inside_directory called on a non-directory entry {dir_entry:?}");
-            return HashSet::default();
-        }
-
         self.fs_entries
             .iter()
-            .skip_while(|fs_entry| match fs_entry {
-                FsEntry::Directory(directory) => {
-                    directory.worktree_id != dir_worktree || &directory.entry != dir_entry
+            .filter_map(|entry| match entry {
+                FsEntry::File(file)
+                    if file.worktree_id == worktree_id
+                        && file.entry.path != directory.path
+                        && file.entry.path.starts_with(&directory.path) =>
+                {
+                    Some(file.buffer_id)
                 }
-                _ => true,
-            })
-            .skip(1)
-            .take_while(|fs_entry| match fs_entry {
-                FsEntry::ExternalFile(..) => false,
-                FsEntry::Directory(directory) => {
-                    directory.worktree_id == dir_worktree
-                        && directory.entry.path.starts_with(&dir_entry.path)
-                }
-                FsEntry::File(file) => {
-                    file.worktree_id == dir_worktree && file.entry.path.starts_with(&dir_entry.path)
-                }
-            })
-            .filter_map(|fs_entry| match fs_entry {
-                FsEntry::File(file) => Some(file.buffer_id),
                 _ => None,
             })
             .collect()
@@ -5377,27 +4961,6 @@ fn workspace_active_editor(
         .act_as::<Editor>(cx)
         .filter(|editor| editor.read(cx).mode().is_full())?;
     Some((active_item, active_editor))
-}
-
-fn back_to_common_visited_parent(
-    visited_dirs: &mut Vec<(ProjectEntryId, Arc<RelPath>)>,
-    worktree_id: &WorktreeId,
-    new_entry: &Entry,
-) -> Option<(WorktreeId, ProjectEntryId)> {
-    while let Some((visited_dir_id, visited_path)) = visited_dirs.last() {
-        match new_entry.path.parent() {
-            Some(parent_path) => {
-                if parent_path == visited_path.as_ref() {
-                    return Some((*worktree_id, *visited_dir_id));
-                }
-            }
-            None => {
-                break;
-            }
-        }
-        visited_dirs.pop();
-    }
-    None
 }
 
 fn file_name(path: &Path) -> String {
@@ -5842,7 +5405,9 @@ impl GenerationState {
 
 #[cfg(test)]
 mod tests {
+    use buffer_diff::BufferDiff;
     use db::indoc;
+    use editor::{HiddenUnstagedDiffHunkRenderer, PathKey};
     use futures::stream::StreamExt as _;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle};
     use language::{self, FakeLspAdapter, markdown_lang, rust_lang};
@@ -5853,7 +5418,7 @@ mod tests {
         project_search::{self, perform_project_search},
     };
     use serde_json::json;
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::{MultiWorkspace, OpenOptions, OpenVisible, ToolbarItemView};
 
     use super::*;
@@ -6607,6 +6172,995 @@ two/  <==== selected
     }
 
     #[gpui::test]
+    async fn test_file_order_matches_diff_multibuffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "crates": { "ide": {
+                    "asdsads": "new file",
+                    "src": {
+                        "interpret.rs": "fn interpret() {}",
+                        "join_lines.rs": "fn join_lines() {}"
+                    }
+                } }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(true);
+            settings.multi_buffer_hide_symbols = Some(true);
+        });
+        let added = open_buffer(&project, path!("/root/crates/ide/asdsads"), cx).await;
+        let deleted = open_buffer(&project, path!("/root/crates/ide/src/join_lines.rs"), cx).await;
+        let modified = open_buffer(&project, path!("/root/crates/ide/src/interpret.rs"), cx).await;
+        fs.remove_file(
+            Path::new(path!("/root/crates/ide/src/join_lines.rs")),
+            project::RemoveOptions::default(),
+        )
+        .await
+        .expect("file deletion should succeed");
+        deleted.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(language::Point::default()..buffer.max_point(), "")],
+                None,
+                cx,
+            );
+        });
+        let editor = add_diff_editor(
+            &workspace,
+            &project,
+            &[
+                (&modified, "old interpret"),
+                (&deleted, "fn join_lines() {}"),
+                (&added, ""),
+            ],
+            cx,
+        );
+        set_buffer_order(&editor, &[&modified, &deleted, &added], cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .focus_panel::<OutlinePanel>(window, cx)
+                .expect("outline panel should be installed");
+        });
+        select_file(
+            &outline_panel,
+            modified.read_with(cx, |buffer, _| buffer.remote_id()),
+            cx,
+        );
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  crates/ide/
+                    src/
+                      interpret.rs  <==== selected
+                      ~~join_lines.rs~~
+                    asdsads"
+            ),
+            cx,
+        );
+        set_buffer_order(&editor, &[&added, &deleted, &modified], cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  crates/ide/
+                    asdsads
+                    src/
+                      ~~join_lines.rs~~
+                      interpret.rs  <==== selected"
+            ),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_file_order_preserves_interleaved_directory_sections(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/one"),
+            json!({ "é": { "子": { "first.txt": "first", "second.txt": "second" } } }),
+        )
+        .await;
+        fs.insert_tree(path!("/two"), json!({ "other.txt": "other" }))
+            .await;
+        let project = Project::test(
+            fs.clone(),
+            [Path::new(path!("/one")), Path::new(path!("/two"))],
+            cx,
+        )
+        .await;
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(true);
+            settings.multi_buffer_hide_symbols = Some(true);
+        });
+        let first = open_buffer(&project, path!("/one/é/子/first.txt"), cx).await;
+        let second = open_buffer(&project, path!("/one/é/子/second.txt"), cx).await;
+        let other = open_buffer(&project, path!("/two/other.txt"), cx).await;
+        let untitled = project.update(cx, |project, cx| {
+            project.create_local_buffer("untitled", None, true, cx)
+        });
+        fs.remove_dir(
+            Path::new(path!("/one/é")),
+            project::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .expect("ancestor deletion should succeed");
+        fs.insert_file(path!("/one/é"), b"replacement".to_vec())
+            .await;
+        let replacement = open_buffer(&project, path!("/one/é"), cx).await;
+        let editor = add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[
+                (&first, Vec::new()),
+                (&second, Vec::new()),
+                (&other, Vec::new()),
+                (&untitled, Vec::new()),
+                (&replacement, Vec::new()),
+            ],
+            cx,
+        );
+        set_buffer_order(
+            &editor,
+            &[&second, &other, &untitled, &first, &replacement],
+            cx,
+        );
+        select_file(
+            &outline_panel,
+            first.read_with(cx, |buffer, _| buffer.remote_id()),
+            cx,
+        );
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.select_parent(&SelectParent, window, cx);
+        });
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                one/
+                  é/子/
+                    ~~second.txt~~
+                two/
+                  other.txt
+                external: untitled
+                one/
+                  é/子/  <==== selected
+                    ~~first.txt~~
+                  é"
+            ),
+            cx,
+        );
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                one/
+                  é/子/
+                two/
+                  other.txt
+                external: untitled
+                one/
+                  é/子/  <==== selected
+                  é"
+            ),
+            cx,
+        );
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                one/
+                  é/子/
+                    ~~second.txt~~
+                two/
+                  other.txt
+                external: untitled
+                one/
+                  é/子/  <==== selected
+                    ~~first.txt~~
+                  é"
+            ),
+            cx,
+        );
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(false);
+        });
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        select_file(
+            &outline_panel,
+            first.read_with(cx, |buffer, _| buffer.remote_id()),
+            cx,
+        );
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.select_parent(&SelectParent, window, cx);
+        });
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                one/
+                  é/
+                    子/
+                      ~~second.txt~~
+                two/
+                  other.txt
+                external: untitled
+                one/
+                  é/
+                    子/  <==== selected
+                      ~~first.txt~~
+                  é"
+            ),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_directory_selection_survives_buffer_reordering(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "dir": { "sub": { "a.txt": "a", "b.txt": "b" } }, "z.txt": "z" }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/root"))], cx).await;
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(true);
+            settings.multi_buffer_hide_symbols = Some(true);
+        });
+        let buffer_a = open_buffer(&project, path!("/root/dir/sub/a.txt"), cx).await;
+        let buffer_b = open_buffer(&project, path!("/root/dir/sub/b.txt"), cx).await;
+        let buffer_z = open_buffer(&project, path!("/root/z.txt"), cx).await;
+        let worktree_id = buffer_a.read_with(cx, |buffer, cx| {
+            File::from_dyn(buffer.file())
+                .expect("buffer should have a file")
+                .worktree
+                .read(cx)
+                .id()
+        });
+        let editor = add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[
+                (&buffer_a, Vec::new()),
+                (&buffer_b, Vec::new()),
+                (&buffer_z, Vec::new()),
+            ],
+            cx,
+        );
+        set_buffer_order(&editor, &[&buffer_b, &buffer_a, &buffer_z], cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .focus_panel::<OutlinePanel>(window, cx)
+                .expect("outline panel should be installed");
+        });
+        select_directory(&outline_panel, worktree_id, rel_path("dir/sub"), cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  dir/sub/  <==== selected
+                    b.txt
+                    a.txt
+                  z.txt"
+            ),
+            cx,
+        );
+        set_buffer_order(&editor, &[&buffer_a, &buffer_b, &buffer_z], cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  dir/sub/  <==== selected
+                    a.txt
+                    b.txt
+                  z.txt"
+            ),
+            cx,
+        );
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.select_next(&SelectNext, window, cx);
+        });
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  dir/sub/
+                    a.txt  <==== selected
+                    b.txt
+                  z.txt"
+            ),
+            cx,
+        );
+        select_directory(&outline_panel, worktree_id, rel_path("dir/sub"), cx);
+        rename_buffer(&project, &buffer_a, rel_path("a.txt"), cx).await;
+        set_buffer_order(&editor, &[&buffer_a, &buffer_b, &buffer_z], cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a.txt
+                  dir/sub/  <==== selected
+                    b.txt
+                  z.txt"
+            ),
+            cx,
+        );
+        rename_buffer(&project, &buffer_a, rel_path("dir/sub/a.txt"), cx).await;
+        set_buffer_order(&editor, &[&buffer_a, &buffer_b, &buffer_z], cx);
+        let buffer_a_id = buffer_a.read_with(cx, |buffer, _| buffer.remote_id());
+        editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |multibuffer, cx| {
+                multibuffer.remove_excerpts_for_buffer(buffer_a_id, cx);
+            });
+        });
+        set_buffer_order(&editor, &[&buffer_b, &buffer_z], cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  dir/sub/  <==== selected
+                    b.txt
+                  z.txt"
+            ),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_selected_file_survives_rename_and_deletion(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/root"), json!({ "a.txt": "a", "z.txt": "z" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        update_outline_panel_settings(cx, |settings| {
+            settings.multi_buffer_hide_symbols = Some(true);
+        });
+        let buffer_a = open_buffer(&project, path!("/root/a.txt"), cx).await;
+        let buffer_z = open_buffer(&project, path!("/root/z.txt"), cx).await;
+        let buffer_id = buffer_a.read_with(cx, |buffer, _| buffer.remote_id());
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_a, Vec::new()), (&buffer_z, Vec::new())],
+            cx,
+        );
+        flush_outline_tasks(cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .focus_panel::<OutlinePanel>(window, cx)
+                .expect("outline panel should be installed");
+        });
+        select_file(&outline_panel, buffer_id, cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a.txt  <==== selected
+                  z.txt"
+            ),
+            cx,
+        );
+
+        fs.rename(
+            Path::new(path!("/root/a.txt")),
+            Path::new(path!("/root/b.txt")),
+            project::RenameOptions::default(),
+        )
+        .await
+        .expect("file rename should succeed");
+        flush_outline_tasks(cx);
+        buffer_a.read_with(cx, |buffer, _| {
+            assert_eq!(
+                File::from_dyn(buffer.file())
+                    .expect("buffer should retain its file")
+                    .path
+                    .as_ref(),
+                rel_path("b.txt"),
+            );
+        });
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  b.txt  <==== selected
+                  z.txt"
+            ),
+            cx,
+        );
+        outline_panel.update_in(cx, |panel, window, cx| {
+            assert!(panel.focus_handle.is_focused(window));
+            match &panel.selected_entry {
+                SelectedEntry::Valid(PanelEntry::Fs(FsEntry::File(file)), _) => {
+                    assert_eq!(
+                        (file.buffer_id, file.entry.path.as_ref()),
+                        (buffer_id, rel_path("b.txt"))
+                    );
+                }
+                selected => {
+                    panic!("expected the renamed file to remain selected, got {selected:?}")
+                }
+            }
+            panel.select_next(&SelectNext, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  b.txt
+                  z.txt  <==== selected"
+            ),
+            cx,
+        );
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.select_previous(&SelectPrevious, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  b.txt  <==== selected
+                  z.txt"
+            ),
+            cx,
+        );
+        fs.remove_file(
+            Path::new(path!("/root/b.txt")),
+            project::RemoveOptions::default(),
+        )
+        .await
+        .expect("renamed file deletion should succeed");
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  ~~b.txt~~  <==== selected
+                  z.txt"
+            ),
+            cx,
+        );
+        outline_panel.read_with(cx, |panel, _| match &panel.selected_entry {
+            SelectedEntry::Valid(PanelEntry::Fs(FsEntry::File(file)), _) => {
+                assert_eq!(
+                    (file.buffer_id, file.entry.path.as_ref()),
+                    (buffer_id, rel_path("b.txt"))
+                );
+                assert!(file.is_deleted);
+            }
+            selected => panic!("expected the deleted file to remain selected, got {selected:?}"),
+        });
+    }
+
+    #[gpui::test]
+    async fn test_directory_state_prunes_paths_after_repeated_renames(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "d0": { "file.txt": "retained buffer" }, "z.txt": "z" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(true);
+            settings.multi_buffer_hide_symbols = Some(true);
+        });
+        let buffer = open_buffer(&project, path!("/root/d0/file.txt"), cx).await;
+        let buffer_z = open_buffer(&project, path!("/root/z.txt"), cx).await;
+        let (buffer_id, worktree_id) = buffer.read_with(cx, |buffer, cx| {
+            let file = File::from_dyn(buffer.file()).expect("buffer should have a file");
+            (buffer.remote_id(), file.worktree.read(cx).id())
+        });
+        let buffer_z_id = buffer_z.read_with(cx, |buffer, _| buffer.remote_id());
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer, Vec::new()), (&buffer_z, Vec::new())],
+            cx,
+        );
+        flush_outline_tasks(cx);
+        select_file(&outline_panel, buffer_z_id, cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  d0/
+                    file.txt
+                  z.txt  <==== selected"
+            ),
+            cx,
+        );
+        assert_directory_paths(&outline_panel, worktree_id, &["", "d0"], &[], cx);
+
+        for (previous, next) in [("d0", "d1"), ("d1", "d2"), ("d2", "d3"), ("d3", "d4")] {
+            select_directory(&outline_panel, worktree_id, rel_path(previous), cx);
+            outline_panel.update_in(cx, |panel, window, cx| {
+                panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+            });
+            flush_outline_tasks(cx);
+            select_file(&outline_panel, buffer_z_id, cx);
+            assert_tree(
+                &outline_panel,
+                &project,
+                &format!(
+                    indoc!(
+                        "
+                        root/
+                          {previous}/
+                          z.txt  <==== selected"
+                    ),
+                    previous = previous,
+                ),
+                cx,
+            );
+            assert_directory_paths(
+                &outline_panel,
+                worktree_id,
+                &["", previous],
+                &[previous],
+                cx,
+            );
+
+            let next_directory = Path::new(path!("/root")).join(next);
+            fs.create_dir(&next_directory)
+                .await
+                .expect("destination directory should be created");
+            let entry_id = buffer.read_with(cx, |buffer, _| {
+                File::from_dyn(buffer.file())
+                    .and_then(|file| file.project_entry_id())
+                    .expect("file should have a worktree entry")
+            });
+            project
+                .update(cx, |project, cx| {
+                    project.rename_entry(
+                        entry_id,
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from(rel_path(&format!("{next}/file.txt"))),
+                        },
+                        cx,
+                    )
+                })
+                .await
+                .expect("file rename should succeed");
+            cx.run_until_parked();
+            project
+                .update(cx, |project, cx| project.git_scans_complete(cx))
+                .await;
+            flush_outline_tasks(cx);
+            buffer.read_with(cx, |buffer, _| {
+                let file = File::from_dyn(buffer.file()).expect("buffer should retain its file");
+                assert_eq!(buffer.remote_id(), buffer_id);
+                assert_eq!(file.path.as_ref(), rel_path(&format!("{next}/file.txt")));
+            });
+            assert_tree(
+                &outline_panel,
+                &project,
+                &format!(
+                    indoc!(
+                        "
+                        root/
+                          {next}/
+                            file.txt
+                          z.txt  <==== selected"
+                    ),
+                    next = next,
+                ),
+                cx,
+            );
+            assert_directory_paths(&outline_panel, worktree_id, &["", next], &[], cx);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_ignored_directory_expansion_does_not_scan_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".gitignore": "ignored\n",
+                "ignored": {
+                    "a": { "deep": { "open.txt": "first\n" } },
+                    "b": { "open.txt": "second\n" },
+                    "c": { "unopened.txt": "unopened\n" }
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        update_outline_panel_settings(cx, |settings| {
+            settings.multi_buffer_hide_symbols = Some(true);
+        });
+        let buffer_a = open_buffer(&project, path!("/root/ignored/a/deep/open.txt"), cx).await;
+        let buffer_b = open_buffer(&project, path!("/root/ignored/b/open.txt"), cx).await;
+        let worktree = buffer_a.read_with(cx, |buffer, _| {
+            File::from_dyn(buffer.file()).unwrap().worktree.clone()
+        });
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+        let buffer_a_id = buffer_a.read_with(cx, |buffer, _| buffer.remote_id());
+        let editor = add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_a, Vec::new()), (&buffer_b, Vec::new())],
+            cx,
+        );
+        wait_for_outline_tasks(&outline_panel, cx).await;
+        let scan_id = worktree.read_with(cx, |worktree, _| worktree.scan_id());
+        let read_dir_calls = fs.read_dir_call_count();
+        let metadata_calls = fs.metadata_call_count();
+
+        for auto_fold_dirs in [false, true] {
+            update_outline_panel_settings(cx, |settings| {
+                settings.auto_fold_dirs = Some(auto_fold_dirs);
+            });
+            wait_for_outline_tasks(&outline_panel, cx).await;
+            let expanded_tree = if auto_fold_dirs {
+                indoc!(
+                    "
+                    root/
+                      ignored/
+                        a/deep/  <==== selected
+                          open.txt
+                        b/
+                          open.txt"
+                )
+            } else {
+                indoc!(
+                    "
+                    root/
+                      ignored/
+                        a/
+                          deep/  <==== selected
+                            open.txt
+                        b/
+                          open.txt"
+                )
+            };
+            select_directory(&outline_panel, worktree_id, rel_path("ignored/a/deep"), cx);
+            for keyboard in [true, false] {
+                outline_panel.update_in(cx, |panel, window, cx| {
+                    if keyboard {
+                        panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+                    } else {
+                        let entry = panel.selected_entry().unwrap().clone();
+                        panel.toggle_expanded(&entry, window, cx);
+                    }
+                });
+                wait_for_outline_tasks(&outline_panel, cx).await;
+                assert!(
+                    editor.read_with(cx, |editor, cx| editor.is_buffer_folded(buffer_a_id, cx))
+                );
+                outline_panel.update_in(cx, |panel, window, cx| {
+                    if keyboard {
+                        panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+                    } else {
+                        let entry = panel.selected_entry().unwrap().clone();
+                        panel.toggle_expanded(&entry, window, cx);
+                    }
+                });
+                wait_for_outline_tasks(&outline_panel, cx).await;
+                assert!(
+                    !editor.read_with(cx, |editor, cx| editor.is_buffer_folded(buffer_a_id, cx))
+                );
+                assert_tree(&outline_panel, &project, expanded_tree, cx);
+                assert_eq!(
+                    worktree.read_with(cx, |worktree, _| worktree.scan_id()),
+                    scan_id
+                );
+                assert_eq!(fs.read_dir_call_count(), read_dir_calls);
+                assert_eq!(fs.metadata_call_count(), metadata_calls);
+            }
+
+            outline_panel.update_in(cx, |panel, window, cx| {
+                panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+            });
+            wait_for_outline_tasks(&outline_panel, cx).await;
+            select_in_buffer(&editor, buffer_a_id, cx);
+            wait_for_outline_tasks(&outline_panel, cx).await;
+            let revealed_tree = if auto_fold_dirs {
+                indoc!(
+                    "
+                    root/
+                      ignored/
+                        a/deep/
+                          open.txt  <==== selected
+                        b/
+                          open.txt"
+                )
+            } else {
+                indoc!(
+                    "
+                    root/
+                      ignored/
+                        a/
+                          deep/
+                            open.txt  <==== selected
+                        b/
+                          open.txt"
+                )
+            };
+            assert_tree(&outline_panel, &project, revealed_tree, cx);
+            assert_eq!(
+                worktree.read_with(cx, |worktree, _| worktree.scan_id()),
+                scan_id
+            );
+            assert_eq!(fs.read_dir_call_count(), read_dir_calls);
+            assert_eq!(fs.metadata_call_count(), metadata_calls);
+            worktree.read_with(cx, |worktree, _| {
+                assert_eq!(
+                    worktree
+                        .entry_for_path(rel_path("ignored/c"))
+                        .map(|entry| entry.kind),
+                    Some(worktree::EntryKind::UnloadedDir),
+                );
+                assert_eq!(
+                    worktree.entry_for_path(rel_path("ignored/c/unopened.txt")),
+                    None
+                );
+            });
+            outline_panel.read_with(cx, |panel, _| {
+                assert_eq!(
+                    panel
+                        .fs_entries
+                        .iter()
+                        .map(|entry| match entry {
+                            FsEntry::Directory(directory) =>
+                                (directory.entry.path.as_ref(), directory.entry.is_ignored),
+                            FsEntry::File(file) =>
+                                (file.entry.path.as_ref(), file.entry.is_ignored),
+                            FsEntry::ExternalFile(_) =>
+                                panic!("indexed ignored files should not be external"),
+                        })
+                        .collect::<Vec<_>>(),
+                    vec![
+                        (rel_path(""), false),
+                        (rel_path("ignored"), true),
+                        (rel_path("ignored/a"), true),
+                        (rel_path("ignored/a/deep"), true),
+                        (rel_path("ignored/a/deep/open.txt"), true),
+                        (rel_path("ignored/b"), true),
+                        (rel_path("ignored/b/open.txt"), true),
+                    ],
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_selected_folded_directory_survives_git_metadata_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "a": { "b": { "file.txt": "modified\n" } },
+                "z.txt": "unchanged\n"
+            }),
+        )
+        .await;
+        let base_contents = [
+            ("a/b/file.txt", "base\n".to_string()),
+            ("z.txt", "unchanged\n".to_string()),
+        ];
+        let dot_git = Path::new(path!("/root/.git"));
+        fs.set_head_for_repo(dot_git, &base_contents, "deadbeef");
+        fs.set_index_for_repo(dot_git, &base_contents);
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(true);
+            settings.multi_buffer_hide_symbols = Some(true);
+        });
+        let buffer = open_buffer(&project, path!("/root/a/b/file.txt"), cx).await;
+        let buffer_z = open_buffer(&project, path!("/root/z.txt"), cx).await;
+        let worktree_id = buffer.read_with(cx, |buffer, cx| {
+            File::from_dyn(buffer.file())
+                .expect("buffer should have a file")
+                .worktree
+                .read(cx)
+                .id()
+        });
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer, Vec::new()), (&buffer_z, Vec::new())],
+            cx,
+        );
+        flush_outline_tasks(cx);
+        select_directory(&outline_panel, worktree_id, rel_path("a/b"), cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a/b/  <==== selected
+                    file.txt
+                  z.txt"
+            ),
+            cx,
+        );
+        let metadata_before = outline_panel.read_with(cx, |panel, _| {
+            let Some(PanelEntry::FoldedDirs(group)) = panel.selected_entry() else {
+                panic!("folded directory should be selected");
+            };
+            assert_eq!(
+                group
+                    .entries
+                    .iter()
+                    .map(|entry| (
+                        entry.path.as_ref(),
+                        entry.git_summary.worktree.modified,
+                        entry.is_ignored
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![(rel_path("a"), 1, false), (rel_path("a/b"), 1, false)],
+            );
+            group
+                .entries
+                .iter()
+                .map(|entry| entry.git_summary)
+                .collect::<Vec<_>>()
+        });
+
+        fs.remove_dir(
+            Path::new(path!("/root/a")),
+            project::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .expect("ancestor deletion should succeed");
+        cx.run_until_parked();
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        flush_outline_tasks(cx);
+        buffer.read_with(cx, |buffer, cx| {
+            let file = File::from_dyn(buffer.file()).expect("buffer should retain its file");
+            assert_eq!(file.disk_state, DiskState::Deleted);
+            assert_eq!(
+                file.worktree
+                    .read(cx)
+                    .entry_for_path(rel_path("a"))
+                    .map(|entry| entry.kind),
+                None
+            );
+        });
+        let metadata_after = outline_panel.read_with(cx, |panel, _| {
+            let group = panel
+                .cached_entries
+                .iter()
+                .find_map(|cached| match &cached.entry {
+                    PanelEntry::FoldedDirs(group)
+                        if group.worktree_id == worktree_id
+                            && group
+                                .entries
+                                .last()
+                                .is_some_and(|entry| entry.path.as_ref() == rel_path("a/b")) =>
+                    {
+                        Some(group)
+                    }
+                    _ => None,
+                })
+                .expect("folded directory should retain its row");
+            assert_eq!(
+                group
+                    .entries
+                    .iter()
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![rel_path("a"), rel_path("a/b")],
+            );
+            group
+                .entries
+                .iter()
+                .map(|entry| entry.git_summary)
+                .collect::<Vec<_>>()
+        });
+        assert_ne!(metadata_before, metadata_after);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a/b/  <==== selected
+                    ~~file.txt~~
+                  z.txt"
+            ),
+            cx,
+        );
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.select_next(&SelectNext, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a/b/
+                    ~~file.txt~~  <==== selected
+                  z.txt"
+            ),
+            cx,
+        );
+    }
+
+    #[gpui::test]
     async fn test_deleted_file_nests_under_existing_parent(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -6622,12 +7176,8 @@ two/  <==== selected
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
 
         let buffer_a = open_buffer(&project, path!("/root/dir/a.txt"), cx).await;
         let buffer_b = open_buffer(&project, path!("/root/dir/b.txt"), cx).await;
@@ -6637,32 +7187,42 @@ two/  <==== selected
             &[(&buffer_a, Vec::new()), (&buffer_b, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        flush_outline_tasks(cx);
 
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  dir/\n    a.txt\n    b.txt",
+            indoc!(
+                "
+                root/
+                  dir/
+                    a.txt
+                    b.txt"
+            ),
             cx,
         );
 
         fs.remove_file(Path::new(path!("/root/dir/a.txt")), Default::default())
             .await
             .unwrap();
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+        flush_outline_tasks(cx);
 
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  dir/\n    ~~a.txt~~\n    b.txt",
+            indoc!(
+                "
+                root/
+                  dir/
+                    ~~a.txt~~
+                    b.txt"
+            ),
             cx,
         );
     }
 
     #[gpui::test]
-    async fn test_deleted_file_in_deleted_directory(cx: &mut TestAppContext) {
+    async fn test_directory_collapse_survives_ancestor_changes(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -6670,39 +7230,82 @@ two/  <==== selected
             path!("/root"),
             json!({
                 "keep.txt": "hello there",
-                "dir": {
-                    "sub": {
-                        "a.txt": "hello world"
-                    }
-                }
+                "dir": { "sub": { "a.txt": "hello world" } }
             }),
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
         update_outline_panel_settings(cx, |settings| {
             settings.auto_fold_dirs = Some(false);
         });
 
         let buffer_keep = open_buffer(&project, path!("/root/keep.txt"), cx).await;
         let buffer_a = open_buffer(&project, path!("/root/dir/sub/a.txt"), cx).await;
+        let worktree_id = buffer_a.read_with(cx, |buffer, cx| {
+            File::from_dyn(buffer.file())
+                .expect("buffer should have a file")
+                .worktree
+                .read(cx)
+                .id()
+        });
         add_multi_buffer_editor(
             &workspace,
             &project,
             &[(&buffer_keep, Vec::new()), (&buffer_a, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
-
+        flush_outline_tasks(cx);
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  dir/\n    sub/\n      a.txt\n  keep.txt",
+            indoc!(
+                "
+                root/
+                  dir/
+                    sub/
+                      a.txt
+                  keep.txt"
+            ),
+            cx,
+        );
+
+        fs.remove_file(
+            Path::new(path!("/root/dir/sub/a.txt")),
+            project::RemoveOptions::default(),
+        )
+        .await
+        .expect("file deletion should succeed");
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  dir/
+                    sub/
+                      ~~a.txt~~
+                  keep.txt"
+            ),
+            cx,
+        );
+
+        select_directory(&outline_panel, worktree_id, rel_path("dir"), cx);
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  dir/  <==== selected
+                  keep.txt"
+            ),
             cx,
         );
 
@@ -6714,15 +7317,219 @@ two/  <==== selected
             },
         )
         .await
-        .unwrap();
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
-
+        .expect("ancestor deletion should succeed");
+        flush_outline_tasks(cx);
+        buffer_a.read_with(cx, |buffer, cx| {
+            let file = File::from_dyn(buffer.file()).expect("buffer should retain its file");
+            assert_eq!(file.disk_state, DiskState::Deleted);
+            assert_eq!(
+                file.worktree
+                    .read(cx)
+                    .entry_for_path(rel_path("dir"))
+                    .map(|entry| entry.kind),
+                None,
+            );
+        });
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  ~~dir/~~\n    ~~sub/~~\n      ~~a.txt~~\n  keep.txt",
+            indoc!(
+                "
+                root/
+                  dir/  <==== selected
+                  keep.txt"
+            ),
+            cx,
+        );
+
+        fs.create_dir(Path::new(path!("/root/dir/sub")))
+            .await
+            .expect("ancestor recreation should succeed");
+        flush_outline_tasks(cx);
+        buffer_a.read_with(cx, |buffer, cx| {
+            let file = File::from_dyn(buffer.file()).expect("buffer should retain its file");
+            assert_eq!(
+                file.worktree
+                    .read(cx)
+                    .entry_for_path(rel_path("dir/sub"))
+                    .map(|entry| entry.is_dir()),
+                Some(true),
+            );
+        });
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  dir/  <==== selected
+                  keep.txt"
+            ),
+            cx,
+        );
+
+        fs.insert_file(path!("/root/dir/sub/a.txt"), b"hello world".to_vec())
+            .await;
+        flush_outline_tasks(cx);
+        buffer_a.read_with(cx, |buffer, _| {
+            let file = File::from_dyn(buffer.file()).expect("buffer should retain its file");
+            assert!(matches!(file.disk_state, DiskState::Present { .. }));
+        });
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  dir/  <==== selected
+                  keep.txt"
+            ),
+            cx,
+        );
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  dir/  <==== selected
+                    sub/
+                      a.txt
+                  keep.txt"
+            ),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_only_deleted_files_in_multiple_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "one": { "é": { "子": { "a.txt": "one" } } },
+                "two": { "é": { "子": { "a.txt": "two" } } }
+            }),
+        )
+        .await;
+        let project = Project::test(
+            fs.clone(),
+            [Path::new(path!("/root/one")), Path::new(path!("/root/two"))],
+            cx,
+        )
+        .await;
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(false);
+        });
+
+        let buffer_one = open_buffer(&project, path!("/root/one/é/子/a.txt"), cx).await;
+        let buffer_two = open_buffer(&project, path!("/root/two/é/子/a.txt"), cx).await;
+        let worktree_one = buffer_one.read_with(cx, |buffer, cx| {
+            File::from_dyn(buffer.file())
+                .expect("buffer should have a file")
+                .worktree
+                .read(cx)
+                .id()
+        });
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_two, Vec::new()), (&buffer_one, Vec::new())],
+            cx,
+        );
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                one/
+                  é/
+                    子/
+                      a.txt
+                two/
+                  é/
+                    子/
+                      a.txt"
+            ),
+            cx,
+        );
+
+        for path in [path!("/root/one/é"), path!("/root/two/é")] {
+            fs.remove_dir(
+                Path::new(path),
+                project::RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: false,
+                },
+            )
+            .await
+            .expect("directory deletion should succeed");
+        }
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                one/
+                  é/
+                    子/
+                      ~~a.txt~~
+                two/
+                  é/
+                    子/
+                      ~~a.txt~~"
+            ),
+            cx,
+        );
+
+        select_directory(&outline_panel, worktree_one, rel_path("é"), cx);
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                one/
+                  é/  <==== selected
+                two/
+                  é/
+                    子/
+                      ~~a.txt~~"
+            ),
+            cx,
+        );
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                one/
+                  é/  <==== selected
+                    子/
+                      ~~a.txt~~
+                two/
+                  é/
+                    子/
+                      ~~a.txt~~"
+            ),
             cx,
         );
     }
@@ -6735,18 +7542,14 @@ two/  <==== selected
         fs.insert_tree(path!("/root"), json!({ "existing.txt": "hello" }))
             .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
 
         let untitled_buffer = project.update(cx, |project, cx| {
             project.create_local_buffer("untitled content", None, true, cx)
         });
         add_multi_buffer_editor(&workspace, &project, &[(&untitled_buffer, Vec::new())], cx);
-        settle_outline_panel(&outline_panel, cx);
+        flush_outline_tasks(cx);
 
         assert_tree(&outline_panel, &project, "external: untitled", cx);
     }
@@ -6760,7 +7563,13 @@ two/  <==== selected
             path!("/root"),
             json!({
                 "dir": {
-                    "a.rs": "pub fn foo() {\n    let x = 1;\n}\n",
+                    "a.rs": indoc!(
+                        "
+                        pub fn foo() {
+                            let x = 1;
+                        }
+                        "
+                    ),
                     "b.rs": "pub fn bar() {}\n",
                 }
             }),
@@ -6768,12 +7577,8 @@ two/  <==== selected
         .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
 
         let buffer_a = open_buffer(&project, path!("/root/dir/a.rs"), cx).await;
         let buffer_b = open_buffer(&project, path!("/root/dir/b.rs"), cx).await;
@@ -6783,19 +7588,28 @@ two/  <==== selected
             &[(&buffer_a, Vec::new()), (&buffer_b, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        flush_outline_tasks(cx);
 
-        fs.remove_file(Path::new(path!("/root/dir/a.rs")), Default::default())
-            .await
-            .unwrap();
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+        fs.remove_file(
+            Path::new(path!("/root/dir/a.rs")),
+            project::RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
+        flush_outline_tasks(cx);
 
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  dir/\n    ~~a.rs~~\n        outline: pub fn foo  <==== selected\n    b.rs\n        outline: pub fn bar",
+            indoc!(
+                "
+                root/
+                  dir/
+                    ~~a.rs~~
+                        outline: pub fn foo  <==== selected
+                    b.rs
+                        outline: pub fn bar"
+            ),
             cx,
         );
 
@@ -6806,45 +7620,39 @@ two/  <==== selected
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  dir/\n    ~~a.rs~~\n        outline: pub fn foo\n    b.rs\n        outline: pub fn bar  <==== selected",
+            indoc!(
+                "
+                root/
+                  dir/
+                    ~~a.rs~~
+                        outline: pub fn foo
+                    b.rs
+                        outline: pub fn bar  <==== selected"
+            ),
             cx,
         );
 
-        select_in_buffer(&editor, buffer_a_id, cx);
-
-        assert_tree(
-            &outline_panel,
-            &project,
-            "root/\n  dir/\n    ~~a.rs~~\n        outline: pub fn foo  <==== selected\n    b.rs\n        outline: pub fn bar",
-            cx,
-        );
-
-        let dir_row = outline_panel.read_with(cx, |outline_panel, _cx| {
-            outline_panel
-                .cached_entries
-                .iter()
-                .find_map(|cached_entry| match &cached_entry.entry {
-                    PanelEntry::Fs(FsEntry::Directory(directory))
-                        if directory.entry.path.file_name() == Some("dir") =>
-                    {
-                        Some(cached_entry.entry.clone())
-                    }
-                    _ => None,
-                })
-                .expect("`dir` should have a row")
+        let worktree_id = buffer_a.read_with(cx, |buffer, cx| {
+            File::from_dyn(buffer.file())
+                .expect("buffer should have a file")
+                .worktree
+                .read(cx)
+                .id()
         });
+        select_directory(&outline_panel, worktree_id, rel_path("dir"), cx);
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.select_entry(dir_row, true, window, cx);
             outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+        flush_outline_tasks(cx);
 
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  dir/  <==== selected",
+            indoc!(
+                "
+                root/
+                  dir/  <==== selected"
+            ),
             cx,
         );
 
@@ -6853,7 +7661,13 @@ two/  <==== selected
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  dir/\n    ~~a.rs~~  <==== selected\n    b.rs",
+            indoc!(
+                "
+                root/
+                  dir/
+                    ~~a.rs~~  <==== selected
+                    b.rs"
+            ),
             cx,
         );
     }
@@ -6874,12 +7688,8 @@ two/  <==== selected
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
 
         let buffer_a = open_buffer(&project, path!("/root/dir/a.txt"), cx).await;
         let buffer_b = open_buffer(&project, path!("/root/dir/b.txt"), cx).await;
@@ -6889,7 +7699,7 @@ two/  <==== selected
             &[(&buffer_a, Vec::new()), (&buffer_b, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        flush_outline_tasks(cx);
 
         let buffer_b_id = buffer_b.read_with(cx, |buffer, _cx| buffer.remote_id());
         select_in_buffer(&editor, buffer_b_id, cx);
@@ -6897,9 +7707,7 @@ two/  <==== selected
         fs.remove_file(Path::new(path!("/root/dir/a.txt")), Default::default())
             .await
             .unwrap();
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+        flush_outline_tasks(cx);
 
         let deleted_row = outline_panel.read_with(cx, |outline_panel, _cx| {
             outline_panel
@@ -6907,7 +7715,7 @@ two/  <==== selected
                 .iter()
                 .find_map(|cached_entry| match &cached_entry.entry {
                     PanelEntry::Fs(FsEntry::File(file))
-                        if file.entry.path.file_name() == Some("a.txt") =>
+                        if file.entry.path.as_ref() == rel_path("dir/a.txt") =>
                     {
                         Some(cached_entry.entry.clone())
                     }
@@ -6948,7 +7756,13 @@ two/  <==== selected
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  dir/\n    ~~a.txt~~  <==== selected\n    b.txt",
+            indoc!(
+                "
+                root/
+                  dir/
+                    ~~a.txt~~  <==== selected
+                    b.txt"
+            ),
             cx,
         );
     }
@@ -6961,12 +7775,8 @@ two/  <==== selected
         fs.insert_tree(path!("/root"), json!({ "existing.txt": "hello" }))
             .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
 
         let new_buffer = project
             .update(cx, |project, cx| {
@@ -6985,7 +7795,7 @@ two/  <==== selected
             );
         });
         add_multi_buffer_editor(&workspace, &project, &[(&new_buffer, Vec::new())], cx);
-        settle_outline_panel(&outline_panel, cx);
+        flush_outline_tasks(cx);
 
         assert_tree(&outline_panel, &project, "external: new.txt", cx);
     }
@@ -6998,37 +7808,39 @@ two/  <==== selected
         fs.insert_tree(
             path!("/root"),
             json!({
-                "keep.txt": "hello there",
-                "foo": {
-                    "a.rs": "pub fn foo() {\n    let x = 1;\n}\n"
+                "éx": "hello there",
+                "é": {
+                    "a.rs": indoc!(
+                        "
+                        pub fn foo() {
+                            let x = 1;
+                        }
+                        "
+                    )
                 }
             }),
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
         update_outline_panel_settings(cx, |settings| {
             settings.auto_fold_dirs = Some(false);
         });
 
-        let buffer_keep = open_buffer(&project, path!("/root/keep.txt"), cx).await;
-        let buffer_a = open_buffer(&project, path!("/root/foo/a.rs"), cx).await;
+        let buffer_keep = open_buffer(&project, path!("/root/éx"), cx).await;
+        let buffer_a = open_buffer(&project, path!("/root/é/a.rs"), cx).await;
         add_multi_buffer_editor(
             &workspace,
             &project,
             &[(&buffer_keep, Vec::new()), (&buffer_a, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        flush_outline_tasks(cx);
 
         fs.remove_dir(
-            Path::new(path!("/root/foo")),
+            Path::new(path!("/root/é")),
             project::RemoveOptions {
                 recursive: true,
                 ignore_if_not_exists: false,
@@ -7036,65 +7848,75 @@ two/  <==== selected
         )
         .await
         .unwrap();
-        fs.insert_file(path!("/root/foo"), "not a directory anymore".into())
+        fs.insert_file(path!("/root/é"), b"not a directory anymore".to_vec())
             .await;
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+        flush_outline_tasks(cx);
 
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  ~~foo/~~\n    ~~a.rs~~\n        outline: pub fn foo  <==== selected\n  keep.txt",
+            indoc!(
+                "
+                root/
+                  é/
+                    ~~a.rs~~
+                        outline: pub fn foo  <==== selected
+                  éx"
+            ),
             cx,
         );
 
-        let buffer_foo = open_buffer(&project, path!("/root/foo"), cx).await;
+        let buffer_replacement = open_buffer(&project, path!("/root/é"), cx).await;
         let editor = add_multi_buffer_editor(
             &workspace,
             &project,
             &[
                 (&buffer_keep, Vec::new()),
                 (&buffer_a, Vec::new()),
-                (&buffer_foo, Vec::new()),
+                (&buffer_replacement, Vec::new()),
             ],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        flush_outline_tasks(cx);
 
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  foo\n  ~~foo/~~\n    ~~a.rs~~\n        outline: pub fn foo\n  keep.txt",
+            indoc!(
+                "
+                root/
+                  é
+                  é/
+                    ~~a.rs~~
+                        outline: pub fn foo
+                  éx"
+            ),
             cx,
         );
 
-        let foo_dir_row = outline_panel.read_with(cx, |outline_panel, _cx| {
-            outline_panel
-                .cached_entries
-                .iter()
-                .find_map(|cached_entry| match &cached_entry.entry {
-                    PanelEntry::Fs(FsEntry::Directory(directory))
-                        if directory.entry.path.file_name() == Some("foo") =>
-                    {
-                        Some(cached_entry.entry.clone())
-                    }
-                    _ => None,
-                })
-                .expect("the synthesized `foo/` directory should have a row")
+        let worktree_id = buffer_a.read_with(cx, |buffer, cx| {
+            File::from_dyn(buffer.file())
+                .expect("buffer should have a file")
+                .worktree
+                .read(cx)
+                .id()
         });
+        select_directory(&outline_panel, worktree_id, rel_path("é"), cx);
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.select_entry(foo_dir_row, true, window, cx);
             outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+        flush_outline_tasks(cx);
 
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  foo\n  ~~foo/~~  <==== selected\n  keep.txt",
+            indoc!(
+                "
+                root/
+                  é
+                  é/  <==== selected
+                  éx"
+            ),
             cx,
         );
 
@@ -7104,79 +7926,20 @@ two/  <==== selected
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  foo\n  ~~foo/~~\n    ~~a.rs~~  <==== selected\n  keep.txt",
+            indoc!(
+                "
+                root/
+                  é
+                  é/
+                    ~~a.rs~~  <==== selected
+                  éx"
+            ),
             cx,
         );
     }
 
     #[gpui::test]
-    async fn test_folded_dirs_stop_at_deletion_boundary(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "keep.txt": "hello there",
-                "parent": {
-                    "gone": {
-                        "a.txt": "hello world"
-                    }
-                }
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
-        update_outline_panel_settings(cx, |settings| {
-            settings.auto_fold_dirs = Some(true);
-        });
-
-        let buffer_keep = open_buffer(&project, path!("/root/keep.txt"), cx).await;
-        let buffer_a = open_buffer(&project, path!("/root/parent/gone/a.txt"), cx).await;
-        add_multi_buffer_editor(
-            &workspace,
-            &project,
-            &[(&buffer_keep, Vec::new()), (&buffer_a, Vec::new())],
-            cx,
-        );
-        settle_outline_panel(&outline_panel, cx);
-
-        assert_tree(
-            &outline_panel,
-            &project,
-            "root/\n  keep.txt\n  parent/gone/\n    a.txt",
-            cx,
-        );
-
-        fs.remove_dir(
-            Path::new(path!("/root/parent/gone")),
-            project::RemoveOptions {
-                recursive: true,
-                ignore_if_not_exists: false,
-            },
-        )
-        .await
-        .unwrap();
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
-
-        assert_tree(
-            &outline_panel,
-            &project,
-            "root/\n  keep.txt\n  parent/\n    ~~gone/~~\n      ~~a.txt~~",
-            cx,
-        );
-    }
-
-    #[gpui::test]
-    async fn test_select_parent_through_folded_deleted_dirs(cx: &mut TestAppContext) {
+    async fn test_folded_directories_survive_ancestor_changes(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -7197,12 +7960,8 @@ two/  <==== selected
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
         update_outline_panel_settings(cx, |settings| {
             settings.auto_fold_dirs = Some(true);
         });
@@ -7215,7 +7974,19 @@ two/  <==== selected
             &[(&buffer_keep, Vec::new()), (&buffer_gone, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a/b/c/d/
+                    gone.txt
+                  keep.txt"
+            ),
+            cx,
+        );
 
         fs.remove_dir(
             Path::new(path!("/root/a/b/c")),
@@ -7226,22 +7997,36 @@ two/  <==== selected
         )
         .await
         .unwrap();
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+        flush_outline_tasks(cx);
 
-        outline_panel.update(cx, |outline_panel, cx| {
-            assert_eq!(
-                display_entries(
-                    &project,
-                    &snapshot(outline_panel, cx),
-                    &outline_panel.cached_entries,
-                    None,
-                    cx,
-                ),
-                "root/\n  a/b/\n    ~~c/d/~~\n      ~~gone.txt~~\n  keep.txt"
-            );
-        });
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a/b/c/d/
+                    ~~gone.txt~~
+                  keep.txt"
+            ),
+            cx,
+        );
+        fs.create_dir(Path::new(path!("/root/a/b/c/d")))
+            .await
+            .expect("ancestor recreation should succeed");
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a/b/c/d/
+                    ~~gone.txt~~
+                  keep.txt"
+            ),
+            cx,
+        );
 
         let deleted_file_row = outline_panel.read_with(cx, |outline_panel, _cx| {
             outline_panel
@@ -7249,7 +8034,7 @@ two/  <==== selected
                 .iter()
                 .find_map(|cached_entry| match &cached_entry.entry {
                     PanelEntry::Fs(FsEntry::File(file))
-                        if file.entry.path.file_name() == Some("gone.txt") =>
+                        if file.entry.path.as_ref() == rel_path("a/b/c/d/gone.txt") =>
                     {
                         Some(cached_entry.entry.clone())
                     }
@@ -7262,23 +8047,90 @@ two/  <==== selected
         });
 
         for expected in [
-            "root/\n  a/b/\n    ~~c/d/~~  <==== selected\n      ~~gone.txt~~\n  keep.txt",
-            "root/\n  a/b/  <==== selected\n    ~~c/d/~~\n      ~~gone.txt~~\n  keep.txt",
-            "root/  <==== selected\n  a/b/\n    ~~c/d/~~\n      ~~gone.txt~~\n  keep.txt",
+            indoc!(
+                "
+                root/
+                  a/b/c/d/  <==== selected
+                    ~~gone.txt~~
+                  keep.txt"
+            ),
+            indoc!(
+                "
+                root/  <==== selected
+                  a/b/c/d/
+                    ~~gone.txt~~
+                  keep.txt"
+            ),
         ] {
             outline_panel.update_in(cx, |outline_panel, window, cx| {
                 outline_panel.select_parent(&SelectParent, window, cx);
-                assert_eq!(
-                    display_entries(
-                        &project,
-                        &snapshot(outline_panel, cx),
-                        &outline_panel.cached_entries,
-                        outline_panel.selected_entry(),
-                        cx,
-                    ),
-                    expected
-                );
             });
+            assert_tree(&outline_panel, &project, expected, cx);
+        }
+
+        let worktree_id = buffer_gone.read_with(cx, |buffer, cx| {
+            File::from_dyn(buffer.file())
+                .expect("buffer should have a file")
+                .worktree
+                .read(cx)
+                .id()
+        });
+        select_directory(&outline_panel, worktree_id, rel_path("a/b/c/d"), cx);
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a/b/c/d/  <==== selected
+                  keep.txt"
+            ),
+            cx,
+        );
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+        });
+        flush_outline_tasks(cx);
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                root/
+                  a/b/c/d/  <==== selected
+                    ~~gone.txt~~
+                  keep.txt"
+            ),
+            cx,
+        );
+        for expected in [
+            indoc!(
+                "
+                root/
+                  a/b/c/d/  <==== selected
+                  keep.txt"
+            ),
+            indoc!(
+                "
+                root/
+                  a/b/c/d/  <==== selected
+                    ~~gone.txt~~
+                  keep.txt"
+            ),
+        ] {
+            outline_panel.update_in(cx, |panel, window, cx| {
+                let entry = panel
+                    .selected_entry()
+                    .expect("folded directory should be selected")
+                    .clone();
+                panel.toggle_expanded(&entry, window, cx);
+            });
+            flush_outline_tasks(cx);
+            assert_tree(&outline_panel, &project, expected, cx);
         }
     }
 
@@ -7317,15 +8169,11 @@ two/  <==== selected
         );
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         project
             .update(cx, |project, cx| project.git_scans_complete(cx))
             .await;
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
 
         let buffer_keep = open_buffer(&project, path!("/root/keep.txt"), cx).await;
         let buffer_excluded = open_buffer(&project, path!("/root/excluded.txt"), cx).await;
@@ -7343,70 +8191,50 @@ two/  <==== selected
             );
         });
 
-        let editor = workspace.update_in(cx, |workspace, window, cx| {
-            let multibuffer = cx.new(|cx| {
-                let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
-                for buffer in [&buffer_keep, &buffer_excluded] {
-                    let ranges = vec![language::Point::default()..buffer.read(cx).max_point()];
-                    multibuffer.set_excerpts_for_buffer(buffer.clone(), ranges, 0, cx);
-                }
-                let diff = cx.new(|cx| {
-                    buffer_diff::BufferDiff::new_with_base_text(
-                        "old\n",
-                        &buffer_excluded.read(cx).text_snapshot(),
-                        cx,
-                    )
-                });
-                multibuffer.add_diff(diff, cx);
-                multibuffer
-            });
-            let editor = cx
-                .new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            editor
-        });
-        settle_outline_panel(&outline_panel, cx);
-
-        let buffer_excluded_id = buffer_excluded.read_with(cx, |buffer, _| buffer.remote_id());
-        editor.read_with(cx, |editor, cx| {
-            assert!(
-                editor
-                    .buffer()
-                    .read(cx)
-                    .snapshot(cx)
-                    .diff_for_buffer_id(buffer_excluded_id)
-                    .is_some_and(|diff| diff.base_text_exists()),
-                "sanity check: the excluded file's excerpt carries a diff with base text, which \
-                 is what used to make it look deleted"
-            );
-        });
-
-        outline_panel.update(cx, |outline_panel, cx| {
-            assert_eq!(
-                display_entries(
-                    &project,
-                    &snapshot(outline_panel, cx),
-                    &outline_panel.cached_entries,
-                    None,
-                    cx,
-                ),
-                "external: excluded.txt\nroot/\n  keep.txt"
-            );
-        });
+        add_diff_editor(
+            &workspace,
+            &project,
+            &[
+                (&buffer_keep, "previous contents\n"),
+                (&buffer_excluded, "old\n"),
+            ],
+            cx,
+        );
+        assert_tree(
+            &outline_panel,
+            &project,
+            indoc!(
+                "
+                external: excluded.txt
+                root/
+                  keep.txt"
+            ),
+            cx,
+        );
     }
 
     #[gpui::test]
-    async fn test_file_absent_from_disk_and_status_with_base_text_nests(cx: &mut TestAppContext) {
+    async fn test_diff_deletions_group_under_scanned_and_excluded_parents(cx: &mut TestAppContext) {
         init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(settings::SplicingVec::from(vec![
+                            "**/excluded".to_string(),
+                            "**/missing".to_string(),
+                        ]));
+                });
+            });
+        });
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             path!("/root"),
             json!({
                 ".git": {},
-                "dir": {
-                    "keep.txt": "hello there",
-                }
+                "scanned": { "keep.txt": "still here" },
+                "excluded": { "keep.txt": "still here" }
             }),
         )
         .await;
@@ -7415,74 +8243,100 @@ two/  <==== selected
         fs.insert_branches(dot_git, &["main"]);
         fs.set_head_for_repo(
             dot_git,
-            &[("dir/keep.txt", "hello there".into())],
+            &[
+                ("scanned/keep.txt", "still here".to_string()),
+                ("excluded/keep.txt", "still here".to_string()),
+            ],
             "deadbeef",
         );
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         project
             .update(cx, |project, cx| project.git_scans_complete(cx))
             .await;
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
         update_outline_panel_settings(cx, |settings| {
             settings.auto_fold_dirs = Some(false);
         });
 
-        let buffer_keep = open_buffer(&project, path!("/root/dir/keep.txt"), cx).await;
-        let buffer_gone = open_buffer(&project, path!("/root/dir/gone.txt"), cx).await;
-
-        buffer_gone.read_with(cx, |buffer, _cx| {
-            assert_eq!(
-                buffer.file().map(|file| file.disk_state()),
-                Some(language::DiskState::New),
-                "sanity check: a committed deletion leaves the buffer in DiskState::New"
-            );
-        });
-        let buffer_gone_id = buffer_gone.read_with(cx, |buffer, _| buffer.remote_id());
-        project.read_with(cx, |project, cx| {
-            assert_eq!(
-                project
-                    .git_store()
-                    .read(cx)
-                    .display_status_for_buffer_id(buffer_gone_id, cx)
-                    .map(|status| status.is_deleted()),
-                None,
-                "sanity check: with diff_base at its default, no status reports the deletion"
-            );
-        });
-
-        workspace.update_in(cx, |workspace, window, cx| {
-            let multibuffer = cx.new(|cx| {
-                let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
-                for buffer in [&buffer_keep, &buffer_gone] {
-                    let ranges = vec![language::Point::default()..buffer.read(cx).max_point()];
-                    multibuffer.set_excerpts_for_buffer(buffer.clone(), ranges, 0, cx);
-                }
-                let diff = cx.new(|cx| {
-                    buffer_diff::BufferDiff::new_with_base_text(
-                        "hello world\n",
-                        &buffer_gone.read(cx).text_snapshot(),
-                        cx,
-                    )
-                });
-                multibuffer.add_diff(diff, cx);
-                multibuffer
+        let buffer_scanned = open_buffer(&project, path!("/root/scanned/gone.txt"), cx).await;
+        let buffer_excluded = open_buffer(&project, path!("/root/excluded/gone.txt"), cx).await;
+        let buffer_missing = open_buffer(&project, path!("/root/missing/gone.txt"), cx).await;
+        for buffer in [&buffer_scanned, &buffer_excluded, &buffer_missing] {
+            buffer.read_with(cx, |buffer, cx| {
+                let file = File::from_dyn(buffer.file()).expect("buffer should have a file");
+                assert_eq!(file.disk_state, DiskState::New);
+                assert_eq!(file.project_entry_id(), None);
+                assert_eq!(
+                    project
+                        .read(cx)
+                        .git_store()
+                        .read(cx)
+                        .display_status_for_buffer_id(buffer.remote_id(), cx),
+                    None,
+                );
             });
-            let editor = cx
-                .new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
-            workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+        }
+        buffer_excluded.read_with(cx, |buffer, cx| {
+            let file = File::from_dyn(buffer.file()).expect("buffer should have a file");
+            let worktree = file.worktree.read(cx);
+            assert_eq!(
+                worktree
+                    .entry_for_path(rel_path("excluded"))
+                    .map(|entry| entry.kind),
+                None
+            );
+            assert_eq!(
+                worktree
+                    .entry_for_path(rel_path("missing"))
+                    .map(|entry| entry.kind),
+                None
+            );
+            assert_eq!(
+                worktree
+                    .entry_for_path(rel_path("scanned"))
+                    .map(|entry| entry.is_dir()),
+                Some(true),
+            );
         });
-        settle_outline_panel(&outline_panel, cx);
-
+        assert_eq!(
+            fs.metadata(Path::new(path!("/root/excluded")))
+                .await
+                .expect("metadata should be readable")
+                .map(|metadata| metadata.is_dir),
+            Some(true),
+        );
+        assert_eq!(
+            fs.metadata(Path::new(path!("/root/missing")))
+                .await
+                .expect("metadata should be readable")
+                .map(|metadata| metadata.is_dir),
+            None,
+        );
+        add_diff_editor(
+            &workspace,
+            &project,
+            &[
+                (&buffer_scanned, "scanned base\n"),
+                (&buffer_excluded, "excluded base\n"),
+                (&buffer_missing, "missing base\n"),
+            ],
+            cx,
+        );
         assert_tree(
             &outline_panel,
             &project,
-            "root/\n  dir/\n    ~~gone.txt~~\n    keep.txt",
+            indoc!(
+                "
+                root/
+                  excluded/
+                    ~~gone.txt~~
+                  missing/
+                    ~~gone.txt~~
+                  scanned/
+                    ~~gone.txt~~"
+            ),
             cx,
         );
     }
@@ -7503,18 +8357,23 @@ two/  <==== selected
         .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
+        let (workspace, outline_panel, mut cx) = active_outline_panel(&project, cx).await;
+        let cx = &mut cx;
 
         let buffer_real = open_buffer(&project, path!("/root/dir/real.rs"), cx).await;
         let buffer_new = open_buffer(&project, path!("/root/dir/never_existed.rs"), cx).await;
         buffer_new.update(cx, |buffer, cx| {
             buffer.edit(
-                [(0..0, "pub fn phantom() {\n    let x = 1;\n}\n")],
+                [(
+                    0..0,
+                    indoc!(
+                        "
+                    pub fn phantom() {
+                        let x = 1;
+                    }
+                    "
+                    ),
+                )],
                 None,
                 cx,
             );
@@ -7525,41 +8384,46 @@ two/  <==== selected
             &[(&buffer_real, Vec::new()), (&buffer_new, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        flush_outline_tasks(cx);
 
         assert_tree(
             &outline_panel,
             &project,
-            "external: never_existed.rs\n    outline: pub fn phantom  <==== selected\nroot/\n  dir/\n    real.rs\n        outline: pub fn real",
+            indoc!(
+                "
+                external: never_existed.rs
+                    outline: pub fn phantom  <==== selected
+                root/
+                  dir/
+                    real.rs
+                        outline: pub fn real"
+            ),
             cx,
         );
 
-        let dir_row = outline_panel.read_with(cx, |outline_panel, _cx| {
-            outline_panel
-                .cached_entries
-                .iter()
-                .find_map(|cached_entry| match &cached_entry.entry {
-                    PanelEntry::Fs(FsEntry::Directory(directory))
-                        if directory.entry.path.file_name() == Some("dir") =>
-                    {
-                        Some(cached_entry.entry.clone())
-                    }
-                    _ => None,
-                })
-                .expect("`dir` should have a row via `real.rs`")
+        let worktree_id = buffer_real.read_with(cx, |buffer, cx| {
+            File::from_dyn(buffer.file())
+                .expect("buffer should have a file")
+                .worktree
+                .read(cx)
+                .id()
         });
+        select_directory(&outline_panel, worktree_id, rel_path("dir"), cx);
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.select_entry(dir_row, true, window, cx);
             outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+        flush_outline_tasks(cx);
 
         assert_tree(
             &outline_panel,
             &project,
-            "external: never_existed.rs\n    outline: pub fn phantom\nroot/\n  dir/  <==== selected",
+            indoc!(
+                "
+                external: never_existed.rs
+                    outline: pub fn phantom
+                root/
+                  dir/  <==== selected"
+            ),
             cx,
         );
 
@@ -7569,41 +8433,14 @@ two/  <==== selected
         assert_tree(
             &outline_panel,
             &project,
-            "external: never_existed.rs\n    outline: pub fn phantom  <==== selected\nroot/\n  dir/",
+            indoc!(
+                "
+                external: never_existed.rs
+                    outline: pub fn phantom  <==== selected
+                root/
+                  dir/"
+            ),
             cx,
-        );
-    }
-
-    #[test]
-    fn test_deleted_entry_ids_are_distinct_and_stable() {
-        use util::rel_path::rel_path;
-
-        let mut ids = DeletedEntryIds::default();
-        let worktree_a = WorktreeId::from_usize(1);
-        let worktree_b = WorktreeId::from_usize(2);
-
-        let first = ids.file_id(worktree_a, rel_path("dir/a.txt"));
-        let second = ids.file_id(worktree_a, rel_path("dir/b.txt"));
-        let same_path_other_worktree = ids.file_id(worktree_b, rel_path("dir/a.txt"));
-        let same_path_as_directory = ids.directory_id(worktree_a, rel_path("dir/a.txt"));
-        assert_ne!(first, second, "different paths must never share an id");
-        assert_ne!(
-            first, same_path_other_worktree,
-            "the same path in different worktrees must not share an id"
-        );
-        assert_ne!(
-            first, same_path_as_directory,
-            "the same path as a file and as a directory must not share an id"
-        );
-
-        assert_eq!(
-            ids.file_id(worktree_a, rel_path("dir/a.txt")),
-            first,
-            "a path keeps its id across lookups"
-        );
-        assert_eq!(
-            ids.directory_id(worktree_a, rel_path("dir/a.txt")),
-            same_path_as_directory
         );
     }
 
@@ -8295,6 +9132,39 @@ outline: struct OutlineEntryExcerpt
             .unwrap()
     }
 
+    async fn rename_buffer(
+        project: &Entity<Project>,
+        buffer: &Entity<language::Buffer>,
+        path: &RelPath,
+        cx: &mut VisualTestContext,
+    ) {
+        let (entry_id, worktree_id) = buffer.read_with(cx, |buffer, cx| {
+            let file = File::from_dyn(buffer.file()).expect("buffer should have a file");
+            (
+                file.project_entry_id()
+                    .expect("file should have a worktree entry"),
+                file.worktree.read(cx).id(),
+            )
+        });
+        project
+            .update(cx, |project, cx| {
+                project.rename_entry(
+                    entry_id,
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(path),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("file rename should succeed");
+        cx.run_until_parked();
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+    }
+
     fn add_multi_buffer_editor(
         workspace: &Entity<Workspace>,
         project: &Entity<Project>,
@@ -8324,6 +9194,38 @@ outline: struct OutlineEntryExcerpt
         })
     }
 
+    fn set_buffer_order(
+        editor: &Entity<Editor>,
+        buffers: &[&Entity<language::Buffer>],
+        cx: &mut VisualTestContext,
+    ) {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.buffer().update(cx, |multibuffer, cx| {
+                for (index, buffer) in buffers.iter().enumerate() {
+                    let mut path = PathKey::for_buffer(buffer, cx);
+                    path.sort_prefix = Some(index as u64);
+                    let range = language::Point::default()..buffer.read(cx).max_point();
+                    multibuffer.set_excerpts_for_path(path, (*buffer).clone(), [range], 0, cx);
+                }
+                assert_eq!(
+                    multibuffer
+                        .snapshot(cx)
+                        .excerpts()
+                        .map(|excerpt| excerpt.context.start.buffer_id)
+                        .collect::<Vec<_>>(),
+                    buffers
+                        .iter()
+                        .map(|buffer| buffer.read(cx).remote_id())
+                        .collect::<Vec<_>>(),
+                );
+            });
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([language::Point::default()..language::Point::default()]);
+            });
+        });
+        flush_outline_tasks(cx);
+    }
+
     fn select_in_buffer(editor: &Entity<Editor>, buffer_id: BufferId, cx: &mut VisualTestContext) {
         let anchor = editor.read_with(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -8338,27 +9240,26 @@ outline: struct OutlineEntryExcerpt
         cx.update(|window, cx| {
             window.focus(&editor.focus_handle(cx), cx);
             editor.update(cx, |editor, cx| {
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges(Some(anchor..anchor))
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(Some(anchor..anchor))
                 });
             });
         });
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+        flush_outline_tasks(cx);
     }
 
-    fn settle_outline_panel(outline_panel: &Entity<OutlinePanel>, cx: &mut VisualTestContext) {
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+    async fn wait_for_outline_tasks(
+        outline_panel: &Entity<OutlinePanel>,
+        cx: &mut VisualTestContext,
+    ) {
         cx.run_until_parked();
-        outline_panel.update_in(cx, |panel, window, cx| {
-            panel.update_non_fs_items(window, cx);
-            panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
-        });
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
-        cx.run_until_parked();
+        cx.condition(outline_panel, |panel, _| {
+            panel.fs_entries_update_task.is_ready()
+                && panel.outline_fetch_tasks.values().all(Task::is_ready)
+                && panel.cached_entries_update_task.is_ready()
+                && panel.reveal_selection_task.is_ready()
+        })
+        .await;
     }
 
     fn update_outline_panel_settings(
@@ -8434,9 +9335,8 @@ outline: struct OutlineEntryExcerpt
                     FsEntry::Directory(directory) => {
                         let path = if let Some(worktree) = project
                             .worktree_for_id(directory.worktree_id, cx)
-                            .filter(|worktree| {
-                                worktree.read(cx).root_entry() == Some(&directory.entry.entry)
-                            }) {
+                            .filter(|_| directory.entry.path.is_empty())
+                        {
                             worktree
                                 .read(cx)
                                 .root_name()
@@ -8451,7 +9351,7 @@ outline: struct OutlineEntryExcerpt
                                 .unwrap_or_default()
                                 .to_string()
                         };
-                        mark_deleted(format!("{path}/"), directory.is_deleted)
+                        format!("{path}/")
                     }
                     FsEntry::File(file) => mark_deleted(
                         file.entry
@@ -8462,15 +9362,12 @@ outline: struct OutlineEntryExcerpt
                         file.is_deleted,
                     ),
                 },
-                PanelEntry::FoldedDirs(folded_dirs) => mark_deleted(
-                    folded_dirs
-                        .entries
-                        .iter()
-                        .filter_map(|dir| dir.path.file_name())
-                        .map(|name| name.to_string() + "/")
-                        .collect(),
-                    folded_dirs.is_deleted,
-                ),
+                PanelEntry::FoldedDirs(folded_dirs) => folded_dirs
+                    .entries
+                    .iter()
+                    .filter_map(|dir| dir.path.file_name())
+                    .map(|name| name.to_string() + "/")
+                    .collect(),
                 PanelEntry::Outline(outline_entry) => match outline_entry {
                     OutlineEntry::Excerpt(_) => continue,
                     OutlineEntry::Outline(outline_entry) => {
@@ -8731,6 +9628,174 @@ outline: struct OutlineEntryExcerpt
             let line_end = multi_buffer_snapshot.clip_point(language::Point::new(selection.end.row, u32::MAX), language::Bias::Right);
             multi_buffer_snapshot.text_for_range(line_start..line_end).collect::<String>().trim().to_owned()
         })
+    }
+
+    async fn active_outline_panel(
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, Entity<OutlinePanel>, VisualTestContext) {
+        let (window, workspace) = add_outline_panel(project, cx).await;
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        let panel = outline_panel(&workspace, &mut cx);
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.set_active(true, window, cx);
+        });
+        (workspace, panel, cx)
+    }
+
+    fn add_diff_editor(
+        workspace: &Entity<Workspace>,
+        project: &Entity<Project>,
+        entries: &[(&Entity<language::Buffer>, &str)],
+        cx: &mut VisualTestContext,
+    ) -> Entity<Editor> {
+        let (editor, diffs) = workspace.update_in(cx, |workspace, window, cx| {
+            let mut diffs = Vec::new();
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+                for (buffer, base_text) in entries {
+                    let diff = cx.new(|cx| {
+                        BufferDiff::new_with_base_text(
+                            base_text,
+                            &buffer.read(cx).text_snapshot(),
+                            cx,
+                        )
+                    });
+                    let buffer_snapshot = buffer.read(cx).snapshot();
+                    let ranges = diff
+                        .read(cx)
+                        .snapshot(cx)
+                        .hunks(&buffer_snapshot)
+                        .map(|hunk| hunk.buffer_range.to_point(&buffer_snapshot))
+                        .collect::<Vec<_>>();
+                    assert!(
+                        !ranges.is_empty(),
+                        "diff fixture must have at least one hunk"
+                    );
+                    multibuffer.set_excerpts_for_buffer((*buffer).clone(), ranges, 0, cx);
+                    multibuffer.add_diff(diff.clone(), cx);
+                    diffs.push(diff);
+                }
+                multibuffer
+            });
+            let editor = cx.new(|cx| {
+                let mut editor =
+                    Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+                editor.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
+                editor.set_expand_all_diff_hunks(cx);
+                editor
+            });
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            (editor, diffs)
+        });
+        flush_outline_tasks(cx);
+        editor.read_with(cx, |editor, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let snapshot = multibuffer.snapshot(cx);
+            for ((buffer, base_text), diff) in entries.iter().zip(&diffs) {
+                let buffer_id = buffer.read(cx).remote_id();
+                assert_eq!(
+                    multibuffer.diff_for(buffer_id).map(|diff| diff.entity_id()),
+                    Some(diff.entity_id()),
+                );
+                let diff = snapshot
+                    .diff_for_buffer_id(buffer_id)
+                    .expect("fixture diff should remain attached");
+                assert!(diff.base_text_exists());
+                assert_eq!(diff.base_text().text(), *base_text);
+            }
+        });
+        editor
+    }
+
+    fn flush_outline_tasks(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.executor().advance_clock(UPDATE_DEBOUNCE * 3);
+        cx.run_until_parked();
+    }
+
+    fn select_directory(
+        panel: &Entity<OutlinePanel>,
+        worktree_id: WorktreeId,
+        path: &RelPath,
+        cx: &mut VisualTestContext,
+    ) {
+        panel.update_in(cx, |panel, window, cx| {
+            let mut entries = panel
+                .cached_entries
+                .iter()
+                .filter(|cached| match &cached.entry {
+                    PanelEntry::Fs(FsEntry::Directory(directory)) => {
+                        directory.worktree_id == worktree_id
+                            && directory.entry.path.as_ref() == path
+                    }
+                    PanelEntry::FoldedDirs(directories) => {
+                        directories.worktree_id == worktree_id
+                            && directories
+                                .entries
+                                .last()
+                                .is_some_and(|entry| entry.path.as_ref() == path)
+                    }
+                    _ => false,
+                });
+            let entry = entries
+                .next()
+                .expect("directory should have a row")
+                .entry
+                .clone();
+            assert!(
+                entries.next().is_none(),
+                "directory should have exactly one row"
+            );
+            panel.select_entry(entry, true, window, cx);
+        });
+    }
+
+    fn select_file(panel: &Entity<OutlinePanel>, buffer_id: BufferId, cx: &mut VisualTestContext) {
+        panel.update_in(cx, |panel, window, cx| {
+            let mut entries = panel.cached_entries.iter().filter(|cached| {
+                matches!(&cached.entry, PanelEntry::Fs(FsEntry::File(file)) if file.buffer_id == buffer_id)
+            });
+            let entry = entries.next().expect("file should have a row").entry.clone();
+            assert_eq!(entries.count(), 0, "file should have exactly one row");
+            panel.select_entry(entry, true, window, cx);
+        });
+    }
+
+    fn assert_directory_paths(
+        panel: &Entity<OutlinePanel>,
+        worktree_id: WorktreeId,
+        expected_unfolded: &[&str],
+        expected_collapsed: &[&str],
+        cx: &mut VisualTestContext,
+    ) {
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(
+                panel.unfolded_dirs,
+                HashMap::from_iter([(
+                    worktree_id,
+                    expected_unfolded
+                        .iter()
+                        .map(|path| Arc::<RelPath>::from(rel_path(path)))
+                        .collect::<BTreeSet<_>>(),
+                )]),
+            );
+            assert_eq!(
+                panel
+                    .collapsed_entries
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        CollapsedEntry::Dir(worktree_id, path) =>
+                            Some((*worktree_id, path.clone())),
+                        _ => None,
+                    })
+                    .collect::<HashSet<_>>(),
+                expected_collapsed
+                    .iter()
+                    .map(|path| (worktree_id, Arc::<RelPath>::from(rel_path(path))))
+                    .collect::<HashSet<_>>(),
+            );
+        });
     }
 
     #[gpui::test]
@@ -9499,7 +10564,14 @@ search: | Field          | Meaning              «  »|"
             root,
             json!({
                 "src": {
-                    "lib.rs": "struct Foo {\n    bar: u32,\n    baz: String,\n}\n",
+                    "lib.rs": indoc!(
+                        "
+                        struct Foo {
+                            bar: u32,
+                            baz: String,
+                        }
+                        "
+                    ),
                 }
             }),
         )
@@ -9849,7 +10921,7 @@ outline: struct Foo  <==== selected
             &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
 
         outline_panel.update(cx, |panel, _cx| {
             assert!(
@@ -10389,7 +11461,7 @@ rust-analyzer/
             ],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
 
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
@@ -10462,7 +11534,7 @@ test/
             &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
 
         outline_panel.update(cx, |panel, _cx| {
             assert!(
@@ -10584,7 +11656,7 @@ test/
             &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
 
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.filter_editor.update(cx, |filter_editor, cx| {
@@ -10720,7 +11792,7 @@ test/
             &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
 
         outline_panel.update(cx, |panel, cx| {
             assert_eq!(
@@ -10806,7 +11878,7 @@ test/
             &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
             cx,
         );
-        settle_outline_panel(&outline_panel, cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
 
         outline_panel.update(cx, |panel, _cx| {
             assert!(
@@ -10822,7 +11894,7 @@ test/
             settings.multi_buffer_hide_symbols = Some(false);
             settings.expand_outlines_with_depth = Some(0);
         });
-        settle_outline_panel(&outline_panel, cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
 
         outline_panel.update(cx, |panel, cx| {
             assert_eq!(
