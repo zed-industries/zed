@@ -30,8 +30,8 @@ use project::{
 use language::{LanguageName, Toolchain, ToolchainScope};
 use remote::{
     DockerConnectionOptions, DockerHost, DockerIdentityKey, RemoteConnectionIdentity,
-    RemoteConnectionOptions,
-    SshConnectionOptions, WslConnectionOptions, remote_connection_identity,
+    RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+    remote_connection_identity,
 };
 use serde::{Deserialize, Serialize};
 use sqlez::{

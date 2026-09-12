@@ -18,8 +18,8 @@ use fs::Fs;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 pub use dev_container_lifecycle::delete_dev_container_with_options;
+use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 

@@ -4410,9 +4410,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn dockerfile_feature_build_builds_on_the_injected_stage_alias(
-        cx: &mut TestAppContext,
-    ) {
+    async fn dockerfile_feature_build_builds_on_the_injected_stage_alias(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         let (_, mut devcontainer_manifest) = init_devcontainer_manifest(
             cx,
@@ -4469,9 +4467,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn remote_dockerfile_feature_build_reads_the_host_dockerfile(
-        cx: &mut TestAppContext,
-    ) {
+    async fn remote_dockerfile_feature_build_reads_the_host_dockerfile(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         let connection = Arc::new(crate::FakeRemoteConnection::default());
         let (_, mut devcontainer_manifest) = init_devcontainer_manifest(
