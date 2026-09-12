@@ -31,6 +31,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
 use settings::{Settings, SettingsStore};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
@@ -2101,6 +2102,8 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     _git_store_subscription: Subscription,
     update_last_checkpoint_if_changed_task: Option<Task<Result<()>>>,
+    // Coalesces a burst of status events so only one checkpoint runs at a time.
+    update_last_checkpoint_if_changed_in_flight: Rc<Cell<bool>>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
@@ -2333,6 +2336,9 @@ impl AcpThread {
                     _
                 )
             ) {
+                if this.update_last_checkpoint_if_changed_in_flight.get() {
+                    return;
+                }
                 this.update_last_checkpoint_if_changed_task =
                     Some(this.update_last_checkpoint_if_changed(cx));
             }
@@ -2344,6 +2350,7 @@ impl AcpThread {
             action_log,
             _git_store_subscription,
             update_last_checkpoint_if_changed_task: None,
+            update_last_checkpoint_if_changed_in_flight: Rc::new(Cell::new(false)),
             shared_buffers: Default::default(),
             entries: Default::default(),
             elicitations: ElicitationStore::default(),
@@ -4176,55 +4183,65 @@ impl AcpThread {
         }
         let old_checkpoint = checkpoint.git_checkpoint.clone();
 
+        self.update_last_checkpoint_if_changed_in_flight.set(true);
+        let in_flight = self.update_last_checkpoint_if_changed_in_flight.clone();
+
         let new_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
         cx.spawn(async move |this, cx| {
-            let Some(new_checkpoint) = new_checkpoint
-                .await
-                .context("failed to get new checkpoint")
-                .log_err()
-            else {
-                return Ok(());
-            };
-
-            let Some(equal) = git_store
-                .update(cx, |git, cx| {
-                    git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
-                })
-                .await
-                .context("failed to compare checkpoints")
-                .log_err()
-            else {
-                return Ok(());
-            };
-
-            if equal {
-                return Ok(());
-            }
-
-            this.update(cx, |this, cx| {
-                if !this
-                    .running_turn
-                    .as_ref()
-                    .is_some_and(|turn| turn.id == turn_id)
-                {
-                    return;
-                }
-
-                let Some((ix, message)) = this.last_user_message() else {
-                    return;
+            let result = async move {
+                let Some(new_checkpoint) = new_checkpoint
+                    .await
+                    .context("failed to get new checkpoint")
+                    .log_err()
+                else {
+                    return Ok(());
                 };
-                if message.client_id.as_ref() != Some(&client_id) {
-                    return;
-                }
-                if let Some(checkpoint) = message.checkpoint.as_mut()
-                    && !checkpoint.show
-                {
-                    checkpoint.show = true;
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                }
-            })?;
 
-            Ok(())
+                let Some(equal) = git_store
+                    .update(cx, |git, cx| {
+                        git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
+                    })
+                    .await
+                    .context("failed to compare checkpoints")
+                    .log_err()
+                else {
+                    return Ok(());
+                };
+
+                if equal {
+                    return Ok(());
+                }
+
+                this.update(cx, |this, cx| {
+                    if !this
+                        .running_turn
+                        .as_ref()
+                        .is_some_and(|turn| turn.id == turn_id)
+                    {
+                        return;
+                    }
+
+                    let Some((ix, message)) = this.last_user_message() else {
+                        return;
+                    };
+                    if message.client_id.as_ref() != Some(&client_id) {
+                        return;
+                    }
+                    if let Some(checkpoint) = message.checkpoint.as_mut()
+                        && !checkpoint.show
+                    {
+                        checkpoint.show = true;
+                        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    }
+                })?;
+
+                Ok(())
+            }
+            .await;
+
+            in_flight.set(false);
+
+            result
         })
     }
 

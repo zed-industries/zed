@@ -489,6 +489,34 @@ pub struct GitStoreCheckpoint {
     checkpoints_by_work_dir_abs_path: HashMap<Arc<Path>, GitRepositoryCheckpoint>,
 }
 
+/// Bounds how many repositories are snapshotted or restored concurrently.
+/// Each repository shells out to `git` (which spawns its own threads), so an
+/// N-repo workspace would otherwise fan out N git subprocesses at once and peg
+/// every core. Override with `ZED_GIT_CHECKPOINT_CONCURRENCY` to tune.
+const DEFAULT_GIT_CHECKPOINT_CONCURRENCY: usize = 4;
+
+fn git_checkpoint_concurrency() -> usize {
+    std::env::var("ZED_GIT_CHECKPOINT_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_GIT_CHECKPOINT_CONCURRENCY)
+}
+
+/// Drives a set of futures with bounded concurrency, preserving input order
+/// and short-circuiting on the first error. Mirrors `future::try_join_all`,
+/// but polls at most `limit` at a time.
+async fn join_with_concurrency_limit<F, T, E>(futs: Vec<F>, limit: usize) -> Result<Vec<T>, E>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    let results = ::futures::stream::iter(futs)
+        .buffered(limit)
+        .collect::<Vec<_>>()
+        .await;
+    results.into_iter().collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
     pub repo_path: RepoPath,
@@ -2141,7 +2169,8 @@ impl GitStore {
         }
 
         cx.background_executor().spawn(async move {
-            let checkpoints = future::try_join_all(checkpoints).await?;
+            let checkpoints =
+                join_with_concurrency_limit(checkpoints, git_checkpoint_concurrency()).await?;
             Ok(GitStoreCheckpoint {
                 checkpoints_by_work_dir_abs_path: work_directory_abs_paths
                     .into_iter()
@@ -2172,7 +2201,7 @@ impl GitStore {
             }
         }
         cx.background_spawn(async move {
-            future::try_join_all(tasks).await?;
+            join_with_concurrency_limit(tasks, git_checkpoint_concurrency()).await?;
             Ok(())
         })
     }
