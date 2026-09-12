@@ -30,7 +30,7 @@ use gpui::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
-    WindowParams, point, px, size,
+    WindowParams, WindowVisibility, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -671,6 +671,10 @@ struct MacWindowState {
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
+    visibility_callback: Option<Box<dyn FnMut(WindowVisibility)>>,
+    // `None` until a callback is registered, so notifications during
+    // construction are not queued for delivery to a callback registered later.
+    last_visibility: Option<WindowVisibility>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
@@ -1104,6 +1108,8 @@ impl MacWindow {
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
+                visibility_callback: None,
+                last_visibility: None,
                 resize_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
@@ -1381,6 +1387,9 @@ impl Drop for MacWindow {
             this.native_window.setDelegate_(nil);
         }
         this.input_handler.take();
+        // A delivery task queued by `report_visibility` may still run after the
+        // GPUI window is gone; without a callback it has nothing to notify.
+        this.visibility_callback.take();
         this.foreground_executor
             .spawn(async move {
                 unsafe {
@@ -1807,6 +1816,10 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        visibility(&self.0.lock())
+    }
+
     // is_hovered is unused on macOS. See Window::is_window_hovered.
     fn is_hovered(&self) -> bool {
         false
@@ -2003,6 +2016,12 @@ impl PlatformWindow for MacWindow {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.as_ref().lock().activate_callback = Some(callback);
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        let mut state = self.0.lock();
+        state.last_visibility = Some(visibility(&state));
+        state.visibility_callback = Some(callback);
     }
 
     fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
@@ -2887,9 +2906,55 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     }
 }
 
+fn visibility(state: &MacWindowState) -> WindowVisibility {
+    let is_visible = unsafe {
+        state
+            .native_window
+            .occlusionState()
+            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+    };
+    if is_visible {
+        WindowVisibility::Visible
+    } else {
+        WindowVisibility::Hidden
+    }
+}
+
+fn report_visibility(window_state: &Arc<Mutex<MacWindowState>>) {
+    let state = window_state.lock();
+    if state.last_visibility.is_none() {
+        return;
+    }
+    let executor = state.foreground_executor.clone();
+    drop(state);
+
+    // AppKit can notify while GPUI is updating a window. Deliver observers
+    // after that update completes, as activation notifications do. The state
+    // is read at delivery rather than captured here so a burst of
+    // notifications collapses to the final value.
+    executor
+        .spawn({
+            let window_state = window_state.clone();
+            async move {
+                let mut state = window_state.lock();
+                let visibility = visibility(&state);
+                if state.last_visibility == Some(visibility) {
+                    return;
+                }
+                state.last_visibility = Some(visibility);
+                if let Some(mut callback) = state.visibility_callback.take() {
+                    drop(state);
+                    callback(visibility);
+                    window_state.lock().visibility_callback = Some(callback);
+                }
+            }
+        })
+        .detach();
+}
+
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = &mut *window_state.lock();
+    let mut lock = window_state.lock();
     unsafe {
         if lock
             .native_window
@@ -2902,6 +2967,10 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
             lock.stop_display_link();
         }
     }
+    drop(lock);
+    // The only visibility source: AppKit posts this for covering, minimizing,
+    // hiding, Space switches, and display sleep alike.
+    report_visibility(&window_state);
 }
 
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
