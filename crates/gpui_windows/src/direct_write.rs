@@ -1787,9 +1787,6 @@ fn apply_font_features(
     features: &FontFeatures,
 ) -> Result<()> {
     let tag_values = features.tag_value_list();
-    if tag_values.is_empty() {
-        return Ok(());
-    }
 
     // All of these features are enabled by default by DirectWrite.
     // If you want to (and can) peek into the source of DirectWrite
