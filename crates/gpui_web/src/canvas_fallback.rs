@@ -73,7 +73,8 @@ fn is_cjk(grapheme: &str) -> bool {
 
     if matches!(base, '\u{ac00}'..='\u{d7a3}') {
         return suffix.is_empty()
-            || ((base as u32 - 0xac00) % 28 == 0 && is_single_modern_trailing_jamo(suffix));
+            || ((base as u32 - 0xac00).is_multiple_of(28)
+                && is_single_modern_trailing_jamo(suffix));
     }
     if matches!(base, '\u{1100}'..='\u{1112}') {
         return matches!(characters.next(), Some('\u{1161}'..='\u{1175}'))
