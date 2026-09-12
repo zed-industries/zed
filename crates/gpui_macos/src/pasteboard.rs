@@ -137,7 +137,11 @@ impl Pasteboard {
                     }
                 });
 
-            Some(ClipboardEntry::String(ClipboardString { text, metadata }))
+            Some(ClipboardEntry::String(ClipboardString {
+                text,
+                metadata,
+                html: None,
+            }))
         }
     }
 
@@ -181,6 +185,7 @@ impl Pasteboard {
                     let mut combined = ClipboardString {
                         text: String::new(),
                         metadata: None,
+                        html: None,
                     };
 
                     for entry in item.entries {
@@ -212,6 +217,16 @@ impl Pasteboard {
             );
             self.inner
                 .setData_forType(text_bytes, NSPasteboardTypeString);
+
+            if let Some(html) = string.html.as_ref() {
+                let html_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    html.as_ptr() as *const c_void,
+                    html.len() as u64,
+                );
+                self.inner
+                    .setData_forType(html_bytes, ns_string("public.html"));
+            }
 
             if let Some(metadata) = string.metadata.as_ref() {
                 let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
@@ -402,6 +417,32 @@ mod tests {
             pasteboard.read(),
             Some(ClipboardItem::new_string(text_from_other_app.to_string()))
         );
+    }
+
+    #[test]
+    fn test_html_with_plain_text_fallback() {
+        autoreleasepool(|| {
+            let pasteboard = Pasteboard::unique();
+            pasteboard.write(ClipboardItem::new_string_with_html(
+                "Olá 世界".to_string(),
+                "<strong>Olá 世界</strong>".to_string(),
+            ));
+            assert_eq!(
+                pasteboard.read().and_then(|item| item.text()).as_deref(),
+                Some("Olá 世界")
+            );
+            // SAFETY: The unique pasteboard is alive, and the type NSString remains
+            // valid within this autorelease pool while data_for_type copies its data.
+            let html = unsafe { pasteboard.data_for_type(ns_string("public.html")) };
+            assert_eq!(
+                html.as_deref(),
+                Some("<strong>Olá 世界</strong>".as_bytes())
+            );
+
+            pasteboard.write(ClipboardItem::new_string("plain".to_string()));
+            // SAFETY: The pasteboard and type NSString are still valid in this pool.
+            assert!(unsafe { pasteboard.data_for_type(ns_string("public.html")) }.is_none());
+        });
     }
 
     #[test]
