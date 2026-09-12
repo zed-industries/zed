@@ -31,6 +31,7 @@ mod keyboard;
 pub mod layer_shell;
 mod menu;
 mod notification;
+mod platform;
 mod platform_scheduler;
 mod platform_window;
 pub mod popup;
@@ -64,6 +65,7 @@ pub use input_handler::*;
 pub use keyboard::*;
 pub use menu::*;
 pub use notification::*;
+pub use platform::*;
 pub use platform_scheduler::*;
 pub use platform_window::*;
 #[cfg(feature = "profiler")]
