@@ -3,8 +3,7 @@ use crate::{
     LongPressEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Render,
     TouchDragEvent, Window, point, seal::Sealed,
 };
-use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
+use std::{any::Any, fmt::Debug, ops::Deref};
 
 /// An event from a platform input source.
 pub trait InputEvent: Sealed + 'static {
@@ -576,31 +575,6 @@ impl Deref for MouseExitEvent {
 
     fn deref(&self) -> &Self::Target {
         &self.modifiers
-    }
-}
-
-/// Data offered to the platform when an internal drag leaves the window and is
-/// promoted to a native drag session.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum ExternalDragPayload {
-    /// Real on-disk paths, handed to the platform as an outbound file drag.
-    Files(FileDragPaths),
-}
-
-/// Paths handed to the platform for a native file drag. Directory metadata is
-/// provided by the caller to avoid querying it when the platform drag starts.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct FileDragPaths(SmallVec<[(PathBuf, bool); 2]>);
-
-impl FileDragPaths {
-    /// Creates a native file-drag payload from paths paired with whether each path is a directory.
-    pub fn new(entries: impl IntoIterator<Item = (PathBuf, bool)>) -> Self {
-        Self(entries.into_iter().collect())
-    }
-
-    /// The dragged paths, each paired with whether it is a directory.
-    pub fn entries(&self) -> &[(PathBuf, bool)] {
-        &self.0
     }
 }
 

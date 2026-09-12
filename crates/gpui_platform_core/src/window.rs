@@ -567,7 +567,6 @@ pub struct TitlebarOptions {
 pub enum WindowKind {
     /// A normal application window
     Normal,
-
     /// A window that appears above all other windows, usually used for alerts or popups
     /// use sparingly!
     PopUp,
@@ -591,4 +590,24 @@ pub enum WindowKind {
     /// A window that appears on top of its parent window and blocks interaction with it
     /// until the modal window is closed
     Dialog,
+}
+
+/// A type of window control area that corresponds to the platform window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowControlArea {
+    /// An area that allows dragging of the platform window.
+    Drag,
+    /// An area that allows closing of the platform window.
+    Close,
+    /// An area that allows maximizing of the platform window.
+    Max,
+    /// An area that allows minimizing of the platform window.
+    Min,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[expect(missing_docs)]
+pub struct DispatchEventResult {
+    pub propagate: bool,
+    pub default_prevented: bool,
 }
