@@ -16,4 +16,6 @@ doctest = false
 anyhow.workspace = true
 collections.workspace = true
 gpui_types.workspace = true
+schemars.workspace = true
+serde.workspace = true
 uuid.workspace = true

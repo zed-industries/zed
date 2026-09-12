@@ -33,17 +33,16 @@ pub(crate) type PlatformScreenCaptureFrame = ();
 pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBuffer;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, BoundsExt,
-    Capslock, DevicePixels, DispatchEventResult, DisplayId, Edges, ExternalDragPayload, Font,
-    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, Modifiers, Pixels, PlatformDisplay, PlatformGestures, PlatformInput,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
-    Size, SvgRenderer, SystemWindowTab, Task, Window, WindowAppearance, WindowBackgroundAppearance,
-    WindowControlArea, hash, point, px, size,
+    Action, AnyWindowHandle, App, AppLifecyclePhase, AsyncWindowContext, BackgroundExecutor,
+    Bounds, BoundsExt, Capslock, CursorStyle, Decorations, DevicePixels, DispatchEventResult,
+    DisplayId, Edges, ExternalDragPayload, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
+    GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Modifiers, Pixels, PlatformDisplay,
+    PlatformGestures, PlatformInput, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
+    Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ResizeEdge,
+    Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
+    ThermalState, Window, WindowAppearance, WindowBackgroundAppearance, WindowButtonLayout,
+    WindowControlArea, WindowControls, WindowDecorations, hash, point, px, size,
 };
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use anyhow::bail;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot;
@@ -54,7 +53,6 @@ use image::{AnimationDecoder as _, DynamicImage, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use scheduler::Instant;
 pub use scheduler::RunnableMeta;
-use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -394,19 +392,6 @@ pub struct SystemNotificationResponse {
     pub action_id: Option<SharedString>,
 }
 
-/// Thermal state of the system
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThermalState {
-    /// System has no thermal constraints
-    Nominal,
-    /// System is slightly constrained, reduce discretionary work
-    Fair,
-    /// System is moderately constrained, reduce CPU/GPU intensive work
-    Serious,
-    /// System is critically constrained, minimize all resource usage
-    Critical,
-}
-
 /// Metadata for a given [ScreenCaptureSource]
 #[derive(Clone)]
 pub struct SourceMetadata {
@@ -443,244 +428,6 @@ pub trait ScreenCaptureStream {
 /// A frame of video captured from a screen.
 pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
-/// Which part of the window to resize
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResizeEdge {
-    /// The top edge
-    Top,
-    /// The top right corner
-    TopRight,
-    /// The right edge
-    Right,
-    /// The bottom right corner
-    BottomRight,
-    /// The bottom edge
-    Bottom,
-    /// The bottom left corner
-    BottomLeft,
-    /// The left edge
-    Left,
-    /// The top left corner
-    TopLeft,
-}
-
-/// A type to describe the appearance of a window
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
-pub enum WindowDecorations {
-    #[default]
-    /// Server side decorations
-    Server,
-    /// Client side decorations
-    Client,
-}
-
-/// A type to describe how this window is currently configured
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
-pub enum Decorations {
-    /// The window is configured to use server side decorations
-    #[default]
-    Server,
-    /// The window is configured to use client side decorations
-    Client {
-        /// The edge tiling state
-        tiling: Tiling,
-    },
-}
-
-/// What window controls this platform supports
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct WindowControls {
-    /// Whether this platform supports fullscreen
-    pub fullscreen: bool,
-    /// Whether this platform supports maximize
-    pub maximize: bool,
-    /// Whether this platform supports minimize
-    pub minimize: bool,
-    /// Whether this platform supports a window menu
-    pub window_menu: bool,
-}
-
-impl Default for WindowControls {
-    fn default() -> Self {
-        // Assume that we can do anything, unless told otherwise
-        Self {
-            fullscreen: true,
-            maximize: true,
-            minimize: true,
-            window_menu: true,
-        }
-    }
-}
-
-/// A window control button type used in [`WindowButtonLayout`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WindowButton {
-    /// The minimize button
-    Minimize,
-    /// The maximize button
-    Maximize,
-    /// The close button
-    Close,
-}
-
-impl WindowButton {
-    /// Returns a stable element ID for rendering this button.
-    pub fn id(&self) -> &'static str {
-        match self {
-            WindowButton::Minimize => "minimize",
-            WindowButton::Maximize => "maximize",
-            WindowButton::Close => "close",
-        }
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn index(&self) -> usize {
-        match self {
-            WindowButton::Minimize => 0,
-            WindowButton::Maximize => 1,
-            WindowButton::Close => 2,
-        }
-    }
-}
-
-/// Maximum number of [`WindowButton`]s per side in the titlebar.
-pub const MAX_BUTTONS_PER_SIDE: usize = 3;
-
-/// Describes which [`WindowButton`]s appear on each side of the titlebar.
-///
-/// On Linux, this is read from the desktop environment's configuration
-/// (e.g. GNOME's `gtk-decoration-layout` gsetting) via [`WindowButtonLayout::parse`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WindowButtonLayout {
-    /// Buttons on the left side of the titlebar.
-    pub left: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
-    /// Buttons on the right side of the titlebar.
-    pub right: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
-}
-
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-impl WindowButtonLayout {
-    /// Returns Zed's built-in fallback button layout for Linux titlebars.
-    pub fn linux_default() -> Self {
-        Self {
-            left: [None; MAX_BUTTONS_PER_SIDE],
-            right: [
-                Some(WindowButton::Minimize),
-                Some(WindowButton::Maximize),
-                Some(WindowButton::Close),
-            ],
-        }
-    }
-
-    /// Parses a GNOME-style `button-layout` string (e.g. `"close,minimize:maximize"`).
-    pub fn parse(layout_string: &str) -> Result<Self> {
-        fn parse_side(
-            s: &str,
-            seen_buttons: &mut [bool; MAX_BUTTONS_PER_SIDE],
-            unrecognized: &mut Vec<String>,
-        ) -> [Option<WindowButton>; MAX_BUTTONS_PER_SIDE] {
-            let mut result = [None; MAX_BUTTONS_PER_SIDE];
-            let mut i = 0;
-            for name in s.split(',') {
-                let trimmed = name.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                let button = match trimmed {
-                    "minimize" => Some(WindowButton::Minimize),
-                    "maximize" => Some(WindowButton::Maximize),
-                    "close" => Some(WindowButton::Close),
-                    other => {
-                        unrecognized.push(other.to_string());
-                        None
-                    }
-                };
-                if let Some(button) = button {
-                    if seen_buttons[button.index()] {
-                        continue;
-                    }
-                    if let Some(slot) = result.get_mut(i) {
-                        *slot = Some(button);
-                        seen_buttons[button.index()] = true;
-                        i += 1;
-                    }
-                }
-            }
-            result
-        }
-
-        let (left_str, right_str) = layout_string.split_once(':').unwrap_or(("", layout_string));
-        let mut unrecognized = Vec::new();
-        let mut seen_buttons = [false; MAX_BUTTONS_PER_SIDE];
-        let layout = Self {
-            left: parse_side(left_str, &mut seen_buttons, &mut unrecognized),
-            right: parse_side(right_str, &mut seen_buttons, &mut unrecognized),
-        };
-
-        if !unrecognized.is_empty()
-            && layout.left.iter().all(Option::is_none)
-            && layout.right.iter().all(Option::is_none)
-        {
-            bail!(
-                "button layout string {:?} contains no valid buttons (unrecognized: {})",
-                layout_string,
-                unrecognized.join(", ")
-            );
-        }
-
-        Ok(layout)
-    }
-
-    /// Formats the layout back into a GNOME-style `button-layout` string.
-    #[cfg(test)]
-    pub fn format(&self) -> String {
-        fn format_side(buttons: &[Option<WindowButton>; MAX_BUTTONS_PER_SIDE]) -> String {
-            buttons
-                .iter()
-                .flatten()
-                .map(|button| match button {
-                    WindowButton::Minimize => "minimize",
-                    WindowButton::Maximize => "maximize",
-                    WindowButton::Close => "close",
-                })
-                .collect::<Vec<_>>()
-                .join(",")
-        }
-
-        format!("{}:{}", format_side(&self.left), format_side(&self.right))
-    }
-}
-
-/// A type to describe which sides of the window are currently tiled in some way
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
-pub struct Tiling {
-    /// Whether the top edge is tiled
-    pub top: bool,
-    /// Whether the left edge is tiled
-    pub left: bool,
-    /// Whether the right edge is tiled
-    pub right: bool,
-    /// Whether the bottom edge is tiled
-    pub bottom: bool,
-}
-
-impl Tiling {
-    /// Initializes a [`Tiling`] type with all sides tiled
-    pub fn tiled() -> Self {
-        Self {
-            top: true,
-            left: true,
-            right: true,
-            bottom: true,
-        }
-    }
-
-    /// Whether any edge is tiled
-    pub fn is_tiled(&self) -> bool {
-        self.top || self.left || self.right || self.bottom
-    }
-}
-
 /// Callbacks for the accessibility adapter.
 pub struct A11yCallbacks {
     /// Called when the adapter is activated (a screen reader connects).
@@ -698,31 +445,6 @@ pub struct RequestFrameOptions {
     pub require_presentation: bool,
     /// Force refresh of all rendering states when true.
     pub force_render: bool,
-}
-
-/// The application's lifecycle phase, as owned and reported by a mobile OS.
-///
-/// `Inactive` means visible but not receiving input (a system dialog on
-/// top), while `Background` means not visible at all, with process death
-/// possible at any time thereafter.
-///
-/// | Phase        | iOS                          | Android      |
-/// |--------------|------------------------------|--------------|
-/// | `Active`     | `didBecomeActive`            | `onResume`   |
-/// | `Inactive`   | `willResignActive`           | `onPause`    |
-/// | `Background` | `didEnterBackground`         | `onStop`     |
-/// | `Foreground` | `willEnterForeground`        | `onStart`    |
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum AppLifecyclePhase {
-    /// Foreground and receiving input.
-    Active,
-    /// Foreground (visible) but not receiving input.
-    Inactive,
-    /// Not visible. The GPU surface may be destroyed while backgrounded and
-    /// the process may be killed without further notice.
-    Background,
-    /// Becoming visible again, before input is restored.
-    Foreground,
 }
 
 /// Regions of a window that are obscured or reserved by the system.
@@ -2264,94 +1986,6 @@ impl From<&str> for PromptButton {
             _ => PromptButton::Other(SharedString::from(value.to_owned())),
         }
     }
-}
-
-/// The style of the cursor (pointer)
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-pub enum CursorStyle {
-    /// The default cursor
-    #[default]
-    Arrow,
-
-    /// A text input cursor
-    /// corresponds to the CSS cursor value `text`
-    IBeam,
-
-    /// A crosshair cursor
-    /// corresponds to the CSS cursor value `crosshair`
-    Crosshair,
-
-    /// A closed hand cursor
-    /// corresponds to the CSS cursor value `grabbing`
-    ClosedHand,
-
-    /// An open hand cursor
-    /// corresponds to the CSS cursor value `grab`
-    OpenHand,
-
-    /// A pointing hand cursor
-    /// corresponds to the CSS cursor value `pointer`
-    PointingHand,
-
-    /// A resize left cursor
-    /// corresponds to the CSS cursor value `w-resize`
-    ResizeLeft,
-
-    /// A resize right cursor
-    /// corresponds to the CSS cursor value `e-resize`
-    ResizeRight,
-
-    /// A resize cursor to the left and right
-    /// corresponds to the CSS cursor value `ew-resize`
-    ResizeLeftRight,
-
-    /// A resize up cursor
-    /// corresponds to the CSS cursor value `n-resize`
-    ResizeUp,
-
-    /// A resize down cursor
-    /// corresponds to the CSS cursor value `s-resize`
-    ResizeDown,
-
-    /// A resize cursor directing up and down
-    /// corresponds to the CSS cursor value `ns-resize`
-    ResizeUpDown,
-
-    /// A resize cursor directing up-left and down-right
-    /// corresponds to the CSS cursor value `nesw-resize`
-    ResizeUpLeftDownRight,
-
-    /// A resize cursor directing up-right and down-left
-    /// corresponds to the CSS cursor value `nwse-resize`
-    ResizeUpRightDownLeft,
-
-    /// A cursor indicating that the item/column can be resized horizontally.
-    /// corresponds to the CSS cursor value `col-resize`
-    ResizeColumn,
-
-    /// A cursor indicating that the item/row can be resized vertically.
-    /// corresponds to the CSS cursor value `row-resize`
-    ResizeRow,
-
-    /// A text input cursor for vertical layout
-    /// corresponds to the CSS cursor value `vertical-text`
-    IBeamCursorForVerticalLayout,
-
-    /// A cursor indicating that the operation is not allowed
-    /// corresponds to the CSS cursor value `not-allowed`
-    OperationNotAllowed,
-
-    /// A cursor indicating that the operation will result in a link
-    /// corresponds to the CSS cursor value `alias`
-    DragLink,
-
-    /// A cursor indicating that the operation will result in a copy
-    /// corresponds to the CSS cursor value `copy`
-    DragCopy,
-
-    /// A cursor indicating that the operation will result in a context menu
-    /// corresponds to the CSS cursor value `context-menu`
-    ContextualMenu,
 }
 
 /// A clipboard item that should be copied to the clipboard

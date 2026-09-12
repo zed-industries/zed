@@ -11,10 +11,14 @@
 
 #![warn(missing_docs)]
 
+mod app;
+mod cursor;
 mod display;
 mod keyboard;
 mod window;
 
+pub use app::*;
+pub use cursor::*;
 pub use display::*;
 pub use keyboard::*;
 pub use window::*;

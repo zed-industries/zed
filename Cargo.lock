@@ -7705,6 +7705,8 @@ dependencies = [
  "anyhow",
  "collections",
  "gpui_types",
+ "schemars 1.0.4",
+ "serde",
  "uuid",
 ]
 
