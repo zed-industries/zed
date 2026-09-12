@@ -1020,6 +1020,12 @@ pub struct SearchSettingsContent {
     pub center_on_match: Option<bool>,
     /// Start searching as you type in project search, without pressing Enter.
     pub search_on_type: Option<bool>,
+    /// Whether to show an info icon when paths are omitted from project search.
+    /// Click the icon to open a buffer with a grouped report of omitted paths.
+    /// Disabling this setting hides only the icon and does not change the search scope.
+    ///
+    /// Default: true
+    pub show_omitted_paths: Option<bool>,
 }
 
 #[with_fallible_options]

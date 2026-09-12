@@ -308,8 +308,9 @@ impl Delegate {
                     )
                 });
 
-            let imported_from_project_search =
-                has_existing_matches || !matches!(in_progress_search, InProgressSearch::None);
+            let imported_from_project_search = active_query.is_some()
+                || has_existing_matches
+                || !matches!(in_progress_search, InProgressSearch::None);
 
             let this = cx.update(move |cx| Self {
                 project_search_view: project_search,
@@ -875,6 +876,11 @@ impl PickerDelegate for Delegate {
             self.collapsed_paths.clear();
             self.selected_index = 0;
             self.active_query = None;
+            self.project_search_view.update(cx, |view, cx| {
+                view.entity.update(cx, |search, cx| {
+                    search.clear_search_omissions(cx);
+                });
+            });
             self.prepend_selected_matches();
             self.rebuild_entries();
             cx.notify();
@@ -887,7 +893,9 @@ impl PickerDelegate for Delegate {
 
         let search_results = self.project_search_view.update(cx, |ps, cx| {
             ps.entity.update(cx, |pr, cx| {
-                pr.project.update(cx, |p, cx| p.search(search_query, cx))
+                let results = pr.project.update(cx, |p, cx| p.search(search_query, cx));
+                pr.track_search_omissions(&results, cx);
+                results
             })
         });
 
@@ -1501,13 +1509,15 @@ impl Delegate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext, TestAppContext};
+    use crate::project_search::perform_project_search;
+    use gpui::{AppContext, TestAppContext, VisualTestContext};
     use project::search::{SearchQuery, SearchResult};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
     use util::paths::PathMatcher;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1569,6 +1579,79 @@ mod tests {
                 picker.delegate.matches.len(),
                 Search::MAX_SEARCH_RESULT_RANGES
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_completed_zero_match_search_preserves_query_on_import(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                ".gitignore": "ignored/\n",
+                "ignored": { "file.txt": "needle" },
+                "visible.txt": "needle"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |workspace, _| workspace.workspace().clone())
+            .unwrap();
+        let search_view = window
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| Delegate::new(workspace, window, cx))
+            })
+            .unwrap()
+            .await
+            .project_search_view;
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        perform_project_search(&search_view, "absent", &mut cx);
+        let search = search_view.read_with(&cx, |view, _| view.entity.clone());
+        search.read_with(&cx, |search, _| {
+            assert!(search.pending_search.is_none());
+            assert!(search.match_ranges.is_empty());
+            assert_eq!(
+                search.active_query.as_ref().map(SearchQuery::as_str),
+                Some("absent")
+            );
+        });
+
+        let delegate = Delegate::new_from_project_search(search_view, &mut cx.to_async()).await;
+        assert!(matches!(
+            delegate.in_progress_search,
+            InProgressSearch::None
+        ));
+        let picker = cx.new_window_entity(|window, cx| Picker::list(delegate, window, cx));
+        cx.run_until_parked();
+        picker.read_with(&cx, |picker, cx| {
+            assert_eq!(picker.query(cx), "");
+            assert!(picker.delegate.matches.is_empty());
+            assert_eq!(
+                picker
+                    .delegate
+                    .active_query
+                    .as_ref()
+                    .map(SearchQuery::as_str),
+                Some("absent")
+            );
+        });
+
+        picker.update_in(&mut cx, |picker, window, cx| {
+            picker.set_query("absent", window, cx);
+        });
+        cx.run_until_parked();
+        picker.update_in(&mut cx, |picker, window, cx| {
+            picker.set_query("", window, cx);
+        });
+        cx.executor().advance_clock(SEARCH_DEBOUNCE);
+        cx.run_until_parked();
+        picker.read_with(&cx, |picker, _| {
+            assert!(picker.delegate.active_query.is_none());
+            assert!(picker.delegate.matches.is_empty());
         });
     }
 

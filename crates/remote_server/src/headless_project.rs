@@ -1220,30 +1220,49 @@ impl HeadlessProject {
                     message.limit as _,
                     cx,
                 )
+                .include_private_omissions(message.include_private_omissions)
                 .into_handle(query, cx)
                 .matching_buffers(cx)
             });
-            let mut batches = std::pin::pin!(
-                results
-                    .rx
-                    .map(|(buffer, _)| buffer)
-                    .ready_chunks(MAX_SEARCH_CANDIDATES_PER_BATCH)
-            );
-            while let Some(buffers) = batches.next().await {
-                let (completion, completed) = oneshot::channel();
-                search_buffer_batches
-                    .send(SearchBufferBatch {
-                        buffers,
-                        handle,
-                        peer_id,
-                        project_id,
-                        completion,
-                    })
-                    .await?;
-                completed.await??;
+            let omissions_task = if message.report_omissions {
+                cx.background_spawn(project::project_search::forward_search_omissions(
+                    results.omissions,
+                    results.omissions_status,
+                    client.clone(),
+                    project_id,
+                    peer_id,
+                    handle,
+                ))
+            } else {
+                drop(results.omissions);
+                Task::ready(Ok(()))
+            };
+            let sender_result = async {
+                let mut batches = std::pin::pin!(
+                    results
+                        .rx
+                        .map(|(buffer, _)| buffer)
+                        .ready_chunks(MAX_SEARCH_CANDIDATES_PER_BATCH)
+                );
+                while let Some(buffers) = batches.next().await {
+                    let (completion, completed) = oneshot::channel();
+                    search_buffer_batches
+                        .send(SearchBufferBatch {
+                            buffers,
+                            handle,
+                            peer_id,
+                            project_id,
+                            completion,
+                        })
+                        .await?;
+                    completed.await??;
+                }
+                anyhow::Ok(())
             }
+            .await;
+            omissions_task.await.log_err();
 
-            client
+            let done_result = client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,
                     peer_id: Some(peer_id),
@@ -1251,8 +1270,11 @@ impl HeadlessProject {
                     variant: Some(proto::find_search_candidates_chunk::Variant::Done(
                         proto::FindSearchCandidatesDone {},
                     )),
+                    ..proto::FindSearchCandidatesChunk::default()
                 })
-                .await?;
+                .await;
+            sender_result?;
+            done_result?;
             anyhow::Ok(())
         });
         buffer_store.update(&mut cx, |store, _| {
@@ -1275,6 +1297,7 @@ impl HeadlessProject {
                 variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
                     proto::FindSearchCandidatesMatches { buffer_ids },
                 )),
+                ..proto::FindSearchCandidatesChunk::default()
             })
             .await?;
         Ok(())
