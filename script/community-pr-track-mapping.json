@@ -269,7 +269,8 @@
         "area:integrations/environment",
         "area:accessibility",
         "area:docs",
-        "platform:general"
+        "platform:general",
+        "platform:web"
       ]
     }
   ]
