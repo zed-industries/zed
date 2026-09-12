@@ -1,4 +1,5 @@
 use super::*;
+use crate::columnar_selection::ColumnarSelectionRows;
 
 impl Editor {
     pub fn sync_selections(
@@ -6,45 +7,30 @@ impl Editor {
         other: Entity<Editor>,
         cx: &mut Context<Self>,
     ) -> gpui::Subscription {
-        let other_selections = other.read(cx).selections.disjoint_anchors().to_vec();
-        if !other_selections.is_empty() {
-            self.selections
-                .change_with(&self.display_snapshot(cx), |selections| {
-                    selections.select_anchors(other_selections);
-                });
-        }
+        self.sync_selections_from(other.read(cx).selections.disjoint_anchors().to_vec(), cx);
 
-        let other_subscription = cx.subscribe(&other, |this, other, other_evt, cx| {
-            if let EditorEvent::SelectionsChanged { local: true } = other_evt {
-                let other_selections = other.read(cx).selections.disjoint_anchors().to_vec();
-                if other_selections.is_empty() {
-                    return;
-                }
-                let snapshot = this.display_snapshot(cx);
-                this.selections.change_with(&snapshot, |selections| {
-                    selections.select_anchors(other_selections);
-                });
+        let other_subscription = cx.subscribe(&other, |editor, other, event, cx| {
+            if let EditorEvent::SelectionsChanged { local: true } = event {
+                editor.sync_selections_from(
+                    other.read(cx).selections.disjoint_anchors().to_vec(),
+                    cx,
+                );
             }
         });
 
-        let this_subscription = cx.subscribe_self::<EditorEvent>(move |this, this_evt, cx| {
-            if let EditorEvent::SelectionsChanged { local: true } = this_evt {
-                let these_selections = this.selections.disjoint_anchors().to_vec();
-                if these_selections.is_empty() {
+        let editor_subscription = cx.subscribe_self::<EditorEvent>(move |editor, event, cx| {
+            if let EditorEvent::SelectionsChanged { local: true } = event {
+                if editor.selections.disjoint_anchors().is_empty() {
                     return;
                 }
+                let selections = editor.selections.disjoint_anchors().to_vec();
                 other.update(cx, |other_editor, cx| {
-                    let snapshot = other_editor.display_snapshot(cx);
-                    other_editor
-                        .selections
-                        .change_with(&snapshot, |selections| {
-                            selections.select_anchors(these_selections);
-                        })
+                    other_editor.sync_selections_from(selections, cx);
                 });
             }
         });
 
-        Subscription::join(other_subscription, this_subscription)
+        Subscription::join(other_subscription, editor_subscription)
     }
 
     /// Changes selections using the provided mutation function. Changes to `self.selections` occur
@@ -57,34 +43,7 @@ impl Editor {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> R {
-        let snapshot = self.display_snapshot(cx);
-        if let Some(state) = &mut self.deferred_selection_effects_state {
-            state.effects.scroll = effects.scroll.or(state.effects.scroll);
-            state.effects.completions = effects.completions;
-            state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
-            let (changed, result) = self.selections.change_with(&snapshot, change);
-            state.changed |= changed;
-            return result;
-        }
-        let mut state = DeferredSelectionEffectsState {
-            changed: false,
-            effects,
-            old_cursor_position: self.selections.newest_anchor().head(),
-            history_entry: SelectionHistoryEntry {
-                selections: self.selections.disjoint_anchors_arc(),
-                select_next_state: self.select_next_state.clone(),
-                select_prev_state: self.select_prev_state.clone(),
-                add_selections_state: self.add_selections_state.clone(),
-            },
-        };
-        let (changed, result) = self.selections.change_with(&snapshot, change);
-        state.changed = state.changed || changed;
-        if self.defer_selection_effects {
-            self.deferred_selection_effects_state = Some(state);
-        } else {
-            self.apply_selection_effects(state, window, cx);
-        }
-        result
+        self.change_selections_with_history(effects, None, window, cx, change)
     }
 
     /// Re-resolves selection anchors so they reference live buffer fragments.
@@ -100,10 +59,9 @@ impl Editor {
     pub fn refresh_selection_anchors(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.display_snapshot(cx);
         let selections = self.selections.all::<MultiBufferOffset>(&snapshot);
-        self.selections
-            .change_with(&snapshot, |selection_collection| {
-                selection_collection.select(selections);
-            });
+        self.change_selections_without_effects(&snapshot, |selection_collection| {
+            selection_collection.select(selections);
+        });
     }
 
     /// Defers the effects of selection change, so that the effects of multiple calls to
@@ -182,15 +140,14 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let old_cursor_position = self.selections.newest_anchor().head();
-        self.selections
-            .change_with(&self.display_snapshot(cx), |s| {
-                s.select_anchors(selections);
-                if let Some(pending_selection) = pending_selection {
-                    s.set_pending(pending_selection, SelectMode::Character);
-                } else {
-                    s.clear_pending();
-                }
-            });
+        self.change_selections_without_effects(&self.display_snapshot(cx), |s| {
+            s.select_anchors(selections);
+            if let Some(pending_selection) = pending_selection {
+                s.set_pending(pending_selection, SelectMode::Character);
+            } else {
+                s.clear_pending();
+            }
+        });
         self.selections_did_change(
             false,
             &old_cursor_position,
@@ -433,11 +390,11 @@ impl Editor {
             if !select_prev_state.done {
                 let first_selection = selections
                     .iter()
-                    .min_by_key(|s| s.id)
+                    .min_by_key(|selection| selection.id)
                     .context("missing selection for select previous action")?;
                 let last_selection = selections
                     .iter()
-                    .max_by_key(|s| s.id)
+                    .max_by_key(|selection| selection.id)
                     .context("missing selection for select previous action")?;
                 let mut next_selected_range = None;
                 // When we're iterating matches backwards, the oldest match will actually be the furthest one in the buffer.
@@ -1118,7 +1075,7 @@ impl Editor {
                     SelectionEffects::scroll(Autoscroll::newest()),
                     window,
                     cx,
-                    |s| s.select_anchors(entry.selections.to_vec()),
+                    |s| s.select_anchors_unexpanded(entry.selections.to_vec()),
                 );
             });
             self.selection_history.mode = SelectionHistoryMode::Normal;
@@ -1143,7 +1100,7 @@ impl Editor {
                     SelectionEffects::scroll(Autoscroll::newest()),
                     window,
                     cx,
-                    |s| s.select_anchors(entry.selections.to_vec()),
+                    |s| s.select_anchors_unexpanded(entry.selections.to_vec()),
                 );
             });
             self.selection_history.mode = SelectionHistoryMode::Normal;
@@ -1625,9 +1582,6 @@ impl Editor {
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
         let buffer = display_map.buffer_snapshot();
-        if self.selections.count() == 1 {
-            self.add_selections_state = None;
-        }
         self.select_next_state = None;
         self.select_prev_state = None;
         self.select_syntax_node_history.try_clear();
@@ -1932,6 +1886,189 @@ impl Editor {
         ))
     }
 
+    pub(super) fn invalidate_add_selection_goals_after_change(
+        &mut self,
+        previous: Option<&[Selection<Anchor>]>,
+    ) {
+        if self.add_selections_state.is_none() {
+            return;
+        }
+        let Some(previous) = previous else {
+            self.add_selections_state = None;
+            return;
+        };
+        let current = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|selection| (selection.id, selection))
+            .collect::<HashMap<_, _>>();
+        let unchanged = previous
+            .iter()
+            .filter(|selection| current.get(&selection.id) == Some(selection))
+            .map(|selection| selection.id)
+            .collect::<HashSet<_>>();
+        let removed = previous
+            .iter()
+            .filter(|selection| !current.contains_key(&selection.id))
+            .map(|selection| selection.id)
+            .collect::<HashSet<_>>();
+        if let Some(state) = &mut self.add_selections_state {
+            Self::retain_add_selection_goals(state, &unchanged, &removed, &current);
+            if state.groups.is_empty() {
+                self.add_selections_state = None;
+            }
+        }
+    }
+
+    fn sync_selections_from(&mut self, selections: Vec<Selection<Anchor>>, cx: &mut Context<Self>) {
+        if !selections.is_empty() {
+            self.change_selections_without_effects(&self.display_snapshot(cx), |collection| {
+                collection.select_anchors(selections);
+            });
+        }
+    }
+
+    fn retain_add_selection_goals<T>(
+        state: &mut AddSelectionsState,
+        unchanged: &HashSet<usize>,
+        removed: &HashSet<usize>,
+        current: &HashMap<usize, &Selection<T>>,
+    ) {
+        let skip_soft_wrap = state.skip_soft_wrap;
+        state.groups.retain_mut(|group| {
+            if group.stack.first().is_none_or(|id| !unchanged.contains(id))
+                || group
+                    .stack
+                    .iter()
+                    .any(|id| !unchanged.contains(id) && !removed.contains(id))
+            {
+                group.goal_source = None;
+            }
+            group.stack.retain(|id| current.contains_key(id));
+            !group.stack.is_empty() && (skip_soft_wrap || group.stack.len() > 1)
+        });
+    }
+
+    fn reconcile_add_selection_groups(
+        state: &mut AddSelectionsState,
+        previous: &[Selection<Point>],
+        current: &[Selection<Point>],
+    ) {
+        let current_by_id = current
+            .iter()
+            .map(|selection| (selection.id, selection))
+            .collect::<HashMap<_, _>>();
+        let mut unchanged = HashSet::default();
+        let mut removed = HashSet::default();
+        for selection in previous {
+            if let Some(current) = current_by_id.get(&selection.id) {
+                if **current == *selection {
+                    unchanged.insert(selection.id);
+                }
+            } else {
+                let index = current.partition_point(|current| current.end < selection.start);
+                let overlaps = current
+                    .iter()
+                    .skip(index)
+                    .take_while(|current| current.start <= selection.end)
+                    .any(|current| {
+                        if current.is_empty() || selection.is_empty() {
+                            current.start <= selection.end && selection.start <= current.end
+                        } else {
+                            current.start < selection.end && selection.start < current.end
+                        }
+                    });
+                if !overlaps {
+                    removed.insert(selection.id);
+                }
+            }
+        }
+        Self::retain_add_selection_goals(state, &unchanged, &removed, &current_by_id);
+    }
+
+    fn resolve_add_selection_anchors(
+        selections: &[Selection<Anchor>],
+        snapshot: &DisplaySnapshot,
+    ) -> Vec<Selection<Point>> {
+        selections
+            .iter()
+            .filter(|selection| {
+                snapshot.can_resolve(&selection.start) && snapshot.can_resolve(&selection.end)
+            })
+            .map(|selection| selection.map(|anchor| anchor.to_point(snapshot.buffer_snapshot())))
+            .collect()
+    }
+
+    fn change_selections_without_effects<R>(
+        &mut self,
+        snapshot: &DisplaySnapshot,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
+    ) -> (bool, R) {
+        let previous = self
+            .add_selections_state
+            .as_ref()
+            .map(|_| self.selections.disjoint_anchors_arc());
+        let (changed, result) = self.selections.change_with(snapshot, change);
+        if changed
+            && let Some(previous) = previous
+            && let Some(state) = &mut self.add_selections_state
+        {
+            let previous = Self::resolve_add_selection_anchors(&previous, snapshot);
+            let current =
+                Self::resolve_add_selection_anchors(self.selections.disjoint_anchors(), snapshot);
+            Self::reconcile_add_selection_groups(state, &previous, &current);
+            if state.groups.is_empty() {
+                self.add_selections_state = None;
+            }
+        }
+        (changed, result)
+    }
+
+    fn selection_history_entry(&self) -> SelectionHistoryEntry {
+        SelectionHistoryEntry {
+            selections: self.selections.disjoint_anchors_arc(),
+            select_next_state: self.select_next_state.clone(),
+            select_prev_state: self.select_prev_state.clone(),
+            add_selections_state: self.add_selections_state.clone(),
+        }
+    }
+
+    fn change_selections_with_history<R>(
+        &mut self,
+        effects: SelectionEffects,
+        history_entry: Option<SelectionHistoryEntry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
+    ) -> R {
+        let snapshot = self.display_snapshot(cx);
+        if self.deferred_selection_effects_state.is_some() {
+            let (changed, result) = self.change_selections_without_effects(&snapshot, change);
+            if let Some(state) = &mut self.deferred_selection_effects_state {
+                state.effects.scroll = effects.scroll.or(state.effects.scroll);
+                state.effects.completions = effects.completions;
+                state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
+                state.changed |= changed;
+            }
+            return result;
+        }
+        let mut state = DeferredSelectionEffectsState {
+            changed: false,
+            effects,
+            old_cursor_position: self.selections.newest_anchor().head(),
+            history_entry: history_entry.unwrap_or_else(|| self.selection_history_entry()),
+        };
+        let (changed, result) = self.change_selections_without_effects(&snapshot, change);
+        state.changed = state.changed || changed;
+        if self.defer_selection_effects {
+            self.deferred_selection_effects_state = Some(state);
+        } else {
+            self.apply_selection_effects(state, window, cx);
+        }
+        result
+    }
+
     fn add_selection(
         &mut self,
         above: bool,
@@ -1940,54 +2077,208 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let all_selections = self.selections.all::<Point>(&display_map);
         let text_layout_details = self.text_layout_details(window, cx);
-
-        let (mut columnar_selections, new_selections_to_columnarize) = {
-            if let Some(state) = self.add_selections_state.as_ref() {
-                let columnar_selection_ids: HashSet<_> = state
-                    .groups
-                    .iter()
-                    .flat_map(|group| group.stack.iter())
-                    .copied()
-                    .collect();
-
-                all_selections
-                    .into_iter()
-                    .partition(|s| columnar_selection_ids.contains(&s.id))
+        let buffer = display_map.buffer_snapshot();
+        let all_selections = self.selections.all_unexpanded::<Point>(&display_map);
+        let goal_source_for_selection = |selection: &Selection<Point>| {
+            let end_bias = if selection.is_empty() {
+                Bias::Right
             } else {
-                (Vec::new(), all_selections)
-            }
+                Bias::Left
+            };
+            buffer.anchor_after(selection.start)..buffer.anchor_at(selection.end, end_bias)
         };
 
+        let history_entry = self
+            .deferred_selection_effects_state
+            .is_none()
+            .then(|| self.selection_history_entry());
+        if self
+            .add_selections_state
+            .as_ref()
+            .is_some_and(|state| state.skip_soft_wrap != skip_soft_wrap)
+        {
+            self.add_selections_state = None;
+        }
         let mut state = self
             .add_selections_state
             .take()
-            .unwrap_or_else(|| AddSelectionsState { groups: Vec::new() });
+            .unwrap_or_else(|| AddSelectionsState {
+                groups: Vec::new(),
+                skip_soft_wrap,
+            });
+        if !state.groups.is_empty() {
+            let previous = Self::resolve_add_selection_anchors(
+                self.selections.disjoint_anchors(),
+                &display_map,
+            );
+            Self::reconcile_add_selection_groups(&mut state, &previous, &all_selections);
+        }
+        let columnar_selection_ids = state
+            .groups
+            .iter()
+            .flat_map(|group| group.stack.iter())
+            .copied()
+            .collect::<HashSet<_>>();
+        let mut columnar_rows = ColumnarSelectionRows::new(&display_map);
+        let (mut columnar_selections, new_selections_to_columnarize) =
+            all_selections
+                .into_iter()
+                .partition::<Vec<_>, _>(|selection| columnar_selection_ids.contains(&selection.id));
 
-        for selection in new_selections_to_columnarize {
+        let mut goal_columns_by_selection_id = HashMap::default();
+        let mut projected_selections = Vec::new();
+        let mut projection_counts = vec![None; new_selections_to_columnarize.len()];
+        if skip_soft_wrap {
+            let selections_by_id = columnar_selections
+                .iter()
+                .map(|selection| (selection.id, selection))
+                .collect::<HashMap<_, _>>();
+            let mut sources = Vec::new();
+            for group in &mut state.groups {
+                let Some(oldest_selection) =
+                    group.stack.first().and_then(|id| selections_by_id.get(id))
+                else {
+                    continue;
+                };
+                if group.goal_source.as_ref().is_some_and(|source| {
+                    !buffer.can_resolve(&source.start) || !buffer.can_resolve(&source.end)
+                }) {
+                    group.goal_source = None;
+                }
+                let source = group
+                    .goal_source
+                    .get_or_insert_with(|| goal_source_for_selection(oldest_selection));
+                if let Some(last_id) = group.stack.last() {
+                    sources.push((*last_id, source.to_point(buffer)));
+                }
+            }
+            sources.extend(
+                new_selections_to_columnarize
+                    .iter()
+                    .map(|selection| (selection.id, selection.range())),
+            );
+            let ranges = sources
+                .iter()
+                .map(|(_, range)| range.clone())
+                .collect::<Vec<_>>();
+            goal_columns_by_selection_id.extend(
+                sources
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .zip(columnar_rows.columns_for_ranges(&ranges)),
+            );
+            let tabs = display_map.tab_snapshot();
+            let mut queries = Vec::new();
+            for (selection, projection_count) in new_selections_to_columnarize
+                .iter()
+                .zip(&mut projection_counts)
+            {
+                let start = tabs.point_to_tab_point(selection.start, Bias::Left);
+                let end = tabs.point_to_tab_point(selection.end, Bias::Left);
+                if start.row() != end.row()
+                    || display_map
+                        .is_block_line(selection.start.to_display_point(&display_map).row())
+                {
+                    let columns = &goal_columns_by_selection_id[&selection.id];
+                    let query_start = queries.len();
+                    let mut row = start.row();
+                    loop {
+                        let last_row =
+                            if let Some(hidden) = display_map.fully_replaced_tab_rows(row) {
+                                *hidden.end()
+                            } else {
+                                queries.push((row, columns.clone(), selection.reversed));
+                                row
+                            };
+                        if last_row >= end.row() {
+                            break;
+                        }
+                        row = last_row + 1;
+                    }
+                    *projection_count = Some(queries.len() - query_start);
+                }
+            }
+            projected_selections = self
+                .selections
+                .build_columnar_selections_from_tab_expanded_columns(&mut columnar_rows, &queries);
+        }
+        let mut projected_selections = projected_selections.into_iter();
+        for (selection, projection_count) in new_selections_to_columnarize
+            .into_iter()
+            .zip(projection_counts)
+        {
+            if skip_soft_wrap {
+                let goal_source = Some(goal_source_for_selection(&selection));
+                let mut stack = Vec::new();
+                if let Some(count) = projection_count {
+                    for selection in projected_selections.by_ref().take(count).flatten() {
+                        stack.push(selection.id);
+                        columnar_selections.push(selection);
+                    }
+                } else {
+                    stack.push(selection.id);
+                    columnar_selections.push(selection);
+                }
+                if !stack.is_empty() {
+                    if above {
+                        stack.reverse();
+                    }
+                    if let Some(columns) = goal_columns_by_selection_id.remove(&selection.id)
+                        && let Some(last_id) = stack.last()
+                    {
+                        goal_columns_by_selection_id.insert(*last_id, columns);
+                    }
+                    state.groups.push(AddSelectionsGroup {
+                        above,
+                        stack,
+                        goal_source,
+                    });
+                } else {
+                    columnar_selections.push(selection);
+                }
+                continue;
+            }
             let range = selection.display_range(&display_map).sorted();
             let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
             let end_x = display_map.x_for_display_point(range.end, &text_layout_details);
             let positions = start_x.min(end_x)..start_x.max(end_x);
             let mut stack = Vec::new();
-            for row in range.start.row().0..=range.end.row().0 {
-                if let Some(selection) = self.selections.build_columnar_selection(
-                    &display_map,
-                    DisplayRow(row),
-                    &positions,
-                    selection.reversed,
-                    &text_layout_details,
-                ) {
-                    stack.push(selection.id);
-                    columnar_selections.push(selection);
+            if range.start.row() == range.end.row() && !display_map.is_block_line(range.start.row())
+            {
+                stack.push(selection.id);
+                columnar_selections.push(Selection {
+                    goal: SelectionGoal::HorizontalRange {
+                        start: positions.start.into(),
+                        end: positions.end.into(),
+                    },
+                    ..selection
+                });
+            } else {
+                for row in range.start.row().0..=range.end.row().0 {
+                    if let Some(selection) = self.selections.build_columnar_selection(
+                        &display_map,
+                        DisplayRow(row),
+                        &positions,
+                        selection.reversed,
+                        &text_layout_details,
+                    ) {
+                        stack.push(selection.id);
+                        columnar_selections.push(selection);
+                    }
                 }
             }
             if !stack.is_empty() {
                 if above {
                     stack.reverse();
                 }
-                state.groups.push(AddSelectionsGroup { above, stack });
+                state.groups.push(AddSelectionsGroup {
+                    above,
+                    stack,
+                    goal_source: None,
+                });
+            } else {
+                columnar_selections.push(selection);
             }
         }
 
@@ -1998,31 +2289,11 @@ impl Editor {
             display_map.max_point().row()
         };
 
-        // When `skip_soft_wrap` is true, we place new selections by column rather than
-        // pixel position, so we need to keep track of the column range of the oldest
-        // selection in each group, because intermediate selections may have been
-        // clamped to shorter lines. Columns are counted with tabs expanded so that
-        // tab-aligned code lines up the way it renders.
-        let mut goal_columns_by_selection_id = if skip_soft_wrap {
-            let mut map = HashMap::default();
-            for group in state.groups.iter() {
-                if let Some(oldest_id) = group.stack.first() {
-                    if let Some(oldest_selection) =
-                        columnar_selections.iter().find(|s| s.id == *oldest_id)
-                    {
-                        let start_col = display_map.tab_expanded_column(oldest_selection.start);
-                        let end_col = display_map.tab_expanded_column(oldest_selection.end);
-                        let goal_columns = start_col.min(end_col)..start_col.max(end_col);
-                        for id in &group.stack {
-                            map.insert(*id, goal_columns.clone());
-                        }
-                    }
-                }
+        if skip_soft_wrap {
+            for selection in &mut columnar_selections {
+                selection.goal = SelectionGoal::None;
             }
-            map
-        } else {
-            HashMap::default()
-        };
+        }
 
         let mut last_added_item_per_group = HashMap::default();
         for group in state.groups.iter_mut() {
@@ -2031,41 +2302,58 @@ impl Editor {
             }
         }
 
+        let mut next_logical_selections = HashMap::default();
+        if skip_soft_wrap {
+            let queries = columnar_selections
+                .iter()
+                .filter_map(|selection| {
+                    let group = last_added_item_per_group.get_mut(&selection.id)?;
+                    if group.stack.len() == 1 {
+                        group.above = above;
+                    }
+                    (group.above == above).then(|| {
+                        (
+                            *selection,
+                            goal_columns_by_selection_id[&selection.id].clone(),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            next_logical_selections.extend(queries.iter().map(|(selection, _)| selection.id).zip(
+                self.selections.find_next_columnar_selections_by_buffer_row(
+                    &display_map,
+                    &mut columnar_rows,
+                    &queries,
+                    above,
+                ),
+            ));
+        }
+
         for selection in columnar_selections {
             if let Some(group) = last_added_item_per_group.get_mut(&selection.id) {
+                if skip_soft_wrap && group.stack.len() == 1 {
+                    group.above = above;
+                }
                 if above == group.above {
-                    let range = selection.display_range(&display_map).sorted();
-                    debug_assert_eq!(range.start.row(), range.end.row());
-                    let row = range.start.row();
-                    let positions =
-                        if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
-                            Pixels::from(start)..Pixels::from(end)
-                        } else {
-                            let start_x =
-                                display_map.x_for_display_point(range.start, &text_layout_details);
-                            let end_x =
-                                display_map.x_for_display_point(range.end, &text_layout_details);
-                            start_x.min(end_x)..start_x.max(end_x)
-                        };
-
                     let maybe_new_selection = if skip_soft_wrap {
-                        let goal_columns = goal_columns_by_selection_id
-                            .remove(&selection.id)
-                            .unwrap_or_else(|| {
-                                let start_col = display_map.tab_expanded_column(selection.start);
-                                let end_col = display_map.tab_expanded_column(selection.end);
-                                start_col.min(end_col)..start_col.max(end_col)
-                            });
-                        self.selections.find_next_columnar_selection_by_buffer_row(
-                            &display_map,
-                            row,
-                            end_row,
-                            above,
-                            &goal_columns,
-                            selection.reversed,
-                            &text_layout_details,
-                        )
+                        next_logical_selections.remove(&selection.id).flatten()
                     } else {
+                        let range = selection.display_range(&display_map).sorted();
+                        let row = if above {
+                            range.start.row()
+                        } else {
+                            range.end.row()
+                        };
+                        let positions =
+                            if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
+                                Pixels::from(start)..Pixels::from(end)
+                            } else {
+                                let start_x = display_map
+                                    .x_for_display_point(range.start, &text_layout_details);
+                                let end_x = display_map
+                                    .x_for_display_point(range.end, &text_layout_details);
+                                start_x.min(end_x)..start_x.max(end_x)
+                            };
                         self.selections.find_next_columnar_selection_by_display_row(
                             &display_map,
                             row,
@@ -2097,23 +2385,17 @@ impl Editor {
             }
         }
 
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.select(final_selections);
-        });
+        let unmerged_selections = final_selections.clone();
+        self.change_selections_with_history(
+            SelectionEffects::default(),
+            history_entry,
+            window,
+            cx,
+            |selections| selections.select(final_selections),
+        );
 
-        let final_selection_ids: HashSet<_> = self
-            .selections
-            .all::<Point>(&display_map)
-            .iter()
-            .map(|s| s.id)
-            .collect();
-        state.groups.retain_mut(|group| {
-            // selections might get merged above so we remove invalid items from stacks
-            group.stack.retain(|id| final_selection_ids.contains(id));
-
-            // single selection in stack can be treated as initial state
-            group.stack.len() > 1
-        });
+        let current = self.selections.all_unexpanded::<Point>(&display_map);
+        Self::reconcile_add_selection_groups(&mut state, &unmerged_selections, &current);
 
         if !state.groups.is_empty() {
             self.add_selections_state = Some(state);
@@ -2167,11 +2449,11 @@ impl Editor {
             if !select_next_state.done {
                 let first_selection = selections
                     .iter()
-                    .min_by_key(|s| s.id)
+                    .min_by_key(|selection| selection.id)
                     .context("missing selection for select next action")?;
                 let last_selection = selections
                     .iter()
-                    .max_by_key(|s| s.id)
+                    .max_by_key(|selection| selection.id)
                     .context("missing selection for select next action")?;
                 let mut next_selected_range = None;
 

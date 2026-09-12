@@ -127,7 +127,7 @@ use std::{
     fmt::Debug,
     iter,
     num::NonZeroU32,
-    ops::{self, Add, Range, Sub},
+    ops::{self, Add, Range, RangeInclusive, Sub},
     sync::Arc,
 };
 
@@ -137,7 +137,8 @@ use crate::{
 use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
 use fold_map::{FoldPointCursor, FoldSnapshot};
 use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
-use tab_map::{TabPoint, TabPointCursor, TabSnapshot};
+pub(crate) use tab_map::TabPoint;
+use tab_map::{TabPointCursor, TabSnapshot};
 use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1520,34 +1521,6 @@ impl DisplaySnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot
     }
 
-    /// The column `point` sits at once tabs are expanded, which is where it appears
-    /// on screen when the line isn't soft-wrapped. Unlike a display column this is
-    /// counted from the start of the buffer row rather than the wrapped segment.
-    pub(crate) fn tab_expanded_column(&self, point: Point) -> u32 {
-        self.tab_snapshot()
-            .point_to_tab_point(point, Bias::Left)
-            .0
-            .column
-    }
-
-    /// Inverse of [`Self::tab_expanded_column`], clamped to the end of the row.
-    pub(crate) fn point_for_tab_expanded_column(
-        &self,
-        buffer_row: MultiBufferRow,
-        column: u32,
-    ) -> Point {
-        let tab_snapshot = self.tab_snapshot();
-        let tab_row = tab_snapshot.buffer_row_to_tab_row(buffer_row);
-        let column = column.min(tab_snapshot.line_len(tab_row));
-        tab_snapshot.tab_point_to_point(TabPoint(Point::new(tab_row, column)), Bias::Left)
-    }
-
-    /// The length of `buffer_row` once tabs are expanded.
-    pub(crate) fn tab_expanded_line_len(&self, buffer_row: MultiBufferRow) -> u32 {
-        let tab_snapshot = self.tab_snapshot();
-        tab_snapshot.line_len(tab_snapshot.buffer_row_to_tab_row(buffer_row))
-    }
-
     pub fn fold_snapshot(&self) -> &FoldSnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot.fold_snapshot
     }
@@ -2474,6 +2447,31 @@ impl DisplaySnapshot {
             ),
             Bias::Right,
         )
+    }
+
+    pub(crate) fn fully_replaced_tab_rows(&self, row: u32) -> Option<RangeInclusive<u32>> {
+        if !self.block_snapshot.has_replacement_blocks()
+            || row > self.tab_snapshot().max_point().row()
+        {
+            return None;
+        }
+        let wraps = self.wrap_snapshot();
+        let wrap_point = wraps.tab_point_to_wrap_point(TabPoint::new(row, 0));
+        let input_range = self
+            .block_snapshot
+            .replacement_block_input_range(wrap_point.row())?;
+        let start = wraps.to_tab_point(WrapPoint::new(input_range.start, 0));
+        let start_row = start.row().checked_add(u32::from(start.column() > 0))?;
+        let end_row = if input_range.end > wraps.max_point().row() {
+            self.tab_snapshot().max_point().row()
+        } else {
+            wraps
+                .to_tab_point(WrapPoint::new(input_range.end, 0))
+                .row()
+                .checked_sub(1)?
+        };
+        let rows = start_row..=end_row;
+        rows.contains(&row).then_some(rows)
     }
 }
 
