@@ -5,8 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, DrawOrder, Edges, Hsla,
+    Pixels, Point, Radians, ScaledPixels, Shadow, Size, bounds_tree::BoundsTree, point,
 };
 use std::{
     fmt::Debug,
@@ -18,9 +18,6 @@ use std::{
 #[allow(non_camel_case_types, unused)]
 #[expect(missing_docs)]
 pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
-
-#[expect(missing_docs)]
-pub type DrawOrder = u32;
 
 /// A boolean stored as a `u32` so that GPU-facing structs contain no
 /// compiler-inserted padding bytes, which would be undefined behavior to
@@ -566,23 +563,6 @@ impl From<Underline> for Primitive {
     fn from(underline: Underline) -> Self {
         Primitive::Underline(underline)
     }
-}
-
-#[derive(Debug, Copy, Clone)]
-#[repr(C)]
-#[expect(missing_docs)]
-pub struct Shadow {
-    pub order: DrawOrder,
-    pub blur_radius: ScaledPixels,
-    pub bounds: Bounds<ScaledPixels>,
-    pub corner_radii: Corners<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
-    pub color: Hsla,
-    pub element_bounds: Bounds<ScaledPixels>,
-    pub element_corner_radii: Corners<ScaledPixels>,
-    /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
-    pub inset: u32,
-    pub pad: u32, // align to 8 bytes
 }
 
 impl From<Shadow> for Primitive {

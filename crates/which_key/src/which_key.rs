@@ -25,7 +25,7 @@ pub(crate) fn map_pending_keystrokes(
     keystrokes
         .iter()
         .cloned()
-        .map(|keystroke| KeybindingKeystroke::new_with_mapper(keystroke, false, keyboard_mapper))
+        .map(|keystroke| keyboard_mapper.map_key_equivalent(keystroke, false))
         .collect()
 }
 

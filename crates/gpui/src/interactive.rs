@@ -1,6 +1,7 @@
 use crate::{
-    Bounds, Capslock, Context, Empty, IntoElement, Keystroke, LongPressEvent, Modifiers, Pixels,
-    Point, Render, TouchDragEvent, Window, point, seal::Sealed,
+    Bounds, Capslock, Context, Empty, IntoElement, KeyDownEvent, KeyUpEvent, LongPressEvent,
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Render, TouchDragEvent,
+    Window, point, seal::Sealed,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -20,20 +21,6 @@ pub trait MouseEvent: InputEvent {}
 /// A gesture event from the platform.
 pub trait GestureEvent: InputEvent {}
 
-/// The key down event equivalent for the platform.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct KeyDownEvent {
-    /// The keystroke that was generated.
-    pub keystroke: Keystroke,
-
-    /// Whether the key is currently held down.
-    pub is_held: bool,
-
-    /// Whether to prefer character input over keybindings for this keystroke.
-    /// In some cases, like AltGr on Windows, modifiers are significant for character input.
-    pub prefer_character_input: bool,
-}
-
 impl Sealed for KeyDownEvent {}
 impl InputEvent for KeyDownEvent {
     fn to_platform_input(self) -> PlatformInput {
@@ -41,13 +28,6 @@ impl InputEvent for KeyDownEvent {
     }
 }
 impl KeyEvent for KeyDownEvent {}
-
-/// The key up event equivalent for the platform.
-#[derive(Clone, Debug)]
-pub struct KeyUpEvent {
-    /// The keystroke that was released.
-    pub keystroke: Keystroke,
-}
 
 impl Sealed for KeyUpEvent {}
 impl InputEvent for KeyUpEvent {
@@ -143,25 +123,6 @@ impl InputEvent for TouchEvent {
     }
 }
 
-/// A mouse down event from the platform
-#[derive(Clone, Debug, Default)]
-pub struct MouseDownEvent {
-    /// Which mouse button was pressed.
-    pub button: MouseButton,
-
-    /// The position of the mouse on the window.
-    pub position: Point<Pixels>,
-
-    /// The modifiers that were held down when the mouse was pressed.
-    pub modifiers: Modifiers,
-
-    /// The number of times the button has been clicked.
-    pub click_count: usize,
-
-    /// Whether this is the first, focusing click.
-    pub first_mouse: bool,
-}
-
 impl Sealed for MouseDownEvent {}
 impl InputEvent for MouseDownEvent {
     fn to_platform_input(self) -> PlatformInput {
@@ -169,16 +130,6 @@ impl InputEvent for MouseDownEvent {
     }
 }
 impl MouseEvent for MouseDownEvent {}
-
-impl MouseDownEvent {
-    /// Returns true if this mouse up event should focus the element.
-    pub fn is_focusing(&self) -> bool {
-        match self.button {
-            MouseButton::Left => true,
-            _ => false,
-        }
-    }
-}
 
 /// A mouse up event from the platform
 #[derive(Clone, Debug, Default)]
@@ -448,60 +399,6 @@ pub enum KeyboardButton {
     Space,
 }
 
-/// An enum representing the mouse button that was pressed.
-#[derive(Hash, Default, PartialEq, Eq, Copy, Clone, Debug)]
-pub enum MouseButton {
-    /// The left mouse button.
-    #[default]
-    Left,
-
-    /// The right mouse button.
-    Right,
-
-    /// The middle mouse button.
-    Middle,
-
-    /// A navigation button, such as back or forward.
-    Navigate(NavigationDirection),
-}
-
-impl MouseButton {
-    /// Get all the mouse buttons in a list.
-    pub fn all() -> Vec<Self> {
-        vec![
-            MouseButton::Left,
-            MouseButton::Right,
-            MouseButton::Middle,
-            MouseButton::Navigate(NavigationDirection::Back),
-            MouseButton::Navigate(NavigationDirection::Forward),
-        ]
-    }
-}
-
-/// A navigation direction, such as back or forward.
-#[derive(Hash, Default, PartialEq, Eq, Copy, Clone, Debug)]
-pub enum NavigationDirection {
-    /// The back button.
-    #[default]
-    Back,
-
-    /// The forward button.
-    Forward,
-}
-
-/// A mouse move event from the platform.
-#[derive(Clone, Debug, Default)]
-pub struct MouseMoveEvent {
-    /// The position of the mouse on the window.
-    pub position: Point<Pixels>,
-
-    /// The mouse button that was pressed, if any.
-    pub pressed_button: Option<MouseButton>,
-
-    /// The modifiers that were held down when the mouse was moved.
-    pub modifiers: Modifiers,
-}
-
 impl Sealed for MouseMoveEvent {}
 impl InputEvent for MouseMoveEvent {
     fn to_platform_input(self) -> PlatformInput {
@@ -509,13 +406,6 @@ impl InputEvent for MouseMoveEvent {
     }
 }
 impl MouseEvent for MouseMoveEvent {}
-
-impl MouseMoveEvent {
-    /// Returns true if the left mouse button is currently held down.
-    pub fn dragging(&self) -> bool {
-        self.pressed_button == Some(MouseButton::Left)
-    }
-}
 
 /// A mouse wheel event from the platform.
 #[derive(Clone, Debug, Default)]

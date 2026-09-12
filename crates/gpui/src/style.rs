@@ -8,8 +8,8 @@ use crate::{
     AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
     FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
-    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
-    point, px, quad, rems, size,
+    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, UnderlineStyle,
+    Window, black, phi, point, px, quad, rems, size,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -819,21 +819,6 @@ impl Default for Style {
             debug_below: false,
         }
     }
-}
-
-/// The properties that can be applied to an underline.
-#[derive(
-    Refineable, Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
-)]
-pub struct UnderlineStyle {
-    /// The thickness of the underline.
-    pub thickness: Pixels,
-
-    /// The color of the underline.
-    pub color: Option<Hsla>,
-
-    /// Whether the underline should be wavy, like in a spell checker.
-    pub wavy: bool,
 }
 
 /// The properties that can be applied to a strikethrough.

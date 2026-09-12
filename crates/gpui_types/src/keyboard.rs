@@ -1,11 +1,17 @@
+//! Keyboard value types shared between GPUI and its platform backends.
+//!
+//! This holds the passive representation of a keystroke ([`Keystroke`]), its
+//! modifiers ([`Modifiers`], [`Capslock`]), and the keybinding-facing wrapper
+//! ([`KeybindingKeystroke`]). The platform-specific `PlatformKeyboardMapper`
+//! trait stays in `gpui`, so platform backends can depend on these types
+//! without depending on all of `gpui`.
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fmt::{Display, Write},
 };
-
-use crate::PlatformKeyboardMapper;
 
 /// This is a helper trait so that we can simplify the implementation of some functions
 pub trait AsKeystroke {
@@ -272,15 +278,6 @@ impl KeybindingKeystroke {
             display_modifiers,
             display_key,
         }
-    }
-
-    /// Create a new keybinding keystroke from the given keystroke using the given keyboard mapper.
-    pub fn new_with_mapper(
-        inner: Keystroke,
-        use_key_equivalents: bool,
-        keyboard_mapper: &dyn PlatformKeyboardMapper,
-    ) -> Self {
-        keyboard_mapper.map_key_equivalent(inner, use_key_equivalents)
     }
 
     /// Create a new keybinding keystroke from the given keystroke, without any platform-specific mapping.
@@ -771,6 +768,6 @@ fn unparse(modifiers: &Modifiers, key: &str) -> String {
     if modifiers.shift {
         result.push_str("shift-");
     }
-    result.push_str(&key);
+    result.push_str(key);
     result
 }

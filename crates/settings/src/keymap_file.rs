@@ -1187,10 +1187,10 @@ impl KeymapFile {
                     .split_whitespace()
                     .map(|source| {
                         let keystroke = Keystroke::parse(source)?;
-                        Ok(KeybindingKeystroke::new_with_mapper(
+                        Ok(gpui::PlatformKeyboardMapper::map_key_equivalent(
+                            keyboard_mapper,
                             keystroke,
                             false,
-                            keyboard_mapper,
                         ))
                     })
                     .collect::<Result<Vec<_>, InvalidKeystrokeError>>()
@@ -1577,7 +1577,7 @@ impl Action for ActionSequence {
 #[cfg(test)]
 mod tests {
     use collections::HashMap;
-    use gpui::{Action, App, DummyKeyboardMapper, KeybindingKeystroke, Keystroke, Unbind};
+    use gpui::{Action, App, KeybindingKeystroke, Keystroke, Unbind};
     use serde_json::Value;
     use unindent::Unindent;
 
@@ -1821,11 +1821,7 @@ mod tests {
         keystrokes
             .split(' ')
             .map(|s| {
-                KeybindingKeystroke::new_with_mapper(
-                    Keystroke::parse(s).expect("Keystrokes valid"),
-                    false,
-                    &DummyKeyboardMapper,
-                )
+                KeybindingKeystroke::from_keystroke(Keystroke::parse(s).expect("Keystrokes valid"))
             })
             .collect()
     }
