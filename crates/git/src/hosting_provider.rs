@@ -17,6 +17,13 @@ pub struct PullRequest {
     pub url: Url,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepositorySearchResult {
+    pub name: SharedString,
+    pub detail: SharedString,
+    pub clone_url: SharedString,
+}
+
 #[derive(Clone)]
 pub struct GitRemote {
     pub host: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
@@ -104,6 +111,18 @@ pub trait GitHostingProvider {
 
     /// Returns whether this provider supports avatars.
     fn supports_avatars(&self) -> bool;
+
+    fn supports_repository_search(&self) -> bool {
+        false
+    }
+
+    async fn search_repositories(
+        &self,
+        _query: &str,
+        _http_client: Arc<dyn HttpClient>,
+    ) -> Result<Vec<RepositorySearchResult>> {
+        Ok(Vec::new())
+    }
 
     /// Returns a URL fragment to the given line selection.
     fn line_fragment(&self, selection: &Range<u32>) -> String {

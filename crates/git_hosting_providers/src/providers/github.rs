@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
@@ -13,10 +14,13 @@ use urlencoding::encode;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
-    PullRequest, RemoteUrl,
+    PullRequest, RemoteUrl, RepositorySearchResult,
 };
 
 use crate::get_host_from_git_remote_url;
+
+const REPOSITORY_SEARCH_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_REPOSITORY_SEARCH_RESULTS: usize = 8;
 
 fn pull_request_number_regex() -> &'static Regex {
     static PULL_REQUEST_NUMBER_REGEX: LazyLock<Regex> =
@@ -60,6 +64,38 @@ struct User {
     )]
     pub id: u64,
     pub avatar_url: String,
+}
+
+#[derive(Deserialize)]
+struct RepositorySearchResponse {
+    items: Vec<GithubRepository>,
+}
+
+#[derive(Deserialize)]
+struct GithubRepository {
+    full_name: String,
+    clone_url: String,
+    private: bool,
+    description: Option<String>,
+}
+
+impl From<GithubRepository> for RepositorySearchResult {
+    fn from(repository: GithubRepository) -> Self {
+        let visibility = if repository.private {
+            "private"
+        } else {
+            "public"
+        };
+        let detail = match repository.description {
+            Some(description) => format!("{visibility} - {description}").into(),
+            None => SharedString::new_static(visibility),
+        };
+        Self {
+            name: repository.full_name.into(),
+            detail,
+            clone_url: repository.clone_url.into(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -163,6 +199,64 @@ impl Github {
             .map(|commit| commit.author)
             .context("failed to deserialize GitHub commit details")
     }
+
+    async fn search_public_repositories(
+        &self,
+        query: &str,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Vec<RepositorySearchResult>> {
+        let mut url = Url::parse("https://api.github.com/search/repositories")?;
+        url.query_pairs_mut()
+            .append_pair("q", query)
+            .append_pair("sort", "updated")
+            .append_pair("per_page", &MAX_REPOSITORY_SEARCH_RESULTS.to_string());
+
+        let mut request = Request::get(url.as_str())
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .follow_redirects(http_client::RedirectPolicy::FollowAll)
+            .timeout(REPOSITORY_SEARCH_TIMEOUT);
+        if let Some(token) = github_token() {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+
+        let mut response = http_client
+            .send(request.body(AsyncBody::default())?)
+            .await
+            .context("requesting GitHub repository suggestions")?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "GitHub repository search returned HTTP {}",
+            response.status(),
+        );
+
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .context("reading GitHub repository suggestions")?;
+        let response: RepositorySearchResponse =
+            serde_json::from_slice(&body).context("parsing GitHub repository suggestions")?;
+
+        Ok(response
+            .items
+            .into_iter()
+            .take(MAX_REPOSITORY_SEARCH_RESULTS)
+            .map(RepositorySearchResult::from)
+            .collect())
+    }
+}
+
+fn github_token() -> Option<String> {
+    std::env::var("GITHUB_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty())
+        .or_else(|| {
+            std::env::var("GH_TOKEN")
+                .ok()
+                .filter(|token| !token.is_empty())
+        })
 }
 
 #[async_trait]
@@ -179,6 +273,22 @@ impl GitHostingProvider for Github {
         // Avatars are not supported for self-hosted GitHub instances
         // See tracking issue: https://github.com/zed-industries/zed/issues/11043
         &self.name == "GitHub"
+    }
+
+    fn supports_repository_search(&self) -> bool {
+        self.base_url.host_str() == Some("github.com")
+    }
+
+    async fn search_repositories(
+        &self,
+        query: &str,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Vec<RepositorySearchResult>> {
+        if !self.supports_repository_search() {
+            return Ok(Vec::new());
+        }
+
+        self.search_public_repositories(query, http_client).await
     }
 
     fn format_line_number(&self, line: u32) -> String {
@@ -303,8 +413,10 @@ impl GitHostingProvider for Github {
 #[cfg(test)]
 mod tests {
     use git::repository::repo_path;
+    use http_client::{AsyncBody, FakeHttpClient, Response};
     use indoc::indoc;
     use pretty_assertions::assert_eq;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
 
@@ -329,6 +441,97 @@ mod tests {
         let remote_url = "git@github.com:zed-industries/zed.git";
         let github = Github::from_remote_url(remote_url);
         assert!(github.is_err());
+    }
+
+    #[test]
+    fn test_repository_search_supports_only_public_github() {
+        assert!(Github::public_instance().supports_repository_search());
+        assert!(
+            !Github::new(
+                "GitHub Self-Hosted",
+                Url::parse("https://github.example.com").expect("valid GitHub URL")
+            )
+            .supports_repository_search()
+        );
+    }
+
+    #[test]
+    fn test_search_repositories() {
+        let http_client = FakeHttpClient::create(|request| async move {
+            assert_eq!(
+                request.uri().to_string(),
+                "https://api.github.com/search/repositories?q=zed+editor&sort=updated&per_page=8"
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("Accept")
+                    .and_then(|value| value.to_str().ok()),
+                Some("application/vnd.github+json")
+            );
+            Ok(Response::builder()
+                .status(200)
+                .body(AsyncBody::from(
+                    r#"{"items":[{"full_name":"zed-industries/zed","clone_url":"https://github.com/zed-industries/zed.git","private":false,"description":"Code at the speed of thought"}]}"#,
+                ))
+                .expect("valid response"))
+        });
+
+        let results = futures::executor::block_on(
+            Github::public_instance().search_repositories("zed editor", http_client),
+        )
+        .expect("repository search should succeed");
+
+        assert_eq!(
+            results,
+            vec![RepositorySearchResult {
+                name: "zed-industries/zed".into(),
+                detail: "public - Code at the speed of thought".into(),
+                clone_url: "https://github.com/zed-industries/zed.git".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_search_repositories_reports_http_errors() {
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(Response::builder()
+                .status(403)
+                .body(AsyncBody::default())
+                .expect("valid response"))
+        });
+
+        let error = futures::executor::block_on(
+            Github::public_instance().search_repositories("zed", http_client),
+        )
+        .expect_err("repository search should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "GitHub repository search returned HTTP 403 Forbidden"
+        );
+    }
+
+    #[test]
+    fn test_self_hosted_search_does_not_make_network_requests() {
+        let request_sent = Arc::new(AtomicBool::new(false));
+        let http_client = FakeHttpClient::create({
+            let request_sent = request_sent.clone();
+            move |_| {
+                request_sent.store(true, Ordering::SeqCst);
+                async move { anyhow::bail!("unexpected repository search request") }
+            }
+        });
+        let github = Github::new(
+            "GitHub Self-Hosted",
+            Url::parse("https://github.example.com").expect("valid GitHub URL"),
+        );
+
+        let results = futures::executor::block_on(github.search_repositories("zed", http_client))
+            .expect("unsupported repository search should be empty");
+
+        assert!(results.is_empty());
+        assert!(!request_sent.load(Ordering::SeqCst));
     }
 
     #[test]
