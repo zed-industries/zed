@@ -1,13 +1,16 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use base64::Engine as _;
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use url::Url;
 use util::{ResultExt, markdown::MarkdownEscaped};
 
 /// Maximum number of characters to show from a tool argument in the
@@ -398,11 +401,9 @@ impl AnyAgentTool for ContextServerTool {
 
             let mut llm_output = Vec::new();
             let mut tool_call_content = Vec::new();
-            let mut concatenated_text = String::new();
             for content in response.content {
                 match content {
                     context_server::types::ToolResponseContent::Text { text } => {
-                        concatenated_text.push_str(&text);
                         tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
                             acp::ContentBlock::Text(acp::TextContent::new(text.clone())),
                         )));
@@ -445,11 +446,67 @@ impl AnyAgentTool for ContextServerTool {
                     context_server::types::ToolResponseContent::Audio { .. } => {
                         log::warn!("Ignoring audio content from tool response");
                     }
-                    context_server::types::ToolResponseContent::Resource { .. } => {
-                        log::warn!("Ignoring resource content from tool response");
+                    context_server::types::ToolResponseContent::Resource { resource } => {
+                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Resource(match &resource {
+                                context_server::types::ResourceContents::Text(text) => {
+                                    acp::EmbeddedResource::new(
+                                        acp::EmbeddedResourceResource::TextResourceContents(
+                                            acp::TextResourceContents::new(
+                                                text.text.clone(),
+                                                text.uri.to_string(),
+                                            ).mime_type(text.mime_type.clone()),
+                                        ),
+                                    )
+                                }
+                                context_server::types::ResourceContents::Blob(blob) => {
+                                    acp::EmbeddedResource::new(
+                                        acp::EmbeddedResourceResource::BlobResourceContents(
+                                            acp::BlobResourceContents::new(
+                                                blob.blob.clone(),
+                                                blob.uri.to_string(),
+                                            ).mime_type(blob.mime_type.clone()),
+                                        ),
+                                    )
+                                }
+                            }),
+                        )));
+
+                        match save_mcp_resource(&event_stream, resource, cx).await {
+                            Ok(summary) => {
+                                llm_output.push(LanguageModelToolResultContent::Text(summary.into()));
+                            }
+                            Err(error) => {
+                                log::warn!("Failed to save MCP resource from tool response: {error:#}");
+                            }
+                        }
                     }
-                    context_server::types::ToolResponseContent::ResourceLink { .. } => {
-                        log::warn!("Ignoring resource link content from tool response");
+                    context_server::types::ToolResponseContent::ResourceLink {
+                        uri,
+                        name,
+                        title,
+                        description,
+                        mime_type,
+                    } => {
+                        let text = [
+                            Some(format!("MCP resource link: {}", title.as_deref().unwrap_or(&name))),
+                            Some(format!("URI: {uri}")),
+                            mime_type.as_deref().map(|mime_type| format!("MIME type: {mime_type}")),
+                            description.as_deref().map(|description| format!("Description: {description}")),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::ResourceLink(
+                                acp::ResourceLink::new(name, uri.as_str())
+                                    .title(title)
+                                    .description(description)
+                                    .mime_type(mime_type),
+                            ),
+                        )));
+                        llm_output.push(LanguageModelToolResultContent::Text(text.into()));
                     }
                 }
             }
@@ -457,7 +514,14 @@ impl AnyAgentTool for ContextServerTool {
                 event_stream
                     .update_fields(acp::ToolCallUpdateFields::new().content(tool_call_content));
             }
-            let raw_output = serde_json::Value::String(concatenated_text);
+            let raw_output = serde_json::Value::String(llm_output
+                .iter()
+                .filter_map(|part| match part {
+                    LanguageModelToolResultContent::Text(text) => Some(text.as_ref()),
+                    LanguageModelToolResultContent::Image(_) => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n"));
             Ok(AgentToolOutput {
                 raw_output,
                 llm_output,
@@ -474,6 +538,121 @@ impl AnyAgentTool for ContextServerTool {
     ) -> Result<()> {
         Ok(())
     }
+}
+
+/// Saves an MCP resource embedded in a tool response to the thread's downloads
+/// directory and returns a one-line summary (path, MIME type, size, URI) that
+/// is handed to the model instead of the resource's contents.
+async fn save_mcp_resource(
+    event_stream: &ToolCallEventStream,
+    resource: context_server::types::ResourceContents,
+    cx: &mut AsyncApp,
+) -> Result<String> {
+    let downloads_dir = event_stream.mcp_downloads_dir(cx)?;
+    save_mcp_resource_contents(&downloads_dir, resource, cx).await
+}
+
+/// Saves an MCP resource embedded in a tool response or prompt to the thread's
+/// downloads directory and returns a one-line summary for the model.
+pub(crate) async fn save_mcp_resource_contents(
+    downloads_dir: &Path,
+    resource: context_server::types::ResourceContents,
+    cx: &mut AsyncApp,
+) -> Result<String> {
+    let (uri, mime_type, bytes) = match resource {
+        context_server::types::ResourceContents::Text(text) => {
+            (text.uri, text.mime_type, text.text.into_bytes())
+        }
+        context_server::types::ResourceContents::Blob(blob) => {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&blob.blob)
+                .context("failed to decode base64 MCP resource blob")?;
+            (blob.uri, blob.mime_type, bytes)
+        }
+    };
+
+    let file_name = mcp_resource_file_name(&uri);
+    let path = unique_download_path(downloads_dir, &file_name);
+    let size = bytes.len();
+
+    cx.background_spawn({
+        let path = path.clone();
+        async move {
+            std::fs::write(&path, &bytes)
+                .with_context(|| format!("failed to write MCP resource to {}", path.display()))
+        }
+    })
+    .await?;
+
+    let mime_type = mime_type.unwrap_or_else(|| "unknown".to_string());
+    Ok(format!(
+        "Saved MCP resource to {} (mime: {}, size: {} bytes, uri: {})",
+        path.display(),
+        mime_type,
+        size,
+        uri
+    ))
+}
+
+/// Derives a file name for a downloaded MCP resource from its URI, preferring
+/// the last path segment and falling back to a hash of the URI. Path segments
+/// are sanitized for use as file names.
+fn mcp_resource_file_name(uri: &Url) -> String {
+    uri.path()
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        .map(sanitize_file_name)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            use std::hash::{Hash as _, Hasher as _};
+            uri.as_str().hash(&mut hasher);
+            format!("resource-{:016x}", hasher.finish())
+        })
+}
+
+fn sanitize_file_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    sanitized
+        .trim_start_matches('.')
+        .chars()
+        .take(100)
+        .collect()
+}
+
+/// Picks a path in `downloads_dir` that doesn't already exist, appending a
+/// numeric suffix on collision.
+fn unique_download_path(downloads_dir: &Path, file_name: &str) -> PathBuf {
+    let candidate = downloads_dir.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let (stem, extension) = match file_name.rsplit_once('.') {
+        Some((stem, extension)) if !extension.is_empty() => (stem, extension),
+        _ => (file_name, ""),
+    };
+    for index in 1.. {
+        let name = if extension.is_empty() {
+            format!("{stem}-{index}")
+        } else {
+            format!("{stem}-{index}.{extension}")
+        };
+        let candidate = downloads_dir.join(name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!("the loop above only exits by returning a non-colliding path")
 }
 
 /// Builds the header label shown for an MCP tool call. When the input is an
@@ -652,5 +831,17 @@ mod tests {
         // "no args at all".
         let input = serde_json::json!({ "q": "" });
         assert_eq!(single_string_arg(&input), Some(""));
+    }
+
+    #[test]
+    fn test_unique_download_path_appends_suffix_on_collision() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("report.md"), b"existing").unwrap();
+        let first = unique_download_path(dir.path(), "report.md");
+        assert_eq!(first, dir.path().join("report-1.md"));
+        assert_eq!(
+            unique_download_path(dir.path(), "report.md"),
+            dir.path().join("report-1.md")
+        );
     }
 }

@@ -1313,6 +1313,9 @@ pub struct Thread {
     running_subagents: Vec<WeakEntity<Thread>>,
     inherits_parent_model_settings: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
+    /// Read-only directory where MCP resources are downloaded for the agent to
+    /// process.
+    mcp_downloads_dir: Option<PathBuf>,
     /// Sandbox permissions the user approved "for the rest of the thread".
     /// Shared with each tool call's event stream so repeated requests for
     /// already-granted permissions skip the approval prompt.
@@ -1453,6 +1456,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
+            mcp_downloads_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
         }
     }
@@ -1525,6 +1529,39 @@ impl Thread {
         self.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
         cx.notify();
         Ok(temp_dir)
+    }
+
+    /// Per-thread directory for MCP resource downloads, created on first use.
+    pub(crate) fn mcp_downloads_dir(&mut self, cx: &mut Context<Self>) -> Result<PathBuf> {
+        if let Some(downloads_dir) = &self.mcp_downloads_dir {
+            std::fs::create_dir_all(downloads_dir).with_context(|| {
+                format!(
+                    "failed to recreate MCP downloads directory {}",
+                    downloads_dir.display()
+                )
+            })?;
+            return Ok(downloads_dir.clone());
+        }
+
+        let root = if cfg!(not(any(target_os = "linux", target_os = "windows"))) {
+            std::env::temp_dir()
+        } else {
+            paths::state_dir().join("mcp-downloads")
+        };
+        std::fs::create_dir_all(&root).with_context(|| {
+            format!(
+                "failed to create MCP downloads root directory {}",
+                root.display()
+            )
+        })?;
+        let downloads_dir = tempfile::Builder::new()
+            .prefix("zed-agent-mcp-")
+            .tempdir_in(&root)
+            .context("failed to create MCP downloads directory")?;
+        let downloads_dir = downloads_dir.keep();
+        self.mcp_downloads_dir = Some(downloads_dir.clone());
+        cx.notify();
+        Ok(downloads_dir)
     }
 
     pub fn replay(
@@ -1835,6 +1872,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
+            mcp_downloads_dir: db_thread.mcp_downloads_dir,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
@@ -1934,6 +1972,7 @@ impl Thread {
                 }
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
+            mcp_downloads_dir: self.mcp_downloads_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
         };
 
@@ -5557,6 +5596,20 @@ impl ToolCallEventStream {
         cx.update(|cx| {
             thread.update(cx, |_thread, cx| cx.notify()).ok();
         });
+    }
+
+    /// The owning thread's MCP downloads directory, resolved for a tool call.
+    /// Fails when the tool call isn't tied to a live thread (e.g. in tests),
+    /// or when the directory can't be created.
+    pub(crate) fn mcp_downloads_dir(&self, cx: &AsyncApp) -> Result<PathBuf> {
+        cx.update(|cx| {
+            let thread = self
+                .thread
+                .as_ref()
+                .and_then(|thread| thread.upgrade())
+                .ok_or_else(|| anyhow!("MCP tool call is not tied to a thread"))?;
+            thread.update(cx, |thread, cx| thread.mcp_downloads_dir(cx))
+        })
     }
 
     /// Returns a future that resolves when the user cancels the tool call.
