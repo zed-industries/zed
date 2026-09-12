@@ -310,6 +310,20 @@ pub struct Checkpoint {
 }
 
 impl UserMessage {
+    // Claude Code injects these as UserMessageChunks over ACP (also after restore).
+    pub fn is_task_notification(&self) -> bool {
+        self.chunks
+            .iter()
+            .find_map(|chunk| match chunk {
+                acp::ContentBlock::Text(text) => {
+                    let trimmed = text.text.trim_start();
+                    (!trimmed.is_empty()).then_some(trimmed.starts_with("<task-notification"))
+                }
+                _ => None,
+            })
+            .unwrap_or(false)
+    }
+
     fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = String::new();
         if self

@@ -6530,7 +6530,12 @@ impl ThreadView {
                 .entries()
                 .iter()
                 .take(entry_ix)
-                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)));
+                .rposition(|entry| {
+                    matches!(
+                        entry,
+                        AgentThreadEntry::UserMessage(message) if !message.is_task_notification()
+                    )
+                });
 
             v_flex()
                 .w_full()
@@ -7000,12 +7005,12 @@ impl ThreadView {
             return;
         }
 
-        // Scroll to the provided user message, or fall back to the most recent one.
-        // (Fallback: if no user message exists, scroll to the bottom.)
-        if let Some(ix) = user_message_index.or_else(|| {
-            entries
-                .iter()
-                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+        let search_end = user_message_index.unwrap_or(entries.len() - 1);
+        if let Some(ix) = (0..=search_end).rev().find(|&ix| {
+            matches!(
+                entries.get(ix),
+                Some(AgentThreadEntry::UserMessage(message)) if !message.is_task_notification()
+            )
         }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: ix,
@@ -7112,10 +7117,12 @@ impl ThreadView {
     ) {
         let entries = self.thread.read(cx).entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
-        if let Some(target_ix) = (0..current_ix)
-            .rev()
-            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
-        {
+        if let Some(target_ix) = (0..current_ix).rev().find(|&i| {
+            matches!(
+                entries.get(i),
+                Some(AgentThreadEntry::UserMessage(message)) if !message.is_task_notification()
+            )
+        }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: target_ix,
                 offset_in_item: px(0.),
@@ -7132,9 +7139,12 @@ impl ThreadView {
     ) {
         let entries = self.thread.read(cx).entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
-        if let Some(target_ix) = (current_ix + 1..entries.len())
-            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
-        {
+        if let Some(target_ix) = (current_ix + 1..entries.len()).find(|&i| {
+            matches!(
+                entries.get(i),
+                Some(AgentThreadEntry::UserMessage(message)) if !message.is_task_notification()
+            )
+        }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: target_ix,
                 offset_in_item: px(0.),
