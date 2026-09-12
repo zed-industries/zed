@@ -44,8 +44,11 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
-use objc2::MainThreadMarker;
-use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSWorkspace};
+use objc2::{MainThreadMarker, runtime::AnyObject};
+use objc2_app_kit::{
+    NSModalResponse, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSWorkspace,
+    NSWorkspaceDidWakeNotification, NSWorkspaceWillSleepNotification,
+};
 use objc2_foundation::NSActivityOptions;
 use parking_lot::Mutex;
 use ptr::null_mut;
@@ -493,14 +496,18 @@ impl MacPlatform {
             return;
         }
 
-        // SAFETY: APP_CLASS is registered during startup and returns the shared NSApplication.
-        unsafe {
+        // The shared application must be created through `APP_CLASS`, or `run`
+        // finds a plain `NSApplication` without the `platform` ivar; only the
+        // delegate lookup goes through the typed binding.
+        // SAFETY: APP_CLASS is registered during startup and `sharedApplication`
+        // returns a live NSApplication instance.
+        let delegate = unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
-            let delegate: id = msg_send![app, delegate];
-            if delegate != nil {
-                register_system_power_observers(delegate);
-                self.0.lock().system_power_observers_registered = true;
-            }
+            (*(app as *const objc2_app_kit::NSApplication)).delegate()
+        };
+        if let Some(delegate) = delegate {
+            register_system_power_observers(delegate.as_ref());
+            self.0.lock().system_power_observers_registered = true;
         }
     }
 }
@@ -1329,7 +1336,8 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: process_info
         ];
 
-        let observer = this as *mut Object as id;
+        // SAFETY: `this` is a live Objective-C object; only the pointer's type changes.
+        let observer = &*(this as *mut Object as *const AnyObject);
         let platform = get_mac_platform(this);
         let callback = {
             let mut state = platform.0.lock();
@@ -1347,23 +1355,25 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-unsafe fn register_system_power_observers(observer: id) {
-    // SAFETY: observer is an Objective-C object implementing onSystemSleep: and onSystemWake:.
+/// `observer` must be the app delegate, whose class declares `onSystemSleep:`
+/// and `onSystemWake:` (see `build_classes`).
+fn register_system_power_observers(observer: &AnyObject) {
+    let center = NSWorkspace::sharedWorkspace().notificationCenter();
+    // SAFETY: both selectors are declared on the delegate class with the
+    // notification-handler signature these observers are invoked with.
     unsafe {
-        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let workspace_center: *mut Object = msg_send![workspace, notificationCenter];
-        let sleep_name = ns_string("NSWorkspaceWillSleepNotification");
-        let _: () = msg_send![workspace_center, addObserver: observer
-            selector: sel!(onSystemSleep:)
-            name: sleep_name
-            object: nil
-        ];
-        let wake_name = ns_string("NSWorkspaceDidWakeNotification");
-        let _: () = msg_send![workspace_center, addObserver: observer
-            selector: sel!(onSystemWake:)
-            name: wake_name
-            object: nil
-        ];
+        center.addObserver_selector_name_object(
+            observer,
+            objc2::sel!(onSystemSleep:),
+            Some(NSWorkspaceWillSleepNotification),
+            None,
+        );
+        center.addObserver_selector_name_object(
+            observer,
+            objc2::sel!(onSystemWake:),
+            Some(NSWorkspaceDidWakeNotification),
+            None,
+        );
     }
 }
 
