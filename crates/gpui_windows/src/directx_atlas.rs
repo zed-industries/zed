@@ -2,9 +2,11 @@ use collections::FxHashMap;
 use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
 use windows::Win32::Graphics::{
+    Direct3D::{
+        D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
+    },
     Direct3D11::{
         D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
-        D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
         ID3D11Device, ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
     },
     Dxgi::Common::*,
@@ -99,6 +101,8 @@ impl DirectXAtlas {
         let mut lock = self.0.lock();
         lock.device = device.clone();
         lock.device_context = device_context.clone();
+        lock.max_texture_size =
+            max_texture_dimension_for_feature_level(unsafe { device.GetFeatureLevel() });
         lock.reset_resources();
     }
 }
