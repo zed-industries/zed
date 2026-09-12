@@ -13,7 +13,7 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::Itertools;
-use settings::{DelayMs, DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
+use settings::{DelayMs, DocumentFoldingRanges, DocumentSymbols, IntoGpui, ProjectSymbols, SemanticTokens};
 
 pub use settings::{
     AutoIndentMode, CompletionSettingsContent, ConfiguredLanguageServer,
@@ -110,6 +110,8 @@ pub struct LanguageSettings {
     pub document_folding_ranges: DocumentFoldingRanges,
     /// Controls the source of document symbols used for outlines and breadcrumbs.
     pub document_symbols: DocumentSymbols,
+    /// Controls the source of project symbols used by "Go to Symbol in Project".
+    pub project_symbols: ProjectSymbols,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already
@@ -840,6 +842,7 @@ impl settings::Settings for AllLanguageSettings {
                 semantic_tokens: settings.semantic_tokens.unwrap(),
                 document_folding_ranges: settings.document_folding_ranges.unwrap(),
                 document_symbols: settings.document_symbols.unwrap(),
+                project_symbols: settings.project_symbols.unwrap(),
                 allow_rewrap: settings.allow_rewrap.unwrap(),
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),
                 edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),

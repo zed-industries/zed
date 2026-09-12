@@ -1203,6 +1203,33 @@ impl DocumentSymbols {
     }
 }
 
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectSymbols {
+    /// Use the language server's `workspace/symbol` when available, falling back to the tree-sitter symbol index for languages without a supporting language server (default).
+    #[default]
+    Auto,
+    /// Always use `workspace/symbol`. Languages without a supporting language server have no project symbols (previous behavior).
+    #[serde(alias = "language_server")]
+    LanguageServer,
+    /// Always use the tree-sitter symbol index.
+    #[serde(alias = "tree_sitter")]
+    TreeSitter,
+}
+
 #[with_fallible_options]
 #[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct FocusFollowsMouse {
