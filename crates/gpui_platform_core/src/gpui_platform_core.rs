@@ -12,6 +12,7 @@
 #![warn(missing_docs)]
 
 mod app;
+mod atlas;
 mod cursor;
 mod dispatcher;
 mod display;
@@ -26,6 +27,7 @@ mod platform_scheduler;
 #[cfg(feature = "profiler")]
 pub mod profiler;
 mod prompt;
+mod render;
 mod screen_capture;
 #[cfg(any(test, feature = "test-support"))]
 mod test_dispatcher;
@@ -34,6 +36,7 @@ mod text_system;
 mod window;
 
 pub use app::*;
+pub use atlas::*;
 pub use cursor::*;
 pub use dispatcher::*;
 pub use display::*;
@@ -48,6 +51,7 @@ pub use platform_scheduler::*;
 #[cfg(feature = "profiler")]
 pub use profiler::*;
 pub use prompt::*;
+pub use render::*;
 pub use screen_capture::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_dispatcher::*;

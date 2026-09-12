@@ -24,6 +24,7 @@ async-task.workspace = true
 chrono.workspace = true
 collections.workspace = true
 derive_more.workspace = true
+etagere.workspace = true
 futures.workspace = true
 gpui_shared_string.workspace = true
 gpui_types.workspace = true

@@ -1,14 +1,11 @@
 use crate::{
-    AssetSource, DevicePixels, IsZero, RenderImage, Result, SharedString, Size,
+    AssetSource, DevicePixels, IsZero, RenderImage, RenderSvgParams, Result, Size,
     swap_rgba_pa_to_bgra,
 };
 use image::Frame;
 use resvg::tiny_skia::Pixmap;
 use smallvec::SmallVec;
-use std::{
-    hash::Hash,
-    sync::{Arc, LazyLock, OnceLock},
-};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 #[cfg(target_os = "macos")]
 const EMOJI_FONT_FAMILIES: &[&str] = &["Apple Color Emoji", ".AppleColorEmojiUI"];
@@ -79,13 +76,6 @@ fn select_emoji_font(
 
 /// When rendering SVGs, we render them at twice the size to get a higher-quality result.
 pub const SMOOTH_SVG_SCALE_FACTOR: f32 = 2.;
-
-#[derive(Clone, PartialEq, Hash, Eq)]
-#[expect(missing_docs)]
-pub struct RenderSvgParams {
-    pub path: SharedString,
-    pub size: Size<DevicePixels>,
-}
 
 #[derive(Clone)]
 /// A struct holding everything necessary to render SVGs.

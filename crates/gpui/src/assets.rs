@@ -1,11 +1,10 @@
-use crate::{DevicePixels, Pixels, Result, SharedString, Size, size};
+use crate::{DevicePixels, ImageId, Pixels, Result, SharedString, Size, size};
 use smallvec::SmallVec;
 
 use image::{Delay, Frame};
 use std::{
     borrow::Cow,
     fmt,
-    hash::Hash,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 
@@ -26,17 +25,6 @@ impl AssetSource for () {
     fn list(&self, _path: &str) -> Result<Vec<SharedString>> {
         Ok(vec![])
     }
-}
-
-/// A unique identifier for the image cache
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct ImageId(pub usize);
-
-#[derive(PartialEq, Eq, Hash, Clone)]
-#[expect(missing_docs)]
-pub struct RenderImageParams {
-    pub image_id: ImageId,
-    pub frame_index: usize,
 }
 
 /// A cached and processed image, in BGRA format
