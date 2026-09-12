@@ -1483,27 +1483,29 @@ impl ProjectSearchView {
         subscriptions.push(cx.observe_in(&entity, window, |this, _, window, cx| {
             this.entity_changed(window, cx)
         }));
-        subscriptions.push(cx.subscribe(
-            &excerpts,
-            |this, _, event: &multi_buffer::Event, cx| match event {
-                multi_buffer::Event::BufferRangesUpdated { buffer, .. } => {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    if this.default_folded_buffers.insert(buffer_id)
-                        && EditorSettings::get_global(cx).multibuffer_default_folded
-                    {
-                        this.results_editor.update(cx, |editor, cx| {
-                            editor.fold_buffer(buffer_id, cx);
-                        });
+        subscriptions.push(
+            cx.subscribe(
+                &excerpts,
+                |this, _, event: &multi_buffer::Event, cx| match event {
+                    multi_buffer::Event::BufferRangesUpdated { buffer, .. } => {
+                        let buffer_id = buffer.read(cx).remote_id();
+                        if this.default_folded_buffers.insert(buffer_id)
+                            && EditorSettings::get_global(cx).multibuffer_default_folded
+                        {
+                            this.results_editor.update(cx, |editor, cx| {
+                                editor.fold_buffer(buffer_id, cx);
+                            });
+                        }
                     }
-                }
-                multi_buffer::Event::BuffersRemoved { removed_buffer_ids } => {
-                    for buffer_id in removed_buffer_ids {
-                        this.default_folded_buffers.remove(buffer_id);
+                    multi_buffer::Event::BuffersRemoved { removed_buffer_ids } => {
+                        for buffer_id in removed_buffer_ids {
+                            this.default_folded_buffers.remove(buffer_id);
+                        }
                     }
-                }
-                _ => {}
-            },
-        ));
+                    _ => {}
+                },
+            ),
+        );
 
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
@@ -7022,9 +7024,7 @@ pub mod tests {
         let is_folded = |buffer_id: language::BufferId, cx: &mut TestAppContext| {
             search_view
                 .read_with(cx, |view, cx| {
-                    view.results_editor
-                        .read(cx)
-                        .is_buffer_folded(buffer_id, cx)
+                    view.results_editor.read(cx).is_buffer_folded(buffer_id, cx)
                 })
                 .unwrap()
         };

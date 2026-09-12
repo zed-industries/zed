@@ -645,8 +645,7 @@ impl ProjectDiagnosticsEditor {
                         cx,
                     )
                 });
-                if buffer_newly_added && EditorSettings::get_global(cx).multibuffer_default_folded
-                {
+                if buffer_newly_added && EditorSettings::get_global(cx).multibuffer_default_folded {
                     this.editor.update(cx, |editor, cx| {
                         editor.fold_buffer(buffer_id, cx);
                     });

@@ -186,12 +186,14 @@ impl GitRepository for FakeGitRepository {
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
         self.with_state_async(false, move |state| {
-            Ok(state.commits.get(&commit).cloned().unwrap_or_else(|| {
-                git::repository::CommitDiff {
+            Ok(state
+                .commits
+                .get(&commit)
+                .cloned()
+                .unwrap_or_else(|| git::repository::CommitDiff {
                     files: Vec::new(),
                     is_shallow_boundary: false,
-                }
-            }))
+                }))
         })
     }
 
