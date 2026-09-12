@@ -1322,6 +1322,45 @@ fn test_expand_excerpts(cx: &mut App) {
     );
 }
 
+#[gpui::test]
+fn test_expand_excerpts_with_anchor_for_removed_path(cx: &mut App) {
+    let buffer_a = cx.new(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
+    let buffer_b = cx.new(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a,
+            vec![Point::new(3, 0)..Point::new(3, 3)],
+            1,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_b,
+            vec![Point::new(3, 0)..Point::new(3, 3)],
+            1,
+            cx,
+        );
+    });
+
+    let anchor_in_a = multibuffer
+        .read(cx)
+        .snapshot(cx)
+        .anchor_before(Point::new(1, 0));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(0), cx);
+    });
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "ccc\nddd\neee");
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_excerpts([anchor_in_a], 1, ExpandExcerptDirection::UpAndDown, cx);
+    });
+
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "ccc\nddd\neee");
+}
+
 #[gpui::test(iterations = 100)]
 async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
     let buffer_1 = cx.new(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
