@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use futures::StreamExt as _;
 use futures::channel::mpsc;
-use gpui_platform_core::{
+use gpui_platform::{
     ForegroundExecutor, SharedString, SystemNotification, SystemNotificationResponse, Task,
 };
 

@@ -33,7 +33,6 @@ use git_ui::clone::clone_and_open;
 use gpui::{
     App, AppContext, Application, AsyncApp, QuitMode, Task, TaskExt, UpdateGlobal as _, block_on,
 };
-use gpui_platform;
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -85,7 +84,7 @@ use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn build_application() -> Application {
-    let platform = gpui_platform::current_platform(false);
+    let platform = gpui::current_platform(false);
     if std::env::var("ZED_EXPERIMENTAL_A11Y").as_deref() == Ok("1") {
         Application::with_platform(platform)
     } else {

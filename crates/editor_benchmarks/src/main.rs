@@ -110,7 +110,7 @@ fn main() {
     let has_replacement = args.replace.is_some();
     let single = args.single;
 
-    gpui_platform::headless().run(move |cx| {
+    gpui::headless().run(move |cx| {
         release_channel::init_test(
             semver::Version::new(0, 0, 0),
             release_channel::ReleaseChannel::Dev,

@@ -29,7 +29,7 @@ default-platform = [
 test-support = [
     "leak-detection",
     "collections/test-support",
-    "gpui_platform_core/test-support",
+    "gpui_platform/test-support",
     "gpui_types/test-support",
     "http_client/test-support",
     "gpui_macos?/test-support",
@@ -41,28 +41,28 @@ test-support = [
 bench-support = [
     "profiler",
     "dep:criterion",
-    "gpui_platform_core/bench-support",
+    "gpui_platform/bench-support",
     "gpui_macos?/bench-support",
 ]
 # Preserve the published feature name while consumers migrate to `bench-support`.
 bench = ["bench-support"]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
-wayland = ["gpui_platform_core/wayland", "gpui_linux?/wayland"]
+wayland = ["gpui_platform/wayland", "gpui_linux?/wayland"]
 x11 = [
     "scap?/x11",
-    "gpui_platform_core/x11",
+    "gpui_platform/x11",
     "gpui_linux?/x11",
 ]
 screen-capture = [
     "scap",
-    "gpui_platform_core/screen-capture",
+    "gpui_platform/screen-capture",
     "gpui_linux?/screen-capture",
     "gpui_macos?/screen-capture",
     "gpui_windows?/screen-capture",
 ]
 windows-manifest = ["dep:embed-resource"]
-profiler = ["dep:hdrhistogram", "gpui_platform_core/profiler"]
+profiler = ["dep:hdrhistogram", "gpui_platform/profiler"]
 stacker = ["dep:stacksafe"]
 font-kit = ["dep:font-kit", "gpui_macos?/font-kit"]
 
@@ -85,7 +85,7 @@ etagere.workspace = true
 futures.workspace = true
 futures-concurrency.workspace = true
 gpui_macros.workspace = true
-gpui_platform_core.workspace = true
+gpui_platform.workspace = true
 gpui_shared_string.workspace = true
 gpui_types = { workspace = true, features = ["lyon"] }
 http_client.workspace = true
@@ -172,8 +172,7 @@ windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Powe
 backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
-gpui_platform_core = { workspace = true, features = ["test-support"] }
+gpui_platform = { workspace = true, features = ["test-support"] }
 gpui_util = { workspace = true }
 lyon = { version = "1.0", features = ["extra"] }
 rand.workspace = true

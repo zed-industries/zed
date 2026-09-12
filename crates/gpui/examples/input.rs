@@ -5,6 +5,7 @@ mod example_support;
 
 use std::ops::Range;
 
+use gpui::application;
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke, LayoutId,
@@ -13,7 +14,6 @@ use gpui::{
     WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
     rgb, rgba, size, white, yellow,
 };
-use gpui_platform::application;
 use unicode_segmentation::*;
 
 actions!(
@@ -779,6 +779,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    gpui::web_init();
     run_example();
 }

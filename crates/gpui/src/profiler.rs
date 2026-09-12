@@ -691,11 +691,11 @@ pub fn save_task_timing() {
 /// Installs gpui's task profiler into the platform hook point.
 ///
 /// Platform backends report runnable polling through
-/// [`gpui_platform_core::profiler::update_running_task`] and
-/// [`gpui_platform_core::profiler::save_task_timing`]; this wires those calls to
+/// [`gpui_platform::profiler::update_running_task`] and
+/// [`gpui_platform::profiler::save_task_timing`]; this wires those calls to
 /// the timing machinery in this module. Repeated calls are ignored.
 pub fn install_profiler_hooks() {
-    gpui_platform_core::profiler::set_task_profiler(update_running_task, save_task_timing);
+    gpui_platform::profiler::set_task_profiler(update_running_task, save_task_timing);
 }
 
 #[doc(hidden)]

@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use anyhow::Result;
-use gpui_platform_core::*;
+use gpui_platform::*;
 use gpui_util::ResultExt;
 use windows::Win32::{
     Foundation::*,

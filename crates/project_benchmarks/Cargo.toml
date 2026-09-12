@@ -10,8 +10,7 @@ askpass.workspace = true
 clap.workspace = true
 client.workspace = true
 futures.workspace = true
-gpui.workspace = true
-gpui_platform.workspace = true
+gpui = { workspace = true, features = ["default-platform"] }
 http_client = { workspace = true, features = ["test-support"]}
 language.workspace = true
 node_runtime.workspace = true

@@ -32,7 +32,7 @@ use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 /// let mut cx = HeadlessAppContext::with_platform(
 ///     text_system,
 ///     Arc::new(Assets),
-///     || gpui_platform::current_headless_renderer(),
+///     || gpui::current_headless_renderer(),
 /// );
 /// ```
 pub struct HeadlessAppContext {

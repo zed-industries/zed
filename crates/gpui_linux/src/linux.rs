@@ -27,7 +27,7 @@ pub(crate) use x11::*;
 use std::rc::Rc;
 
 /// Returns the default platform implementation for the current OS.
-pub fn current_platform(headless: bool) -> Rc<dyn gpui_platform_core::Platform> {
+pub fn current_platform(headless: bool) -> Rc<dyn gpui_platform::Platform> {
     #[cfg(feature = "x11")]
     use anyhow::Context as _;
 
@@ -37,7 +37,7 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui_platform_core::Platform> 
         });
     }
 
-    match gpui_platform_core::guess_compositor() {
+    match gpui_platform::guess_compositor() {
         #[cfg(feature = "wayland")]
         "Wayland" => Rc::new(LinuxPlatform {
             inner: WaylandClient::new(),
@@ -54,7 +54,7 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui_platform_core::Platform> 
             inner: HeadlessClient::new(),
         }),
         _ => unreachable!(
-            r#"At least one of the "wayland" or "x11" features must be enabled on gpui_linux or gpui_platform."#
+            r#"At least one of the "wayland" or "x11" features must be enabled on gpui_linux or gpui."#
         ),
     }
 }

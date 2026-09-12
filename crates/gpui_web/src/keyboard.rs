@@ -1,4 +1,4 @@
-use gpui_platform_core::PlatformKeyboardLayout;
+use gpui_platform::PlatformKeyboardLayout;
 
 pub struct WebKeyboardLayout;
 

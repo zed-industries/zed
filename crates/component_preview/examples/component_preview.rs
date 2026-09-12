@@ -30,7 +30,7 @@ fn main() {
         .filter_level(log::LevelFilter::Warn)
         .init();
 
-    gpui_platform::application().with_assets(Assets).run(|cx| {
+    gpui::application().with_assets(Assets).run(|cx| {
         component::init();
 
         cx.on_action(quit);

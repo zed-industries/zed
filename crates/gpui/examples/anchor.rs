@@ -3,12 +3,12 @@
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
+use gpui::application;
 use gpui::{
     Anchor, AnchoredPositionMode, App, Axis, Bounds, Context, Half as _, InteractiveElement,
     ParentElement, Pixels, Point, Render, SharedString, Size, Window, WindowBounds, WindowOptions,
     anchored, deferred, div, point, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
 
 struct AnchorDemo {
     hovered_button: Option<usize>,
@@ -202,6 +202,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    gpui::web_init();
     run_example();
 }

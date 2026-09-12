@@ -8,7 +8,7 @@ use crate::viewport::WebViewport;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
-use gpui_platform_core::{
+use gpui_platform::{
     Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs, Modifiers,
     MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size,

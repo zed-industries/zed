@@ -6,7 +6,7 @@ edition.workspace = true
 
 [dependencies]
 fs.workspace = true
-gpui_platform.workspace = true
+gpui = { workspace = true, features = ["default-platform"] }
 settings.workspace = true
 worktree.workspace = true
 

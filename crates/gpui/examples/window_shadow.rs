@@ -3,13 +3,13 @@
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
+use gpui::application;
 use gpui::{
     App, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton, Pixels,
     Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
     WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black,
     white,
 };
-use gpui_platform::application;
 
 struct WindowShadow {}
 
@@ -247,6 +247,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    gpui::web_init();
     run_example();
 }

@@ -238,9 +238,9 @@ actions!(image, [Quit]);
 
 fn run_example() {
     #[cfg(not(target_family = "wasm"))]
-    let app = gpui_platform::application();
+    let app = gpui::application();
     #[cfg(target_family = "wasm")]
-    let app = gpui_platform::single_threaded_web();
+    let app = gpui::single_threaded_web();
 
     app.run(move |cx: &mut App| {
         if !example_support::load_fonts(cx) {
@@ -294,6 +294,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    gpui::web_init();
     run_example();
 }

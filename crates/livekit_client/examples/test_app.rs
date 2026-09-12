@@ -23,7 +23,7 @@ actions!(livekit_client, [Quit]);
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui_platform::application().run(|cx| {
+    gpui::application().run(|cx| {
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 

@@ -12,15 +12,15 @@ workspace = true
 path = "src/gpui_macos.rs"
 
 [features]
-default = ["gpui_platform_core/default"]
-bench-support = ["gpui_platform_core/bench-support", "gpui_apple/bench-support"]
-test-support = ["gpui_platform_core/test-support", "gpui_apple/test-support"]
+default = ["gpui_platform/default"]
+bench-support = ["gpui_platform/bench-support", "gpui_apple/bench-support"]
+test-support = ["gpui_platform/test-support", "gpui_apple/test-support"]
 runtime_shaders = ["gpui_apple/runtime_shaders"]
 font-kit = ["dep:font-kit"]
-screen-capture = ["gpui_platform_core/screen-capture"]
+screen-capture = ["gpui_platform/screen-capture"]
 
 [dependencies]
-gpui_platform_core.workspace = true
+gpui_platform.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 accesskit.workspace = true

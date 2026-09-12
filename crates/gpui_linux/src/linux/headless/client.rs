@@ -6,7 +6,7 @@ use gpui_util::ResultExt;
 
 use crate::linux::headless::window::{HeadlessDisplay, HeadlessWindow};
 use crate::linux::{LinuxClient, LinuxCommon, LinuxKeyboardLayout};
-use gpui_platform_core::{
+use gpui_platform::{
     CursorStyle, DisplayId, PlatformDisplay, PlatformKeyboardLayout, PlatformWindow, WindowId,
     WindowParams,
 };
@@ -80,7 +80,7 @@ impl LinuxClient for HeadlessClient {
     fn screen_capture_sources(
         &self,
     ) -> futures::channel::oneshot::Receiver<
-        anyhow::Result<Vec<Rc<dyn gpui_platform_core::ScreenCaptureSource>>>,
+        anyhow::Result<Vec<Rc<dyn gpui_platform::ScreenCaptureSource>>>,
     > {
         let (tx, rx) = futures::channel::oneshot::channel();
         tx.send(Err(anyhow::anyhow!(
@@ -119,15 +119,15 @@ impl LinuxClient for HeadlessClient {
 
     fn reveal_path(&self, _path: std::path::PathBuf) {}
 
-    fn write_to_primary(&self, _item: gpui_platform_core::ClipboardItem) {}
+    fn write_to_primary(&self, _item: gpui_platform::ClipboardItem) {}
 
-    fn write_to_clipboard(&self, _item: gpui_platform_core::ClipboardItem) {}
+    fn write_to_clipboard(&self, _item: gpui_platform::ClipboardItem) {}
 
-    fn read_from_primary(&self) -> Option<gpui_platform_core::ClipboardItem> {
+    fn read_from_primary(&self) -> Option<gpui_platform::ClipboardItem> {
         None
     }
 
-    fn read_from_clipboard(&self) -> Option<gpui_platform_core::ClipboardItem> {
+    fn read_from_clipboard(&self) -> Option<gpui_platform::ClipboardItem> {
         None
     }
 

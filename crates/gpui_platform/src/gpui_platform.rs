@@ -1,207 +1,108 @@
-//! Convenience crate that re-exports GPUI's platform traits and the
-//! `current_platform` constructor so consumers don't need `#[cfg]` gating.
+//! Abstract platform traits shared by `gpui` and its platform backends.
+//!
+//! This crate is the contract between the GPUI facade and the concrete
+//! platform implementations (`gpui_macos`, `gpui_linux`, `gpui_windows`,
+//! `gpui_web`). It depends only on `gpui_types` and other low-level leaf
+//! crates, never on `gpui`, so a backend can implement these traits without
+//! depending on the entire framework.
+//!
+//! The `gpui` crate re-exports everything here, so consumers keep using
+//! `gpui::PlatformKeyboardMapper` and friends.
 
-pub use gpui::Platform;
+#![warn(missing_docs)]
 
-use std::rc::Rc;
+mod app;
+mod atlas;
+mod bounds_tree;
+mod clipboard;
+mod cursor;
+mod dispatcher;
+mod display;
+mod executor;
+mod executor_runtime;
+mod font_fallbacks;
+mod font_features;
+mod gestures;
+mod gpu;
+mod input;
+mod input_handler;
+mod keyboard;
+#[cfg(all(target_os = "linux", feature = "wayland"))]
+pub mod layer_shell;
+mod menu;
+mod notification;
+mod platform;
+mod platform_scheduler;
+mod platform_window;
+pub mod popup;
+pub mod profiler;
+mod prompt;
+#[cfg(any(
+    test,
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    feature = "test-support",
+    feature = "bench-support"
+))]
+#[expect(missing_docs)]
+pub mod queue;
+mod render;
+#[cfg(all(
+    feature = "screen-capture",
+    any(target_os = "windows", target_os = "linux", target_os = "freebsd",)
+))]
+pub mod scap_screen_capture;
+mod scene;
+mod screen_capture;
+#[cfg(any(test, feature = "test-support"))]
+mod test_dispatcher;
+mod text_input;
+mod text_system;
+mod window;
+mod window_id;
 
-/// Returns a background executor for the current platform.
-pub fn background_executor() -> gpui::BackgroundExecutor {
-    current_platform(true).background_executor()
-}
-
-pub fn application() -> gpui::Application {
-    #[cfg(target_family = "wasm")]
-    {
-        application_with_web_backend(gpui_web::WebBackendPreference::Auto)
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    gpui::Application::with_platform(current_platform(false))
-}
-
-pub fn headless() -> gpui::Application {
-    gpui::Application::with_platform(current_platform(true))
-}
-
-#[cfg(target_family = "wasm")]
-pub use gpui_web::WebBackendPreference;
-
-#[cfg(target_family = "wasm")]
-pub fn application_with_web_backend(backend_preference: WebBackendPreference) -> gpui::Application {
-    let platform = Rc::new(gpui_web::WebPlatform::new_with_backend(
-        true,
-        backend_preference,
-    ));
-    let http_client = std::sync::Arc::new(platform.fetch_http_client());
-    gpui::Application::with_platform(platform).with_http_client(http_client)
-}
-
-/// Unlike `application`, this function returns a single-threaded web application.
-#[cfg(target_family = "wasm")]
-pub fn single_threaded_web() -> gpui::Application {
-    let platform = Rc::new(gpui_web::WebPlatform::new(false));
-    let http_client = std::sync::Arc::new(platform.fetch_http_client());
-    gpui::Application::with_platform(platform).with_http_client(http_client)
-}
-
-/// Initializes panic hooks and logging for the web platform.
-/// Call this before running the application in a wasm_bindgen entrypoint.
-#[cfg(target_family = "wasm")]
-pub fn web_init() {
-    console_error_panic_hook::set_once();
-    gpui_web::init_logging();
-}
-
-/// Returns the default [`Platform`] for the current OS.
-pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
-    #[cfg(target_os = "macos")]
-    {
-        Rc::new(gpui_macos::MacPlatform::new(headless))
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        Rc::new(
-            gpui_windows::WindowsPlatform::new(headless)
-                .expect("failed to initialize Windows platform"),
-        )
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    {
-        gpui_linux::current_platform(headless)
-    }
-
-    #[cfg(target_family = "wasm")]
-    {
-        let _ = headless;
-        Rc::new(gpui_web::WebPlatform::new(true))
-    }
-}
-
-/// Returns a new [`HeadlessRenderer`] for the current platform, if available.
-#[cfg(any(feature = "bench-support", feature = "test-support"))]
-pub fn current_headless_renderer() -> Option<Box<dyn gpui::PlatformHeadlessRenderer>> {
-    #[cfg(target_os = "macos")]
-    {
-        Some(Box::new(
-            gpui_macos::metal_renderer::MetalHeadlessRenderer::new(),
-        ))
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod tests {
-    use super::*;
-    use gpui::{AppContext, Empty, VisualTestAppContext};
-    use std::cell::RefCell;
-    use std::time::Duration;
-
-    // Note: All VisualTestAppContext tests are ignored by default because they require
-    // the macOS main thread. Standard Rust tests run on worker threads, which causes
-    // SIGABRT when interacting with macOS AppKit/Cocoa APIs.
-    //
-    // To run these tests, use:
-    // cargo test -p gpui visual_test_context -- --ignored --test-threads=1
-
-    #[test]
-    #[ignore] // Requires macOS main thread
-    fn test_foreground_tasks_run_with_run_until_parked() {
-        let mut cx = VisualTestAppContext::new(current_platform(false));
-
-        let task_ran = Rc::new(RefCell::new(false));
-
-        // Spawn a foreground task via the App's spawn method
-        // This should use our TestDispatcher, not the MacDispatcher
-        {
-            let task_ran = task_ran.clone();
-            cx.update(|cx| {
-                cx.spawn(async move |_| {
-                    *task_ran.borrow_mut() = true;
-                })
-                .detach();
-            });
-        }
-
-        // The task should not have run yet
-        assert!(!*task_ran.borrow());
-
-        // Run until parked should execute the foreground task
-        cx.run_until_parked();
-
-        // Now the task should have run
-        assert!(*task_ran.borrow());
-    }
-
-    #[test]
-    #[ignore] // Requires macOS main thread
-    fn test_advance_clock_triggers_delayed_tasks() {
-        let mut cx = VisualTestAppContext::new(current_platform(false));
-
-        let task_ran = Rc::new(RefCell::new(false));
-
-        // Spawn a task that waits for a timer
-        {
-            let task_ran = task_ran.clone();
-            let executor = cx.background_executor.clone();
-            cx.update(|cx| {
-                cx.spawn(async move |_| {
-                    executor.timer(Duration::from_millis(500)).await;
-                    *task_ran.borrow_mut() = true;
-                })
-                .detach();
-            });
-        }
-
-        // Run until parked - the task should be waiting on the timer
-        cx.run_until_parked();
-        assert!(!*task_ran.borrow());
-
-        // Advance clock past the timer duration
-        cx.advance_clock(Duration::from_millis(600));
-
-        // Now the task should have completed
-        assert!(*task_ran.borrow());
-    }
-
-    #[test]
-    #[ignore] // Requires macOS main thread - window creation fails on test threads
-    fn test_window_spawn_uses_test_dispatcher() {
-        let mut cx = VisualTestAppContext::new(current_platform(false));
-
-        let task_ran = Rc::new(RefCell::new(false));
-
-        let window = cx
-            .open_offscreen_window_default(|_, cx| cx.new(|_| Empty))
-            .expect("Failed to open window");
-
-        // Spawn a task via window.spawn - this is the critical test case
-        // for tooltip behavior, as tooltips use window.spawn for delayed show
-        {
-            let task_ran = task_ran.clone();
-            cx.update_window(window.into(), |_, window, cx| {
-                window
-                    .spawn(cx, async move |_| {
-                        *task_ran.borrow_mut() = true;
-                    })
-                    .detach();
-            })
-            .ok();
-        }
-
-        // The task should not have run yet
-        assert!(!*task_ran.borrow());
-
-        // Run until parked should execute the foreground task spawned via window
-        cx.run_until_parked();
-
-        // Now the task should have run
-        assert!(*task_ran.borrow());
-    }
-}
+pub use app::*;
+pub use atlas::*;
+pub use clipboard::*;
+pub use cursor::*;
+pub use dispatcher::*;
+pub use display::*;
+pub use executor::*;
+pub use executor_runtime::*;
+pub use font_fallbacks::*;
+pub use font_features::*;
+pub use gestures::*;
+pub use gpu::*;
+pub use gpui_shared_string::*;
+pub use gpui_types::*;
+pub use input::*;
+pub use input_handler::*;
+pub use keyboard::*;
+pub use menu::*;
+pub use notification::*;
+pub use platform::*;
+pub use platform_scheduler::*;
+pub use platform_window::*;
+pub use profiler::{
+    ForegroundRunnableCounter, foreground_runnable_counter, foreground_runnable_finished,
+};
+pub use prompt::*;
+#[cfg(any(
+    test,
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    feature = "test-support",
+    feature = "bench-support"
+))]
+pub use queue::*;
+pub use render::*;
+pub use scene::*;
+pub use screen_capture::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use test_dispatcher::*;
+pub use text_input::*;
+pub use text_system::*;
+pub use window::*;
+pub use window_id::*;

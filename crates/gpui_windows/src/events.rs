@@ -18,7 +18,7 @@ use windows::{
 };
 
 use crate::*;
-use gpui_platform_core::*;
+use gpui_platform::*;
 
 pub(crate) const WM_GPUI_CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const WM_GPUI_CLOSE_ONE_WINDOW: u32 = WM_USER + 2;

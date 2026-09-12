@@ -3,12 +3,12 @@
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
+use gpui::application;
 use gpui::{
     Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, PathStyle, Pixels,
     Point, Render, StrokeOptions, Window, WindowOptions, canvas, div, linear_color_stop,
     linear_gradient, point, prelude::*, px, quad, rgb, size,
 };
-use gpui_platform::application;
 
 struct PaintingViewer {
     default_lines: Vec<(Path<Pixels>, Background)>,
@@ -473,6 +473,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    gpui::web_init();
     run_example();
 }

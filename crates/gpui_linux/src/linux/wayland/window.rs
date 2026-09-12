@@ -32,7 +32,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
-use gpui_platform_core::{
+use gpui_platform::{
     Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload, GpuSpecs, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
@@ -47,11 +47,8 @@ use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 #[derive(Default)]
 pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
-    input: Option<
-        Box<
-            dyn FnMut(gpui_platform_core::PlatformInput) -> gpui_platform_core::DispatchEventResult,
-        >,
-    >,
+    input:
+        Option<Box<dyn FnMut(gpui_platform::PlatformInput) -> gpui_platform::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
@@ -1865,7 +1862,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_input(
         &self,
-        callback: Box<dyn FnMut(PlatformInput) -> gpui_platform_core::DispatchEventResult>,
+        callback: Box<dyn FnMut(PlatformInput) -> gpui_platform::DispatchEventResult>,
     ) {
         self.0.callbacks.borrow_mut().input = Some(callback);
     }
@@ -1988,7 +1985,7 @@ impl PlatformWindow for WaylandWindow {
         state.client.start_external_drag(&state.surface, payload)
     }
 
-    fn start_window_resize(&self, edge: gpui_platform_core::ResizeEdge) {
+    fn start_window_resize(&self, edge: gpui_platform::ResizeEdge) {
         let state = self.borrow();
         if let Some(toplevel) = state.surface_state.toplevel() {
             toplevel.resize(
@@ -2120,7 +2117,7 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn a11y_init(&self, callbacks: gpui_platform_core::A11yCallbacks) {
+    fn a11y_init(&self, callbacks: gpui_platform::A11yCallbacks) {
         let activation_handler = TrivialActivationHandler {
             callback: callbacks.activation,
         };

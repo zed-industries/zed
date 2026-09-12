@@ -3,7 +3,7 @@ use std::ffi::{CStr, c_void};
 
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
-use gpui_platform_core::{
+use gpui_platform::{
     KeybindingKeystroke, Keystroke, PlatformKeyboardLayout, PlatformKeyboardMapper,
 };
 

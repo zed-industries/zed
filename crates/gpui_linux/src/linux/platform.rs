@@ -31,7 +31,7 @@ use gpui_util::{ResultExt as _, new_std_command};
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
-use gpui_platform_core::{
+use gpui_platform::{
     ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
     MenuCommandId, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem, PlatformTextSystem, PlatformWindow,
@@ -73,7 +73,7 @@ pub(crate) trait LinuxClient {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui_platform_core::ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui_platform::ScreenCaptureSource>>>> {
         let (sources_tx, sources_rx) = oneshot::channel();
         sources_tx
             .send(Err(anyhow::anyhow!(
@@ -156,7 +156,7 @@ impl LinuxCommon {
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        let text_system = Arc::new(gpui_platform_core::NoopTextSystem::new());
+        let text_system = Arc::new(gpui_platform::NoopTextSystem::new());
 
         let callbacks = PlatformHandlers::default();
 
@@ -256,7 +256,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     }
 
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
-        Rc::new(gpui_platform_core::DummyKeyboardMapper)
+        Rc::new(gpui_platform::DummyKeyboardMapper)
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
@@ -402,7 +402,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui_platform_core::ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui_platform::ScreenCaptureSource>>>> {
         self.inner.screen_capture_sources()
     }
 
@@ -460,7 +460,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                         options
                             .prompt
                             .as_ref()
-                            .map(gpui_platform_core::SharedString::as_str),
+                            .map(gpui_platform::SharedString::as_str),
                     )
                     .multiple(options.multiple)
                     .directory(options.directories)
@@ -609,7 +609,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
             .with_common(|common| common.app_name = Some(name.to_string()));
     }
 
-    fn show_system_notification(&self, notification: gpui_platform_core::SystemNotification) {
+    fn show_system_notification(&self, notification: gpui_platform::SystemNotification) {
         self.inner.with_common(|common| {
             common
                 .system_notifications
@@ -624,7 +624,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn on_system_notification_response(
         &self,
-        callback: Box<dyn FnMut(gpui_platform_core::SystemNotificationResponse)>,
+        callback: Box<dyn FnMut(gpui_platform::SystemNotificationResponse)>,
     ) {
         self.inner.with_common(|common| {
             let executor = common.foreground_executor.clone();
@@ -1048,9 +1048,9 @@ fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn keystroke_from_xkb(
     state: &State,
-    mut modifiers: gpui_platform_core::Modifiers,
+    mut modifiers: gpui_platform::Modifiers,
     keycode: Keycode,
-) -> gpui_platform_core::Keystroke {
+) -> gpui_platform::Keystroke {
     let key_utf32 = state.key_get_utf32(keycode);
     let key_utf8 = state.key_get_utf8(keycode);
     let key_sym = state.key_get_one_sym(keycode);
@@ -1163,7 +1163,7 @@ pub(super) fn keystroke_from_xkb(
     let key_char =
         (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
-    gpui_platform_core::Keystroke {
+    gpui_platform::Keystroke {
         modifiers,
         key,
         key_char,
@@ -1230,12 +1230,12 @@ pub fn keystroke_underlying_dead_key(keysym: Keysym) -> Option<String> {
     }
 }
 #[cfg(any(feature = "wayland", feature = "x11"))]
-pub(super) fn modifiers_from_xkb(keymap_state: &State) -> gpui_platform_core::Modifiers {
+pub(super) fn modifiers_from_xkb(keymap_state: &State) -> gpui_platform::Modifiers {
     let shift = keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
     let alt = keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
     let control = keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
     let platform = keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-    gpui_platform_core::Modifiers {
+    gpui_platform::Modifiers {
         shift,
         alt,
         control,
@@ -1245,9 +1245,9 @@ pub(super) fn modifiers_from_xkb(keymap_state: &State) -> gpui_platform_core::Mo
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-pub(super) fn capslock_from_xkb(keymap_state: &State) -> gpui_platform_core::Capslock {
+pub(super) fn capslock_from_xkb(keymap_state: &State) -> gpui_platform::Capslock {
     let on = keymap_state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
-    gpui_platform_core::Capslock { on }
+    gpui_platform::Capslock { on }
 }
 
 /// Resolve a Linux `dev_t` to PCI vendor/device IDs via sysfs, returning a
@@ -1343,7 +1343,7 @@ async fn await_idle_sleep_prevention(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_platform_core::{Point, px};
+    use gpui_platform::{Point, px};
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     #[test]

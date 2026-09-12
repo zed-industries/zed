@@ -206,7 +206,7 @@ impl ShapedLine {
 
 /// Extension methods for painting a bare [`LineLayout`].
 ///
-/// These live in `gpui` rather than `gpui_platform_core` because they need
+/// These live in `gpui` rather than `gpui_platform` because they need
 /// [`Window`] and [`App`].
 pub trait LineLayoutExt {
     /// Paint this layout to the window, using the given decoration runs to color

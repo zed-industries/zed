@@ -485,7 +485,7 @@ pub(crate) fn decode_static_image_from_decoder(
 /// Operations on [`Image`] that integrate it with GPUI's rendering and asset
 /// systems.
 ///
-/// The data-only parts of [`Image`] live in `gpui_platform_core`; this trait adds
+/// The data-only parts of [`Image`] live in `gpui_platform`; this trait adds
 /// the operations that require [`App`], a [`Window`], or the render pipeline.
 pub trait ImageExt: Sized {
     /// Use the GPUI `use_asset` API to make this image renderable

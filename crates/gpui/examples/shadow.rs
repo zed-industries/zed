@@ -3,11 +3,11 @@
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
+use gpui::application;
 use gpui::{
     App, Bounds, BoxShadow, Context, Div, SharedString, Window, WindowBounds, WindowOptions, div,
     hsla, prelude::*, px, relative, rgb, size,
 };
-use gpui_platform::application;
 
 struct Shadow {}
 
@@ -617,6 +617,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    gpui::web_init();
     run_example();
 }

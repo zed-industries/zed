@@ -1,8 +1,8 @@
 [package]
 name = "gpui_platform"
 version = "0.1.0"
-edition.workspace = true
 publish.workspace = true
+edition.workspace = true
 license = "Apache-2.0"
 
 [lints]
@@ -10,30 +10,54 @@ workspace = true
 
 [lib]
 path = "src/gpui_platform.rs"
+doctest = false
 
 [features]
 default = []
-bench-support = ["gpui/bench-support", "gpui_macos/bench-support"]
-font-kit = ["gpui_macos/font-kit"]
-test-support = ["gpui/test-support", "gpui_macos/test-support", "gpui_windows/test-support"]
-screen-capture = ["gpui/screen-capture", "gpui_macos/screen-capture", "gpui_windows/screen-capture", "gpui_linux/screen-capture"]
-runtime_shaders = ["gpui_macos/runtime_shaders"]
-wayland = ["gpui_linux/wayland"]
-x11 = ["gpui_linux/x11"]
+test-support = []
+bench-support = ["test-support"]
+profiler = []
+wayland = []
+x11 = ["scap?/x11"]
+screen-capture = ["dep:scap"]
 
 [dependencies]
-gpui.workspace = true
-
-[target.'cfg(target_os = "macos")'.dependencies]
-gpui_macos.workspace = true
+accesskit.workspace = true
+anyhow.workspace = true
+async-task.workspace = true
+chrono.workspace = true
+collections.workspace = true
+derive_more.workspace = true
+etagere.workspace = true
+bitflags.workspace = true
+futures.workspace = true
+gpui_shared_string.workspace = true
+gpui_types.workspace = true
+gpui_util.workspace = true
+image.workspace = true
+log.workspace = true
+num_cpus = "1.13"
+parking = "2.0.0"
+parking_lot.workspace = true
+rand.workspace = true
+raw-window-handle.workspace = true
+scheduler.workspace = true
+schemars.workspace = true
+seahash = "4.1"
+serde.workspace = true
+serde_json.workspace = true
+slotmap.workspace = true
+smallvec.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+waker-fn = "1.2.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-gpui_windows.workspace = true
-gpui = { workspace = true, features = ["windows-manifest"] }
+windows = { workspace = true, features = ["Win32_Foundation"] }
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-gpui_linux.workspace = true
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
+scap = { workspace = true, optional = true }
 
-[target.'cfg(target_family = "wasm")'.dependencies]
-gpui_web.workspace = true
-console_error_panic_hook.workspace = true
+[target.'cfg(target_os = "macos")'.dependencies]
+core-video.workspace = true

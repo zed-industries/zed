@@ -7,11 +7,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use gpui::application;
 use gpui::{
     App, AssetSource, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div,
     prelude::*, px, rgb, size, svg,
 };
-use gpui_platform::application;
 
 struct Assets {
     base: PathBuf,
@@ -103,6 +103,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    gpui::web_init();
     run_example();
 }

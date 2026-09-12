@@ -25,7 +25,7 @@ use scheduler::Instant;
 
 use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming};
 use crate::WindowId;
-use gpui_platform_core::ForegroundRunnableCounter;
+use gpui_platform::ForegroundRunnableCounter;
 
 /// Task polls shorter than this are folded into a [`PollSummary`] instead of
 /// being recorded individually. This keeps the stream bounded by the number
@@ -505,7 +505,7 @@ thread_local! {
 /// on the main thread; every other thread's recording calls are no-ops.
 /// Idempotent so that multiple `App`s on one thread (tests) share one journal.
 pub(crate) fn install_foreground_journal() -> ForegroundJournal {
-    let foreground_runnables = gpui_platform_core::foreground_runnable_counter();
+    let foreground_runnables = gpui_platform::foreground_runnable_counter();
     FOREGROUND_JOURNAL.with(|journal| {
         let mut journal = journal.borrow_mut();
         if let Some(journal) = journal.as_ref() {
@@ -551,7 +551,7 @@ pub(crate) fn install_test_foreground_journal(
     capacity: usize,
     pending_capacity: usize,
 ) -> (ForegroundJournal, TestForegroundJournalGuard) {
-    let foreground_runnables = gpui_platform_core::foreground_runnable_counter();
+    let foreground_runnables = gpui_platform::foreground_runnable_counter();
     let (handle, publisher) = ForegroundJournal::new(capacity, pending_capacity);
     let previous = FOREGROUND_JOURNAL.with(|journal| {
         journal.borrow_mut().replace(ForegroundJournalWriter::new(
@@ -605,7 +605,7 @@ pub(crate) fn end_foreground_turn() {
 }
 
 pub(crate) fn record_task_poll(timing: TaskTiming) {
-    gpui_platform_core::foreground_runnable_finished();
+    gpui_platform::foreground_runnable_finished();
     with_journal(|journal| {
         if timing.poll_duration() >= TASK_POLL_FLOOR {
             journal.record_event(ForegroundEvent::TaskPoll(timing));

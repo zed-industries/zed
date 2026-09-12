@@ -23,7 +23,7 @@ use cocoa::{
     },
 };
 use dispatch2::DispatchQueue;
-use gpui_platform_core::{
+use gpui_platform::{
     BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload, ExternalPaths,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
@@ -669,8 +669,7 @@ struct MacWindowState {
     frame_source: Option<WindowFrameSource>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
-    event_callback:
-        Option<Box<dyn FnMut(PlatformInput) -> gpui_platform_core::DispatchEventResult>>,
+    event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui_platform::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
@@ -907,10 +906,7 @@ impl MacWindowState {
         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
         let screen = unsafe { NSWindow::screen(self.native_window) };
         if screen == nil {
-            return Bounds::new(
-                point(px(0.), px(0.)),
-                gpui_platform_core::DEFAULT_WINDOW_SIZE,
-            );
+            return Bounds::new(point(px(0.), px(0.)), gpui_platform::DEFAULT_WINDOW_SIZE);
         }
         let screen_frame = unsafe { NSScreen::frame(screen) };
 
@@ -2003,7 +1999,7 @@ impl PlatformWindow for MacWindow {
 
     fn on_input(
         &self,
-        callback: Box<dyn FnMut(PlatformInput) -> gpui_platform_core::DispatchEventResult>,
+        callback: Box<dyn FnMut(PlatformInput) -> gpui_platform::DispatchEventResult>,
     ) {
         self.0.as_ref().lock().event_callback = Some(callback);
     }
@@ -2093,7 +2089,7 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().toggle_tab_bar_callback = Some(callback);
     }
 
-    fn draw(&self, scene: &gpui_platform_core::Scene) {
+    fn draw(&self, scene: &gpui_platform::Scene) {
         let mut this = self.0.lock();
         this.renderer.draw(scene);
     }
@@ -2102,7 +2098,7 @@ impl PlatformWindow for MacWindow {
         self.0.lock().renderer.sprite_atlas().clone()
     }
 
-    fn gpu_specs(&self) -> Option<gpui_platform_core::GpuSpecs> {
+    fn gpu_specs(&self) -> Option<gpui_platform::GpuSpecs> {
         None
     }
 
@@ -2331,12 +2327,12 @@ impl PlatformWindow for MacWindow {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn render_to_image(&self, scene: &gpui_platform_core::Scene) -> Result<RgbaImage> {
+    fn render_to_image(&self, scene: &gpui_platform::Scene) -> Result<RgbaImage> {
         let mut this = self.0.lock();
         this.renderer.render_to_image(scene)
     }
 
-    fn a11y_init(&self, callbacks: gpui_platform_core::A11yCallbacks) {
+    fn a11y_init(&self, callbacks: gpui_platform::A11yCallbacks) {
         let mut lock = self.0.lock();
 
         let activation_handler = A11yActivationHandler {

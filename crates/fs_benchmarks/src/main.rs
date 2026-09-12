@@ -1,6 +1,6 @@
 use fs::Fs;
 use gpui::AppContext;
-use gpui_platform::headless;
+use gpui::headless;
 
 fn main() {
     let Some(path_to_read) = std::env::args().nth(1) else {

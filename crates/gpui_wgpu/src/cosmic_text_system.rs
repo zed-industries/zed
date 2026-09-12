@@ -4,7 +4,7 @@ use cosmic_text::{
     Attrs, AttrsList, Ellipsize, Family, Font as CosmicTextFont,
     FontFeatures as CosmicFontFeatures, FontSystem, ShapeBuffer, ShapeLine, Stretch, Style, Weight,
 };
-use gpui_platform_core::{
+use gpui_platform::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, GlyphId,
     IsZero as _, LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
     SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point,
@@ -324,7 +324,7 @@ impl CosmicTextSystemState {
             _ => Arc::from(Vec::new()),
         };
 
-        let name = gpui_platform_core::font_name_with_fallbacks(name, &self.system_font_fallback);
+        let name = gpui_platform::font_name_with_fallbacks(name, &self.system_font_fallback);
 
         let families = self
             .font_system
@@ -838,7 +838,7 @@ fn find_best_match(
     let target_weight = font.weight.0;
     let target_italic = matches!(
         font.style,
-        gpui_platform_core::FontStyle::Italic | gpui_platform_core::FontStyle::Oblique
+        gpui_platform::FontStyle::Italic | gpui_platform::FontStyle::Oblique
     );
 
     let mut best_index = 0;
@@ -995,12 +995,12 @@ fn cosmic_font_features(features: &FontFeatures) -> Result<CosmicFontFeatures> {
 }
 
 #[cfg(feature = "font-kit")]
-fn font_into_properties(font: &gpui_platform_core::Font) -> font_kit::properties::Properties {
+fn font_into_properties(font: &gpui_platform::Font) -> font_kit::properties::Properties {
     font_kit::properties::Properties {
         style: match font.style {
-            gpui_platform_core::FontStyle::Normal => font_kit::properties::Style::Normal,
-            gpui_platform_core::FontStyle::Italic => font_kit::properties::Style::Italic,
-            gpui_platform_core::FontStyle::Oblique => font_kit::properties::Style::Oblique,
+            gpui_platform::FontStyle::Normal => font_kit::properties::Style::Normal,
+            gpui_platform::FontStyle::Italic => font_kit::properties::Style::Italic,
+            gpui_platform::FontStyle::Oblique => font_kit::properties::Style::Oblique,
         },
         weight: font_kit::properties::Weight(font.weight.0),
         stretch: Default::default(),
@@ -1081,7 +1081,7 @@ mod tests {
             len: text.len(),
             font_id,
         }];
-        Ok(text_system.layout_line(text, gpui_platform_core::px(14.0), &runs))
+        Ok(text_system.layout_line(text, gpui_platform::px(14.0), &runs))
     }
 
     /// Mirrors the original crash: mixed-direction text reaching the shaper
@@ -1100,7 +1100,7 @@ mod tests {
         }];
 
         let lines =
-            window_text_system.shape_text(text, gpui_platform_core::px(14.0), &runs, None, None)?;
+            window_text_system.shape_text(text, gpui_platform::px(14.0), &runs, None, None)?;
 
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1].len(), "\u{05d0}\u{001c}A".len());
@@ -1196,7 +1196,7 @@ mod tests {
                 font_id,
             },
         ];
-        let layout = text_system.layout_line(text, gpui_platform_core::px(14.0), &runs);
+        let layout = text_system.layout_line(text, gpui_platform::px(14.0), &runs);
 
         assert_eq!(layout.len, text.len());
         assert!(layout.width > Pixels::ZERO);

@@ -13,5 +13,5 @@ path = "src/eval_utils.rs"
 doctest = false
 
 [dependencies]
-gpui_platform.workspace = true
+gpui = { workspace = true, features = ["default-platform"] }
 smol.workspace = true

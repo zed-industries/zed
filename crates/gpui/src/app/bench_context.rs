@@ -35,7 +35,7 @@ use crate::{
 /// benchmark measurements include production shaping and glyph rasterization.
 ///
 /// `headless_renderer_factory` supplies a renderer for benchmark windows, e.g.
-/// `gpui_platform::current_headless_renderer`. When present, scenes drawn by
+/// `gpui::current_headless_renderer`. When present, scenes drawn by
 /// benchmarks are rasterized through the real sprite atlas and submitted to
 /// the GPU on present, so quad/sprite regressions show up in measurements.
 /// When `None`, presenting discards the scene. Currently only macOS provides

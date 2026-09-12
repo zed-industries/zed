@@ -1,6 +1,6 @@
+use gpui::application;
 /// Click the button — the `.active()` background gets stuck on every other click.
 use gpui::*;
-use gpui_platform::application;
 
 struct Example;
 

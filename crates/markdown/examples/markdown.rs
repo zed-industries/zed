@@ -35,7 +35,7 @@ Remember, markdown processors may have slight differences and extensions, so alw
 
 pub fn main() {
     env_logger::init();
-    gpui_platform::application().with_assets(Assets).run(|cx| {
+    gpui::application().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);

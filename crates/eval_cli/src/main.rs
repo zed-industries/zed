@@ -197,7 +197,7 @@ fn main() {
     });
 
     let http_client = Arc::new(reqwest_client::ReqwestClient::new());
-    let app = gpui_platform::headless().with_http_client(http_client);
+    let app = gpui::headless().with_http_client(http_client);
 
     app.run(move |cx| {
         let app_state = headless::init(cx);

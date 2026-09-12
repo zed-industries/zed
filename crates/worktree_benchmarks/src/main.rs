@@ -14,7 +14,7 @@ fn main() {
         );
         return;
     };
-    let app = gpui_platform::headless();
+    let app = gpui::headless();
 
     app.run(|cx| {
         settings::init(cx);

@@ -567,7 +567,7 @@ pub fn execute_run(
     init_paths()?;
 
     let startup_time = Instant::now();
-    let app = gpui_platform::headless();
+    let app = gpui::headless();
     let pid = std::process::id();
     let id = pid.to_string();
     let should_install_crash_handler =

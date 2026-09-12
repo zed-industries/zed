@@ -1,4 +1,4 @@
-pub use gpui_platform_core::layer_shell::*;
+pub use gpui_platform::layer_shell::*;
 
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 

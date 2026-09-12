@@ -22,7 +22,7 @@ tracy = ["ztracing/tracy"]
 track-project-leak = ["gpui/leak-detection"]
 test-support = [
     "gpui/test-support",
-    "gpui_platform/screen-capture",
+    "gpui/screen-capture",
     "dep:image",
     "workspace/test-support",
     "project/test-support",
@@ -35,8 +35,7 @@ test-support = [
 ]
 visual-tests = [
     "gpui/test-support",
-    "gpui_platform/screen-capture",
-    "gpui_platform/test-support",
+    "gpui/screen-capture",
     "dep:image",
     "dep:tempfile",
     "dep:action_log",
@@ -125,9 +124,11 @@ git_hosting_providers.workspace = true
 git_ui = { workspace = true, features = ["call"] }
 git_ui_core.workspace = true
 go_to_line.workspace = true
-gpui = { workspace = true, features = ["profiler", "stacker"] }
-gpui_platform = { workspace = true, features = [
+gpui = { workspace = true, features = [
+    "profiler",
+    "stacker",
     "screen-capture",
+    "default-platform",
     "font-kit",
     "wayland",
     "x11",

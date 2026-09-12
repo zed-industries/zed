@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
-use gpui_platform_core::{
+use gpui_platform::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
     PlatformAtlas, Point, Size,
 };
@@ -275,7 +275,7 @@ unsafe impl<T> Send for AssertSend<T> {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_platform_core::PlatformAtlas;
+    use gpui_platform::PlatformAtlas;
     use std::borrow::Cow;
 
     fn create_atlas() -> Option<MetalAtlas> {
@@ -284,8 +284,8 @@ mod tests {
     }
 
     fn make_image_key(image_id: usize, frame_index: usize) -> AtlasKey {
-        AtlasKey::Image(gpui_platform_core::RenderImageParams {
-            image_id: gpui_platform_core::ImageId(image_id),
+        AtlasKey::Image(gpui_platform::RenderImageParams {
+            image_id: gpui_platform::ImageId(image_id),
             frame_index,
         })
     }

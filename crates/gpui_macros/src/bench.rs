@@ -93,9 +93,9 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
                         let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
                             gpui::bench_platform(
                                 Some(Box::new(|| {
-                                    gpui_platform::current_headless_renderer()
+                                    gpui::current_headless_renderer()
                                 })),
-                                gpui_platform::current_platform(true).text_system(),
+                                gpui::current_platform(true).text_system(),
                             ),
                             Some(stringify!(#outer_fn_name)),
                             bencher,
@@ -136,9 +136,9 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
                     let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
                         gpui::bench_platform(
                             Some(Box::new(|| {
-                                gpui_platform::current_headless_renderer()
+                                gpui::current_headless_renderer()
                             })),
-                            gpui_platform::current_platform(true).text_system(),
+                            gpui::current_platform(true).text_system(),
                         ),
                         Some(stringify!(#outer_fn_name)),
                         bencher,

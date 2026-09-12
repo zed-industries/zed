@@ -2124,7 +2124,6 @@ dependencies = [
  "editor",
  "futures 0.3.34",
  "gpui",
- "gpui_platform",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -3597,7 +3596,6 @@ dependencies = [
  "env_logger 0.11.8",
  "fs",
  "gpui",
- "gpui_platform",
  "language",
  "log",
  "node_runtime",
@@ -5426,7 +5424,6 @@ dependencies = [
  "futures 0.3.34",
  "gaoya",
  "gpui",
- "gpui_platform",
  "gpui_tokio",
  "http_client",
  "indoc",
@@ -5651,7 +5648,6 @@ dependencies = [
  "anyhow",
  "editor",
  "gpui",
- "gpui_platform",
  "language",
  "multi_buffer",
  "project",
@@ -6011,7 +6007,6 @@ dependencies = [
  "fs",
  "futures 0.3.34",
  "gpui",
- "gpui_platform",
  "gpui_tokio",
  "language",
  "language_extension",
@@ -6039,7 +6034,7 @@ dependencies = [
 name = "eval_utils"
 version = "0.1.0"
 dependencies = [
- "gpui_platform",
+ "gpui",
  "smol",
 ]
 
@@ -6158,7 +6153,7 @@ dependencies = [
  "extension",
  "fs",
  "futures 0.3.34",
- "gpui_platform",
+ "gpui",
  "http_client",
  "language",
  "log",
@@ -6739,7 +6734,6 @@ version = "0.1.0"
 dependencies = [
  "fs",
  "gpui",
- "gpui_platform",
 ]
 
 [[package]]
@@ -7506,7 +7500,6 @@ dependencies = [
  "gpui_macos",
  "gpui_macros",
  "gpui_platform",
- "gpui_platform_core",
  "gpui_shared_string",
  "gpui_types",
  "gpui_util",
@@ -7581,7 +7574,7 @@ dependencies = [
  "etagere",
  "foreign-types 0.5.0",
  "gpui",
- "gpui_platform_core",
+ "gpui_platform",
  "image",
  "log",
  "metal",
@@ -7606,7 +7599,7 @@ dependencies = [
  "filedescriptor",
  "futures 0.3.34",
  "gpui",
- "gpui_platform_core",
+ "gpui_platform",
  "gpui_types",
  "gpui_util",
  "gpui_wgpu",
@@ -7658,7 +7651,7 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "gpui_apple",
- "gpui_platform_core",
+ "gpui_platform",
  "gpui_util",
  "image",
  "itertools 0.14.0",
@@ -7696,18 +7689,6 @@ dependencies = [
 
 [[package]]
 name = "gpui_platform"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "gpui",
- "gpui_linux",
- "gpui_macos",
- "gpui_web",
- "gpui_windows",
-]
-
-[[package]]
-name = "gpui_platform_core"
 version = "0.1.0"
 dependencies = [
  "accesskit",
@@ -7796,7 +7777,7 @@ dependencies = [
  "anyhow",
  "console_error_panic_hook",
  "futures 0.3.34",
- "gpui_platform_core",
+ "gpui_platform",
  "gpui_wgpu",
  "http_client",
  "js-sys",
@@ -7823,7 +7804,7 @@ dependencies = [
  "criterion",
  "etagere",
  "gpui",
- "gpui_platform_core",
+ "gpui_platform",
  "gpui_util",
  "itertools 0.14.0",
  "log",
@@ -7852,7 +7833,7 @@ dependencies = [
  "dunce",
  "etagere",
  "futures 0.3.34",
- "gpui_platform_core",
+ "gpui_platform",
  "gpui_util",
  "image",
  "itertools 0.14.0",
@@ -10246,7 +10227,6 @@ dependencies = [
  "cpal",
  "futures 0.3.34",
  "gpui",
- "gpui_platform",
  "gpui_tokio",
  "http_client_tls",
  "image",
@@ -10665,7 +10645,6 @@ dependencies = [
  "env_logger 0.11.8",
  "fs",
  "gpui",
- "gpui_platform",
  "html5ever",
  "image",
  "indoc",
@@ -14076,7 +14055,6 @@ dependencies = [
  "client",
  "futures 0.3.34",
  "gpui",
- "gpui_platform",
  "http_client",
  "language",
  "node_runtime",
@@ -15168,7 +15146,6 @@ dependencies = [
  "git",
  "git_hosting_providers",
  "gpui",
- "gpui_platform",
  "gpui_tokio",
  "http_client",
  "image",
@@ -22450,7 +22427,7 @@ name = "worktree_benchmarks"
 version = "0.1.0"
 dependencies = [
  "fs",
- "gpui_platform",
+ "gpui",
  "settings",
  "worktree",
 ]
@@ -22914,7 +22891,6 @@ dependencies = [
  "git_ui_core",
  "go_to_line",
  "gpui",
- "gpui_platform",
  "gpui_tokio",
  "http_client",
  "image",

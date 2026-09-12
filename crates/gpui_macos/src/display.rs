@@ -8,7 +8,7 @@ use cocoa::{
 use core_foundation::base::CFRelease;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
-use gpui_platform_core::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, size};
+use gpui_platform::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, size};
 use objc::{msg_send, sel, sel_impl};
 use uuid::Uuid;
 

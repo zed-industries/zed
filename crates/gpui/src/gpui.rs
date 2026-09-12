@@ -117,7 +117,7 @@ macro_rules! bench_main {
         criterion::criterion_main!($($tokens)*);
     };
 }
-pub use gpui_platform_core::*;
+pub use gpui_platform::*;
 pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;
 pub use input::*;

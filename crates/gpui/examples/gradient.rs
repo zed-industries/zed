@@ -3,11 +3,11 @@
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
+use gpui::application;
 use gpui::{
     App, Bounds, ColorSpace, Context, Half, Render, Window, WindowOptions, canvas, div,
     linear_color_stop, linear_gradient, point, prelude::*, px, size,
 };
-use gpui_platform::application;
 
 struct GradientViewer {
     color_space: ColorSpace,
@@ -273,6 +273,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    gpui::web_init();
     run_example();
 }

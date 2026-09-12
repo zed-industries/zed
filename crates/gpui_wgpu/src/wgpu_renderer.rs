@@ -1,7 +1,7 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
-use gpui_platform_core::{
+use gpui_platform::{
     AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch,
     ScaledPixels, Scene, Size, get_gamma_correction_ratios,
 };
@@ -2105,9 +2105,9 @@ impl WgpuRenderer {
         };
 
         let config = WgpuSurfaceConfig {
-            size: gpui_platform_core::Size {
-                width: gpui_platform_core::DevicePixels(self.surface_config.width as i32),
-                height: gpui_platform_core::DevicePixels(self.surface_config.height as i32),
+            size: gpui_platform::Size {
+                width: gpui_platform::DevicePixels(self.surface_config.width as i32),
+                height: gpui_platform::DevicePixels(self.surface_config.height as i32),
             },
             transparent: self.surface_config.alpha_mode != wgpu::CompositeAlphaMode::Opaque,
             preferred_present_mode: Some(self.surface_config.present_mode),
@@ -2201,7 +2201,7 @@ impl RenderingParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_platform_core::{
+    use gpui_platform::{
         MonochromeSprite, PolychromeSprite, Quad, Shadow, SubpixelSprite, Underline,
     };
 
