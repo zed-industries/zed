@@ -346,6 +346,11 @@ impl ThreadedDispatcher {
                 return result;
             }
             let ran_task = self.run_one_main_task();
+            // A completion poll must not pull an unrelated animation frame
+            // into the measured operation.
+            if let Some(result) = ready() {
+                return result;
+            }
             let dispatched_frames = dispatch_frames();
             if ran_task || dispatched_frames {
                 continue;

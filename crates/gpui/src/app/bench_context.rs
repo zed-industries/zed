@@ -631,8 +631,9 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Runs main-thread tasks until `ready` returns a value.
     ///
-    /// Scheduled frames run after each task poll and while waiting for work.
-    /// Once `ready` reports completion, no further tasks or frames are delivered.
+    /// While incomplete, scheduled frames run after each task poll and while
+    /// waiting for work. Readiness is checked before frame delivery, so completion
+    /// does not wait for a final presentation; renderer sessions do that explicitly.
     pub fn run_until<R>(&self, ready: impl FnMut() -> Option<R>) -> R {
         self.background_executor
             .dispatcher()
