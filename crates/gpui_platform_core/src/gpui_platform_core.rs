@@ -74,6 +74,8 @@ pub use font_fallbacks::*;
 pub use font_features::*;
 pub use gestures::*;
 pub use gpu::*;
+pub use gpui_shared_string::*;
+pub use gpui_types::*;
 pub use input::*;
 pub use input_handler::*;
 pub use keyboard::*;
