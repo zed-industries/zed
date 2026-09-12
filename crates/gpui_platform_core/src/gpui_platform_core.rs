@@ -49,6 +49,11 @@ mod prompt;
 #[expect(missing_docs)]
 pub mod queue;
 mod render;
+#[cfg(all(
+    feature = "screen-capture",
+    any(target_os = "windows", target_os = "linux", target_os = "freebsd",)
+))]
+pub mod scap_screen_capture;
 mod scene;
 mod screen_capture;
 #[cfg(any(test, feature = "test-support"))]

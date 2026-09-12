@@ -1,10 +1,11 @@
 //! Screen capture for Linux and Windows
 use crate::{
-    DevicePixels, ForegroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    Size, SourceMetadata, size,
+    ForegroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SourceMetadata,
 };
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
+use gpui_types::{DevicePixels, Size, size};
 use scap::Target;
 use std::rc::Rc;
 use std::sync::Arc;
