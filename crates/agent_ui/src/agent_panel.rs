@@ -67,7 +67,7 @@ use chrono::{DateTime, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
 use collections::HashMap;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, MultiBuffer, ReviewFeedback};
 use extension_host::ExtensionStore;
 use feature_flags::{CreateThreadToolFeatureFlag, FeatureFlagAppExt as _};
 
@@ -4132,6 +4132,21 @@ impl AgentPanel {
     pub fn active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
         let server_view = self.active_conversation_view()?;
         server_view.read(cx).root_thread_view()
+    }
+
+    pub fn send_review_feedback(
+        &mut self,
+        feedback: Vec<ReviewFeedback>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<bool> {
+        let Some(thread_view) = self.active_thread_view(cx) else {
+            return Ok(false);
+        };
+        thread_view.update(cx, |thread_view, cx| {
+            thread_view.send_review_feedback(feedback, window, cx)
+        })?;
+        Ok(true)
     }
 
     pub fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
