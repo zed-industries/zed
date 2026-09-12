@@ -7716,6 +7716,7 @@ dependencies = [
  "scheduler",
  "schemars 1.0.4",
  "serde",
+ "serde_json",
  "uuid",
  "waker-fn",
 ]

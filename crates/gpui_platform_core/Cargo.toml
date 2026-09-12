@@ -33,5 +33,6 @@ parking = "2.0.0"
 scheduler.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"

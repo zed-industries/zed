@@ -1,11 +1,7 @@
-mod font_fallbacks;
-mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
 
-pub use font_fallbacks::*;
-pub use font_features::*;
 pub use line::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
@@ -13,8 +9,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
+    Bounds, DevicePixels, FontFallbacks, FontFeatures, Hsla, Pixels, PlatformTextSystem, Point,
+    Result, SharedString, Size, StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
 };
 use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;
