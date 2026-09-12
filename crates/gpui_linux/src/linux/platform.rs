@@ -32,11 +32,11 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use gpui::{
-    Action, ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
-    WindowButtonLayout, WindowId, WindowParams,
+    ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
+    MenuCommandId, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem, PlatformTextSystem, PlatformWindow,
+    Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowId,
+    WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui_types::{Pixels, Point, px};
@@ -116,9 +116,9 @@ pub(crate) struct PlatformHandlers {
     pub(crate) open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     pub(crate) quit: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) reopen: Option<Box<dyn FnMut()>>,
-    pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
+    pub(crate) app_menu_action: Option<Box<dyn FnMut(MenuCommandId)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
-    pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(MenuCommandId) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
     pub(crate) system_wake: Option<Box<dyn FnMut()>>,
 }
@@ -132,7 +132,6 @@ pub(crate) struct LinuxCommon {
     pub(crate) button_layout: WindowButtonLayout,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
-    pub(crate) menus: Vec<OwnedMenu>,
     app_name: Option<String>,
     system_notifications: crate::linux::system_notifications::SystemNotificationState,
     #[cfg_attr(
@@ -174,7 +173,6 @@ impl LinuxCommon {
             button_layout: WindowButtonLayout::linux_default(),
             callbacks,
             signal,
-            menus: Vec::new(),
             app_name: None,
             system_notifications: crate::linux::system_notifications::SystemNotificationState::new(
             ),
@@ -629,7 +627,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         });
     }
 
-    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(MenuCommandId)>) {
         self.inner.with_common(|common| {
             common.callbacks.app_menu_action = Some(callback);
         });
@@ -641,7 +639,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         });
     }
 
-    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(MenuCommandId) -> bool>) {
         self.inner.with_common(|common| {
             common.callbacks.validate_app_menu_command = Some(callback);
         });
@@ -653,17 +651,11 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         Ok(app_path)
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
-        self.inner.with_common(|common| {
-            common.menus = menus.into_iter().map(|menu| menu.owned()).collect();
-        })
+    fn set_menus(&self, _menus: Vec<PlatformMenu>) {
+        // todo(linux)
     }
 
-    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        self.inner.with_common(|common| Some(common.menus.clone()))
-    }
-
-    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {
+    fn set_dock_menu(&self, _menu: Vec<PlatformMenuItem>) {
         // todo(linux)
     }
 

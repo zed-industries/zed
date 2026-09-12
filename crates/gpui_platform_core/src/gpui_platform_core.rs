@@ -29,6 +29,7 @@ mod input_handler;
 mod keyboard;
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 pub mod layer_shell;
+mod menu;
 mod notification;
 mod platform_scheduler;
 mod platform_window;
@@ -61,6 +62,7 @@ pub use gpu::*;
 pub use input::*;
 pub use input_handler::*;
 pub use keyboard::*;
+pub use menu::*;
 pub use notification::*;
 pub use platform_scheduler::*;
 pub use platform_window::*;

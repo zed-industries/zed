@@ -4,11 +4,12 @@ use crate::NoopTextSystem;
 use crate::PathPromptOptions;
 use crate::{
     ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SharedString,
-    SourceMetadata, SystemNotification, SystemNotificationResponse, Task, TestDisplay, TestWindow,
-    ThermalState, WindowAppearance, WindowId, WindowParams, size,
+    DummyKeyboardMapper, ForegroundExecutor, MenuCommandId, Platform, PlatformDisplay,
+    PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformMenu,
+    PlatformMenuItem, PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource,
+    ScreenCaptureStream, SharedString, SourceMetadata, SystemNotification,
+    SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
+    WindowId, WindowParams, size,
 };
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
@@ -52,7 +53,6 @@ pub(crate) struct TestPlatform {
     idle_sleep_prevention_fails: Cell<bool>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
-    menus: RefCell<Vec<OwnedMenu>>,
 }
 
 #[derive(Clone)]
@@ -170,7 +170,6 @@ impl TestPlatform {
             system_notifications: Default::default(),
             text_system,
             headless_renderer_factory,
-            menus: Default::default(),
         })
     }
 
@@ -626,23 +625,17 @@ impl Platform for TestPlatform {
         self.system_notifications.borrow_mut().response_callback = Some(callback);
     }
 
-    fn set_menus(&self, menus: Vec<crate::Menu>, _keymap: &Keymap) {
-        *self.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect()
-    }
+    fn set_menus(&self, _menus: Vec<PlatformMenu>) {}
 
-    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        Some(self.menus.borrow().clone())
-    }
-
-    fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
+    fn set_dock_menu(&self, _menu: Vec<PlatformMenuItem>) {}
 
     fn add_recent_document(&self, _paths: &Path) {}
 
-    fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
+    fn on_app_menu_action(&self, _callback: Box<dyn FnMut(MenuCommandId)>) {}
 
     fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
+    fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(MenuCommandId) -> bool>) {}
 
     fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()

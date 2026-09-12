@@ -16,14 +16,14 @@ mod visual_test;
 pub mod scap_screen_capture;
 
 use crate::{
-    Action, ActivityGuard, App, AppLifecyclePhase, AsyncWindowContext, BackgroundExecutor, Bounds,
+    ActivityGuard, App, AppLifecyclePhase, AsyncWindowContext, BackgroundExecutor, Bounds,
     BoundsExt, ClipboardItem, ClipboardReadError, CursorStyle, ForegroundExecutor, Image,
-    ImageFormat, ImageSource, Keymap, PathPromptOptions, Pixels, PlatformDisplay, PlatformGestures,
-    PlatformInputHandler, PlatformInputHandlerDelegate, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, RenderImage,
-    ScreenCaptureSource, Size, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
-    TextInputConfiguration, ThermalState, UTF16Selection, Window, WindowAppearance, WindowBounds,
-    WindowButtonLayout, WindowId, WindowParams,
+    ImageFormat, ImageSource, MenuCommandId, PathPromptOptions, Pixels, PlatformDisplay,
+    PlatformGestures, PlatformInputHandler, PlatformInputHandlerDelegate, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem, PlatformTextSystem, PlatformWindow,
+    Point, RenderImage, ScreenCaptureSource, Size, SvgRenderer, SystemNotification,
+    SystemNotificationResponse, Task, TextInputConfiguration, ThermalState, UTF16Selection, Window,
+    WindowAppearance, WindowBounds, WindowButtonLayout, WindowId, WindowParams,
 };
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
@@ -192,24 +192,21 @@ pub trait Platform: 'static {
         None
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
-    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        None
-    }
+    fn set_menus(&self, menus: Vec<PlatformMenu>);
 
-    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
+    fn set_dock_menu(&self, menu: Vec<PlatformMenuItem>);
     fn perform_dock_menu_action(&self, _action: usize) {}
     fn add_recent_document(&self, _path: &Path) {}
     fn update_jump_list(
         &self,
-        _menus: Vec<MenuItem>,
+        _menus: Vec<PlatformMenuItem>,
         _entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         Task::ready(Vec::new())
     }
-    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(MenuCommandId)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
-    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(MenuCommandId) -> bool>);
 
     fn thermal_state(&self) -> ThermalState;
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);

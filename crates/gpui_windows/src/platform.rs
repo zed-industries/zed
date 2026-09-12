@@ -72,7 +72,6 @@ struct WindowsPlatformInner {
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
-    menus: RefCell<Vec<OwnedMenu>>,
     jump_list: RefCell<JumpList>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
@@ -89,9 +88,9 @@ struct PlatformCallbacks {
     open_urls: Cell<Option<Box<dyn FnMut(Vec<String>)>>>,
     quit: Cell<Option<Box<dyn FnMut() -> bool>>>,
     reopen: Cell<Option<Box<dyn FnMut()>>>,
-    app_menu_action: Cell<Option<Box<dyn FnMut(&dyn Action)>>>,
+    app_menu_action: Cell<Option<Box<dyn FnMut(MenuCommandId)>>>,
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
-    validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
+    validate_app_menu_command: Cell<Option<Box<dyn FnMut(MenuCommandId) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
     system_wake: Cell<Option<Box<dyn FnMut()>>>,
 }
@@ -109,7 +108,6 @@ impl WindowsPlatformState {
             cursor_visible: Arc::new(AtomicBool::new(true)),
             draw_coordinator: Rc::new(DrawCoordinator::new()),
             directx_devices: RefCell::new(directx_devices),
-            menus: RefCell::new(Vec::new()),
         }
     }
 }
@@ -295,7 +293,7 @@ impl WindowsPlatform {
         }
     }
 
-    fn set_dock_menus(&self, menus: Vec<MenuItem>) {
+    fn set_dock_menus(&self, menus: Vec<PlatformMenuItem>) {
         let mut actions = Vec::new();
         menus.into_iter().for_each(|menu| {
             if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
@@ -319,7 +317,7 @@ impl WindowsPlatform {
 
     fn update_jump_list(
         &self,
-        menus: Vec<MenuItem>,
+        menus: Vec<PlatformMenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         let mut actions = Vec::new();
@@ -797,19 +795,15 @@ impl Platform for WindowsPlatform {
             .on_response(&self.foreground_executor, callback);
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
-        *self.inner.state.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect();
+    fn set_menus(&self, _menus: Vec<PlatformMenu>) {
+        // todo(windows)
     }
 
-    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        Some(self.inner.state.menus.borrow().clone())
-    }
-
-    fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
+    fn set_dock_menu(&self, menus: Vec<PlatformMenuItem>) {
         self.set_dock_menus(menus);
     }
 
-    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(MenuCommandId)>) {
         self.inner
             .state
             .callbacks
@@ -825,7 +819,7 @@ impl Platform for WindowsPlatform {
             .set(Some(callback));
     }
 
-    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(MenuCommandId) -> bool>) {
         self.inner
             .state
             .callbacks
@@ -1008,7 +1002,7 @@ impl Platform for WindowsPlatform {
 
     fn update_jump_list(
         &self,
-        menus: Vec<MenuItem>,
+        menus: Vec<PlatformMenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         self.update_jump_list(menus, entries)
@@ -1191,20 +1185,20 @@ impl WindowsPlatformInner {
     }
 
     fn handle_dock_action_event(&self, action_idx: usize) -> Option<isize> {
-        let Some(action) = self
+        let Some(command_id) = self
             .state
             .jump_list
             .borrow()
             .dock_menus
             .get(action_idx)
-            .map(|dock_menu| dock_menu.action.boxed_clone())
+            .map(|dock_menu| dock_menu.command_id)
         else {
             log::error!("Dock menu for index {action_idx} not found");
             return Some(1);
         };
         self.with_callback(
             |callbacks| &callbacks.app_menu_action,
-            |callback| callback(&*action),
+            |callback| callback(command_id),
         );
         Some(0)
     }

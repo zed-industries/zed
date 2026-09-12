@@ -29,9 +29,9 @@ use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
-    Action, ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    MenuCommandId, OsAction, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem, PlatformOsMenu, PlatformTextSystem,
     PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowId,
     WindowKind, WindowParams, popup::PopupNotSupportedError,
 };
@@ -59,7 +59,7 @@ use std::{
     rc::Rc,
     slice, str,
     sync::{
-        Arc, OnceLock,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -182,14 +182,12 @@ pub(crate) struct MacPlatformState {
     on_system_wake: Option<Box<dyn FnMut()>>,
     system_wake_observer_registered: bool,
     quit: Option<Box<dyn FnMut() -> bool>>,
-    menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
-    validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    menu_command: Option<Box<dyn FnMut(MenuCommandId)>>,
+    validate_menu_command: Option<Box<dyn FnMut(MenuCommandId) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
-    menu_actions: Vec<Box<dyn Action>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
-    menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
     cursor_visible: Arc<AtomicBool>,
@@ -230,7 +228,6 @@ impl MacPlatform {
             menu_command: None,
             validate_menu_command: None,
             will_open_menu: None,
-            menu_actions: Default::default(),
             open_urls: None,
             finish_launching: None,
             dock_menu: None,
@@ -238,7 +235,6 @@ impl MacPlatform {
             on_thermal_state_change: None,
             on_system_wake: None,
             system_wake_observer_registered: false,
-            menus: None,
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
             system_notifications: crate::system_notifications::SystemNotificationState::new(),
@@ -246,13 +242,7 @@ impl MacPlatform {
         Self(state, marker)
     }
 
-    unsafe fn create_menu_bar(
-        &self,
-        menus: &Vec<Menu>,
-        delegate: id,
-        actions: &mut Vec<Box<dyn Action>>,
-        keymap: &Keymap,
-    ) -> id {
+    unsafe fn create_menu_bar(&self, menus: &[PlatformMenu], delegate: id) -> id {
         unsafe {
             let application_menu = NSMenu::new(nil).autorelease();
             application_menu.setDelegate_(delegate);
@@ -264,12 +254,7 @@ impl MacPlatform {
                 menu.setDelegate_(delegate);
 
                 for item_config in &menu_config.items {
-                    menu.addItem_(Self::create_menu_item(
-                        item_config,
-                        delegate,
-                        actions,
-                        keymap,
-                    ));
+                    menu.addItem_(Self::create_menu_item(item_config, delegate));
                 }
 
                 let menu_item = NSMenuItem::new(nil).autorelease();
@@ -287,86 +272,44 @@ impl MacPlatform {
         }
     }
 
-    unsafe fn create_dock_menu(
-        &self,
-        menu_items: Vec<MenuItem>,
-        delegate: id,
-        actions: &mut Vec<Box<dyn Action>>,
-        keymap: &Keymap,
-    ) -> id {
+    unsafe fn create_dock_menu(&self, menu_items: Vec<PlatformMenuItem>, delegate: id) -> id {
         unsafe {
             let dock_menu = NSMenu::new(nil);
             dock_menu.setDelegate_(delegate);
             for item_config in menu_items {
-                dock_menu.addItem_(Self::create_menu_item(
-                    &item_config,
-                    delegate,
-                    actions,
-                    keymap,
-                ));
+                dock_menu.addItem_(Self::create_menu_item(&item_config, delegate));
             }
 
             dock_menu
         }
     }
 
-    unsafe fn create_menu_item(
-        item: &MenuItem,
-        delegate: id,
-        actions: &mut Vec<Box<dyn Action>>,
-        keymap: &Keymap,
-    ) -> id {
-        static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
-
+    unsafe fn create_menu_item(item: &PlatformMenuItem, delegate: id) -> id {
         unsafe {
             match item {
-                MenuItem::Separator => NSMenuItem::separatorItem(nil),
-                MenuItem::Action {
+                PlatformMenuItem::Separator => NSMenuItem::separatorItem(nil),
+                PlatformMenuItem::Action {
                     name,
-                    action,
+                    command_id,
+                    keystroke,
                     os_action,
                     checked,
                     disabled,
                 } => {
-                    // Note that this is intentionally using earlier bindings, whereas typically
-                    // later ones take display precedence. See the discussion on
-                    // https://github.com/zed-industries/zed/issues/23621
-                    let keystrokes = keymap
-                        .bindings_for_action(action.as_ref())
-                        .find_or_first(|binding| {
-                            binding.predicate().is_none_or(|predicate| {
-                                predicate.eval(DEFAULT_CONTEXT.get_or_init(|| {
-                                    let mut workspace_context = KeyContext::new_with_defaults();
-                                    workspace_context.add("Workspace");
-                                    let mut pane_context = KeyContext::new_with_defaults();
-                                    pane_context.add("Pane");
-                                    let mut editor_context = KeyContext::new_with_defaults();
-                                    editor_context.add("Editor");
-
-                                    pane_context.extend(&editor_context);
-                                    workspace_context.extend(&pane_context);
-                                    vec![workspace_context]
-                                }))
-                            })
-                        })
-                        .map(|binding| binding.keystrokes());
-
                     let selector = match os_action {
-                        Some(gpui::OsAction::Cut) => selector("cut:"),
-                        Some(gpui::OsAction::Copy) => selector("copy:"),
-                        Some(gpui::OsAction::Paste) => selector("paste:"),
-                        Some(gpui::OsAction::SelectAll) => selector("selectAll:"),
+                        Some(OsAction::Cut) => selector("cut:"),
+                        Some(OsAction::Copy) => selector("copy:"),
+                        Some(OsAction::Paste) => selector("paste:"),
+                        Some(OsAction::SelectAll) => selector("selectAll:"),
                         // "undo:" and "redo:" are always disabled in our case, as
                         // we don't have a NSTextView/NSTextField to enable them on.
-                        Some(gpui::OsAction::Undo) => selector("handleGPUIMenuItem:"),
-                        Some(gpui::OsAction::Redo) => selector("handleGPUIMenuItem:"),
+                        Some(OsAction::Undo) => selector("handleGPUIMenuItem:"),
+                        Some(OsAction::Redo) => selector("handleGPUIMenuItem:"),
                         None => selector("handleGPUIMenuItem:"),
                     };
 
-                    let item;
-                    if let Some(keystrokes) = keystrokes {
-                        if keystrokes.len() == 1 {
-                            let keystroke = &keystrokes[0];
+                    let (key_equivalent, mask) = match keystroke {
+                        Some(keystroke) => {
                             let mut mask = NSEventModifierFlags::empty();
                             for (modifier, flag) in &[
                                 (
@@ -391,47 +334,33 @@ impl MacPlatform {
                                 }
                             }
 
-                            item = NSMenuItem::alloc(nil)
-                                .initWithTitle_action_keyEquivalent_(
-                                    ns_string(name),
-                                    selector,
-                                    ns_string(key_to_native(keystroke.key()).as_ref()),
-                                )
-                                .autorelease();
-                            if Self::os_version() >= Version::new(12, 0, 0) {
-                                let _: () = msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
-                            }
-                            item.setKeyEquivalentModifierMask_(mask);
-                        } else {
-                            item = NSMenuItem::alloc(nil)
-                                .initWithTitle_action_keyEquivalent_(
-                                    ns_string(name),
-                                    selector,
-                                    ns_string(""),
-                                )
-                                .autorelease();
+                            (key_to_native(keystroke.key()).into_owned(), mask)
                         }
-                    } else {
-                        item = NSMenuItem::alloc(nil)
-                            .initWithTitle_action_keyEquivalent_(
-                                ns_string(name),
-                                selector,
-                                ns_string(""),
-                            )
-                            .autorelease();
+                        None => (String::new(), NSEventModifierFlags::empty()),
+                    };
+
+                    let item = NSMenuItem::alloc(nil)
+                        .initWithTitle_action_keyEquivalent_(
+                            ns_string(name),
+                            selector,
+                            ns_string(&key_equivalent),
+                        )
+                        .autorelease();
+                    if keystroke.is_some() && Self::os_version() >= Version::new(12, 0, 0) {
+                        let _: () =
+                            msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
                     }
+                    item.setKeyEquivalentModifierMask_(mask);
 
                     if *checked {
                         item.setState_(NSVisualEffectState::Active);
                     }
                     item.setEnabled_(if *disabled { NO } else { YES });
 
-                    let tag = actions.len() as NSInteger;
-                    let _: () = msg_send![item, setTag: tag];
-                    actions.push(action.boxed_clone());
+                    let _: () = msg_send![item, setTag: *command_id as NSInteger];
                     item
                 }
-                MenuItem::Submenu(Menu {
+                PlatformMenuItem::Submenu(PlatformMenu {
                     name,
                     items,
                     disabled,
@@ -440,14 +369,14 @@ impl MacPlatform {
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
                     for item in items {
-                        submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
+                        submenu.addItem_(Self::create_menu_item(item, delegate));
                     }
                     item.setSubmenu_(submenu);
                     item.setEnabled_(if *disabled { NO } else { YES });
                     item.setTitle_(ns_string(name));
                     item
                 }
-                MenuItem::SystemMenu(OsMenu { name, menu_type }) => {
+                PlatformMenuItem::SystemMenu(PlatformOsMenu { name, menu_type }) => {
                     let item = NSMenuItem::new(nil).autorelease();
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
@@ -958,7 +887,7 @@ impl Platform for MacPlatform {
         self.0.lock().on_keyboard_layout_change = Some(callback);
     }
 
-    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(MenuCommandId)>) {
         self.0.lock().menu_command = Some(callback);
     }
 
@@ -966,7 +895,7 @@ impl Platform for MacPlatform {
         self.0.lock().will_open_menu = Some(callback);
     }
 
-    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(MenuCommandId) -> bool>) {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
@@ -1051,28 +980,19 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
+    fn set_menus(&self, menus: Vec<PlatformMenu>) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
-            let mut state = self.0.lock();
-            let actions = &mut state.menu_actions;
-            let menu = self.create_menu_bar(&menus, NSWindow::delegate(app), actions, keymap);
-            drop(state);
+            let menu = self.create_menu_bar(&menus, NSWindow::delegate(app));
             app.setMainMenu_(menu);
         }
-        self.0.lock().menus = Some(menus.into_iter().map(|menu| menu.owned()).collect());
     }
 
-    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        self.0.lock().menus.clone()
-    }
-
-    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {
+    fn set_dock_menu(&self, menu: Vec<PlatformMenuItem>) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
-            let actions = &mut state.menu_actions;
-            let new = self.create_dock_menu(menu, NSWindow::delegate(app), actions, keymap);
+            let new = self.create_dock_menu(menu, NSWindow::delegate(app));
             if let Some(old) = state.dock_menu.replace(new) {
                 CFRelease(old as _)
             }
@@ -1457,12 +1377,8 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
         let mut lock = platform.0.lock();
         if let Some(mut callback) = lock.menu_command.take() {
             let tag: NSInteger = msg_send![item, tag];
-            let index = tag as usize;
-            if let Some(action) = lock.menu_actions.get(index) {
-                let action = action.boxed_clone();
-                drop(lock);
-                callback(&*action);
-            }
+            drop(lock);
+            callback(tag as MenuCommandId);
             platform.0.lock().menu_command.get_or_insert(callback);
         }
     }
@@ -1475,12 +1391,8 @@ extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
         let mut lock = platform.0.lock();
         if let Some(mut callback) = lock.validate_menu_command.take() {
             let tag: NSInteger = msg_send![item, tag];
-            let index = tag as usize;
-            if let Some(action) = lock.menu_actions.get(index) {
-                let action = action.boxed_clone();
-                drop(lock);
-                result = callback(action.as_ref());
-            }
+            drop(lock);
+            result = callback(tag as MenuCommandId);
             platform
                 .0
                 .lock()

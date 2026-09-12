@@ -45,15 +45,15 @@ use crate::{
     AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
     ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload,
     FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke,
-    LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
-    PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
-    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
-    SystemNotification, SystemNotificationResponse, SystemWindowTab, Task, TextRenderingMode,
-    TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator,
+    LayoutId, Menu, MenuCommandId, MenuItem, OwnedMenu, OwnedMenuItem, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
+    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, SystemWindowTab,
+    Task, TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance,
+    WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
-    hash, init_app_menus,
+    hash, init_app_menus, resolve_dock_menu, resolve_menus,
 };
 
 mod async_context;
@@ -686,6 +686,8 @@ pub struct App {
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
+    pub(crate) menu_actions: Rc<RefCell<Vec<Box<dyn Action>>>>,
+    owned_menus: Rc<RefCell<Option<Vec<OwnedMenu>>>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
     pub(crate) global_action_listeners:
@@ -816,6 +818,8 @@ impl App {
                 window_handles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
+                menu_actions: Rc::new(RefCell::new(Vec::new())),
+                owned_menus: Rc::new(RefCell::new(None)),
                 keyboard_layout,
                 keyboard_mapper,
                 global_action_listeners: Default::default(),
@@ -2427,18 +2431,52 @@ impl App {
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
     pub fn set_menus(&self, menus: impl IntoIterator<Item = Menu>) {
-        let menus: Vec<Menu> = menus.into_iter().collect();
-        self.platform.set_menus(menus, &self.keymap.borrow());
+        let owned: Vec<OwnedMenu> = menus.into_iter().map(Menu::owned).collect();
+        let resolved = {
+            let keymap = self.keymap.borrow();
+            let mut actions = self.menu_actions.borrow_mut();
+            resolve_menus(&owned, &keymap, &mut actions)
+        };
+        *self.owned_menus.borrow_mut() = Some(owned);
+        self.platform.set_menus(resolved);
     }
 
     /// Gets the menu bar for this application.
     pub fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        self.platform.get_menus()
+        self.owned_menus.borrow().clone()
     }
 
     /// Sets the right click menu for the app icon in the dock
     pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
-        self.platform.set_dock_menu(menus, &self.keymap.borrow())
+        let owned: Vec<OwnedMenuItem> = menus.into_iter().map(MenuItem::owned).collect();
+        let resolved = {
+            let keymap = self.keymap.borrow();
+            let mut actions = self.menu_actions.borrow_mut();
+            resolve_dock_menu(&owned, &keymap, &mut actions)
+        };
+        self.platform.set_dock_menu(resolved)
+    }
+
+    /// Returns whether the menu command with the given id is currently available.
+    pub(crate) fn is_menu_command_available(&mut self, command_id: MenuCommandId) -> bool {
+        let action = self
+            .menu_actions
+            .borrow()
+            .get(command_id)
+            .map(|action| action.boxed_clone());
+        action.is_some_and(|action| self.is_action_available(action.as_ref()))
+    }
+
+    /// Dispatches the menu command with the given id.
+    pub(crate) fn dispatch_menu_command(&mut self, command_id: MenuCommandId) {
+        let action = self
+            .menu_actions
+            .borrow()
+            .get(command_id)
+            .map(|action| action.boxed_clone());
+        if let Some(action) = action {
+            self.dispatch_action(action.as_ref());
+        }
     }
 
     /// Performs the action associated with the given dock menu item, only used on Windows for now.
@@ -2461,7 +2499,13 @@ impl App {
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
-        self.platform.update_jump_list(menus, entries)
+        let owned: Vec<OwnedMenuItem> = menus.into_iter().map(MenuItem::owned).collect();
+        let resolved = {
+            let keymap = self.keymap.borrow();
+            let mut actions = self.menu_actions.borrow_mut();
+            resolve_dock_menu(&owned, &keymap, &mut actions)
+        };
+        self.platform.update_jump_list(resolved, entries)
     }
 
     /// Dispatch an action to the currently active window or global action handler

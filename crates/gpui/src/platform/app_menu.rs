@@ -1,4 +1,9 @@
-use crate::{Action, App, Platform, SharedString};
+use crate::{
+    Action, App, KeyContext, Keymap, Keystroke, OsAction, Platform, PlatformMenu, PlatformMenuItem,
+    PlatformOsMenu, SharedString, SystemMenuType,
+};
+use itertools::Itertools as _;
+use std::sync::OnceLock;
 
 /// A menu of the application, either a main menu or a submenu
 pub struct Menu {
@@ -63,13 +68,6 @@ impl OsMenu {
             menu_type: self.menu_type,
         }
     }
-}
-
-/// The type of system menu
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum SystemMenuType {
-    /// The 'Services' menu in the Application menu on macOS
-    Services,
 }
 
 /// The different kinds of items that can be in a menu
@@ -300,34 +298,6 @@ impl Clone for OwnedMenuItem {
     }
 }
 
-// TODO: As part of the global selections refactor, these should
-// be moved to GPUI-provided actions that make this association
-// without leaking the platform details to GPUI users
-
-/// OS actions are actions that are recognized by the operating system
-/// This allows the operating system to provide specialized behavior for
-/// these actions
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum OsAction {
-    /// The 'cut' action
-    Cut,
-
-    /// The 'copy' action
-    Copy,
-
-    /// The 'paste' action
-    Paste,
-
-    /// The 'select all' action
-    SelectAll,
-
-    /// The 'undo' action
-    Undo,
-
-    /// The 'redo' action
-    Redo,
-}
-
 pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
     platform.on_will_open_app_menu(Box::new({
         let cx = cx.to_async();
@@ -340,22 +310,144 @@ pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
 
     platform.on_validate_app_menu_command(Box::new({
         let cx = cx.to_async();
-        move |action| {
+        move |command_id| {
             cx.app
                 .upgrade()
-                .map(|app| app.borrow_mut().update(|cx| cx.is_action_available(action)))
+                .map(|app| {
+                    app.borrow_mut()
+                        .update(|cx| cx.is_menu_command_available(command_id))
+                })
                 .unwrap_or(false)
         }
     }));
 
     platform.on_app_menu_action(Box::new({
         let cx = cx.to_async();
-        move |action| {
+        move |command_id| {
             if let Some(app) = cx.app.upgrade() {
-                app.borrow_mut().update(|cx| cx.dispatch_action(action));
+                app.borrow_mut()
+                    .update(|cx| cx.dispatch_menu_command(command_id));
             }
         }
     }));
+}
+
+/// Resolves a menu tree into the platform vocabulary, recording each action in
+/// `actions` such that its index is the item's [`MenuCommandId`].
+pub(crate) fn resolve_menus(
+    menus: &[OwnedMenu],
+    keymap: &Keymap,
+    actions: &mut Vec<Box<dyn Action>>,
+) -> Vec<PlatformMenu> {
+    menus
+        .iter()
+        .map(|menu| resolve_menu(menu, keymap, actions))
+        .collect()
+}
+
+/// Resolves a dock menu into the platform vocabulary, appending its actions to
+/// the same `actions` registry as [`resolve_menus`].
+pub(crate) fn resolve_dock_menu(
+    items: &[OwnedMenuItem],
+    keymap: &Keymap,
+    actions: &mut Vec<Box<dyn Action>>,
+) -> Vec<PlatformMenuItem> {
+    items
+        .iter()
+        .map(|item| resolve_item(item, keymap, actions))
+        .collect()
+}
+
+fn resolve_menu(
+    menu: &OwnedMenu,
+    keymap: &Keymap,
+    actions: &mut Vec<Box<dyn Action>>,
+) -> PlatformMenu {
+    PlatformMenu {
+        name: menu.name.clone(),
+        items: menu
+            .items
+            .iter()
+            .map(|item| resolve_item(item, keymap, actions))
+            .collect(),
+        disabled: menu.disabled,
+    }
+}
+
+fn resolve_item(
+    item: &OwnedMenuItem,
+    keymap: &Keymap,
+    actions: &mut Vec<Box<dyn Action>>,
+) -> PlatformMenuItem {
+    match item {
+        OwnedMenuItem::Separator => PlatformMenuItem::Separator,
+        OwnedMenuItem::Submenu(menu) => {
+            PlatformMenuItem::Submenu(resolve_menu(menu, keymap, actions))
+        }
+        OwnedMenuItem::SystemMenu(OwnedOsMenu { name, menu_type }) => {
+            PlatformMenuItem::SystemMenu(PlatformOsMenu {
+                name: name.clone(),
+                menu_type: *menu_type,
+            })
+        }
+        OwnedMenuItem::Action {
+            name,
+            action,
+            os_action,
+            checked,
+            disabled,
+        } => {
+            let keystroke = resolve_keystroke(action.as_ref(), keymap);
+            let command_id = actions.len();
+            actions.push(action.boxed_clone());
+            PlatformMenuItem::Action {
+                name: name.clone(),
+                command_id,
+                keystroke,
+                os_action: *os_action,
+                checked: *checked,
+                disabled: *disabled,
+            }
+        }
+    }
+}
+
+/// Finds the accelerator to display for `action`, mirroring the precedence the
+/// macOS backend used: prefer the earliest binding whose predicate holds in a
+/// default Workspace/Pane/Editor context, and only show an accelerator when the
+/// chosen binding is a single keystroke.
+///
+/// See the discussion on <https://github.com/zed-industries/zed/issues/23621>.
+fn resolve_keystroke(action: &dyn Action, keymap: &Keymap) -> Option<Keystroke> {
+    static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
+
+    let keystrokes = keymap
+        .bindings_for_action(action)
+        .find_or_first(|binding| {
+            binding.predicate().is_none_or(|predicate| {
+                predicate.eval(DEFAULT_CONTEXT.get_or_init(|| {
+                    let mut workspace_context = KeyContext::new_with_defaults();
+                    workspace_context.add("Workspace");
+                    let mut pane_context = KeyContext::new_with_defaults();
+                    pane_context.add("Pane");
+                    let mut editor_context = KeyContext::new_with_defaults();
+                    editor_context.add("Editor");
+
+                    pane_context.extend(&editor_context);
+                    workspace_context.extend(&pane_context);
+                    vec![workspace_context]
+                }))
+            })
+        })
+        .map(|binding| binding.keystrokes());
+
+    match keystrokes {
+        Some(keystrokes) if keystrokes.len() == 1 => keystrokes
+            .into_iter()
+            .next()
+            .map(|keystroke| keystroke.inner().clone()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

@@ -7,10 +7,10 @@
 
 use crate::ScreenCaptureSource;
 use crate::{
-    ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
-    TestDispatcher, WindowAppearance, WindowId, WindowParams,
+    ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    MenuCommandId, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem, PlatformTextSystem, PlatformWindow,
+    Task, TestDispatcher, WindowAppearance, WindowId, WindowParams,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -178,19 +178,15 @@ impl Platform for VisualTestPlatform {
 
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
+    fn set_menus(&self, _menus: Vec<PlatformMenu>) {}
 
-    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        None
-    }
+    fn set_dock_menu(&self, _menu: Vec<PlatformMenuItem>) {}
 
-    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}
-
-    fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
+    fn on_app_menu_action(&self, _callback: Box<dyn FnMut(MenuCommandId)>) {}
 
     fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
+    fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(MenuCommandId) -> bool>) {}
 
     fn app_path(&self) -> Result<PathBuf> {
         self.platform.app_path()

@@ -20,7 +20,7 @@ use windows::{
     core::{GUID, HSTRING, Interface},
 };
 
-use gpui::{Action, MenuItem, SharedString};
+use gpui::{MenuCommandId, PlatformMenuItem, SharedString};
 
 pub(crate) struct JumpList {
     pub(crate) dock_menus: Vec<DockMenuItem>,
@@ -39,22 +39,29 @@ impl JumpList {
 pub(crate) struct DockMenuItem {
     pub(crate) name: SharedString,
     pub(crate) description: SharedString,
-    pub(crate) action: Box<dyn Action>,
+    pub(crate) command_id: MenuCommandId,
 }
 
 impl DockMenuItem {
-    pub(crate) fn new(item: MenuItem) -> anyhow::Result<Self> {
+    pub(crate) fn new(item: PlatformMenuItem) -> anyhow::Result<Self> {
         match item {
-            MenuItem::Action { name, action, .. } => Ok(Self {
-                name: name.clone(),
-                description: if name == "New Window" {
+            PlatformMenuItem::Action {
+                name, command_id, ..
+            } => {
+                let description: SharedString = if name == "New Window" {
                     "Opens a new window".into()
                 } else {
-                    name
-                },
-                action,
-            }),
-            _ => anyhow::bail!("Only `MenuItem::Action` is supported for dock menu on Windows."),
+                    name.clone().into()
+                };
+                Ok(Self {
+                    name: name.into(),
+                    description,
+                    command_id,
+                })
+            }
+            _ => anyhow::bail!(
+                "Only `PlatformMenuItem::Action` is supported for dock menu on Windows."
+            ),
         }
     }
 }
