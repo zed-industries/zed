@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result};
+use block::ConcreteBlock;
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
@@ -6,7 +7,7 @@ use gpui::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
     PlatformAtlas, Point, Size,
 };
-use metal::Device;
+use metal::{CommandQueue, Device, MTLBlitOption, MTLOrigin, MTLResourceOptions, MTLSize};
 use parking_lot::Mutex;
 use std::borrow::Cow;
 
@@ -21,30 +22,69 @@ const MAX_ATLAS_SIZE: Size<DevicePixels> = Size {
     height: DevicePixels(16384),
 };
 
+/// Upper bound on pending dynamic-texture bytes held on the CPU before they are
+/// flushed to the GPU. Full-texture updates coalesce, so this only accumulates
+/// for partial updates while no frame is being drawn.
+const MAX_PENDING_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
+
 pub struct MetalAtlas(Mutex<MetalAtlasState>);
 
 impl MetalAtlas {
-    pub(crate) fn new(device: Device, is_apple_gpu: bool) -> Self {
+    pub(crate) fn new(device: Device, is_apple_gpu: bool, command_queue: CommandQueue) -> Self {
         MetalAtlas(Mutex::new(MetalAtlasState {
             device: AssertSend(device),
+            command_queue: AssertSend(command_queue),
             is_apple_gpu,
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
             tiles_by_key: Default::default(),
+            pending_uploads: Vec::new(),
+            pending_upload_bytes: 0,
         }))
     }
 
     pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> metal::Texture {
         self.0.lock().texture(id).metal_texture.clone()
     }
+
+    /// Applies queued dynamic-texture uploads in `command_buffer`.
+    ///
+    /// Updates are recorded as GPU blits from a staging buffer instead of CPU-side
+    /// `replaceRegion`, so they are ordered after previously submitted command
+    /// buffers by the shared command queue and cannot race a frame that is still
+    /// reading the texture.
+    pub(crate) fn encode_pending_uploads(&self, command_buffer: &metal::CommandBufferRef) {
+        self.0.lock().encode_pending_locked(command_buffer);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn flush_pending_uploads(&self) {
+        let command_queue = self.0.lock().command_queue.0.clone();
+        let command_buffer = command_queue.new_command_buffer().to_owned();
+        self.encode_pending_uploads(&command_buffer);
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+    }
+}
+
+struct PendingUpload {
+    texture_id: AtlasTextureId,
+    /// Device-pixel destination origin of the upload within the atlas texture.
+    origin: MTLOrigin,
+    size: MTLSize,
+    bytes_per_row: u64,
+    data: Vec<u8>,
 }
 
 struct MetalAtlasState {
     device: AssertSend<Device>,
+    command_queue: AssertSend<CommandQueue>,
     is_apple_gpu: bool,
     monochrome_textures: AtlasTextureList<MetalAtlasTexture>,
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    pending_uploads: Vec<PendingUpload>,
+    pending_upload_bytes: usize,
 }
 
 impl PlatformAtlas for MetalAtlas {
@@ -74,12 +114,12 @@ impl PlatformAtlas for MetalAtlas {
     }
 
     fn update(&self, key: &AtlasKey, bounds: Bounds<DevicePixels>, bytes: &[u8]) -> Result<()> {
-        let lock = self.0.lock();
+        let mut lock = self.0.lock();
         let Some(tile) = lock.tiles_by_key.get(key).copied() else {
             return Ok(());
         };
-        let texture = lock.texture(tile.texture_id);
-        validate_upload(tile, bounds, bytes, texture.bytes_per_pixel())?;
+        let bytes_per_pixel = lock.texture(tile.texture_id).bytes_per_pixel();
+        validate_upload(tile, bounds, bytes, bytes_per_pixel)?;
         let upload_bounds = Bounds {
             origin: Point {
                 x: DevicePixels(
@@ -101,12 +141,16 @@ impl PlatformAtlas for MetalAtlas {
             },
             size: bounds.size,
         };
-        texture.upload(upload_bounds, bytes);
+        lock.queue_upload(tile, upload_bounds, bytes, bytes_per_pixel);
         Ok(())
     }
 
     fn resource_generation(&self) -> u64 {
         0
+    }
+
+    fn max_texture_size(&self) -> Option<Size<DevicePixels>> {
+        Some(MAX_ATLAS_SIZE)
     }
 
     fn remove(&self, key: &AtlasKey) {
@@ -130,14 +174,26 @@ impl PlatformAtlas for MetalAtlas {
             return;
         };
 
+        let mut freed = false;
         if let Some(mut texture) = texture_slot.take() {
             texture.allocator.deallocate(tile.tile_id.into());
             texture.decrement_ref_count();
             if texture.is_unreferenced() {
                 textures.free_list.push(id.index as usize);
+                freed = true;
             } else {
                 *texture_slot = Some(texture);
             }
+        }
+
+        if freed {
+            lock.pending_uploads
+                .retain(|upload| upload.texture_id != id);
+            lock.pending_upload_bytes = lock
+                .pending_uploads
+                .iter()
+                .map(|upload| upload.data.len())
+                .sum();
         }
     }
 }
@@ -263,6 +319,105 @@ impl MetalAtlasState {
             AtlasTextureKind::Subpixel => unreachable!(),
         };
         textures[id.index as usize].as_ref().unwrap()
+    }
+
+    fn texture_if_present(&self, id: AtlasTextureId) -> Option<&MetalAtlasTexture> {
+        let textures = match id.kind {
+            AtlasTextureKind::Monochrome => &self.monochrome_textures,
+            AtlasTextureKind::Polychrome => &self.polychrome_textures,
+            AtlasTextureKind::Subpixel => unreachable!(),
+        };
+        textures
+            .textures
+            .get(id.index as usize)
+            .and_then(|t| t.as_ref())
+    }
+
+    /// Queues a dynamic-texture upload to be applied on the next frame's command buffer.
+    fn queue_upload(
+        &mut self,
+        tile: AtlasTile,
+        bounds: Bounds<DevicePixels>,
+        bytes: &[u8],
+        bytes_per_pixel: u8,
+    ) {
+        let is_full_update = bounds.origin == tile.bounds.origin && bounds.size == tile.bounds.size;
+        if is_full_update {
+            // A full-texture upload supersedes every earlier upload for this texture.
+            self.pending_uploads
+                .retain(|upload| upload.texture_id != tile.texture_id);
+            self.pending_upload_bytes = self
+                .pending_uploads
+                .iter()
+                .map(|upload| upload.data.len())
+                .sum();
+        }
+
+        self.pending_upload_bytes = self.pending_upload_bytes.saturating_add(bytes.len());
+        self.pending_uploads.push(PendingUpload {
+            texture_id: tile.texture_id,
+            origin: MTLOrigin {
+                x: bounds.origin.x.0 as u64,
+                y: bounds.origin.y.0 as u64,
+                z: 0,
+            },
+            size: MTLSize::new(bounds.size.width.0 as u64, bounds.size.height.0 as u64, 1),
+            bytes_per_row: bounds.size.width.to_bytes(bytes_per_pixel) as u64,
+            data: bytes.to_vec(),
+        });
+
+        if self.pending_upload_bytes > MAX_PENDING_UPLOAD_BYTES {
+            let command_queue = self.command_queue.0.clone();
+            let command_buffer = command_queue.new_command_buffer().to_owned();
+            self.encode_pending_locked(&command_buffer);
+            command_buffer.commit();
+        }
+    }
+
+    /// Encodes and clears queued uploads onto `command_buffer`.
+    fn encode_pending_locked(&mut self, command_buffer: &metal::CommandBufferRef) {
+        let pending_uploads = std::mem::take(&mut self.pending_uploads);
+        self.pending_upload_bytes = 0;
+        if pending_uploads.is_empty() {
+            return;
+        }
+
+        let blit = command_buffer.new_blit_command_encoder();
+        let mut staging_buffers = Vec::with_capacity(pending_uploads.len());
+        for upload in pending_uploads {
+            let Some(texture) = self.texture_if_present(upload.texture_id) else {
+                // The texture was removed before this frame; its queued pixels are
+                // no longer needed.
+                continue;
+            };
+            let buffer = self.device.0.new_buffer_with_data(
+                upload.data.as_ptr().cast(),
+                upload.data.len() as u64,
+                MTLResourceOptions::StorageModeShared,
+            );
+            blit.copy_from_buffer_to_texture(
+                &buffer,
+                0,
+                upload.bytes_per_row,
+                0,
+                upload.size,
+                &texture.metal_texture,
+                0,
+                0,
+                upload.origin,
+                MTLBlitOption::None,
+            );
+            staging_buffers.push(buffer);
+        }
+        blit.end_encoding();
+
+        // Keep the staging buffers alive until the GPU has consumed them.
+        let staging_buffers = std::cell::Cell::new(Some(staging_buffers));
+        let block = ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
+            let _ = staging_buffers.take();
+        })
+        .copy();
+        command_buffer.add_completed_handler(&block);
     }
 }
 
@@ -393,7 +548,8 @@ mod tests {
 
     fn create_atlas() -> Option<MetalAtlas> {
         let device = metal::Device::system_default()?;
-        Some(MetalAtlas::new(device, true))
+        let command_queue = device.new_command_queue();
+        Some(MetalAtlas::new(device, true, command_queue))
     }
 
     fn make_dynamic_texture_key(texture_id: usize) -> AtlasKey {
@@ -542,6 +698,9 @@ mod tests {
                 &dirty_pixel,
             )
             .expect("partial upload should succeed");
+
+        // Uploads are applied by the next frame's command buffer.
+        atlas.flush_pending_uploads();
 
         let texture = atlas.metal_texture(tile.texture_id);
         let mut uploaded = [0u8; 16];

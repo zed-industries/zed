@@ -52,6 +52,10 @@ pub struct DynamicTextureParams {
 }
 
 /// A mutable BGRA texture with a stable identity and fixed device-pixel size.
+///
+/// The size is fixed for the lifetime of the texture. Pixels are tightly packed
+/// BGRA; updates via [`Window::update_dynamic_texture`](crate::Window::update_dynamic_texture)
+/// are relative to the top-left corner and take effect on the next painted frame.
 pub struct DynamicTexture {
     /// The stable ID associated with this texture.
     pub id: DynamicTextureId,

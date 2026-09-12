@@ -1515,7 +1515,35 @@ fn dynamic_texture_byte_len(size: Size<DevicePixels>) -> Result<usize> {
 }
 
 fn dynamic_texture_blank(size: Size<DevicePixels>) -> Result<Vec<u8>> {
-    Ok(vec![0; dynamic_texture_byte_len(size)?])
+    let byte_len = dynamic_texture_byte_len(size)?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(byte_len)
+        .map_err(|_| anyhow!("dynamic texture of {byte_len} bytes is too large to allocate"))?;
+    bytes.resize(byte_len, 0);
+    Ok(bytes)
+}
+
+/// Rejects dynamic-texture sizes that the backend cannot allocate before any CPU
+/// buffer is created for them.
+fn validate_dynamic_texture_size(
+    atlas: &dyn PlatformAtlas,
+    size: Size<DevicePixels>,
+) -> Result<()> {
+    dynamic_texture_dimension(size.width.0, "width")?;
+    dynamic_texture_dimension(size.height.0, "height")?;
+    if let Some(max) = atlas.max_texture_size() {
+        if size.width > max.width || size.height > max.height {
+            return Err(anyhow!(
+                "dynamic texture size {}x{} exceeds the supported maximum {}x{}",
+                size.width.0,
+                size.height.0,
+                max.width.0,
+                max.height.0
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_dynamic_texture_update(
@@ -1565,6 +1593,7 @@ fn update_dynamic_texture_atlas(
     bounds: Bounds<DevicePixels>,
     bytes: &[u8],
 ) -> Result<()> {
+    validate_dynamic_texture_size(atlas, texture_size)?;
     let is_full_update = bounds.origin == Point::default() && bounds.size == texture_size;
     let mut inserted = false;
 
@@ -4982,7 +5011,16 @@ impl Window {
 
     /// Uploads a BGRA region into a dynamic texture without replacing its stable identity.
     ///
-    /// The update bounds are relative to the top-left corner of the dynamic texture.
+    /// `bounds` is relative to the top-left corner of the dynamic texture and is
+    /// validated against the texture size. `bytes` must be tightly packed BGRA (four
+    /// bytes per pixel, no row padding), `width * height * 4` bytes long, with the
+    /// first byte being blue and the fourth alpha.
+    ///
+    /// The upload is queued and applied by the backend on the next rendered frame,
+    /// so the change is visible after the owning view requests another paint. A full
+    /// texture-sized update supersedes any queued update for the same texture, so a
+    /// producer that keeps pushing whole frames cannot grow backend memory without
+    /// bound.
     pub fn update_dynamic_texture(
         &mut self,
         data: &DynamicTexture,
@@ -5015,6 +5053,7 @@ impl Window {
         }
         .into();
         let size = data.size();
+        validate_dynamic_texture_size(self.sprite_atlas.as_ref(), size)?;
         let tile = self
             .sprite_atlas
             .get_or_insert_with(&key, &mut || {
@@ -8869,6 +8908,10 @@ mod dynamic_texture_tests {
         fn remove(&self, _key: &AtlasKey) {
             self.0.lock().tile = None;
         }
+
+        fn max_texture_size(&self) -> Option<Size<DevicePixels>> {
+            Some(size(DevicePixels(8), DevicePixels(8)))
+        }
     }
 
     fn test_dynamic_texture_key(id: usize) -> AtlasKey {
@@ -8886,6 +8929,34 @@ mod dynamic_texture_tests {
         );
         assert!(dynamic_texture_byte_len(size(DevicePixels(0), DevicePixels(2))).is_err());
         assert!(dynamic_texture_byte_len(size(DevicePixels(3), DevicePixels(-1))).is_err());
+    }
+
+    #[test]
+    fn dynamic_texture_blank_rejects_unallocatable_size() {
+        // i32::MAX squared times four bytes passes the usize multiplication check
+        // but exceeds Vec's capacity limit; this must return an error, not panic.
+        let oversized = size(DevicePixels(i32::MAX), DevicePixels(i32::MAX));
+        assert!(dynamic_texture_blank(oversized).is_err());
+    }
+
+    #[test]
+    fn update_rejects_size_beyond_backend_limit_before_allocating() {
+        let atlas = RecordingAtlas::default();
+        let oversized = size(DevicePixels(9), DevicePixels(9));
+        let bounds = Bounds::new(Point::default(), oversized);
+        let bytes = vec![0; 9 * 9 * 4];
+
+        assert!(
+            update_dynamic_texture_atlas(
+                &atlas,
+                &test_dynamic_texture_key(2),
+                oversized,
+                bounds,
+                &bytes,
+            )
+            .is_err()
+        );
+        assert!(atlas.0.lock().builds.is_empty());
     }
 
     #[test]

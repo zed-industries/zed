@@ -10,6 +10,11 @@ use std::{borrow::Cow, ops, sync::Arc};
 
 use crate::WgpuContext;
 
+/// Upper bound on the CPU-side bytes held in the pending upload queue before it
+/// is flushed. Full-texture updates coalesce, so this only grows for partial
+/// updates while no frame is draining the queue (hidden/minimized window).
+const MAX_PENDING_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
+
 fn device_size_to_etagere(size: Size<DevicePixels>) -> etagere::Size {
     size2(size.width.0, size.height.0)
 }
@@ -37,6 +42,8 @@ struct WgpuAtlasState {
     storage: WgpuAtlasStorage,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
     pending_uploads: Vec<PendingUpload>,
+    pending_upload_bytes: usize,
+    max_pending_upload_bytes: usize,
     resource_generation: u64,
 }
 
@@ -59,6 +66,8 @@ impl WgpuAtlas {
             storage: WgpuAtlasStorage::default(),
             tiles_by_key: Default::default(),
             pending_uploads: Vec::new(),
+            pending_upload_bytes: 0,
+            max_pending_upload_bytes: MAX_PENDING_UPLOAD_BYTES,
             resource_generation: 0,
         }))
     }
@@ -74,6 +83,11 @@ impl WgpuAtlas {
     pub fn before_frame(&self) {
         let mut lock = self.0.lock();
         lock.flush_uploads();
+    }
+
+    #[cfg(test)]
+    pub fn set_max_pending_upload_bytes(&self, bytes: usize) {
+        self.0.lock().max_pending_upload_bytes = bytes;
     }
 
     pub fn get_texture_info(&self, id: AtlasTextureId) -> WgpuTextureInfo {
@@ -178,6 +192,11 @@ impl PlatformAtlas for WgpuAtlas {
             if texture.is_unreferenced() {
                 lock.pending_uploads
                     .retain(|upload| upload.id != texture.id);
+                lock.pending_upload_bytes = lock
+                    .pending_uploads
+                    .iter()
+                    .map(|upload| upload.data.len())
+                    .sum();
                 lock.storage[id.kind]
                     .free_list
                     .push(texture.id.index as usize);
@@ -190,6 +209,14 @@ impl PlatformAtlas for WgpuAtlas {
     fn resource_generation(&self) -> u64 {
         self.0.lock().resource_generation
     }
+
+    fn max_texture_size(&self) -> Option<Size<DevicePixels>> {
+        let max = self.0.lock().max_texture_size as i32;
+        Some(Size {
+            width: DevicePixels(max),
+            height: DevicePixels(max),
+        })
+    }
 }
 
 impl WgpuAtlasState {
@@ -197,6 +224,7 @@ impl WgpuAtlasState {
         self.storage = WgpuAtlasStorage::default();
         self.tiles_by_key.clear();
         self.pending_uploads.clear();
+        self.pending_upload_bytes = 0;
         self.resource_generation = self
             .resource_generation
             .checked_add(1)
@@ -298,6 +326,7 @@ impl WgpuAtlasState {
             },
             allocator: BucketedAtlasAllocator::new(device_size_to_etagere(size)),
             format,
+            size,
             texture,
             view,
             live_atlas_keys: 0,
@@ -321,12 +350,36 @@ impl WgpuAtlasState {
     }
 
     fn upload_texture(&mut self, id: AtlasTextureId, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
-        let data = self
-            .storage
-            .get(id)
-            .map(|texture| swizzle_upload_data(bytes, texture.format))
-            .unwrap_or_else(|| bytes.to_vec());
+        let (data, texture_size) = match self.storage.get(id) {
+            Some(texture) => (swizzle_upload_data(bytes, texture.format), texture.size),
+            None => (
+                bytes.to_vec(),
+                Size {
+                    width: DevicePixels(0),
+                    height: DevicePixels(0),
+                },
+            ),
+        };
 
+        let is_full_update = bounds.origin == Point::default() && bounds.size == texture_size;
+        if is_full_update {
+            // A newer full-frame upload supersedes earlier queued uploads for the
+            // same texture, so it cannot grow the pending queue without bound.
+            self.pending_uploads.retain(|upload| upload.id != id);
+            self.pending_upload_bytes = self
+                .pending_uploads
+                .iter()
+                .map(|upload| upload.data.len())
+                .sum();
+        }
+
+        if self.pending_upload_bytes.saturating_add(data.len()) > self.max_pending_upload_bytes {
+            // No frame is draining the queue (e.g. a hidden window): flush what is
+            // queued so CPU memory stays bounded while updates keep arriving.
+            self.flush_uploads();
+        }
+
+        self.pending_upload_bytes = self.pending_upload_bytes.saturating_add(data.len());
         self.pending_uploads
             .push(PendingUpload { id, bounds, data });
     }
@@ -384,6 +437,7 @@ impl WgpuAtlasState {
     }
 
     fn flush_uploads(&mut self) {
+        self.pending_upload_bytes = 0;
         for upload in self.pending_uploads.drain(..) {
             let Some(texture) = self.storage.get(upload.id) else {
                 continue;
@@ -474,6 +528,7 @@ struct WgpuAtlasTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     format: wgpu::TextureFormat,
+    size: Size<DevicePixels>,
     live_atlas_keys: u32,
 }
 
@@ -794,6 +849,55 @@ mod tests {
         assert!(out_of_bounds.is_err());
         let wrong_byte_count = atlas.update(&key, texture_bounds(0, 0, 1, 1), &[0; 3]);
         assert!(wrong_byte_count.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn full_updates_coalesce_in_the_pending_queue() -> anyhow::Result<()> {
+        let (device, queue) = test_device_and_queue()?;
+        let atlas = WgpuAtlas::new(device, queue, wgpu::TextureFormat::Bgra8Unorm);
+        let key = dynamic_texture_key(7);
+        let size = texture_size(4, 4);
+        let initial = vec![0u8; 4 * 4 * 4];
+        let mut build = || Ok(Some((size, Cow::Borrowed(initial.as_slice()))));
+        atlas
+            .get_or_insert_with(&key, &mut build)?
+            .expect("dynamic texture should be allocated");
+        atlas.before_frame();
+
+        for value in [1u8, 2, 3] {
+            let frame = vec![value; 4 * 4 * 4];
+            atlas.update(&key, texture_bounds(0, 0, 4, 4), &frame)?;
+        }
+
+        let lock = atlas.0.lock();
+        assert_eq!(lock.pending_uploads.len(), 1);
+        assert_eq!(lock.pending_upload_bytes, 4 * 4 * 4);
+        Ok(())
+    }
+
+    #[test]
+    fn partial_uploads_flush_when_the_bounded_queue_is_exceeded() -> anyhow::Result<()> {
+        let (device, queue) = test_device_and_queue()?;
+        let atlas = WgpuAtlas::new(device, queue, wgpu::TextureFormat::Bgra8Unorm);
+        let max_pending_bytes = 8;
+        atlas.set_max_pending_upload_bytes(max_pending_bytes);
+        let key = dynamic_texture_key(8);
+        let size = texture_size(4, 4);
+        let initial = vec![0u8; 4 * 4 * 4];
+        let mut build = || Ok(Some((size, Cow::Borrowed(initial.as_slice()))));
+        atlas
+            .get_or_insert_with(&key, &mut build)?
+            .expect("dynamic texture should be allocated");
+        atlas.before_frame();
+
+        for _ in 0..8 {
+            atlas.update(&key, texture_bounds(0, 0, 1, 1), &[1, 2, 3, 4])?;
+        }
+
+        let lock = atlas.0.lock();
+        assert!(lock.pending_upload_bytes <= max_pending_bytes);
+        assert!(lock.pending_uploads.len() <= 2);
         Ok(())
     }
 }

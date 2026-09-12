@@ -1451,6 +1451,12 @@ pub trait PlatformAtlas {
         0
     }
 
+    /// Returns the maximum device-pixel size this atlas can allocate for a single
+    /// texture, or `None` when the backend imposes no fixed limit.
+    fn max_texture_size(&self) -> Option<Size<DevicePixels>> {
+        None
+    }
+
     fn remove(&self, key: &AtlasKey);
 
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]

@@ -158,6 +158,15 @@ impl PlatformAtlas for DirectXAtlas {
         self.0.lock().resource_generation.current()
     }
 
+    fn max_texture_size(&self) -> Option<Size<DevicePixels>> {
+        // D3D11 feature level 11 guarantees 16384x16384 2D textures.
+        const MAX: i32 = 16384;
+        Some(Size {
+            width: DevicePixels(MAX),
+            height: DevicePixels(MAX),
+        })
+    }
+
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
 
