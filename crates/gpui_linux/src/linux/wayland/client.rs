@@ -374,6 +374,22 @@ pub struct DragState {
     data_offer: Option<wl_data_offer::WlDataOffer>,
     window: Option<WaylandWindowStatePtr>,
     position: Point<Pixels>,
+    uri_read_generation: u64,
+}
+
+impl DragState {
+    fn begin_uri_read(&mut self) -> u64 {
+        self.invalidate_uri_read();
+        self.uri_read_generation
+    }
+
+    fn invalidate_uri_read(&mut self) {
+        self.uri_read_generation = self.uri_read_generation.wrapping_add(1);
+    }
+
+    fn is_uri_read_current(&self, generation: u64) -> bool {
+        self.uri_read_generation == generation
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -929,6 +945,7 @@ impl WaylandClient {
                 data_offer: None,
                 window: None,
                 position: Point::default(),
+                uri_read_generation: 0,
             },
             external_drag: None,
             click: ClickState {
@@ -2601,6 +2618,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let Some(drag_window) = get_window(&mut state, &surface.id()) else {
                         return;
                     };
+                    let uri_read_generation = state.drag.begin_uri_read();
 
                     const ACTIONS: DndAction = DndAction::Copy;
                     data_offer.set_actions(ACTIONS, ACTIONS);
@@ -2649,7 +2667,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 data_offer.destroy();
                                 return;
                             }
-
                             let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                                 position,
                                 paths: gpui::ExternalPaths(paths),
@@ -2657,6 +2674,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
                             let client = this.get_client();
                             let mut state = client.borrow_mut();
+                            if !state.drag.is_uri_read_current(uri_read_generation) {
+                                data_offer.destroy();
+                                return;
+                            }
                             state.drag.data_offer = Some(data_offer);
                             state.drag.window = Some(drag_window.clone());
                             state.drag.position = position;
@@ -2679,6 +2700,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 drag_window.handle_input(input);
             }
             wl_data_device::Event::Leave => {
+                state.drag.invalidate_uri_read();
                 let Some(drag_window) = state.drag.window.clone() else {
                     return;
                 };
@@ -2693,6 +2715,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 drag_window.handle_input(input);
             }
             wl_data_device::Event::Drop => {
+                state.drag.invalidate_uri_read();
                 let Some(drag_window) = state.drag.window.clone() else {
                     return;
                 };
@@ -2909,6 +2932,26 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    #[test]
+    fn invalidates_stale_drag_uri_reads() {
+        let mut drag = DragState {
+            data_offer: None,
+            window: None,
+            position: Point::default(),
+            uri_read_generation: 0,
+        };
+
+        let first_generation = drag.begin_uri_read();
+        assert!(drag.is_uri_read_current(first_generation));
+
+        let second_generation = drag.begin_uri_read();
+        assert!(!drag.is_uri_read_current(first_generation));
+        assert!(drag.is_uri_read_current(second_generation));
+
+        drag.invalidate_uri_read();
+        assert!(!drag.is_uri_read_current(second_generation));
+    }
 
     #[derive(Default)]
     struct FakeImeCursorRectangleSink {
