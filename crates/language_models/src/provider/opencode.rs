@@ -2,9 +2,9 @@ use anyhow::Result;
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::{FutureExt, StreamExt, future::BoxFuture};
+use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
-use http_client::{AsyncBody, CustomHeaders, HttpClient, http};
+use http_client::{AsyncBody, CustomHeaders, HttpClient, RequestBuilderExt, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
@@ -67,6 +67,215 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 const OPENCODE_SESSION_HEADER_NAME: &str = "x-opencode-session";
 pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &[OPENCODE_SESSION_HEADER_NAME];
 
+/// The models.dev registry, which OpenCode keeps up to date with newly
+/// released models for its Zen and Go subscriptions.
+const MODELS_DEV_API_URL: &str = "https://models.dev/api.json";
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+struct RegistryProvider {
+    #[serde(default)]
+    npm: Option<String>,
+    #[serde(default)]
+    models: BTreeMap<String, RegistryModel>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+struct RegistryModel {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    family: Option<String>,
+    #[serde(default)]
+    reasoning_options: Vec<RegistryReasoningOption>,
+    #[serde(default)]
+    interleaved: Option<RegistryInterleaved>,
+    #[serde(default)]
+    modalities: Option<RegistryModalities>,
+    #[serde(default)]
+    limit: Option<RegistryLimit>,
+    #[serde(default)]
+    provider: Option<RegistryModelProvider>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+struct RegistryReasoningOption {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    #[serde(default)]
+    values: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+struct RegistryInterleaved {
+    #[serde(default)]
+    field: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+struct RegistryModalities {
+    #[serde(default)]
+    input: Option<Vec<String>>,
+    #[serde(default)]
+    output: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+struct RegistryLimit {
+    #[serde(default)]
+    context: Option<u64>,
+    #[serde(default)]
+    output: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+struct RegistryModelProvider {
+    #[serde(default)]
+    npm: Option<String>,
+}
+
+impl RegistryModel {
+    /// Converts a registry model into a custom OpenCode model, resolving the
+    /// API protocol from the registry's per-model SDK, the model family, and
+    /// finally the provider-level SDK default.
+    fn into_custom(self, id: String, provider_npm: Option<&str>) -> Option<opencode::Model> {
+        let protocol = self
+            .provider
+            .as_ref()
+            .and_then(|provider| provider.npm.as_deref())
+            .and_then(protocol_from_npm)
+            .or_else(|| self.family.as_deref().and_then(protocol_from_family))
+            .or_else(|| provider_npm.and_then(protocol_from_npm))
+            .unwrap_or(ApiProtocol::OpenAiChat);
+        Some(opencode::Model::Custom {
+            name: id,
+            display_name: self.name,
+            max_tokens: self
+                .limit
+                .as_ref()
+                .and_then(|limit| limit.context)
+                .unwrap_or(128_000),
+            max_output_tokens: self.limit.as_ref().and_then(|limit| limit.output),
+            protocol,
+            reasoning_effort_levels: registry_reasoning_effort_levels(&self.reasoning_options),
+            custom_model_api_url: None,
+            interleaved_reasoning: self.interleaved.is_some_and(|interleaved| {
+                interleaved.field.as_deref() == Some("reasoning_content")
+            }),
+        })
+    }
+}
+
+fn protocol_from_npm(npm: &str) -> Option<ApiProtocol> {
+    match npm {
+        "@ai-sdk/anthropic" => Some(ApiProtocol::Anthropic),
+        "@ai-sdk/openai" => Some(ApiProtocol::OpenAiResponses),
+        "@ai-sdk/google" => Some(ApiProtocol::Google),
+        "@ai-sdk/openai-compatible" => Some(ApiProtocol::OpenAiChat),
+        _ => None,
+    }
+}
+
+fn protocol_from_family(family: &str) -> Option<ApiProtocol> {
+    let family = family.to_ascii_lowercase();
+    if family.starts_with("claude") {
+        Some(ApiProtocol::Anthropic)
+    } else if family.starts_with("gpt") || family.starts_with("grok") || family.starts_with("muse")
+    {
+        Some(ApiProtocol::OpenAiResponses)
+    } else if family.starts_with("gemini") {
+        Some(ApiProtocol::Google)
+    } else if family.starts_with("qwen") {
+        Some(ApiProtocol::Anthropic)
+    } else if family.starts_with("deepseek")
+        || family.starts_with("glm")
+        || family.starts_with("kimi")
+        || family.starts_with("minimax")
+        || family.starts_with("mimo")
+        || family.starts_with("hy")
+        || family.starts_with("longcat")
+    {
+        Some(ApiProtocol::OpenAiChat)
+    } else {
+        None
+    }
+}
+
+fn registry_reasoning_effort_levels(
+    options: &[RegistryReasoningOption],
+) -> Option<Vec<ReasoningEffort>> {
+    let effort_levels: Vec<ReasoningEffort> = options
+        .iter()
+        .filter(|option| option.kind.as_deref() == Some("effort"))
+        .flat_map(|option| option.values.iter().flatten())
+        .filter_map(|value| normalize_reasoning_effort(value))
+        .collect();
+    if !effort_levels.is_empty() {
+        Some(effort_levels)
+    } else if options
+        .iter()
+        .any(|option| option.kind.as_deref() == Some("toggle"))
+    {
+        // Toggle-only reasoning models can't express effort levels; enabling
+        // reasoning means requesting the highest effort (see Kimi K3).
+        Some(vec![ReasoningEffort::Max])
+    } else {
+        None
+    }
+}
+
+fn parse_registry_models(body: &str) -> Result<Vec<(OpenCodeSubscription, opencode::Model)>> {
+    let registry: serde_json::Value = serde_json::from_str(body)?;
+    let mut models = Vec::new();
+    for (provider_id, subscription) in [
+        ("opencode", OpenCodeSubscription::Zen),
+        ("opencode-go", OpenCodeSubscription::Go),
+    ] {
+        let Some(provider_value) = registry.get(provider_id) else {
+            log::warn!("OpenCode model registry is missing the {provider_id} provider");
+            continue;
+        };
+        let provider: RegistryProvider = match serde_json::from_value(provider_value.clone()) {
+            Ok(provider) => provider,
+            Err(error) => {
+                log::warn!(
+                    "failed to parse the {provider_id} provider in the OpenCode model registry: {error:?}"
+                );
+                continue;
+            }
+        };
+        let provider_npm = provider.npm.clone();
+        for (id, model) in provider.models {
+            if let Some(model) = model.into_custom(id, provider_npm.as_deref()) {
+                models.push((subscription, model));
+            }
+        }
+    }
+    Ok(models)
+}
+
+async fn fetch_registry_models(
+    http_client: &dyn HttpClient,
+    extra_headers: &CustomHeaders,
+) -> Result<Vec<(OpenCodeSubscription, opencode::Model)>> {
+    let request = http::Request::builder()
+        .method(http::Method::GET)
+        .uri(MODELS_DEV_API_URL)
+        .header("Content-Type", "application/json")
+        .extra_headers(extra_headers)
+        .body(AsyncBody::empty())?;
+    let mut response = http_client.send(request).await?;
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "failed to fetch the OpenCode model registry, status code: {:?}, body: {}",
+            response.status(),
+            body
+        ));
+    }
+    parse_registry_models(&body)
+}
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenCodeSettings {
     pub api_url: String,
@@ -74,6 +283,7 @@ pub struct OpenCodeSettings {
     pub custom_headers: CustomHeaders,
     pub show_zen_models: bool,
     pub show_go_models: bool,
+    pub fetch_registry_models: bool,
 }
 
 pub struct OpenCodeLanguageModelProvider {
@@ -84,6 +294,10 @@ pub struct OpenCodeLanguageModelProvider {
 pub struct State {
     api_key_state: ApiKeyState,
     credentials_provider: Arc<dyn CredentialsProvider>,
+    http_client: Arc<dyn HttpClient>,
+    registry_models: Option<Vec<(OpenCodeSubscription, opencode::Model)>>,
+    registry_fetch_task: Option<Task<()>>,
+    registry_fetch_attempted: bool,
 }
 
 impl State {
@@ -113,6 +327,39 @@ impl State {
             cx,
         )
     }
+
+    /// Fetches the models.dev registry so that newly released OpenCode models
+    /// show up without a Zed release. Built-in models take precedence; this
+    /// only fills in models that Zed doesn't bundle yet.
+    fn maybe_fetch_registry_models(&mut self, cx: &mut Context<Self>) {
+        if self.registry_fetch_attempted
+            || !OpenCodeLanguageModelProvider::settings(cx).fetch_registry_models
+        {
+            return;
+        }
+        self.registry_fetch_attempted = true;
+        let http_client = self.http_client.clone();
+        let extra_headers = OpenCodeLanguageModelProvider::settings(cx)
+            .custom_headers
+            .clone();
+        let task = cx.spawn(async move |this, cx| {
+            let registry_models = fetch_registry_models(http_client.as_ref(), &extra_headers).await;
+            this.update(cx, |state, cx| {
+                state.registry_fetch_task.take();
+                match registry_models {
+                    Ok(registry_models) => {
+                        state.registry_models = Some(registry_models);
+                        cx.notify();
+                    }
+                    Err(error) => {
+                        log::warn!("failed to fetch the OpenCode model registry: {error:?}");
+                    }
+                }
+            })
+            .ok();
+        });
+        self.registry_fetch_task = Some(task);
+    }
 }
 
 impl OpenCodeLanguageModelProvider {
@@ -137,8 +384,13 @@ impl OpenCodeLanguageModelProvider {
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                 credentials_provider,
+                http_client: http_client.clone(),
+                registry_models: None,
+                registry_fetch_task: None,
+                registry_fetch_attempted: false,
             }
         });
+        state.update(cx, |state, cx| state.maybe_fetch_registry_models(cx));
 
         Self { http_client, state }
     }
@@ -247,6 +499,17 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
                 if Self::subscription_enabled(subscription, cx) {
                     let key = format!("{}/{}", subscription.id_prefix(), model.id());
                     models.insert(key, (model.clone(), subscription));
+                }
+            }
+        }
+
+        if settings.fetch_registry_models {
+            if let Some(registry_models) = self.state.read(cx).registry_models.clone() {
+                for (subscription, model) in registry_models {
+                    if Self::subscription_enabled(subscription, cx) {
+                        let key = format!("{}/{}", subscription.id_prefix(), model.id());
+                        models.entry(key).or_insert((model, subscription));
+                    }
                 }
             }
         }
@@ -994,6 +1257,7 @@ impl Render for ConfigurationView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use collections::HashMap;
     use http_client::{FakeHttpClient, Response};
     use language_model::{LanguageModelRequestMessage, MessageContent, Role};
     use parking_lot::Mutex;
@@ -1024,6 +1288,109 @@ mod tests {
         let value = opencode_session_header_value(Some("thread\n123"));
 
         assert_generated_session_id(&value);
+    }
+
+    #[test]
+    fn test_parse_registry_models_resolves_protocols_and_metadata() {
+        let body = r#"
+        {
+          "opencode": {
+            "npm": "@ai-sdk/openai-compatible",
+            "models": {
+              "claude-opus-5": {
+                "provider": { "npm": "@ai-sdk/anthropic" },
+                "limit": { "context": 1000000, "output": 128000 }
+              },
+              "glm-5.3": {
+                "family": "glm",
+                "interleaved": { "field": "reasoning_content" },
+                "limit": { "context": 1000000, "output": 131072 }
+              }
+            }
+          },
+          "opencode-go": {
+            "npm": "@ai-sdk/openai-compatible",
+            "models": {
+              "kimi-k3": {
+                "reasoning_options": [{ "type": "toggle" }],
+                "limit": { "context": 1048576, "output": 131072 }
+              },
+              "qwen3.8-flash": {
+                "provider": { "npm": "@ai-sdk/anthropic" },
+                "limit": { "context": 1000000 }
+              }
+            }
+          },
+          "other-provider": {
+            "models": { "should-be-ignored": {} }
+          }
+        }"#;
+
+        let models = parse_registry_models(body).unwrap();
+        assert_eq!(models.len(), 4);
+        let by_id: HashMap<_, _> = models
+            .iter()
+            .map(|(subscription, model)| {
+                (
+                    format!("{}/{}", subscription.id_prefix(), model.id()),
+                    model,
+                )
+            })
+            .collect();
+
+        let claude = by_id["zen/claude-opus-5"].clone();
+        let opencode::Model::Custom {
+            name,
+            max_tokens,
+            max_output_tokens,
+            protocol,
+            interleaved_reasoning,
+            ..
+        } = claude
+        else {
+            panic!("registry models should be custom models");
+        };
+        assert_eq!(name, "claude-opus-5");
+        assert_eq!(max_tokens, 1_000_000);
+        assert_eq!(max_output_tokens, Some(128_000));
+        assert_eq!(protocol, ApiProtocol::Anthropic);
+        assert!(!interleaved_reasoning);
+
+        let opencode::Model::Custom {
+            protocol,
+            interleaved_reasoning,
+            ..
+        } = &by_id["zen/glm-5.3"]
+        else {
+            panic!("registry models should be custom models");
+        };
+        assert_eq!(*protocol, ApiProtocol::OpenAiChat);
+        assert!(*interleaved_reasoning);
+
+        let opencode::Model::Custom {
+            protocol,
+            reasoning_effort_levels,
+            ..
+        } = &by_id["go/kimi-k3"]
+        else {
+            panic!("registry models should be custom models");
+        };
+        assert_eq!(*protocol, ApiProtocol::OpenAiChat);
+        assert_eq!(
+            reasoning_effort_levels.as_ref().unwrap(),
+            &vec![ReasoningEffort::Max]
+        );
+
+        let opencode::Model::Custom {
+            protocol,
+            max_output_tokens,
+            ..
+        } = &by_id["go/qwen3.8-flash"]
+        else {
+            panic!("registry models should be custom models");
+        };
+        assert_eq!(*protocol, ApiProtocol::Anthropic);
+        assert_eq!(*max_output_tokens, None);
     }
 
     #[gpui::test]
