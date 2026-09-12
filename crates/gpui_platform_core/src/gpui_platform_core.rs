@@ -38,6 +38,16 @@ pub mod popup;
 #[cfg(feature = "profiler")]
 pub mod profiler;
 mod prompt;
+#[cfg(any(
+    test,
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    feature = "test-support",
+    feature = "bench-support"
+))]
+#[expect(missing_docs)]
+pub mod queue;
 mod render;
 mod scene;
 mod screen_capture;
@@ -71,6 +81,15 @@ pub use platform_window::*;
 #[cfg(feature = "profiler")]
 pub use profiler::*;
 pub use prompt::*;
+#[cfg(any(
+    test,
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    feature = "test-support",
+    feature = "bench-support"
+))]
+pub use queue::*;
 pub use render::*;
 pub use scene::*;
 pub use screen_capture::*;

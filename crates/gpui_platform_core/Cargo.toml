@@ -9,8 +9,6 @@ license = "Apache-2.0"
 workspace = true
 
 [dev-dependencies]
-parking_lot.workspace = true
-rand.workspace = true
 
 [lib]
 path = "src/gpui_platform_core.rs"
@@ -42,6 +40,8 @@ image.workspace = true
 log.workspace = true
 num_cpus = "1.13"
 parking = "2.0.0"
+parking_lot.workspace = true
+rand.workspace = true
 raw-window-handle.workspace = true
 scheduler.workspace = true
 schemars.workspace = true

@@ -95,7 +95,7 @@ impl<T> PriorityQueueState<T> {
     fn try_recv<'a>(
         &'a self,
     ) -> Result<Option<parking_lot::MutexGuard<'a, PriorityQueues<T>>>, RecvError> {
-        let mut queues = self.queues.lock();
+        let queues = self.queues.lock();
 
         let sender_count = self.sender_count.load(std::sync::atomic::Ordering::Relaxed);
         if queues.is_empty() && sender_count == 0 {
@@ -226,7 +226,7 @@ impl<T> PriorityQueueReceiver<T> {
     }
 
     /// Returns the number of queued elements across all priorities.
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         let queues = self.state.queues.lock();
         queues.high_priority.len() + queues.medium_priority.len() + queues.low_priority.len()
     }
