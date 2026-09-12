@@ -56,6 +56,7 @@ impl DirectXAtlas {
         DirectXAtlas(Mutex::new(DirectXAtlasState {
             device: device.clone(),
             device_context: device_context.clone(),
+            resource_generation: Default::default(),
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
             subpixel_textures: Default::default(),
