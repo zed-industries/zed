@@ -1,4 +1,4 @@
-use crate::canvas_fallback::classify_canvas_fallback;
+use crate::canvas_fallback::{CanvasFontFallback, classify_canvas_fallback};
 use crate::canvas_text::{self, CanvasTextMetrics};
 use crate::glyph_cache::{CanvasGlyph, GlyphCache};
 use crate::run_replacements::{Replacement, apply_replacements, collect_candidates};
@@ -19,6 +19,7 @@ const MAX_MEASUREMENTS: usize = 4096;
 pub(crate) struct WebTextSystem {
     native: CosmicTextSystem,
     state: RwLock<State>,
+    canvas_font_fallback: CanvasFontFallback,
 }
 
 #[derive(Default)]
@@ -52,10 +53,14 @@ impl State {
 }
 
 impl WebTextSystem {
-    pub(crate) fn new(system_font_fallback: &str) -> Self {
+    pub(crate) fn new(
+        system_font_fallback: &str,
+        canvas_font_fallback: CanvasFontFallback,
+    ) -> Self {
         Self {
             native: CosmicTextSystem::new_without_system_fonts(system_font_fallback),
             state: RwLock::new(State::default()),
+            canvas_font_fallback,
         }
     }
 
@@ -180,12 +185,18 @@ impl WebTextSystem {
     }
 
     fn apply_fallback(&self, text: &str, font_runs: &[FontRun], layout: &mut LineLayout) {
-        if text.is_ascii() || !f32::from(layout.font_size).is_finite() || layout.font_size <= px(0.)
+        if self.canvas_font_fallback == CanvasFontFallback::Disabled
+            || text.is_ascii()
+            || !f32::from(layout.font_size).is_finite()
+            || layout.font_size <= px(0.)
         {
             return;
         }
         let mut replacements = Vec::new();
         for candidate in collect_candidates(text, font_runs, layout) {
+            if !self.canvas_font_fallback.allows(candidate.color) {
+                continue;
+            }
             let Some(glyphs) = candidate.glyphs else {
                 continue;
             };

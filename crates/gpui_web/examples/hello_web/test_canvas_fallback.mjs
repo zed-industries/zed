@@ -157,8 +157,11 @@ try {
     await insert(text);
     await delay(200);
     assert.equal(await readText(), text);
-    for (const grapheme of ["中", "文", "が", "か\u3099", "각", "각", "❤️", "👍🏽", "🇯🇵", "👩‍💻", "👨‍👩‍👧‍👦"]) {
+    for (const grapheme of ["❤️", "👍🏽", "🇯🇵", "1⃣", "👩‍💻", "👨‍👩‍👧‍👦"]) {
         assert.ok(await rasterCount(grapheme) > 0, `Missing whole-grapheme raster: ${grapheme}`);
+    }
+    for (const grapheme of ["中", "文", "が", "か\u3099", "각", "각"]) {
+        assert.equal(await rasterCount(grapheme), 0, `Default policy should not rasterize CJK: ${grapheme}`);
     }
     assert.ok(
         await evaluate("canvasCalls.every(call => call.willReadFrequently === true)"),

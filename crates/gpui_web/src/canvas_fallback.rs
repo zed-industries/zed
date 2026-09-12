@@ -14,6 +14,29 @@ use unicode_properties::{EmojiStatus, GeneralCategory, UnicodeEmoji, UnicodeGene
 use unicode_script::{Script, UnicodeScript};
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Controls browser-font fallback when loaded fonts lack a glyph or its emoji presentation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CanvasFontFallback {
+    /// Use only fonts loaded into GPUI.
+    Disabled,
+    /// Use Canvas only for eligible graphemes requesting emoji presentation.
+    #[default]
+    Emoji,
+    /// Also allow approximate independent rendering of eligible horizontal CJK text.
+    EmojiAndCjk,
+}
+
+impl CanvasFontFallback {
+    #[cfg(any(target_family = "wasm", test))]
+    pub(crate) fn allows(self, emoji_presentation: bool) -> bool {
+        match self {
+            Self::Disabled => false,
+            Self::Emoji => emoji_presentation,
+            Self::EmojiAndCjk => true,
+        }
+    }
+}
+
 /// A supported grapheme assumed to be independently renderable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CanvasFallback {
@@ -200,6 +223,21 @@ fn is_supported_zwj_sequence(grapheme: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_font_fallback_policy() {
+        assert_eq!(CanvasFontFallback::default(), CanvasFontFallback::Emoji);
+        for grapheme in ["😀", "❤️", "1️⃣", "👨‍👩‍👧‍👦", "中", "か\u{3099}", "각", "©", "❤︎"]
+        {
+            let fallback = classify_canvas_fallback(grapheme).expect("eligible grapheme");
+            assert!(!CanvasFontFallback::Disabled.allows(fallback.emoji_presentation));
+            assert_eq!(
+                CanvasFontFallback::Emoji.allows(fallback.emoji_presentation),
+                ["😀", "❤️", "1️⃣", "👨‍👩‍👧‍👦"].contains(&grapheme),
+            );
+            assert!(CanvasFontFallback::EmojiAndCjk.allows(fallback.emoji_presentation));
+        }
+    }
 
     #[test]
     fn ascii_is_ineligible_but_keycaps_are_preserved() {
