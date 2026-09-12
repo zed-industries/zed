@@ -431,6 +431,8 @@ mod tests {
                 pasteboard.read().and_then(|item| item.text()).as_deref(),
                 Some("Olá 世界")
             );
+            // SAFETY: The unique pasteboard is alive, and the type NSString remains
+            // valid within this autorelease pool while data_for_type copies its data.
             let html = unsafe { pasteboard.data_for_type(ns_string("public.html")) };
             assert_eq!(
                 html.as_deref(),
@@ -438,6 +440,7 @@ mod tests {
             );
 
             pasteboard.write(ClipboardItem::new_string("plain".to_string()));
+            // SAFETY: The pasteboard and type NSString are still valid in this pool.
             assert!(unsafe { pasteboard.data_for_type(ns_string("public.html")) }.is_none());
         });
     }
