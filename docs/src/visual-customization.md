@@ -415,6 +415,36 @@ TBD: Centered layout related settings
   // of each entry in the completions menu. "symbol" shows a syntax-colored
   // single-letter badge.
   "completion_menu_item_kind": "off", // off, symbol
+  // Customize the single-character symbols used for completion item kinds.
+  // Symbols must be supported by the UI font or one of its fallbacks. To use
+  // Nerd Font glyphs, configure a Nerd Font as the UI font or a fallback.
+  "completion_menu_item_kind_symbols": {
+    "text": "t",
+    "method": "m",
+    "function": "f",
+    "constructor": "C",
+    "field": "f",
+    "variable": "v",
+    "class": "c",
+    "interface": "i",
+    "module": "M",
+    "property": "p",
+    "unit": "u",
+    "value": "v",
+    "enum": "e",
+    "keyword": "k",
+    "snippet": "s",
+    "color": "c",
+    "file": "F",
+    "reference": "r",
+    "folder": "D",
+    "enum_member": "e",
+    "constant": "c",
+    "struct": "S",
+    "event": "E",
+    "operator": "o",
+    "type_parameter": "T"
+  },
   // Turn on colorization of brackets in editors (configurable per language)
   "colorize_brackets": true,
 ```
