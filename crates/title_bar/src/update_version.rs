@@ -1,25 +1,44 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use auto_update::{AutoUpdateStatus, AutoUpdater, UpdateCheckType};
-use gpui::{Empty, Render};
+use gpui::{Empty, Render, Task};
 use semver::Version;
 use ui::{Tooltip, UpdateButton, prelude::*};
+
+const UP_TO_DATE_DISPLAY_DURATION: Duration = Duration::from_secs(4);
 
 pub struct UpdateVersion {
     status: AutoUpdateStatus,
     update_check_type: UpdateCheckType,
     dismissed_status: Option<AutoUpdateStatus>,
+    showing_up_to_date: bool,
+    _up_to_date_timer: Option<Task<()>>,
 }
 
 impl UpdateVersion {
     pub fn new(cx: &mut Context<Self>) -> Self {
         if let Some(auto_updater) = AutoUpdater::get(cx) {
             cx.observe(&auto_updater, |this, auto_update, cx| {
-                let auto_update = auto_update.read(cx);
-                this.status = auto_update.status();
-                this.update_check_type = auto_update.update_check_type();
-                this.dismissed_status = auto_update.dismissed_status();
+                let (status, update_check_type, dismissed_status) = {
+                    let auto_update = auto_update.read(cx);
+                    (
+                        auto_update.status(),
+                        auto_update.update_check_type(),
+                        auto_update.dismissed_status(),
+                    )
+                };
+                let finished_manual_check =
+                    Self::is_up_to_date(&this.status, &status, update_check_type);
+                this.status = status;
+                this.update_check_type = update_check_type;
+                this.dismissed_status = dismissed_status;
+                if finished_manual_check {
+                    this.show_up_to_date(cx);
+                } else if !matches!(this.status, AutoUpdateStatus::Idle) {
+                    this.hide_up_to_date();
+                }
                 cx.notify();
             })
             .detach();
@@ -27,14 +46,47 @@ impl UpdateVersion {
                 status: auto_updater.read(cx).status(),
                 update_check_type: UpdateCheckType::Automatic,
                 dismissed_status: auto_updater.read(cx).dismissed_status(),
+                showing_up_to_date: false,
+                _up_to_date_timer: None,
             }
         } else {
             Self {
                 status: AutoUpdateStatus::Idle,
                 update_check_type: UpdateCheckType::Automatic,
                 dismissed_status: None,
+                showing_up_to_date: false,
+                _up_to_date_timer: None,
             }
         }
+    }
+
+    fn is_up_to_date(
+        previous_status: &AutoUpdateStatus,
+        status: &AutoUpdateStatus,
+        update_check_type: UpdateCheckType,
+    ) -> bool {
+        update_check_type.is_manual()
+            && matches!(previous_status, AutoUpdateStatus::Checking)
+            && matches!(status, AutoUpdateStatus::Idle)
+    }
+
+    fn show_up_to_date(&mut self, cx: &mut Context<Self>) {
+        self.showing_up_to_date = true;
+        self._up_to_date_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(UP_TO_DATE_DISPLAY_DURATION)
+                .await;
+            this.update(cx, |this, cx| {
+                this.hide_up_to_date();
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn hide_up_to_date(&mut self) {
+        self.showing_up_to_date = false;
+        self._up_to_date_timer = None;
     }
 
     pub fn update_simulation(&mut self, cx: &mut Context<Self>) {
@@ -59,6 +111,7 @@ impl UpdateVersion {
         self.status = next_state;
         self.update_check_type = UpdateCheckType::Manual;
         self.dismissed_status = None;
+        self.hide_up_to_date();
         cx.notify()
     }
 
@@ -90,6 +143,9 @@ impl Render for UpdateVersion {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.is_dismissed() {
             return Empty.into_any_element();
+        }
+        if self.showing_up_to_date {
+            return UpdateButton::up_to_date().into_any_element();
         }
         match &self.status {
             AutoUpdateStatus::Checking if self.update_check_type.is_manual() => {
@@ -159,6 +215,36 @@ mod tests {
             message,
             "Update to Version: 1.0.0+nightly.14d9a4189f058d8736339b06ff2340101eaea5af"
         );
+    }
+
+    #[test]
+    fn test_is_up_to_date() {
+        assert!(UpdateVersion::is_up_to_date(
+            &AutoUpdateStatus::Checking,
+            &AutoUpdateStatus::Idle,
+            UpdateCheckType::Manual
+        ));
+
+        assert!(!UpdateVersion::is_up_to_date(
+            &AutoUpdateStatus::Checking,
+            &AutoUpdateStatus::Idle,
+            UpdateCheckType::Automatic
+        ));
+
+        assert!(!UpdateVersion::is_up_to_date(
+            &AutoUpdateStatus::Checking,
+            &AutoUpdateStatus::Downloading {
+                version: Version::new(1, 99, 0),
+                progress: None,
+            },
+            UpdateCheckType::Manual
+        ));
+
+        assert!(!UpdateVersion::is_up_to_date(
+            &AutoUpdateStatus::Idle,
+            &AutoUpdateStatus::Idle,
+            UpdateCheckType::Manual
+        ));
     }
 
     #[test]
