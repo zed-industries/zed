@@ -40,7 +40,7 @@ use lsp::{
 };
 use node_runtime::NodeRuntime;
 use project::{
-    LanguageServerLogType, ProgressToken, Project, ProjectPath,
+    CompletionSource, LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
     image_store,
     lsp_store::log_store::{LanguageServerKind, LanguageServerLogKey, LogStore},
@@ -54,6 +54,7 @@ use settings::{
 };
 use smol::stream::StreamExt;
 use std::{
+    cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
     str::FromStr,
@@ -1212,6 +1213,185 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
     })
+}
+
+#[gpui::test]
+async fn test_remote_completion_resolve_edit_ranges(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code/project"),
+        json!({ "lib.rs": "test(value1, value2)" }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let capabilities = lsp::ServerCapabilities {
+        completion_provider: Some(lsp::CompletionOptions {
+            resolve_provider: Some(true),
+            ..lsp::CompletionOptions::default()
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+    project.update(cx, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+    let mut fake_servers = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName(SharedString::from("rust-analyzer")),
+            capabilities,
+            Some(Box::new(|fake_server| {
+                fake_server.set_request_handler::<lsp::request::Completion, _, _>(
+                    |params, _| async move {
+                        assert_eq!(
+                            params.text_document_position.position,
+                            lsp::Position::new(0, 13)
+                        );
+                        Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
+                            label: "value2=".to_string(),
+                            ..lsp::CompletionItem::default()
+                        }])))
+                    },
+                );
+            })),
+        )
+    });
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("worktree should open")
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("lib.rs")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    let fake_server = fake_servers.next().await.expect("LSP should start");
+    cx.run_until_parked();
+
+    let explicit_replace_range =
+        lsp::Range::new(lsp::Position::new(0, 12), lsp::Position::new(0, 19));
+    let explicit_insert_range =
+        lsp::Range::new(lsp::Position::new(0, 12), lsp::Position::new(0, 13));
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    for (resolved_edit, expected_insert_range, expected_replace_range, expected_text) in [
+        (None, Some(13..13), 13..19, "value2="),
+        (
+            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: explicit_replace_range,
+                new_text: " value2=".to_string(),
+            })),
+            None,
+            12..19,
+            " value2=",
+        ),
+        (
+            Some(lsp::CompletionTextEdit::InsertAndReplace(
+                lsp::InsertReplaceEdit {
+                    insert: explicit_insert_range,
+                    replace: explicit_replace_range,
+                    new_text: " value2=".to_string(),
+                },
+            )),
+            Some(12..13),
+            12..19,
+            " value2=",
+        ),
+    ] {
+        fake_server.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
+            move |mut item, _| {
+                let resolved_edit = resolved_edit.clone();
+                async move {
+                    assert_eq!(item.label, "value2=");
+                    item.documentation = Some(lsp::Documentation::String("resolved".to_string()));
+                    item.text_edit = resolved_edit;
+                    Ok(item)
+                }
+            },
+        );
+        let completions = project
+            .update(cx, |project, cx| {
+                project.completions(
+                    &buffer,
+                    13,
+                    CompletionContext {
+                        trigger_kind: CompletionTriggerKind::INVOKED,
+                        trigger_character: None,
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("completions should load")
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>();
+        assert_eq!(completions.len(), 1);
+        buffer.read_with(cx, |buffer, _| {
+            let completion = completions.first().expect("completion should exist");
+            let CompletionSource::Lsp { insert_range, .. } = &completion.source else {
+                panic!("expected LSP completion");
+            };
+            assert_eq!(
+                *insert_range,
+                Some(buffer.anchor_before(13)..buffer.anchor_after(13))
+            );
+            assert_eq!(
+                completion.replace_range,
+                buffer.anchor_before(13)..buffer.anchor_after(19)
+            );
+        });
+        let completions = Rc::new(RefCell::new(completions.into_boxed_slice()));
+        let did_resolve = lsp_store
+            .update(cx, |lsp_store, cx| {
+                lsp_store.resolve_completions(buffer.clone(), vec![0], completions.clone(), cx)
+            })
+            .await
+            .expect("completion should resolve");
+        assert!(did_resolve);
+        buffer.read_with(cx, |buffer, _| {
+            let completions = completions.borrow();
+            let completion = completions.first().expect("completion should exist");
+            let CompletionSource::Lsp {
+                insert_range,
+                resolved,
+                lsp_completion,
+                ..
+            } = &completion.source
+            else {
+                panic!("expected LSP completion");
+            };
+            assert!(*resolved);
+            assert_eq!(
+                lsp_completion.documentation,
+                Some(lsp::Documentation::String("resolved".to_string()))
+            );
+            assert_eq!(
+                *insert_range,
+                expected_insert_range
+                    .map(|range| buffer.anchor_before(range.start)..buffer.anchor_after(range.end))
+            );
+            assert_eq!(
+                completion.replace_range,
+                buffer.anchor_before(expected_replace_range.start)
+                    ..buffer.anchor_after(expected_replace_range.end)
+            );
+            assert_eq!(completion.new_text, expected_text);
+        });
+    }
 }
 
 #[gpui::test]
