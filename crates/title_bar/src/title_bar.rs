@@ -242,6 +242,8 @@ impl Render for TitleBar {
         let is_git_enabled = ProjectSettings::get_global(cx).git.enabled.status;
 
         let show_menus = show_menus(cx);
+        let inline_menus = show_menus && title_bar_settings.inline_menus;
+        let separate_menu_row = show_menus && !inline_menus;
 
         let mut children = <ArrayVec<_, 5>>::new();
 
@@ -315,15 +317,15 @@ impl Render for TitleBar {
                         || title_bar_settings.show_project_items;
                     title_bar
                         .when_some(
-                            self.application_menu.clone().filter(|_| !show_menus),
+                            self.application_menu.clone().filter(|_| !separate_menu_row),
                             |title_bar, menu| {
                                 // Hide the project/branch items to make room when the
-                                // menu bar is expanded -- except in accessible mode,
-                                // where the menu bar is always expanded but those
-                                // controls must still remain reachable.
+                                // menu bar is temporarily expanded. Permanently inline
+                                // menus must leave those controls reachable.
                                 render_project_items &= !menu
                                     .update(cx, |menu, cx| menu.all_menus_shown(cx))
-                                    || cx.accessible_mode();
+                                    || cx.accessible_mode()
+                                    || inline_menus;
                                 title_bar.child(menu)
                             },
                         )
@@ -409,7 +411,7 @@ impl Render for TitleBar {
                 .into_any_element(),
         );
 
-        if show_menus {
+        if separate_menu_row {
             self.platform_titlebar.update(cx, |this, _| {
                 this.set_button_layout(button_layout);
                 this.set_children(
