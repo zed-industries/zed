@@ -1,0 +1,17 @@
+[package]
+name = "gpui_platform_core"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_platform_core.rs"
+doctest = false
+
+[dependencies]
+collections.workspace = true
+gpui_types.workspace = true

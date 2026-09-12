@@ -7503,6 +7503,7 @@ dependencies = [
  "getrandom 0.3.4",
  "gpui_macros",
  "gpui_platform",
+ "gpui_platform_core",
  "gpui_shared_string",
  "gpui_types",
  "gpui_util",
@@ -7695,6 +7696,14 @@ dependencies = [
  "gpui_macos",
  "gpui_web",
  "gpui_windows",
+]
+
+[[package]]
+name = "gpui_platform_core"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "gpui_types",
 ]
 
 [[package]]

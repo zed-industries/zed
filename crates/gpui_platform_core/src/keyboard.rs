@@ -1,6 +1,7 @@
-use collections::HashMap;
+//! Platform keyboard traits and implementations.
 
-use crate::{KeybindingKeystroke, Keystroke};
+use collections::HashMap;
+use gpui_types::{KeybindingKeystroke, Keystroke};
 
 /// A trait for platform-specific keyboard layouts
 pub trait PlatformKeyboardLayout {
