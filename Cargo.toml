@@ -201,6 +201,7 @@ members = [
     "crates/streaming_diff",
     "crates/sum_tree",
     "crates/svg_preview",
+    "crates/symbol_index",
     "crates/syntax_theme",
     "crates/system_specs",
     "crates/tab_switcher",
@@ -468,6 +469,7 @@ sqlez_macros = { path = "crates/sqlez_macros" }
 streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 svg_preview = { path = "crates/svg_preview" }
+symbol_index = { path = "crates/symbol_index" }
 syntax_theme = { path = "crates/syntax_theme" }
 system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
