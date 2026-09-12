@@ -19,11 +19,11 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
 use git::{CopyFilePermalink, OpenFilePermalink};
 use gpui::{
-    Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
-    DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, TaskExt, WeakEntity, WeakFocusHandle, Window, actions,
-    anchored, deferred, prelude::*,
+    Action, Anchor, AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem,
+    Context, Div, DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
+    FocusOutEvent, Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point,
+    PromptLevel, Render, ScrollHandle, Stateful, Subscription, Task, TaskExt, WeakEntity,
+    WeakFocusHandle, Window, actions, anchored, canvas, deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
@@ -34,6 +34,7 @@ use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use std::{
     any::Any,
+    cell::RefCell,
     cmp, fmt, mem,
     num::NonZeroUsize,
     path::PathBuf,
@@ -392,6 +393,13 @@ impl fmt::Debug for Event {
     }
 }
 
+#[derive(Clone, Default)]
+struct WrapTabIdentity {
+    pub row_end: bool,
+    pub mid_row: bool,
+    pub extend_to: Option<gpui::Pixels>,
+}
+
 /// A container for 0 to many items that are open in the workspace.
 /// Treats all items uniformly via the [`ItemHandle`] trait, whether it's an editor, search results multibuffer, terminal or something else,
 /// responsible for managing item tabs, focus and zoom states and drag and drop features.
@@ -421,6 +429,7 @@ pub struct Pane {
     can_toggle_zoom: bool,
     should_display_tab_bar: Rc<dyn Fn(&Window, &mut Context<Pane>) -> bool>,
     should_display_welcome_page: bool,
+    uses_default_tab_bar_buttons: bool,
     render_tab_bar_buttons: Rc<
         dyn Fn(
             &mut Pane,
@@ -431,6 +440,12 @@ pub struct Pane {
     render_tab_bar: Rc<dyn Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement>,
     show_tab_bar_buttons: bool,
     max_tabs: Option<NonZeroUsize>,
+    wrapped_tab_natural_widths: Rc<RefCell<HashMap<EntityId, Pixels>>>,
+    wrap_main_bar_width: Rc<RefCell<Option<Pixels>>>,
+    wrap_pinned_bar_width: Rc<RefCell<Option<Pixels>>>,
+    wrap_nav_width: Rc<RefCell<Pixels>>,
+    wrap_actions_width: Rc<RefCell<Option<Pixels>>>,
+    wrap_planned_widths: Rc<RefCell<(Option<Pixels>, Option<Pixels>)>>,
     use_max_tabs: bool,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
@@ -597,6 +612,13 @@ impl Pane {
             }))),
             toolbar: cx.new(|_| Toolbar::new()),
             tab_bar_scroll_handle: ScrollHandle::new(),
+            wrapped_tab_natural_widths: Default::default(),
+            wrap_main_bar_width: Default::default(),
+            wrap_pinned_bar_width: Default::default(),
+            wrap_nav_width: Default::default(),
+            wrap_actions_width: Default::default(),
+            wrap_planned_widths: Default::default(),
+
             suppress_scroll: false,
             drag_split_direction: None,
             workspace,
@@ -607,6 +629,7 @@ impl Pane {
             should_display_tab_bar: Rc::new(|_, cx| TabBarSettings::get_global(cx).show),
             should_display_welcome_page: false,
             render_tab_bar_buttons: Rc::new(default_render_tab_bar_buttons),
+            uses_default_tab_bar_buttons: true,
             render_tab_bar: Rc::new(Self::render_tab_bar),
             show_tab_bar_buttons: TabBarSettings::get_global(cx).show_tab_bar_buttons,
             display_nav_history_buttons: Some(
@@ -678,7 +701,7 @@ impl Pane {
             self.was_focused = true;
             self.update_history(self.active_item_index);
             if !self.suppress_scroll && self.items.get(self.active_item_index).is_some() {
-                self.update_active_tab(self.active_item_index);
+                self.update_active_tab(self.active_item_index, cx);
             }
             cx.emit(Event::Focus);
             cx.notify();
@@ -873,6 +896,11 @@ impl Pane {
         cx.notify();
     }
 
+    /// Registers a custom renderer for the tab bar's corner buttons.
+    ///
+    /// In wrap mode, left children are not placed and right children must
+    /// stay laid out (wrap in an invisible div, not `None`) or the row-1
+    /// actions reserve collapses.
     pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut Context<Self>, render: F)
     where
         F: 'static
@@ -883,6 +911,7 @@ impl Pane {
             ) -> (Option<AnyElement>, Option<AnyElement>),
     {
         self.render_tab_bar_buttons = Rc::new(render);
+        self.uses_default_tab_bar_buttons = false;
         cx.notify();
     }
 
@@ -1502,12 +1531,17 @@ impl Pane {
                 focus_changed: focus_item,
             });
 
-            self.update_active_tab(index);
+            self.update_active_tab(index, cx);
             cx.notify();
         }
     }
 
-    fn update_active_tab(&mut self, index: usize) {
+    fn update_active_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        if TabBarSettings::get_global(cx).wrap_tabs {
+            // Wrap layout has no horizontal scroll handle attached; nothing to scroll.
+            self.suppress_scroll = false;
+            return;
+        }
         if !self.is_tab_pinned(index) {
             self.suppress_scroll = false;
             self.tab_bar_scroll_handle
@@ -2835,7 +2869,84 @@ impl Pane {
         )
     }
 
+    fn tab_end_slot_element(
+        &self,
+        ix: usize,
+        item_id: EntityId,
+        is_pinned: bool,
+        is_active: bool,
+        focus_handle: &FocusHandle,
+        cx: &mut Context<Pane>,
+    ) -> Option<AnyElement> {
+        let settings = ItemSettings::get_global(cx);
+        let show_close_button = settings.show_close_button;
+        let end_slot_action: &'static dyn Action;
+        let end_slot_tooltip_text: &'static str;
+        let end_slot = if is_pinned {
+            end_slot_action = &TogglePinTab;
+            end_slot_tooltip_text = "Unpin Tab";
+            IconButton::new("unpin tab", IconName::Pin)
+                .shape(IconButtonShape::Square)
+                .icon_color(Color::Muted)
+                .size(ButtonSize::None)
+                .icon_size(IconSize::Small)
+                .on_click(cx.listener(move |pane, _, window, cx| {
+                    pane.unpin_tab_at(ix, window, cx);
+                }))
+        } else {
+            end_slot_action = &CloseActiveItem {
+                save_intent: None,
+                close_pinned: false,
+            };
+            end_slot_tooltip_text = "Close Tab";
+            match show_close_button {
+                ShowCloseButton::Always => IconButton::new("close tab", IconName::Close),
+                ShowCloseButton::Hover => {
+                    IconButton::new("close tab", IconName::Close).visible_on_hover("")
+                }
+                ShowCloseButton::Hidden => return None,
+            }
+            .shape(IconButtonShape::Square)
+            .icon_color(Color::Muted)
+            .size(ButtonSize::None)
+            .icon_size(IconSize::Small)
+            .on_click(cx.listener(move |pane, _, window, cx| {
+                pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                    .detach_and_log_err(cx);
+            }))
+        }
+        .map(|this| {
+            if is_active {
+                let focus_handle = focus_handle.clone();
+                this.tooltip(move |window, cx| {
+                    Tooltip::for_action_in(
+                        end_slot_tooltip_text,
+                        end_slot_action,
+                        &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
+                        cx,
+                    )
+                })
+            } else {
+                this.tooltip(Tooltip::text(end_slot_tooltip_text))
+            }
+        });
+        Some(end_slot.into_any_element())
+    }
+
     fn render_tab(
+        &self,
+        ix: usize,
+        item: &dyn ItemHandle,
+        detail: usize,
+        focus_handle: &FocusHandle,
+        identity: WrapTabIdentity,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> impl IntoElement + use<> {
+        self.render_tab_inner(ix, item, detail, focus_handle, identity, false, window, cx)
+    }
+
+    fn render_ruler_tab(
         &self,
         ix: usize,
         item: &dyn ItemHandle,
@@ -2844,19 +2955,70 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Pane>,
     ) -> impl IntoElement + use<> {
+        self.render_tab_inner(
+            ix,
+            item,
+            detail,
+            focus_handle,
+            WrapTabIdentity::default(),
+            true,
+            window,
+            cx,
+        )
+    }
+
+    fn render_tab_inner(
+        &self,
+        ix: usize,
+        item: &dyn ItemHandle,
+        detail: usize,
+        focus_handle: &FocusHandle,
+        identity: WrapTabIdentity,
+        ruler: bool,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> impl IntoElement + use<> {
         let is_active = ix == self.active_item_index;
         let is_preview = self
             .preview_item_id
             .map(|id| id == item.item_id())
             .unwrap_or(false);
-
+        let max_title_len = identity.extend_to.filter(|_| !ruler).map(|width| {
+            let chrome = ui::Tab::extended_tab_label_chrome(cx, window.rem_size());
+            let avail = (width - chrome).max(px(16.));
+            let title = item.tab_content_text(detail, cx);
+            let text_style = window.text_style();
+            let font_size = text_style.font_size.to_pixels(window.rem_size());
+            let font = ThemeSettings::get_global(cx).ui_font.clone();
+            let measured = window
+                .text_system()
+                .layout_line(
+                    title.as_ref(),
+                    font_size,
+                    &[gpui::TextRun {
+                        len: title.len(),
+                        font,
+                        color: gpui::Hsla::default(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                )
+                .width;
+            if measured <= avail || measured == px(0.) {
+                usize::MAX
+            } else {
+                scaled_char_budget(avail, measured, title.chars().count())
+            }
+        });
         let label = item.tab_content(
             TabContentParams {
                 detail: Some(detail),
                 selected: is_active,
                 preview: is_preview,
                 deemphasized: !self.has_focus(window, cx),
-                max_title_len: None,
+                max_title_len,
                 truncate_title_middle: false,
             },
             window,
@@ -2866,8 +3028,7 @@ impl Pane {
         let icon = self.tab_icon_element(item, is_active, window, cx);
 
         let settings = ItemSettings::get_global(cx);
-        let close_side = &settings.close_position;
-        let show_close_button = &settings.show_close_button;
+        let close_side = settings.close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let tab_tooltip_content = item.tab_tooltip_content(cx);
         let item_id = item.item_id();
@@ -2876,6 +3037,13 @@ impl Pane {
         let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
+        let has_file_icon = icon.is_some();
+
+        let capability = item.capability(cx);
+        let wrap_tabs = TabBarSettings::get_global(cx).wrap_tabs;
+        let wrap_mid_row = wrap_tabs && !ruler && identity.mid_row;
+        let end_slot =
+            self.tab_end_slot_element(ix, item_id, is_pinned, is_active, focus_handle, cx);
         let read_only_toggle = |toggleable: bool| {
             IconButton::new("toggle_read_only", IconName::FileLock)
                 .size(ButtonSize::None)
@@ -2902,186 +3070,165 @@ impl Pane {
                 }))
         };
 
-        let has_file_icon = icon.is_some();
-
-        let capability = item.capability(cx);
-        let tab = Tab::new(ix)
-            .position(if is_first_item {
-                TabPosition::First
-            } else if is_last_item {
-                TabPosition::Last
-            } else {
-                TabPosition::Middle(position_relative_to_active_item)
-            })
-            .close_side(match close_side {
-                ClosePosition::Left => ui::TabCloseSide::Start,
-                ClosePosition::Right => ui::TabCloseSide::End,
-            })
-            .toggle_state(is_active)
-            .on_click(cx.listener({
-                let item_handle = item.boxed_clone();
-                move |pane: &mut Self, event: &ClickEvent, window, cx| {
-                    if event.click_count() > 1 {
-                        pane.unpreview_item_if_preview(item_id);
-                        let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
-                        if let Some((_, action)) = extra_actions
-                            .into_iter()
-                            .find(|(label, _)| label.as_ref() == "Rename")
-                        {
-                            // Dispatch action directly through the focus handle to avoid
-                            // relay_action's intermediate focus step which can interfere
-                            // with inline editors.
-                            let focus_handle = item_handle.item_focus_handle(cx);
-                            focus_handle.dispatch_action(&*action, window, cx);
-                            return;
+        let tab = if ruler {
+            Tab::new(("wrap-ruler", ix))
+        } else {
+            Tab::new(ix)
+        }
+        .wrap(wrap_tabs && !ruler)
+        .wrap_mid_row(wrap_mid_row)
+        .wrap_row_end(wrap_tabs && !ruler && identity.row_end)
+        .when_some(
+            identity.extend_to.filter(|_| wrap_tabs && !ruler),
+            |tab, w| tab.extend_to(w),
+        )
+        .when(wrap_tabs, |tab| {
+            if ruler {
+                let item_id = item.item_id();
+                let recorder = self.wrapped_tab_natural_widths.clone();
+                let pane = cx.entity().downgrade();
+                tab.report_bounds(Rc::new(move |bounds, cx| {
+                    let width = bounds.size.width;
+                    if recorder.borrow_mut().insert(item_id, width) != Some(width) {
+                        // Notifies raised during a draw phase don't
+                        // schedule a redraw; defer this one out of it.
+                        if let Some(pane) = pane.upgrade() {
+                            let pane_id = pane.entity_id();
+                            cx.defer(move |cx| cx.notify(pane_id));
                         }
                     }
-                    pane.activate_item(ix, true, true, window, cx)
-                }
-            }))
-            .on_aux_click(
-                cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
-                    if !event.is_middle_click() || is_pinned {
+                }))
+            } else {
+                tab
+            }
+        })
+        .position(if is_first_item {
+            TabPosition::First
+        } else if is_last_item {
+            TabPosition::Last
+        } else {
+            TabPosition::Middle(position_relative_to_active_item)
+        })
+        .close_side(match close_side {
+            ClosePosition::Left => ui::TabCloseSide::Start,
+            ClosePosition::Right => ui::TabCloseSide::End,
+        })
+        .toggle_state(is_active)
+        .on_click(cx.listener({
+            let item_handle = item.boxed_clone();
+            move |pane: &mut Self, event: &ClickEvent, window, cx| {
+                if event.click_count() > 1 {
+                    pane.unpreview_item_if_preview(item_id);
+                    let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
+                    if let Some((_, action)) = extra_actions
+                        .into_iter()
+                        .find(|(label, _)| label.as_ref() == "Rename")
+                    {
+                        // Dispatch action directly through the focus handle to avoid
+                        // relay_action's intermediate focus step which can interfere
+                        // with inline editors.
+                        let focus_handle = item_handle.item_focus_handle(cx);
+                        focus_handle.dispatch_action(&*action, window, cx);
                         return;
                     }
-
-                    pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                        .detach_and_log_err(cx);
-                    cx.stop_propagation();
-                }),
-            )
-            .on_drag(
-                DraggedTab {
-                    item: item.boxed_clone(),
-                    pane: cx.entity(),
-                    detail,
-                    is_active,
-                    ix,
-                },
-                |tab, _, _, cx| cx.new(|_| tab.clone()),
-            )
-            .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
-                let mut styled_tab = tab
-                    .bg(cx.theme().colors().drop_target_background)
-                    .border_color(cx.theme().colors().drop_target_border)
-                    .border_0();
-
-                if ix < dragged_tab.ix {
-                    styled_tab = styled_tab.border_l_2();
-                } else if ix > dragged_tab.ix {
-                    styled_tab = styled_tab.border_r_2();
+                }
+                pane.activate_item(ix, true, true, window, cx)
+            }
+        }))
+        .on_aux_click(
+            cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
+                if !event.is_middle_click() || is_pinned {
+                    return;
                 }
 
-                styled_tab
-            })
-            .drag_over::<DraggedSelection>(|tab, _, _, cx| {
-                tab.bg(cx.theme().colors().drop_target_background)
-            })
-            .when_some(self.can_drop_predicate.clone(), |this, p| {
-                this.can_drop(move |a, window, cx| p(a, window, cx))
-            })
-            .on_drop(
-                cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
-                    this.drag_split_direction = None;
-                    this.handle_tab_drop(dragged_tab, ix, false, window, cx)
-                }),
-            )
-            .on_drop(
-                cx.listener(move |this, selection: &DraggedSelection, window, cx| {
-                    this.drag_split_direction = None;
-                    this.handle_dragged_selection_drop(selection, Some(ix), window, cx)
-                }),
-            )
-            .on_drop(cx.listener(move |this, paths, window, cx| {
+                pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                    .detach_and_log_err(cx);
+                cx.stop_propagation();
+            }),
+        )
+        .on_drag(
+            DraggedTab {
+                item: item.boxed_clone(),
+                pane: cx.entity(),
+                detail,
+                is_active,
+                ix,
+            },
+            |tab, _, _, cx| cx.new(|_| tab.clone()),
+        )
+        .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
+            let mut styled_tab = tab
+                .bg(cx.theme().colors().drop_target_background)
+                .border_color(cx.theme().colors().drop_target_border)
+                .border_0();
+
+            if ix < dragged_tab.ix {
+                styled_tab = styled_tab.border_l_2();
+            } else if ix > dragged_tab.ix {
+                styled_tab = styled_tab.border_r_2();
+            }
+
+            styled_tab
+        })
+        .drag_over::<DraggedSelection>(|tab, _, _, cx| {
+            tab.bg(cx.theme().colors().drop_target_background)
+        })
+        .when_some(self.can_drop_predicate.clone(), |this, p| {
+            this.can_drop(move |a, window, cx| p(a, window, cx))
+        })
+        .on_drop(
+            cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                 this.drag_split_direction = None;
-                this.handle_external_paths_drop(paths, window, cx)
-            }))
-            .start_slot::<Indicator>(indicator)
-            .map(|this| {
-                let end_slot_action: &'static dyn Action;
-                let end_slot_tooltip_text: &'static str;
-                let end_slot = if is_pinned {
-                    end_slot_action = &TogglePinTab;
-                    end_slot_tooltip_text = "Unpin Tab";
-                    IconButton::new("unpin tab", IconName::Pin)
-                        .shape(IconButtonShape::Square)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::Small)
-                        .on_click(cx.listener(move |pane, _, window, cx| {
-                            pane.unpin_tab_at(ix, window, cx);
-                        }))
+                this.handle_tab_drop(dragged_tab, ix, false, window, cx)
+            }),
+        )
+        .on_drop(
+            cx.listener(move |this, selection: &DraggedSelection, window, cx| {
+                this.drag_split_direction = None;
+                this.handle_dragged_selection_drop(selection, Some(ix), window, cx)
+            }),
+        )
+        .on_drop(cx.listener(move |this, paths, window, cx| {
+            this.drag_split_direction = None;
+            this.handle_external_paths_drop(paths, window, cx)
+        }))
+        .start_slot::<Indicator>(indicator)
+        .map(|this| match end_slot {
+            Some(end_slot) => this.end_slot(end_slot),
+            None => this,
+        })
+        .child(
+            h_flex()
+                .id(("pane-tab-content", ix))
+                .gap_1()
+                .children(if let Some(icon) = icon {
+                    Some(icon)
+                } else if !capability.editable() {
+                    Some(read_only_toggle(capability == Capability::Read).into_any_element())
                 } else {
-                    end_slot_action = &CloseActiveItem {
-                        save_intent: None,
-                        close_pinned: false,
-                    };
-                    end_slot_tooltip_text = "Close Tab";
-                    match show_close_button {
-                        ShowCloseButton::Always => IconButton::new("close tab", IconName::Close),
-                        ShowCloseButton::Hover => {
-                            IconButton::new("close tab", IconName::Close).visible_on_hover("")
+                    None
+                })
+                .child(label)
+                .map(|this| match tab_tooltip_content {
+                    Some(TabTooltipContent::Text(text)) => {
+                        if capability.editable() {
+                            this.tooltip(Tooltip::text(text))
+                        } else {
+                            this.tooltip(move |_, cx| {
+                                let text = text.clone();
+                                Tooltip::with_meta(text, None, "Read-Only Tab", cx)
+                            })
                         }
-                        ShowCloseButton::Hidden => return this,
                     }
-                    .shape(IconButtonShape::Square)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::None)
-                    .icon_size(IconSize::Small)
-                    .on_click(cx.listener(move |pane, _, window, cx| {
-                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                            .detach_and_log_err(cx);
-                    }))
-                }
-                .map(|this| {
-                    if is_active {
-                        let focus_handle = focus_handle.clone();
-                        this.tooltip(move |window, cx| {
-                            Tooltip::for_action_in(
-                                end_slot_tooltip_text,
-                                end_slot_action,
-                                &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
-                                cx,
-                            )
-                        })
-                    } else {
-                        this.tooltip(Tooltip::text(end_slot_tooltip_text))
+                    Some(TabTooltipContent::Custom(element_fn)) => {
+                        this.tooltip(move |window, cx| element_fn(window, cx))
                     }
-                });
-                this.end_slot(end_slot)
-            })
-            .child(
-                h_flex()
-                    .id(("pane-tab-content", ix))
-                    .gap_1()
-                    .children(if let Some(icon) = icon {
-                        Some(icon)
-                    } else if !capability.editable() {
-                        Some(read_only_toggle(capability == Capability::Read).into_any_element())
-                    } else {
-                        None
-                    })
-                    .child(label)
-                    .map(|this| match tab_tooltip_content {
-                        Some(TabTooltipContent::Text(text)) => {
-                            if capability.editable() {
-                                this.tooltip(Tooltip::text(text))
-                            } else {
-                                this.tooltip(move |_, cx| {
-                                    let text = text.clone();
-                                    Tooltip::with_meta(text, None, "Read-Only Tab", cx)
-                                })
-                            }
-                        }
-                        Some(TabTooltipContent::Custom(element_fn)) => {
-                            this.tooltip(move |window, cx| element_fn(window, cx))
-                        }
-                        None => this,
-                    })
-                    .when(capability == Capability::Read && has_file_icon, |this| {
-                        this.child(read_only_toggle(true))
-                    }),
-            );
+                    None => this,
+                })
+                .when(capability == Capability::Read && has_file_icon, |this| {
+                    this.child(read_only_toggle(true))
+                }),
+        );
 
         let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
             .then(|| self.items[ix].project_entry_ids(cx).get(0).copied())
@@ -3464,26 +3611,18 @@ impl Pane {
             })
     }
 
-    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
-        if self.workspace.upgrade().is_none() {
-            return gpui::Empty.into_any();
-        }
-
+    fn nav_history_buttons(&self, cx: &mut Context<Pane>) -> (IconButton, IconButton) {
+        let entity = cx.entity();
         let focus_handle = self.focus_handle.clone();
-
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
-            .on_click({
-                let entity = cx.entity();
-                move |_, window, cx| {
-                    entity.update(cx, |pane, cx| {
-                        pane.navigate_backward(&Default::default(), window, cx)
-                    })
-                }
+            .on_click(move |_, window, cx| {
+                entity.update(cx, |pane, cx| {
+                    pane.navigate_backward(&Default::default(), window, cx)
+                })
             })
             .disabled(!self.can_navigate_backward())
             .tooltip({
-                let focus_handle = focus_handle.clone();
                 move |window, cx| {
                     Tooltip::for_action_in(
                         "Go Back",
@@ -3493,20 +3632,17 @@ impl Pane {
                     )
                 }
             });
-
+        let entity = cx.entity();
+        let focus_handle = self.focus_handle.clone();
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
-            .on_click({
-                let entity = cx.entity();
-                move |_, window, cx| {
-                    entity.update(cx, |pane, cx| {
-                        pane.navigate_forward(&Default::default(), window, cx)
-                    })
-                }
+            .on_click(move |_, window, cx| {
+                entity.update(cx, |pane, cx| {
+                    pane.navigate_forward(&Default::default(), window, cx)
+                })
             })
             .disabled(!self.can_navigate_forward())
             .tooltip({
-                let focus_handle = focus_handle.clone();
                 move |window, cx| {
                     Tooltip::for_action_in(
                         "Go Forward",
@@ -3516,55 +3652,610 @@ impl Pane {
                     )
                 }
             });
+        (navigate_backward, navigate_forward)
+    }
 
-        let mut tab_items = self
+    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
+        if self.workspace.upgrade().is_none() {
+            return gpui::Empty.into_any();
+        }
+        let (wrap, separate_pinned_row) = {
+            let tab_bar_settings = TabBarSettings::get_global(cx);
+            (
+                tab_bar_settings.wrap_tabs,
+                tab_bar_settings.show_pinned_tabs_in_separate_row,
+            )
+        };
+        if !wrap {
+            self.wrapped_tab_natural_widths.borrow_mut().clear();
+        }
+
+        let focus_handle = self.focus_handle.clone();
+        let (navigate_backward, navigate_forward) = self.nav_history_buttons(cx);
+
+        if wrap {
+            let actions = *self.wrap_actions_width.borrow();
+            let reserve = actions.unwrap_or(px(0.));
+            let nav_w = *self.wrap_nav_width.borrow();
+            let widths = {
+                let mut recorded = self.wrapped_tab_natural_widths.borrow_mut();
+                recorded.retain(|id, _| self.items.iter().any(|item| item.item_id() == *id));
+                recorded.clone()
+            };
+            let two_row = separate_pinned_row
+                && self.pinned_tab_count > 0
+                && self.pinned_tab_count < self.items.len();
+
+            if two_row {
+                let pinned_rows = Self::plan_wrap_rows(
+                    &self.items,
+                    &widths,
+                    0..self.pinned_tab_count,
+                    *self.wrap_pinned_bar_width.borrow(),
+                    reserve,
+                    nav_w,
+                );
+                let unpinned_rows = Self::plan_wrap_rows(
+                    &self.items,
+                    &widths,
+                    self.pinned_tab_count..self.items.len(),
+                    *self.wrap_main_bar_width.borrow(),
+                    px(0.),
+                    px(0.),
+                );
+                self.render_wrapped_two_row_tab_bar(
+                    pinned_rows,
+                    unpinned_rows,
+                    widths,
+                    reserve,
+                    nav_w,
+                    window,
+                    cx,
+                )
+            } else {
+                let rows = Self::plan_wrap_rows(
+                    &self.items,
+                    &widths,
+                    0..self.items.len(),
+                    *self.wrap_main_bar_width.borrow(),
+                    reserve,
+                    nav_w,
+                );
+                self.render_wrapped_tab_bar(rows, widths, reserve, nav_w, window, cx)
+            }
+        } else {
+            let mut tab_items = self
+                .items
+                .iter()
+                .enumerate()
+                .zip(tab_details(&self.items, window, cx))
+                .map(|((ix, item), detail)| {
+                    self.render_tab(
+                        ix,
+                        &**item,
+                        detail,
+                        &focus_handle,
+                        WrapTabIdentity::default(),
+                        window,
+                        cx,
+                    )
+                    .into_any_element()
+                })
+                .collect::<Vec<_>>();
+            let tab_count = tab_items.len();
+            if self.is_tab_pinned(tab_count) {
+                log::warn!(
+                    "Pinned tab count ({}) exceeds actual tab count ({}). \
+                    This should not happen. If possible, add reproduction steps, \
+                    in a comment, to https://github.com/zed-industries/zed/issues/33342",
+                    self.pinned_tab_count,
+                    tab_count
+                );
+                self.pinned_tab_count = tab_count;
+            }
+            let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
+            let pinned_tabs = tab_items;
+
+            if TabBarSettings::get_global(cx).show_pinned_tabs_in_separate_row
+                && !pinned_tabs.is_empty()
+                && !unpinned_tabs.is_empty()
+            {
+                self.render_two_row_tab_bar(
+                    pinned_tabs,
+                    unpinned_tabs,
+                    tab_count,
+                    navigate_backward,
+                    navigate_forward,
+                    window,
+                    cx,
+                )
+            } else {
+                self.render_single_row_tab_bar(
+                    pinned_tabs,
+                    unpinned_tabs,
+                    tab_count,
+                    navigate_backward,
+                    navigate_forward,
+                    window,
+                    cx,
+                )
+            }
+        }
+    }
+
+    fn row_capacity(row_ix: usize, bar_w: Pixels, first_row_reserve: Pixels) -> Pixels {
+        if row_ix == 0 {
+            bar_w - first_row_reserve
+        } else {
+            bar_w
+        }
+    }
+
+    fn tab_natural_width(
+        items: &[Box<dyn ItemHandle>],
+        widths: &HashMap<EntityId, Pixels>,
+        ix: usize,
+    ) -> Option<Pixels> {
+        widths.get(&items.get(ix)?.item_id()).copied()
+    }
+
+    fn plan_wrap_rows(
+        items: &[Box<dyn ItemHandle>],
+        widths: &HashMap<EntityId, Pixels>,
+        range: std::ops::Range<usize>,
+        bar_w: Option<Pixels>,
+        first_row_reserve: Pixels,
+        nav_w: Pixels,
+    ) -> Vec<Vec<usize>> {
+        let Some(bar_w) = bar_w else {
+            return vec![];
+        };
+        let mut indices: Vec<usize> = range
+            .filter(|ix| Self::tab_natural_width(items, widths, *ix).is_some())
+            .collect();
+        if indices.is_empty() {
+            return vec![];
+        }
+        let mut rows: Vec<Vec<usize>> = vec![];
+        let mut current: Vec<usize> = vec![];
+        let mut x = nav_w;
+        let mut row_ix = 0usize;
+        for ix in indices.drain(..) {
+            let width = Self::tab_natural_width(items, widths, ix).unwrap_or(px(0.))
+                + ui::Tab::border_box_inset();
+            let capacity = Self::row_capacity(row_ix, bar_w, first_row_reserve);
+            if !current.is_empty() && x + width > capacity {
+                rows.push(mem::take(&mut current));
+                x = px(0.);
+                row_ix += 1;
+            }
+            current.push(ix);
+            x += width;
+        }
+        rows.push(current);
+        rows
+    }
+
+    fn wrap_identities(rows: &[Vec<usize>]) -> HashMap<usize, WrapTabIdentity> {
+        let mut map = HashMap::default();
+        let last_row = rows.len().saturating_sub(1);
+        for (r, row) in rows.iter().enumerate() {
+            let is_final = r == last_row;
+            for (pos, &ix) in row.iter().enumerate() {
+                map.insert(
+                    ix,
+                    WrapTabIdentity {
+                        row_end: !is_final && pos + 1 == row.len(),
+                        mid_row: !is_final,
+                        extend_to: None,
+                    },
+                );
+            }
+        }
+        map
+    }
+
+    fn apply_wrap_extensions(
+        items: &[Box<dyn ItemHandle>],
+        widths: &HashMap<EntityId, Pixels>,
+        rows: &[Vec<usize>],
+        identities: &mut HashMap<usize, WrapTabIdentity>,
+        bar_w: Pixels,
+        planned_reserve: Pixels,
+        actions_visible: bool,
+        nav_w: Pixels,
+    ) {
+        let last_row = rows.len().saturating_sub(1);
+        for (r, row) in rows.iter().enumerate() {
+            if r == last_row || row.is_empty() {
+                continue;
+            }
+            let mut x = if r == 0 { nav_w } else { px(0.) };
+            for ix in row.iter().take(row.len() - 1) {
+                x += Self::tab_natural_width(items, widths, *ix).unwrap_or(px(0.))
+                    + ui::Tab::border_box_inset();
+            }
+            // Row membership always honors the reserve; only the row-0
+            // extension reclaims it while the actions are hidden.
+            let capacity = Self::row_capacity(
+                r,
+                bar_w,
+                if r == 0 && !actions_visible {
+                    px(0.)
+                } else {
+                    planned_reserve
+                },
+            );
+            if let Some(id) = identities.get_mut(row.last().unwrap()) {
+                id.extend_to = Some((capacity - x).max(px(0.)));
+            }
+        }
+    }
+
+    fn render_wrap_row(
+        &self,
+        row: &[usize],
+        identities: &HashMap<usize, WrapTabIdentity>,
+        details: &[usize],
+        nav: Option<AnyElement>,
+        drop_target: Option<AnyElement>,
+        focus_handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> AnyElement {
+        h_flex()
+            .w_full()
+            .when_some(nav, |row_el, nav| row_el.child(nav))
+            .children(row.iter().map(|&ix| {
+                let item = self.items[ix].boxed_clone();
+                self.render_tab(
+                    ix,
+                    item.as_ref(),
+                    details.get(ix).copied().unwrap_or(0),
+                    focus_handle,
+                    identities.get(&ix).cloned().unwrap_or_default(),
+                    window,
+                    cx,
+                )
+                .into_any_element()
+            }))
+            .when_some(drop_target, |row_el, target| row_el.child(target))
+            .into_any_element()
+    }
+
+    fn render_wrap_ruler_tabs(
+        &self,
+        focus_handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> AnyElement {
+        let details = tab_details(&self.items, window, cx);
+        let ruler_tabs = self
             .items
             .iter()
             .enumerate()
-            .zip(tab_details(&self.items, window, cx))
+            .zip(details)
             .map(|((ix, item), detail)| {
-                self.render_tab(ix, &**item, detail, &focus_handle, window, cx)
+                self.render_ruler_tab(ix, &**item, detail, focus_handle, window, cx)
                     .into_any_element()
             })
             .collect::<Vec<_>>();
-        let tab_count = tab_items.len();
-        if self.is_tab_pinned(tab_count) {
-            log::warn!(
-                "Pinned tab count ({}) exceeds actual tab count ({}). \
-                This should not happen. If possible, add reproduction steps, \
-                in a comment, to https://github.com/zed-industries/zed/issues/33342",
-                self.pinned_tab_count,
-                tab_count
+        div()
+            .id("wrap_ruler")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_0()
+            .overflow_hidden()
+            .flex()
+            .flex_row()
+            .children(ruler_tabs)
+            .into_any_element()
+    }
+
+    fn render_wrap_settle_canvas(&self, cx: &mut Context<Pane>) -> AnyElement {
+        let planned = self.wrap_planned_widths.clone();
+        let main_rc = self.wrap_main_bar_width.clone();
+        let pinned_rc = self.wrap_pinned_bar_width.clone();
+        let pane_entity = cx.entity();
+        canvas(
+            move |_: Bounds<Pixels>, _: &mut Window, cx: &mut App| {
+                let recorded = (*main_rc.borrow(), *pinned_rc.borrow());
+                if recorded != *planned.borrow() {
+                    *planned.borrow_mut() = recorded;
+                    let pane_id = pane_entity.entity_id();
+                    cx.defer(move |cx| cx.notify(pane_id));
+                }
+            },
+            |_: Bounds<Pixels>, _: (), _: &mut Window, _: &mut App| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_0()
+        .into_any_element()
+    }
+
+    fn render_wrapped_tab_bar(
+        &mut self,
+        rows: Vec<Vec<usize>>,
+        widths: HashMap<EntityId, Pixels>,
+        reserve: Pixels,
+        nav_w: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> AnyElement {
+        let details = tab_details(&self.items, window, cx);
+        let mut identities = Self::wrap_identities(&rows);
+        if let Some(&bar_w) = self.wrap_main_bar_width.borrow().as_ref() {
+            Self::apply_wrap_extensions(
+                &self.items,
+                &widths,
+                &rows,
+                &mut identities,
+                bar_w,
+                reserve,
+                self.has_focus(window, cx) || self.context_menu_focused(window, cx),
+                nav_w,
             );
-            self.pinned_tab_count = tab_count;
         }
-        let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
-        let pinned_tabs = tab_items;
+        let focus_handle = self.focus_handle.clone();
 
-        let tab_bar_settings = TabBarSettings::get_global(cx);
-        let use_separate_rows = tab_bar_settings.show_pinned_tabs_in_separate_row;
+        let last_row = rows.len().saturating_sub(1);
+        let row_elements = rows
+            .iter()
+            .enumerate()
+            .map(|(r, row)| {
+                let nav = if r == 0 {
+                    self.wrap_nav_container(cx)
+                } else {
+                    None
+                };
+                let drop_target = if r == last_row {
+                    Some(
+                        self.render_tab_bar_drop_target(self.items.len(), cx)
+                            .into_any_element(),
+                    )
+                } else {
+                    None
+                };
+                self.render_wrap_row(
+                    row,
+                    &identities,
+                    &details,
+                    nav,
+                    drop_target,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            })
+            .collect::<Vec<_>>();
 
-        if use_separate_rows && !pinned_tabs.is_empty() && !unpinned_tabs.is_empty() {
-            self.render_two_row_tab_bar(
-                pinned_tabs,
-                unpinned_tabs,
-                tab_count,
-                navigate_backward,
-                navigate_forward,
+        let bar_width_rc = self.wrap_main_bar_width.clone();
+        let actions_width_rc = self.wrap_actions_width.clone();
+        let tab_bar = TabBar::new("tab_bar")
+            .wrap(true)
+            .report_bounds(Rc::new(move |bounds| {
+                *bar_width_rc.borrow_mut() = Some(bounds.size.width);
+            }))
+            .report_actions_bounds(Rc::new(move |bounds| {
+                *actions_width_rc.borrow_mut() = Some(bounds.size.width);
+            }));
+        let tab_bar = self.attach_wrap_ctas(tab_bar, window, cx);
+        tab_bar
+            .children(row_elements)
+            .child(self.render_wrap_ruler_tabs(&focus_handle, window, cx))
+            .child(self.render_wrap_settle_canvas(cx))
+            .into_any_element()
+    }
+
+    fn render_wrapped_two_row_tab_bar(
+        &mut self,
+        pinned_rows: Vec<Vec<usize>>,
+        unpinned_rows: Vec<Vec<usize>>,
+        widths: HashMap<EntityId, Pixels>,
+        reserve: Pixels,
+        nav_w: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> AnyElement {
+        let details = tab_details(&self.items, window, cx);
+        let focus_handle = self.focus_handle.clone();
+
+        let mut pinned_ids = Self::wrap_identities(&pinned_rows);
+        if let Some(&bar_w) = self.wrap_pinned_bar_width.borrow().as_ref() {
+            Self::apply_wrap_extensions(
+                &self.items,
+                &widths,
+                &pinned_rows,
+                &mut pinned_ids,
+                bar_w,
+                reserve,
+                self.has_focus(window, cx) || self.context_menu_focused(window, cx),
+                nav_w,
+            );
+        }
+        let pinned_last = pinned_rows.len().saturating_sub(1);
+        let pinned_row_elements = pinned_rows
+            .iter()
+            .enumerate()
+            .map(|(r, row)| {
+                let nav = if r == 0 {
+                    self.wrap_nav_container(cx)
+                } else {
+                    None
+                };
+                let drop_target = if r == pinned_last {
+                    Some(
+                        self.render_pinned_tab_bar_drop_target(cx)
+                            .into_any_element(),
+                    )
+                } else {
+                    None
+                };
+                self.render_wrap_row(
+                    row,
+                    &pinned_ids,
+                    &details,
+                    nav,
+                    drop_target,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            })
+            .collect::<Vec<_>>();
+        let pinned_bar_width_rc = self.wrap_pinned_bar_width.clone();
+        let actions_width_rc = self.wrap_actions_width.clone();
+        let pinned_tab_bar = self
+            .attach_wrap_ctas(
+                TabBar::new("pinned_tab_bar")
+                    .wrap(true)
+                    .report_bounds(Rc::new(move |bounds| {
+                        *pinned_bar_width_rc.borrow_mut() = Some(bounds.size.width);
+                    }))
+                    .report_actions_bounds(Rc::new(move |bounds| {
+                        *actions_width_rc.borrow_mut() = Some(bounds.size.width);
+                    })),
                 window,
                 cx,
             )
+            .children(pinned_row_elements);
+
+        let mut unpinned_ids = Self::wrap_identities(&unpinned_rows);
+        if let Some(&bar_w) = self.wrap_main_bar_width.borrow().as_ref() {
+            Self::apply_wrap_extensions(
+                &self.items,
+                &widths,
+                &unpinned_rows,
+                &mut unpinned_ids,
+                bar_w,
+                px(0.),
+                true,
+                px(0.),
+            );
+        }
+        let unpinned_last = unpinned_rows.len().saturating_sub(1);
+        let unpinned_row_elements = unpinned_rows
+            .iter()
+            .enumerate()
+            .map(|(r, row)| {
+                let drop_target = if r == unpinned_last {
+                    Some(
+                        self.render_tab_bar_drop_target(self.items.len(), cx)
+                            .into_any_element(),
+                    )
+                } else {
+                    None
+                };
+                self.render_wrap_row(
+                    row,
+                    &unpinned_ids,
+                    &details,
+                    None,
+                    drop_target,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            })
+            .collect::<Vec<_>>();
+        let main_bar_width_rc = self.wrap_main_bar_width.clone();
+        let unpinned_tab_bar = TabBar::new("unpinned_tab_bar")
+            .wrap(true)
+            .report_bounds(Rc::new(move |bounds| {
+                *main_bar_width_rc.borrow_mut() = Some(bounds.size.width);
+            }))
+            .children(unpinned_row_elements)
+            .child(self.render_wrap_ruler_tabs(&focus_handle, window, cx))
+            .child(self.render_wrap_settle_canvas(cx));
+
+        v_flex()
+            .w_full()
+            .flex_none()
+            .child(pinned_tab_bar)
+            .child(unpinned_tab_bar)
+            .into_any_element()
+    }
+
+    fn wrap_nav_container(&self, cx: &mut Context<Pane>) -> Option<AnyElement> {
+        if !self.display_nav_history_buttons.unwrap_or_default() {
+            *self.wrap_nav_width.borrow_mut() = px(0.);
+            return None;
+        }
+        let (navigate_backward, navigate_forward) = self.nav_history_buttons(cx);
+        let nav_width = self.wrap_nav_width.clone();
+        let pane = cx.entity().downgrade();
+        Some(
+            h_flex()
+                .id("wrap_nav")
+                .flex_none()
+                .h(Tab::container_height(cx))
+                .gap(DynamicSpacing::Base04.rems(cx))
+                .px(DynamicSpacing::Base06.rems(cx))
+                .border_r_1()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .child(navigate_backward)
+                .child(navigate_forward)
+                .child(
+                    canvas(
+                        move |bounds: Bounds<Pixels>, _: &mut Window, cx: &mut App| {
+                            let width = bounds.size.width;
+                            if *nav_width.borrow_mut() != width {
+                                *nav_width.borrow_mut() = width;
+                                // Deferred: notifies during a draw phase don't
+                                // schedule a redraw.
+                                if let Some(pane) = pane.upgrade() {
+                                    let pane_id = pane.entity_id();
+                                    cx.defer(move |cx| cx.notify(pane_id));
+                                }
+                            }
+                        },
+                        |_: Bounds<Pixels>, _: (), _: &mut Window, _: &mut App| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn attach_wrap_ctas(
+        &mut self,
+        tab_bar: TabBar,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> TabBar {
+        if !self.show_tab_bar_buttons {
+            // Reset so rows aren't planned against a phantom reserve.
+            *self.wrap_actions_width.borrow_mut() = None;
+            return tab_bar;
+        }
+        let actions_visible = self.has_focus(window, cx) || self.context_menu_focused(window, cx);
+        let right_children = if self.uses_default_tab_bar_buttons {
+            let (_, right_children) = render_tab_bar_buttons_laid_out(self, window, cx);
+            right_children.map(|child| {
+                if actions_visible {
+                    child
+                } else {
+                    div().invisible().child(child).into_any_element()
+                }
+            })
         } else {
-            self.render_single_row_tab_bar(
-                pinned_tabs,
-                unpinned_tabs,
-                tab_count,
-                navigate_backward,
-                navigate_forward,
-                window,
-                cx,
-            )
-        }
+            let render_tab_buttons = self.render_tab_bar_buttons.clone();
+            let (left_children, right_children) = render_tab_buttons(self, window, cx);
+            if left_children.is_some() {
+                log::warn!("wrap mode renders row 0 itself; dropping custom tab bar left children");
+            }
+            right_children
+        };
+        tab_bar
+            .paint_actions(actions_visible)
+            .end_children(right_children)
     }
 
     fn configure_tab_bar_start(
@@ -3615,7 +4306,7 @@ impl Pane {
                 window,
                 cx,
             )
-            .children(pinned_tabs.len().ne(&0).then(|| {
+            .children((!pinned_tabs.is_empty()).then(|| {
                 let max_scroll = self.tab_bar_scroll_handle.max_offset().x;
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
                 let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
@@ -3662,6 +4353,7 @@ impl Pane {
                     .children(pinned_tabs)
                     .child(self.render_pinned_tab_bar_drop_target(cx)),
             );
+
         v_flex()
             .w_full()
             .flex_none()
@@ -3699,11 +4391,24 @@ impl Pane {
         tab_count: usize,
         cx: &mut Context<Pane>,
     ) -> impl IntoElement {
-        div()
-            .id("tab_bar_drop_target")
-            .min_w_6()
-            .h(Tab::container_height(cx))
-            .flex_grow_1()
+        self.tab_bar_drop_target_builder(
+            div()
+                .id("tab_bar_drop_target")
+                .min_w_6()
+                .h(Tab::container_height(cx))
+                .flex_grow_1(),
+            tab_count,
+            cx,
+        )
+    }
+
+    fn tab_bar_drop_target_builder(
+        &self,
+        target: Stateful<Div>,
+        tab_count: usize,
+        cx: &mut Context<Pane>,
+    ) -> Stateful<Div> {
+        target
             // HACK: This empty child is currently necessary to force the drop target to appear
             // despite us setting a min width above.
             .child("")
@@ -3748,8 +4453,9 @@ impl Pane {
             .min_w_6()
             .h(Tab::container_height(cx))
             .flex_grow_1()
-            .border_l_1()
-            .border_color(cx.theme().colors().border)
+            .when(!TabBarSettings::get_global(cx).wrap_tabs, |this| {
+                this.border_l_1().border_color(cx.theme().colors().border)
+            })
             // HACK: This empty child is currently necessary to force the drop target to appear
             // despite us setting a min width above.
             .child("")
@@ -4316,6 +5022,14 @@ fn default_render_tab_bar_buttons(
     if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
         return (None, None);
     }
+    render_tab_bar_buttons_laid_out(pane, window, cx)
+}
+
+fn render_tab_bar_buttons_laid_out(
+    pane: &mut Pane,
+    _window: &mut Window,
+    cx: &mut Context<Pane>,
+) -> (Option<AnyElement>, Option<AnyElement>) {
     let (can_clone, can_split_move) = match pane.active_item() {
         Some(active_item) if active_item.can_split(cx) => (true, false),
         Some(_) => (false, pane.items_len() > 1),
@@ -5032,6 +5746,10 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) ->
     }
 }
 
+fn scaled_char_budget(avail: Pixels, measured: Pixels, char_count: usize) -> usize {
+    (((avail / measured) * char_count as f32).floor() as usize).max(5)
+}
+
 pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {
     util::disambiguate::compute_disambiguation_details(items, |item, detail| {
         item.tab_content_text(detail, cx)
@@ -5655,6 +6373,774 @@ mod tests {
         assert!(
             pinned_row_bounds.is_none(),
             "pinned_tabs_row should not exist when setting is disabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_wrap_tabs_renders_across_multiple_rows(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+
+        cx.simulate_resize(size(px(300.), px(300.)));
+
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        let tab_bounds: Vec<_> = ["TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5"]
+            .iter()
+            .filter_map(|selector| cx.debug_bounds(selector))
+            .collect();
+        assert_eq!(tab_bounds.len(), 6, "all six tabs should render");
+
+        let y_coords: std::collections::HashSet<gpui::Pixels> =
+            tab_bounds.iter().map(|b| b.origin.y).collect();
+        assert!(
+            y_coords.len() >= 2,
+            "Wrap should produce multiple rows, got y coords: {y_coords:?}"
+        );
+
+        let first_tab_x = tab_bounds[0].origin.x;
+        assert!(
+            tab_bounds
+                .iter()
+                .any(|b| b.origin.y != tab_bounds[0].origin.y && b.origin.x < first_tab_x),
+            "Later rows should start left of the nav-button-offset first row"
+        );
+
+        for width in [120., 90., 60., 40.] {
+            cx.simulate_resize(size(px(width), px(300.)));
+            cx.run_until_parked();
+        }
+    }
+
+    #[test]
+    fn test_scaled_char_budget_never_drops_below_truncate_floor() {
+        assert_eq!(scaled_char_budget(px(16.), px(42.), 1), 5);
+        assert_eq!(scaled_char_budget(px(1.), px(1000.), 40), 5);
+        assert_eq!(scaled_char_budget(px(0.), px(10.), 10), 5);
+        assert_eq!(scaled_char_budget(px(1000.), px(10.), 10), 1000);
+        assert_eq!(scaled_char_budget(px(20.), px(10.), 3), 6);
+    }
+
+    #[gpui::test]
+    async fn test_non_wrap_with_pinned_tabs_shows_unpinned_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        cx.simulate_resize(size(px(400.), px(300.)));
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_a.item_id()).unwrap(),
+                window,
+                cx,
+            );
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_b.item_id()).unwrap(),
+                window,
+                cx,
+            );
+        });
+        for label in ["C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        for (ix, selector) in ["TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5"]
+            .iter()
+            .enumerate()
+        {
+            let bounds = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} (index {ix}) should render"));
+            assert!(
+                bounds.size.width > px(0.),
+                "{selector} should have nonzero width, got {bounds:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_wrapped_row_end_tabs_extend_to_bar_edge(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(300.), px(300.)));
+
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        let bounds: Vec<_> = ["TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5"]
+            .iter()
+            .filter_map(|selector| cx.debug_bounds(selector))
+            .collect();
+        assert_eq!(bounds.len(), 6, "all six tabs should render");
+
+        let first_row_y = bounds[0].origin.y;
+        let second_row: Vec<_> = bounds
+            .iter()
+            .filter(|b| b.origin.y != first_row_y)
+            .collect();
+        assert!(!second_row.is_empty(), "expected wrapping to occur");
+
+        let actions_width = pane
+            .read_with(cx, |pane, _| *pane.wrap_actions_width.borrow())
+            .expect("actions width measured");
+        let row1_end = bounds
+            .iter()
+            .filter(|b| b.origin.y == first_row_y)
+            .max_by_key(|b| b.right())
+            .unwrap();
+        let zone_edge = px(300.) - actions_width;
+        assert!(
+            (row1_end.right() - zone_edge).abs() <= px(5.),
+            "row-1 end tab should extend to the zone edge ({zone_edge:?}), got {row1_end:?}"
+        );
+
+        let all_y: Vec<_> = {
+            let mut ys: Vec<_> = bounds.iter().map(|b| b.origin.y).collect();
+            ys.sort();
+            ys.dedup();
+            ys
+        };
+        let last_y = *all_y.last().unwrap();
+        for y in &all_y[1..] {
+            let row_end = bounds
+                .iter()
+                .filter(|b| b.origin.y == *y)
+                .max_by_key(|b| b.right())
+                .unwrap();
+            if *y == last_y {
+                assert!(
+                    row_end.right() <= px(300.) + px(2.),
+                    "final row must not overflow the bar, got {row_end:?}"
+                );
+            } else {
+                assert!(
+                    (row_end.right() - px(300.)).abs() <= px(2.),
+                    "mid rows extend to the bar edge, got {row_end:?}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_wrap_reflows_rows_when_tab_removed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(375.), px(300.)));
+
+        let items: Vec<_> = ["A", "B", "C", "D", "E", "F"]
+            .map(|label| add_labeled_item(&pane, label, false, cx))
+            .into_iter()
+            .collect();
+        cx.run_until_parked();
+
+        fn y(sel: &'static str, cx: &mut gpui::VisualTestContext) -> gpui::Pixels {
+            cx.debug_bounds(sel).expect(sel).origin.y
+        }
+        assert_ne!(
+            y("TAB-0", cx),
+            y("TAB-5", cx),
+            "expected two rows initially"
+        );
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(items[1].item_id(), SaveIntent::Close, window, cx)
+                .detach_and_log_err(cx);
+        });
+        cx.run_until_parked();
+
+        let row1_y = y("TAB-0", cx);
+        for sel in ["TAB-1", "TAB-2", "TAB-3", "TAB-4"] {
+            assert_eq!(
+                y(sel, cx),
+                row1_y,
+                "{sel} should reflow onto the single row after removal"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_pinned_strip_wraps_in_two_row_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        set_pinned_tabs_separate_row(cx, true);
+        cx.simulate_resize(size(px(300.), px(300.)));
+
+        let long = "pinned_with_a_rather_long_name.rs";
+        let pinned_handles: Vec<_> = (0..6)
+            .map(|_| add_labeled_item(&pane, long, false, cx))
+            .collect();
+        pane.update_in(cx, |pane, window, cx| {
+            for handle in &pinned_handles {
+                pane.pin_tab_at(
+                    pane.index_for_item_id(handle.item_id()).unwrap(),
+                    window,
+                    cx,
+                );
+            }
+        });
+        add_labeled_item(&pane, "work", false, cx);
+        cx.run_until_parked();
+
+        let pinned_bounds: Vec<_> = ["TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5"]
+            .iter()
+            .filter_map(|selector| cx.debug_bounds(selector))
+            .collect();
+        assert_eq!(pinned_bounds.len(), 6, "all pinned tabs should render");
+
+        let ys: std::collections::HashSet<gpui::Pixels> =
+            pinned_bounds.iter().map(|b| b.origin.y).collect();
+        assert!(
+            ys.len() >= 2,
+            "pinned tabs should wrap onto multiple rows, got y coords: {ys:?}"
+        );
+        let pinned_bottom = pinned_bounds.iter().map(|b| b.bottom()).max().unwrap();
+        let work = cx.debug_bounds("TAB-6").expect("unpinned tab renders");
+        assert!(
+            work.origin.y >= pinned_bottom,
+            "unpinned bar should sit below the wrapped pinned strip"
+        );
+
+        // Row 1 reserves the actions zone.
+        let actions_width = pane
+            .read_with(cx, |pane, _| *pane.wrap_actions_width.borrow())
+            .expect("actions width measured");
+        assert!(
+            actions_width > px(0.),
+            "actions stay laid out (visibility-gated)"
+        );
+        let first_row_y = pinned_bounds[0].origin.y;
+        let row1_end = pinned_bounds
+            .iter()
+            .filter(|b| b.origin.y == first_row_y)
+            .max_by_key(|b| b.right())
+            .unwrap();
+        let zone_edge = px(300.) - actions_width;
+        assert!(
+            (row1_end.right() - zone_edge).abs() <= px(5.),
+            "pinned row-1 end tab should extend to the zone edge ({zone_edge:?}), got {row1_end:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resize_churn_never_applies_stale_extensions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(600.), px(300.)));
+
+        for label in ["A", "B", "C", "D", "E", "F", "G", "H"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        // No tab may exceed the bar mid-drag.
+        for width in [560., 520., 480., 440., 350.] {
+            cx.simulate_resize(size(px(width), px(300.)));
+            cx.run_until_parked();
+
+            for sel in [
+                "TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5", "TAB-6", "TAB-7",
+            ] {
+                if let Some(b) = cx.debug_bounds(sel) {
+                    assert!(
+                        b.size.width <= px(width),
+                        "{sel} width {:?} exceeds bar width {width} — stale extension applied",
+                        b.size.width
+                    );
+                }
+            }
+        }
+
+        cx.run_until_parked();
+        let ys: std::collections::HashSet<gpui::Pixels> = [
+            "TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5", "TAB-6", "TAB-7",
+        ]
+        .iter()
+        .filter_map(|s| cx.debug_bounds(s))
+        .map(|b| b.origin.y)
+        .collect();
+        assert!(ys.len() >= 2, "tabs should wrap at 350px");
+        pane.read_with(cx, |pane, _| {
+            assert!(
+                !pane.wrapped_tab_natural_widths.borrow().is_empty(),
+                "row planning should run once widths are measured"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_narrower_than_last_tab_no_phantom_row(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(200.), px(300.)));
+        add_labeled_item(&pane, "one.rs", false, cx);
+        add_labeled_item(&pane, "two.rs", false, cx);
+        cx.run_until_parked();
+
+        let b0 = cx.debug_bounds("TAB-0").expect("tab 0 renders");
+        let b1 = cx.debug_bounds("TAB-1").expect("tab 1 renders");
+        assert_ne!(b0.origin.y, b1.origin.y, "tab 1 should wrap to its own row");
+        assert!(
+            b0.origin.y < b1.origin.y,
+            "row order must be top-down, got {b0:?} above {b1:?}?"
+        );
+        let row_pitch = cx.update(|_, cx| ui::Tab::container_height(cx));
+        assert_eq!(
+            b1.origin.y - b0.origin.y,
+            row_pitch,
+            "exactly two rows, one container height apart"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_unfocused_pane_reserves_actions_zone_without_flicker(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(300.), px(300.)));
+
+        let _new_pane = pane.update_in(cx, |pane, window, cx| {
+            pane.split(SplitDirection::Right, SplitMode::EmptyPane, window, cx)
+        });
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        let actions_width = pane
+            .read_with(cx, |pane, _| *pane.wrap_actions_width.borrow())
+            .expect("unfocused pane's actions width must be measurable");
+        assert!(
+            actions_width > px(0.),
+            "unfocused pane's actions must stay measurable, got {actions_width:?}"
+        );
+
+        let selectors = ["TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5"];
+        let tab_bounds = |cx: &mut gpui::VisualTestContext| -> Vec<gpui::Bounds<gpui::Pixels>> {
+            selectors
+                .iter()
+                .filter_map(|s| cx.debug_bounds(s))
+                .collect()
+        };
+        let row1_right = |bounds: &[gpui::Bounds<gpui::Pixels>]| {
+            let row1_y = bounds
+                .iter()
+                .map(|b| b.origin.y)
+                .min()
+                .expect("tabs render");
+            bounds
+                .iter()
+                .filter(|b| b.origin.y == row1_y)
+                .map(|b| b.right())
+                .max()
+                .expect("row 1 tabs")
+        };
+        let bar_w = pane
+            .read_with(cx, |pane, _| *pane.wrap_main_bar_width.borrow())
+            .expect("bar width measured");
+
+        let unfocused_bounds = tab_bounds(cx);
+        let unfocused_right = row1_right(&unfocused_bounds);
+        assert!(
+            (unfocused_right - bar_w).abs() <= px(2.),
+            "unfocused row-1 end tab should extend to the bar edge ({bar_w:?}), got {unfocused_right:?}"
+        );
+
+        // Focusing must not reflow: same row membership, extension pulls back
+        // to the zone edge.
+        pane.update_in(cx, |pane, window, cx| {
+            pane.focus_active_item(window, cx);
+        });
+        cx.run_until_parked();
+
+        let focused_bounds = tab_bounds(cx);
+        assert_eq!(
+            unfocused_bounds
+                .iter()
+                .map(|b| b.origin.y)
+                .collect::<Vec<_>>(),
+            focused_bounds
+                .iter()
+                .map(|b| b.origin.y)
+                .collect::<Vec<_>>(),
+            "focus change must not move tabs between rows"
+        );
+        let zone_edge = bar_w - actions_width;
+        let focused_right = row1_right(&focused_bounds);
+        assert!(
+            (focused_right - zone_edge).abs() <= px(5.),
+            "focused row-1 end tab should stop at the zone edge ({zone_edge:?}), got {focused_right:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_row_one_tabs_never_enter_actions_zone(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(300.), px(300.)));
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        let assert_stable_and_zoned = |cx: &mut gpui::VisualTestContext, width: gpui::Pixels| {
+            cx.run_until_parked();
+            let capture =
+                |cx: &mut gpui::VisualTestContext| -> Vec<Option<gpui::Bounds<gpui::Pixels>>> {
+                    ["TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5"]
+                        .iter()
+                        .map(|s| cx.debug_bounds(s))
+                        .collect()
+                };
+            let first = capture(cx);
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            let second = capture(cx);
+            // 1px tolerance for device-pixel snapping.
+            let within_tolerance = first.iter().zip(second.iter()).all(|(a, b)| match (a, b) {
+                (Some(a), Some(b)) => {
+                    (a.origin.x - b.origin.x).abs() <= px(1.)
+                        && (a.origin.y - b.origin.y).abs() <= px(1.)
+                        && (a.size.width - b.size.width).abs() <= px(1.)
+                }
+                (None, None) => true,
+                _ => false,
+            });
+            assert!(
+                within_tolerance,
+                "layout must not oscillate at width {width:?}:\nF1 {first:?}\nF2 {second:?}"
+            );
+
+            let last_row_y = first
+                .iter()
+                .flatten()
+                .map(|b| b.origin.y)
+                .max()
+                .expect("tabs render");
+            let last_row_right = first
+                .iter()
+                .flatten()
+                .filter(|b| b.origin.y == last_row_y)
+                .map(|b| b.right())
+                .max()
+                .expect("last row tabs");
+            assert!(
+                last_row_right <= width,
+                "last row must not overflow the bar ({width:?}), got {last_row_right:?}"
+            );
+        };
+
+        for width in [260., 280., 300., 320., 340., 360.] {
+            cx.simulate_resize(size(px(width), px(300.)));
+            assert_stable_and_zoned(cx, px(width));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_wrap_respects_custom_tab_bar_buttons(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(300.), px(300.)));
+        pane.update_in(cx, |pane, _, cx| {
+            pane.set_render_tab_bar_buttons(cx, |_, _, _| {
+                (None, Some(div().w(px(60.)).into_any_element()))
+            });
+        });
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        let actions_width = pane
+            .read_with(cx, |pane, _| *pane.wrap_actions_width.borrow())
+            .expect("custom actions must be measured");
+        assert!(
+            (actions_width - px(60.)).abs() <= px(12.),
+            "reserve must come from the custom actions buttons, got {actions_width:?}"
+        );
+        let zone_edge = px(300.) - actions_width;
+        let row1_right = ["TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5"]
+            .iter()
+            .filter_map(|s| cx.debug_bounds(s))
+            .max_by_key(|b| b.right())
+            .map(|b| b.right())
+            .expect("tabs render");
+        assert!(
+            row1_right <= zone_edge + px(2.),
+            "row-1 tabs must respect the custom reserve ({zone_edge:?}), got {row1_right:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_wrap_custom_ctas_reserve_stable_across_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(300.), px(300.)));
+        pane.update_in(cx, |pane, _, cx| {
+            pane.set_render_tab_bar_buttons(cx, |pane, window, cx| {
+                let children = div().w(px(60.)).into_any_element();
+                if pane.has_focus(window, cx) {
+                    (None, Some(children))
+                } else {
+                    (
+                        None,
+                        Some(gpui::div().invisible().child(children).into_any_element()),
+                    )
+                }
+            });
+        });
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        let focused_width = pane
+            .read_with(cx, |pane, _| *pane.wrap_actions_width.borrow())
+            .expect("focused actions buttons must be measured");
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.split(SplitDirection::Right, SplitMode::EmptyPane, window, cx)
+        });
+        cx.run_until_parked();
+
+        let unfocused_width = pane
+            .read_with(cx, |pane, _| *pane.wrap_actions_width.borrow())
+            .expect("invisible actions buttons must stay measurable");
+        assert!(
+            (unfocused_width - focused_width).abs() <= px(1.),
+            "unfocused reserve must match focused ({focused_width:?}), got {unfocused_width:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_wrap_custom_ctas_none_override_means_no_reserve(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(300.), px(300.)));
+        pane.update_in(cx, |pane, _, cx| {
+            pane.set_render_tab_bar_buttons(cx, |_, _, _| (None, None));
+        });
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        let actions_width = pane.read_with(cx, |pane, _| *pane.wrap_actions_width.borrow());
+        assert_eq!(
+            actions_width, None,
+            "a permanent (None, None) override reserves nothing"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_drag_tab_within_wrap_row(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(300.), px(300.)));
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+        assert_item_labels(&pane, ["A", "B", "C", "D", "E", "F*"], cx);
+
+        let tab_a = cx.debug_bounds("TAB-0").expect("tab A renders");
+        let tab_c = cx.debug_bounds("TAB-2").expect("tab C renders");
+        cx.simulate_event(MouseDownEvent {
+            position: tab_a.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseMoveEvent {
+            position: tab_c.center(),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseUpEvent {
+            position: tab_c.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["B", "C", "A*", "D", "E", "F"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_tab_across_wrap_rows(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_wrap_tabs(cx, true);
+        cx.simulate_resize(size(px(300.), px(300.)));
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        let tab_a = cx.debug_bounds("TAB-0").expect("tab A renders");
+        let row1_y = tab_a.origin.y;
+        let tab_f = cx
+            .debug_bounds("TAB-5")
+            .expect("tab F renders (a lower row)");
+        assert_ne!(
+            tab_f.origin.y, row1_y,
+            "fixture must wrap: A and F on different rows"
+        );
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_a.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseMoveEvent {
+            position: tab_f.center(),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseUpEvent {
+            position: tab_f.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["B", "C", "D", "E", "F", "A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_wrap_tabs_disabled_by_default_does_not_wrap(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        cx.simulate_resize(size(px(300.), px(300.)));
+
+        for label in ["A", "B", "C", "D", "E", "F"] {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        cx.run_until_parked();
+
+        let y_coords: std::collections::HashSet<gpui::Pixels> =
+            ["TAB-0", "TAB-1", "TAB-2", "TAB-3", "TAB-4", "TAB-5"]
+                .iter()
+                .filter_map(|selector| cx.debug_bounds(selector))
+                .map(|bounds| bounds.origin.y)
+                .collect();
+        assert_eq!(
+            y_coords.len(),
+            1,
+            "Non-wrap layout should keep all tabs on one row, got y coords: {y_coords:?}"
         );
     }
 
@@ -9070,6 +10556,14 @@ mod tests {
                     .tab_bar
                     .get_or_insert_default()
                     .show_pinned_tabs_in_separate_row = Some(enabled);
+            });
+        });
+    }
+
+    fn set_wrap_tabs(cx: &mut TestAppContext, enabled: bool) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.tab_bar.get_or_insert_default().wrap_tabs = Some(enabled);
             });
         });
     }
