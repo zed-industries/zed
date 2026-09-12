@@ -12,7 +12,7 @@ use http_client::Url;
 use log::Level;
 use smallvec::SmallVec;
 use std::{
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     collections::{BTreeMap, HashSet},
     ops::Deref,
     path::PathBuf,
@@ -809,20 +809,6 @@ impl X11Client {
             .map(|window_reference| window_reference.window.clone())
     }
 
-    // The visibility callback re-enters GPUI, so the client state must not be
-    // borrowed while it runs.
-    fn handle_visibility_changed(&self, x_window: xproto::Window) {
-        let mut state = self.0.borrow_mut();
-        state.update_refresh_loop(x_window);
-        let Some(window_ref) = state.windows.get(&x_window) else {
-            return;
-        };
-        let visibility = window_ref.visibility();
-        let window = window_ref.window.clone();
-        drop(state);
-        window.set_visibility(visibility);
-    }
-
     fn handle_event(&self, event: Event) -> Option<()> {
         match event {
             Event::UnmapNotify(event) => {
@@ -830,24 +816,21 @@ impl X11Client {
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.is_mapped = false;
                 }
-                drop(state);
-                self.handle_visibility_changed(event.window);
+                handle_visibility_changed(state, event.window);
             }
             Event::MapNotify(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.is_mapped = true;
                 }
-                drop(state);
-                self.handle_visibility_changed(event.window);
+                handle_visibility_changed(state, event.window);
             }
             Event::VisibilityNotify(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.last_visibility = event.state;
                 }
-                drop(state);
-                self.handle_visibility_changed(event.window);
+                handle_visibility_changed(state, event.window);
             }
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
@@ -2192,6 +2175,20 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     let micros = 1_000_000_000 / millihertz;
     log::info!("Refreshing every {}ms", micros / 1_000);
     Duration::from_micros(micros)
+}
+
+/// Applies a mapped/obscured change to the refresh loop and reports the
+/// resulting visibility to the window. Consumes the client borrow because the
+/// visibility callback re-enters GPUI.
+fn handle_visibility_changed(mut state: RefMut<'_, X11ClientState>, x_window: xproto::Window) {
+    state.update_refresh_loop(x_window);
+    let Some(window_ref) = state.windows.get(&x_window) else {
+        return;
+    };
+    let visibility = window_ref.visibility();
+    let window = window_ref.window.clone();
+    drop(state);
+    window.set_visibility(visibility);
 }
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
