@@ -4366,6 +4366,15 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                                 ..Diagnostic::default()
                             },
                         ),
+                        DiagnosticEntry::new(
+                            Unclipped(PointUtf16::new(3, 0))..Unclipped(PointUtf16::new(3, 0)),
+                            Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error on empty line".into(),
+                                source_kind: DiagnosticSourceKind::Pushed,
+                                ..Diagnostic::default()
+                            },
+                        ),
                     ],
                     cx,
                 )
@@ -4391,6 +4400,13 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                 ("\nlet three = 3;\n", None)
             ]
         );
+
+        let snapshot = buffer.snapshot();
+        let diagnostics = snapshot
+            .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(3, 0), false)
+            .collect::<Vec<_>>();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range, Point::new(3, 0)..Point::new(3, 0));
     });
 }
 
