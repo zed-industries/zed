@@ -138,6 +138,25 @@ impl<T: ReceiveData> DataOffer<T> {
     }
 }
 
+/// Best-effort hostname lookup, used as part of the self-identifying clipboard mime type
+/// so that clipboard contents can be recognized as originating from this Zed instance even
+/// across hosts that share a display server (e.g. via SSH forwarding).
+fn hostname() -> String {
+    // `HOST_NAME_MAX` is 64 on Linux; use a generous buffer to also cover other systems.
+    let mut buf = [0u8; 256];
+    let ret = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len()) };
+    if ret != 0 {
+        return "unknown".to_string();
+    }
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    let name = String::from_utf8_lossy(&buf[..end]).into_owned();
+    if name.is_empty() {
+        "unknown".to_string()
+    } else {
+        name
+    }
+}
+
 impl Clipboard {
     pub fn new(
         connection: Connection,
@@ -146,7 +165,7 @@ impl Clipboard {
         Self {
             connection,
             loop_handle,
-            self_mime: format!("pid/{}", std::process::id()),
+            self_mime: format!("hostname-pid/{}-{}", hostname(), std::process::id()),
 
             contents: None,
             primary_contents: None,
