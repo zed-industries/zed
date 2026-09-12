@@ -1,8 +1,8 @@
 use settings::{Settings, SettingsStore};
 
 use gpui::{
-    AnyWindowHandle, Context, Hsla, InteractiveElement, MouseButton, ParentElement, ScrollHandle,
-    Styled, SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas, div,
+    Context, Hsla, InteractiveElement, MouseButton, ParentElement, ScrollHandle, Styled,
+    SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas, div,
 };
 
 use theme_settings::ThemeSettings;
@@ -29,7 +29,7 @@ actions!(
 pub struct DraggedWindowTab {
     pub id: WindowId,
     pub ix: usize,
-    pub handle: AnyWindowHandle,
+    pub handle: WindowId,
     pub title: String,
     pub width: Pixels,
     pub is_active: bool,
@@ -82,7 +82,7 @@ impl SystemWindowTabs {
                         } else {
                             vec![SystemWindowTab::new(
                                 SharedString::from(window.window_title()),
-                                window.window_handle(),
+                                window.window_handle().window_id(),
                             )]
                         };
 
@@ -223,15 +223,17 @@ impl SystemWindowTabs {
                 })
             })
             .on_click(move |_, _, cx| {
-                let _ = item.handle.update(cx, |_, window, _| {
-                    window.activate_window();
-                });
+                if let Some(handle) = cx.window_handle(item.handle) {
+                    let _ = handle.update(cx, |_, window, _| {
+                        window.activate_window();
+                    });
+                }
             })
             .on_mouse_up(MouseButton::Middle, move |_, window, cx| {
-                if item.handle.window_id() == window.window_handle().window_id() {
+                if item.handle == window.window_handle().window_id() {
                     window.dispatch_action(Box::new(CloseWindow), cx);
-                } else {
-                    let _ = item.handle.update(cx, |_, window, cx| {
+                } else if let Some(handle) = cx.window_handle(item.handle) {
+                    let _ = handle.update(cx, |_, window, cx| {
                         window.dispatch_action(Box::new(CloseWindow), cx);
                     });
                 }
@@ -256,12 +258,10 @@ impl SystemWindowTabs {
                                 .icon_size(IconSize::XSmall)
                                 .on_click({
                                     move |_, window, cx| {
-                                        if item.handle.window_id()
-                                            == window.window_handle().window_id()
-                                        {
+                                        if item.handle == window.window_handle().window_id() {
                                             window.dispatch_action(Box::new(CloseWindow), cx);
-                                        } else {
-                                            let _ = item.handle.update(cx, |_, window, cx| {
+                                        } else if let Some(handle) = cx.window_handle(item.handle) {
+                                            let _ = handle.update(cx, |_, window, cx| {
                                                 window.dispatch_action(Box::new(CloseWindow), cx);
                                             });
                                         }
@@ -373,8 +373,8 @@ impl SystemWindowTabs {
             if predicate(tab) {
                 if tab.id == window.window_handle().window_id() {
                     action(window, cx);
-                } else {
-                    let _ = tab.handle.update(cx, |_view, window, cx| {
+                } else if let Some(handle) = cx.window_handle(tab.handle) {
+                    let _ = handle.update(cx, |_view, window, cx| {
                         action(window, cx);
                     });
                 }
@@ -394,7 +394,7 @@ impl Render for SystemWindowTabs {
         let visible = controller.is_visible();
         let current_window_tab = vec![SystemWindowTab::new(
             SharedString::from(window.window_title()),
-            window.window_handle(),
+            window.window_handle().window_id(),
         )];
         let tabs = controller
             .tabs(window.window_handle().window_id())
@@ -435,8 +435,8 @@ impl Render for SystemWindowTabs {
                         SystemWindowTabController::move_tab_to_new_window(cx, tab.id);
                         if tab.id == window.window_handle().window_id() {
                             window.move_tab_to_new_window();
-                        } else {
-                            let _ = tab.handle.update(cx, |_, window, _cx| {
+                        } else if let Some(handle) = cx.window_handle(tab.handle) {
+                            let _ = handle.update(cx, |_, window, _cx| {
                                 window.move_tab_to_new_window();
                             });
                         }

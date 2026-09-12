@@ -49,8 +49,8 @@ use crate::{
     PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
     PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
     ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
-    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
+    SystemNotification, SystemNotificationResponse, SystemWindowTab, Task, TextRenderingMode,
+    TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
     WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
@@ -345,27 +345,6 @@ pub enum CursorHideMode {
     OnTypingAndAction,
 }
 
-#[doc(hidden)]
-#[derive(Clone, PartialEq, Eq)]
-pub struct SystemWindowTab {
-    pub id: WindowId,
-    pub title: SharedString,
-    pub handle: AnyWindowHandle,
-    pub last_active_at: Instant,
-}
-
-impl SystemWindowTab {
-    /// Create a new instance of the window tab.
-    pub fn new(title: SharedString, handle: AnyWindowHandle) -> Self {
-        Self {
-            id: handle.id,
-            title,
-            handle,
-            last_active_at: Instant::now(),
-        }
-    }
-}
-
 /// A controller for managing window tabs.
 #[derive(Default)]
 pub struct SystemWindowTabController {
@@ -395,7 +374,7 @@ impl SystemWindowTabController {
     }
 
     /// Get the next tab group window handle.
-    pub fn get_next_tab_group_window(cx: &mut App, id: WindowId) -> Option<&AnyWindowHandle> {
+    pub fn get_next_tab_group_window(cx: &mut App, id: WindowId) -> Option<AnyWindowHandle> {
         let controller = cx.global::<SystemWindowTabController>();
         let current_group = controller
             .tab_groups
@@ -408,19 +387,20 @@ impl SystemWindowTabController {
         let idx = group_ids.iter().position(|g| *g == current_group)?;
         let next_idx = (idx + 1) % group_ids.len();
 
-        controller
+        let tab_handle = controller
             .tab_groups
             .get(group_ids[next_idx])
             .and_then(|tabs| {
                 tabs.iter()
                     .max_by_key(|tab| tab.last_active_at)
                     .or_else(|| tabs.first())
-                    .map(|tab| &tab.handle)
-            })
+                    .map(|tab| tab.handle)
+            })?;
+        cx.window_handle(tab_handle)
     }
 
     /// Get the previous tab group window handle.
-    pub fn get_prev_tab_group_window(cx: &mut App, id: WindowId) -> Option<&AnyWindowHandle> {
+    pub fn get_prev_tab_group_window(cx: &mut App, id: WindowId) -> Option<AnyWindowHandle> {
         let controller = cx.global::<SystemWindowTabController>();
         let current_group = controller
             .tab_groups
@@ -437,15 +417,16 @@ impl SystemWindowTabController {
             idx - 1
         };
 
-        controller
+        let tab_handle = controller
             .tab_groups
             .get(group_ids[prev_idx])
             .and_then(|tabs| {
                 tabs.iter()
                     .max_by_key(|tab| tab.last_active_at)
                     .or_else(|| tabs.first())
-                    .map(|tab| &tab.handle)
-            })
+                    .map(|tab| tab.handle)
+            })?;
+        cx.window_handle(tab_handle)
     }
 
     /// Get all tabs in the same window.
@@ -603,36 +584,46 @@ impl SystemWindowTabController {
 
     /// Selects the next tab in the tab group in the trailing direction.
     pub fn select_next_tab(cx: &mut App, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let Some(tabs) = controller.tabs(id) else {
-            return;
+        let next_handle = {
+            let controller = cx.global::<SystemWindowTabController>();
+            let Some(tabs) = controller.tabs(id) else {
+                return;
+            };
+
+            let current_index = tabs.iter().position(|tab| tab.id == id).unwrap();
+            let next_index = (current_index + 1) % tabs.len();
+            tabs[next_index].handle
         };
 
-        let current_index = tabs.iter().position(|tab| tab.id == id).unwrap();
-        let next_index = (current_index + 1) % tabs.len();
-
-        let _ = &tabs[next_index].handle.update(cx, |_, window, _| {
-            window.activate_window();
-        });
+        if let Some(handle) = cx.window_handle(next_handle) {
+            let _ = handle.update(cx, |_, window, _| {
+                window.activate_window();
+            });
+        }
     }
 
     /// Selects the previous tab in the tab group in the leading direction.
     pub fn select_previous_tab(cx: &mut App, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let Some(tabs) = controller.tabs(id) else {
-            return;
+        let previous_handle = {
+            let controller = cx.global::<SystemWindowTabController>();
+            let Some(tabs) = controller.tabs(id) else {
+                return;
+            };
+
+            let current_index = tabs.iter().position(|tab| tab.id == id).unwrap();
+            let previous_index = if current_index == 0 {
+                tabs.len() - 1
+            } else {
+                current_index - 1
+            };
+            tabs[previous_index].handle
         };
 
-        let current_index = tabs.iter().position(|tab| tab.id == id).unwrap();
-        let previous_index = if current_index == 0 {
-            tabs.len() - 1
-        } else {
-            current_index - 1
-        };
-
-        let _ = &tabs[previous_index].handle.update(cx, |_, window, _| {
-            window.activate_window();
-        });
+        if let Some(handle) = cx.window_handle(previous_handle) {
+            let _ = handle.update(cx, |_, window, _| {
+                window.activate_window();
+            });
+        }
     }
 }
 
@@ -1252,7 +1243,7 @@ impl App {
         self.platform.window_stack().map(|window_ids| {
             window_ids
                 .into_iter()
-                .filter_map(|window_id| self.any_window_handle(window_id))
+                .filter_map(|window_id| self.window_handle(window_id))
                 .collect()
         })
     }
@@ -1261,14 +1252,12 @@ impl App {
     pub fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform
             .active_window()
-            .and_then(|window_id| self.any_window_handle(window_id))
+            .and_then(|window_id| self.window_handle(window_id))
     }
 
-    fn any_window_handle(&self, window_id: WindowId) -> Option<AnyWindowHandle> {
-        self.windows
-            .get(window_id)
-            .and_then(|window| window.as_ref())
-            .map(|window| window.handle)
+    /// Returns the handle for the window with the given id, if it is open.
+    pub fn window_handle(&self, window_id: WindowId) -> Option<AnyWindowHandle> {
+        self.window_handles.get(&window_id).copied()
     }
 
     /// Opens a new window with the given option and the root view returned by the given function.

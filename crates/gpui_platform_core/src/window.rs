@@ -4,7 +4,7 @@ use gpui_shared_string::SharedString;
 use gpui_types::{Bounds, Edges, Pixels, Point, Size, px, size};
 use std::{sync::Arc, time::Duration};
 
-use crate::{DisplayId, popup::PopupOptions};
+use crate::{DisplayId, WindowId, popup::PopupOptions};
 
 /// Default window size used when no explicit size is provided.
 pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(1095.));
@@ -610,4 +610,30 @@ pub enum WindowControlArea {
 pub struct DispatchEventResult {
     pub propagate: bool,
     pub default_prevented: bool,
+}
+
+/// A tab in the platform's native window tab bar.
+#[doc(hidden)]
+#[derive(Clone, PartialEq, Eq)]
+pub struct SystemWindowTab {
+    /// The window id of the tab.
+    pub id: WindowId,
+    /// The title shown on the tab.
+    pub title: SharedString,
+    /// The window id this tab activates.
+    pub handle: WindowId,
+    /// When this tab was last the active tab.
+    pub last_active_at: scheduler::Instant,
+}
+
+impl SystemWindowTab {
+    /// Create a new instance of the window tab.
+    pub fn new(title: SharedString, handle: WindowId) -> Self {
+        Self {
+            id: handle,
+            title,
+            handle,
+            last_active_at: scheduler::Instant::now(),
+        }
+    }
 }
