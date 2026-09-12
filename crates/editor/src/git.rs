@@ -920,6 +920,8 @@ impl Editor {
     }
 
     fn restore_diff_hunks(&mut self, hunks: Vec<ResolvedDiffHunks>, cx: &mut Context<Self>) {
+        let save_restored_buffers = self.buffer().read(cx).all_diff_hunks_expanded();
+        let project = self.project.as_ref();
         let mut revert_changes = Vec::new();
         for hunks in hunks {
             let Some(buffer) = hunks.buffer else {
@@ -958,6 +960,11 @@ impl Editor {
                     cx,
                 );
             });
+            if save_restored_buffers && let Some(project) = project {
+                project
+                    .update(cx, |project, cx| project.save_buffer(buffer, cx))
+                    .detach_and_log_err(cx);
+            }
         }
     }
 

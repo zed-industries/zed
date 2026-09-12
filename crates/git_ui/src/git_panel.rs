@@ -9695,7 +9695,7 @@ pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool
 
 #[cfg(test)]
 mod tests {
-    use editor::SplittableEditor;
+    use editor::{SplittableEditor, test::editor_test_context::EditorTestContext};
     use git::{
         repository::repo_path,
         status::{StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
@@ -9886,6 +9886,171 @@ mod tests {
         await_git_panel_entries(&panel, &mut cx).await;
 
         (fs, project, workspace, panel, cx)
+    }
+
+    #[gpui::test]
+    async fn test_restoring_project_diff_hunk_updates_panel_and_only_saves_affected_buffer(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "file": "changed\n",
+                "other": "other on disk\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("multi-workspace should have an active workspace");
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .as_local()
+                .expect("worktree should be local")
+                .scan_complete()
+        })
+        .await;
+        cx.run_until_parked();
+
+        let worktree_id = project.read_with(&cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .id()
+        });
+        let editor = workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("file")), None, true, window, cx)
+            })
+            .await
+            .expect("file should open")
+            .downcast::<Editor>()
+            .expect("opened item should be an editor");
+        cx.run_until_parked();
+
+        let mut cx = EditorTestContext::for_editor_in(editor, &mut cx).await;
+        cx.set_head_text("original\n");
+        cx.set_index_text("original\n");
+        let other_editor = workspace
+            .update_in(&mut cx.cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("other")), None, true, window, cx)
+            })
+            .await
+            .expect("other file should open")
+            .downcast::<Editor>()
+            .expect("opened item should be an editor");
+        other_editor.update_in(&mut cx.cx, |editor, window, cx| {
+            editor.set_text("unsaved other\n", window, cx);
+        });
+        let other_buffer = other_editor.read_with(&cx.cx, |editor, cx| {
+            editor
+                .active_buffer(cx)
+                .expect("other editor should have an active buffer")
+        });
+
+        let panel = workspace.update_in(&mut cx.cx, GitPanel::new);
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(&cx.cx, |panel, _| panel.entries.clone());
+        pretty_assertions::assert_eq!(
+            entries,
+            [
+                GitListEntry::Header(GitHeaderEntry {
+                    header: Section::Tracked
+                }),
+                GitListEntry::Status(GitStatusEntry {
+                    repo_path: repo_path("file"),
+                    status: StatusCode::Modified.worktree(),
+                    staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
+                }),
+                GitListEntry::Header(GitHeaderEntry {
+                    header: Section::New
+                }),
+                GitListEntry::Status(GitStatusEntry {
+                    repo_path: repo_path("other"),
+                    status: FileStatus::Untracked,
+                    staging: StageStatus::Unstaged,
+                    diff_stat: None,
+                }),
+            ]
+        );
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        let project_diff = workspace.update(&mut cx.cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("project diff should be open")
+        });
+        let editor = project_diff.read_with(&cx.cx, |project_diff, cx| {
+            project_diff.editor(cx).read(cx).rhs_editor().clone()
+        });
+        let mut cx = EditorTestContext::for_editor_in(editor, &mut cx.cx).await;
+
+        cx.dispatch_action(git::Restore);
+        cx.run_until_parked();
+        assert_eq!(
+            fs.read_file_sync(path!("/root/file"))
+                .expect("restored file should exist"),
+            b"original\n"
+        );
+        assert_eq!(
+            fs.read_file_sync(path!("/root/other"))
+                .expect("other file should exist"),
+            b"other on disk\n"
+        );
+        other_buffer.read_with(&cx.cx, |buffer, _| {
+            assert_eq!(buffer.text(), "unsaved other\n");
+            assert!(buffer.is_dirty());
+        });
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(&cx.cx, |panel, _| panel.entries.clone());
+        pretty_assertions::assert_eq!(
+            entries,
+            [
+                GitListEntry::Header(GitHeaderEntry {
+                    header: Section::New
+                }),
+                GitListEntry::Status(GitStatusEntry {
+                    repo_path: repo_path("other"),
+                    status: FileStatus::Untracked,
+                    staging: StageStatus::Unstaged,
+                    diff_stat: None,
+                }),
+            ]
+        );
     }
 
     #[gpui::test]
