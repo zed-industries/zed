@@ -280,7 +280,10 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     "default": false
                 }
             },
-            "required": ["request"],
+            "anyOf": [
+                { "required": ["request"] },
+                { "required": ["build"] }
+            ]
             "allOf": [
                 {
                     "if": {
