@@ -44,11 +44,21 @@ pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &Lang
 
                 let requests = params;
                 let target_server = match lsp_store.read_with(cx, |this, _| {
+                    let vue_worktree_id = this.as_local().and_then(|local| {
+                        local
+                            .language_server_ids
+                            .iter()
+                            .find(|(_, v)| v.id == vue_server_id)
+                            .map(|(seed, _)| seed.worktree_id)
+                    });
+
                     let language_server_id = this
                         .as_local()
                         .and_then(|local| {
                             local.language_server_ids.iter().find_map(|(seed, v)| {
-                                [VTSLS, TS_LS].contains(&seed.name).then_some(v.id)
+                                ([VTSLS, TS_LS].contains(&seed.name)
+                                    && vue_worktree_id.is_none_or(|wt| wt == seed.worktree_id))
+                                .then_some(v.id)
                             })
                         })
                         .context("Could not find language server")?;
