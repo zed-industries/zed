@@ -634,9 +634,9 @@ mod tests {
 
     use crate::{
         ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
-        InputHandler, IntoElement, KeyBinding, KeyContext, Keymap, Pixels, PlatformWindow, Point,
-        Render, Subscription, TestAppContext, UTF16Selection, Unbind, VisualContext,
-        VisualTestContext, Window,
+        InputHandler, InteractiveElement, IntoElement, KeyBinding, KeyContext, KeyDownEvent,
+        Keymap, PassToSystem, Pixels, PlatformInput, PlatformWindow, Point, Render, Subscription,
+        TestAppContext, UTF16Selection, Unbind, VisualContext, VisualTestContext, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -908,6 +908,110 @@ mod tests {
         let keybinding = tree.bindings_for_action(&TestAction, &contexts);
 
         assert!(keybinding[0].action.partial_eq(&TestAction))
+    }
+
+    /// Models the macOS window-tiling scenario: a raw key listener (as `TerminalView` has)
+    /// would otherwise consume the keystroke before the platform's own key handling sees it.
+    /// A contextless `zed::PassToSystem` binding outranks the in-context binding and leaves the
+    /// event unhandled.
+    #[crate::test]
+    fn test_pass_to_system_leaves_key_event_unhandled(cx: &mut TestAppContext) {
+        #[derive(Clone)]
+        struct PassToSystemTestView {
+            focus_handle: FocusHandle,
+            action_count: Rc<Cell<usize>>,
+            raw_key_count: Rc<Cell<usize>>,
+        }
+
+        impl Render for PassToSystemTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                crate::div()
+                    .track_focus(&self.focus_handle)
+                    .key_context("Terminal")
+                    .on_action({
+                        let action_count = self.action_count.clone();
+                        move |_: &TestAction, _, cx| {
+                            action_count.set(action_count.get() + 1);
+                            cx.stop_propagation();
+                        }
+                    })
+                    .on_key_down({
+                        // Mirrors `TerminalView::key_down`, which consumes any keystroke it can
+                        // translate into terminal escape bytes.
+                        let raw_key_count = self.raw_key_count.clone();
+                        move |_, _, cx| {
+                            raw_key_count.set(raw_key_count.get() + 1);
+                            cx.stop_propagation();
+                        }
+                    })
+            }
+        }
+
+        cx.update(|cx| {
+            cx.bind_keys([
+                KeyBinding::new("ctrl-alt-left", TestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-alt-up", TestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-alt-left", PassToSystem, None),
+            ]);
+        });
+
+        let (view, cx) = cx.add_window_view(|_, cx| PassToSystemTestView {
+            focus_handle: cx.focus_handle(),
+            action_count: Rc::default(),
+            raw_key_count: Rc::default(),
+        });
+        let (action_count, raw_key_count) = view.update(cx, |view, _| {
+            (view.action_count.clone(), view.raw_key_count.clone())
+        });
+        let focus_handle = view.update(cx, |view, _| view.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+        cx.run_until_parked();
+
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let observed_action = Rc::new(Cell::new(false));
+        let _subscription = cx.update(|_, cx| {
+            let observed = observed.clone();
+            let observed_action = observed_action.clone();
+            cx.observe_keystrokes(move |event, _, _| {
+                observed.borrow_mut().push(event.keystroke.clone());
+                observed_action.set(event.action.is_some());
+            })
+        });
+
+        let propagate = dispatch_key_down(cx, "ctrl-alt-left");
+
+        // Left unhandled: the platform still gets a chance at the key.
+        assert!(propagate);
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(raw_key_count.get(), 0);
+        assert_eq!(observed.borrow().len(), 1);
+        assert!(!observed_action.get());
+
+        // Unbound combinations are unaffected, so the action is strictly opt-in.
+        let propagate = dispatch_key_down(cx, "ctrl-alt-up");
+
+        assert!(!propagate);
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(raw_key_count.get(), 0);
+    }
+
+    fn dispatch_key_down(cx: &mut VisualTestContext, keystroke: &str) -> bool {
+        let keystroke = Keystroke::parse(keystroke).expect("valid keystroke");
+        cx.update(|window, cx| {
+            window
+                .dispatch_event(
+                    PlatformInput::KeyDown(KeyDownEvent {
+                        keystroke,
+                        is_held: false,
+                        prefer_character_input: false,
+                    }),
+                    cx,
+                )
+                .propagate
+        })
     }
 
     #[test]
