@@ -1728,6 +1728,8 @@ struct GutterButtonTooltip {
     primary: GutterButtonIntent,
     secondary: GutterButtonIntent,
     focus_handle: FocusHandle,
+    #[cfg(test)]
+    on_render: Option<Rc<RefCell<Vec<(String, String)>>>>,
 }
 
 impl GutterButtonTooltip {
@@ -1762,6 +1764,13 @@ impl Render for GutterButtonTooltip {
         let intent = self.active_intent(window.modifiers());
         let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
         let meta_text = self.meta_text();
+
+        #[cfg(test)]
+        if let Some(on_render) = &self.on_render {
+            on_render
+                .borrow_mut()
+                .push((intent.as_str().to_owned(), meta_text.clone()));
+        }
 
         tooltip_container(cx, move |this, _| {
             this.child(
@@ -4821,6 +4830,8 @@ impl Editor {
                         primary,
                         secondary,
                         focus_handle: focus_handle.clone(),
+                        #[cfg(test)]
+                        on_render: None,
                     })
                     .into()
                 })
