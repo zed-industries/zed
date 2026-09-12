@@ -22,7 +22,7 @@ use crate::{
     TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    is_pass_to_system, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -5791,6 +5791,14 @@ impl Window {
 
         if !skip_bindings {
             for binding in match_result.bindings {
+                if is_pass_to_system(binding.action.as_ref()) {
+                    // Leave `propagate_event` set and skip the rest of dispatch, so the platform
+                    // sees the key as unhandled and its own key handling still gets a chance at it
+                    // - on macOS, the main menu's key equivalents.
+                    self.dispatch_keystroke_observers(event, None, match_result.context_stack, cx);
+                    self.pending_input_changed(cx);
+                    return;
+                }
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
