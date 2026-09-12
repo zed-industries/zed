@@ -244,6 +244,39 @@ Error: Running Zed as root or via sudo is unsupported.
     }
 }
 
+/// Raises the soft limit on open file descriptors without changing the hard limit.
+///
+/// Call during startup, before spawning children that will inherit the limit.
+#[cfg(unix)]
+pub fn increase_open_file_limit() -> Result<()> {
+    use anyhow::Context as _;
+    use nix::sys::resource::{Resource::RLIMIT_NOFILE, getrlimit, setrlimit};
+
+    let (soft_limit, hard_limit) = getrlimit(RLIMIT_NOFILE).context("getrlimit(RLIMIT_NOFILE)")?;
+    // These are startup targets, not OS ceilings. Preserve higher inherited limits.
+    let target = if cfg!(target_os = "macos") {
+        10_240
+    } else {
+        65_536
+    };
+    let mut requested_limit = hard_limit.min(target);
+
+    while requested_limit > soft_limit {
+        let Err(error) = setrlimit(RLIMIT_NOFILE, requested_limit, hard_limit) else {
+            log::info!("raised open file soft limit from {soft_limit} to {requested_limit}");
+            return Ok(());
+        };
+
+        // Some systems enforce a ceiling below the reported hard limit.
+        if error != nix::errno::Errno::EINVAL || requested_limit == soft_limit + 1 {
+            return Err(error).context("setrlimit(RLIMIT_NOFILE)");
+        }
+        requested_limit = soft_limit + (requested_limit - soft_limit) / 2;
+    }
+
+    Ok(())
+}
+
 #[cfg(unix)]
 fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {

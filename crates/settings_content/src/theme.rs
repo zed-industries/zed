@@ -842,6 +842,10 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.foreground")]
     pub editor_foreground: Option<ThemeColor>,
 
+    /// Text color used for CodeLens items in the editor.
+    #[serde(rename = "editor.code_lens.foreground")]
+    pub editor_code_lens_foreground: Option<ThemeColor>,
+
     #[serde(rename = "editor.background")]
     pub editor_background: Option<ThemeColor>,
 

@@ -78,6 +78,43 @@ pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
 
+/// Whether the platform is presenting a window's frames.
+///
+/// This is about presentation, not the window's shown/hidden state: a shown
+/// window that is fully covered by other windows, minimized, on another
+/// Space or virtual desktop, or on a display that is asleep is `Hidden`. A
+/// window only partly covered by other windows is `Visible`.
+///
+/// Each platform reports from a single source, and what that source can see
+/// differs:
+///
+/// * macOS: `NSWindow.occlusionState`. Covers all of the cases above.
+/// * Windows: `WS_VISIBLE` and the minimized state. Windows keeps compositing
+///   covered windows for thumbnails and Alt-Tab and offers no occlusion
+///   notification, so a fully covered window stays `Visible`. Display sleep is
+///   not reported either.
+/// * Wayland: the `xdg_toplevel` `suspended` state (xdg-shell v6). Compositors
+///   that don't support it never report `Hidden`.
+/// * X11: mapped state plus `VisibilityNotify`. Compositing window managers
+///   generally never report a window as fully obscured, so covering is only
+///   detected without compositing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowVisibility {
+    /// At least part of the window is being presented; frames drawn for it
+    /// will be shown.
+    Visible,
+    /// No part of the window is being presented. The platform will not
+    /// request frames for it until it becomes visible again.
+    Hidden,
+}
+
+impl WindowVisibility {
+    /// Whether frames drawn for the window will be shown.
+    pub fn is_visible(self) -> bool {
+        self == Self::Visible
+    }
+}
+
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub(crate) use test::*;
 
@@ -221,6 +258,9 @@ pub trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
+    /// Registers the callback invoked when the system is about to sleep.
+    fn on_system_sleep(&self, callback: Box<dyn FnMut()>);
+    /// Registers the callback invoked when the system resumes from sleep.
     fn on_system_wake(&self, callback: Box<dyn FnMut()>);
 
     // Mobile platform methods. On mobile the OS owns the application
@@ -822,9 +862,9 @@ impl WindowInsets {
 /// A change in the state of the focused text input.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum TextInputStateChange {
-    /// An editable element gained focus.
+    /// The window changed from having no active text input to having one.
     FocusGained,
-    /// The focused editable element lost focus.
+    /// The window no longer has an active text input.
     FocusLost,
     /// The selection or caret moved
     SelectionChanged,
@@ -838,6 +878,26 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
+    /// Returns the visible viewport in logical pixels relative to the content origin.
+    ///
+    /// This may be smaller or offset when a keyboard or zoom obscures content;
+    /// it must not change the full layout size returned by `content_size`.
+    /// Implementations should return a frame snapshot, not query platform layout here.
+    fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+        Bounds::new(Point::default(), self.content_size())
+    }
+    /// Registers a callback when visible geometry may have changed.
+    ///
+    /// This requests a frame; backends can sample the new viewport and safe-area
+    /// geometry in `prepare_frame` rather than updating it inside the callback.
+    fn on_visual_viewport_changed(&self, _callback: Box<dyn FnMut()>) {}
+    /// Samples platform geometry before a draw, returning whether view caches must be invalidated.
+    ///
+    /// Geometry getters must remain consistent throughout the ensuing draw.
+    /// Do not invoke callbacks here: GPUI is already updating this window.
+    fn prepare_frame(&self) -> bool {
+        false
+    }
     fn resize(&mut self, size: Size<Pixels>);
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
@@ -863,6 +923,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Requests that the operating system draw attention to this window.
     fn request_attention(&self) {}
     fn is_active(&self) -> bool;
+    /// The current [`WindowVisibility`]. Read once when the window is created;
+    /// afterwards changes arrive through [`Self::on_visibility_change`].
+    fn visibility(&self) -> WindowVisibility;
     fn is_hovered(&self) -> bool;
     fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);
@@ -877,6 +940,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
+    /// Registers the callback invoked when [`Self::visibility`] changes. Only
+    /// transitions are reported; the callback runs on the main thread outside
+    /// of any window update.
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>);
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);

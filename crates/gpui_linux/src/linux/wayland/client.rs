@@ -260,7 +260,9 @@ impl Globals {
             primary_selection_manager: globals.bind(&qh, 1..=1, ()).ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             seat,
-            wm_base: globals.bind(&qh, 1..=5, ()).unwrap(),
+            // Accept any xdg_wm_base version up to 6, which added the `suspended`
+            // toplevel state; older compositors bind at their own version.
+            wm_base: globals.bind(&qh, 1..=6, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
@@ -787,7 +789,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle
@@ -809,10 +811,14 @@ impl WaylandClient {
 
         handle
             .insert_source(
-                wake_receiver,
+                power_receiver,
                 |event, _, client: &mut WaylandClientStatePtr| {
-                    if let calloop::channel::Event::Msg(()) = event {
-                        client.get_client().borrow_mut().common.handle_system_wake();
+                    if let calloop::channel::Event::Msg(event) = event {
+                        client
+                            .get_client()
+                            .borrow_mut()
+                            .common
+                            .handle_system_power_event(event);
                     }
                 },
             )
