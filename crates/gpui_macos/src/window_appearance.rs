@@ -3,7 +3,7 @@ use cocoa::{
     base::id,
     foundation::NSString,
 };
-use gpui::WindowAppearance;
+use gpui_platform_core::WindowAppearance;
 use objc::{msg_send, sel, sel_impl};
 use std::ffi::CStr;
 

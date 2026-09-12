@@ -21,7 +21,7 @@ use windows::Win32::{
 };
 
 use crate::{HWND, SafeHwnd, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
-use gpui::{
+use gpui_platform_core::{
     PlatformDispatcher, Priority, PriorityQueueSender, RunnableVariant, TimerResolutionGuard,
 };
 
@@ -92,9 +92,9 @@ impl WindowsDispatcher {
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
         let location = runnable.metadata().location;
         let spawned = runnable.metadata().spawned;
-        gpui::profiler::update_running_task(spawned, location);
+        gpui_platform_core::profiler::update_running_task(spawned, location);
         runnable.run();
-        gpui::profiler::save_task_timing();
+        gpui_platform_core::profiler::save_task_timing();
     }
 }
 

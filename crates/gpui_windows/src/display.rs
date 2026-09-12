@@ -16,7 +16,7 @@ use windows::{
 };
 
 use crate::logical_point;
-use gpui::{Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, point, size};
+use gpui_platform_core::{Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, point, size};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
@@ -64,7 +64,7 @@ impl WindowsDisplay {
                     (work_area.right - work_area.left) as f32 / scale_factor,
                     (work_area.bottom - work_area.top) as f32 / scale_factor,
                 )
-                .map(gpui::px),
+                .map(gpui_platform_core::px),
             },
             physical_bounds: Bounds {
                 origin: point(monitor_size.left.into(), monitor_size.top.into()),

@@ -37,7 +37,7 @@ use windows::{
 };
 
 use crate::*;
-use gpui::*;
+use gpui_platform_core::*;
 
 pub struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
@@ -170,7 +170,7 @@ impl WindowsPlatform {
         } else {
             (
                 None,
-                Arc::new(gpui::NoopTextSystem::new()) as Arc<dyn PlatformTextSystem>,
+                Arc::new(gpui_platform_core::NoopTextSystem::new()) as Arc<dyn PlatformTextSystem>,
                 None,
             )
         };
@@ -618,7 +618,7 @@ impl Platform for WindowsPlatform {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        gpui::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
+        gpui_platform_core::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
     }
 
     fn active_window(&self) -> Option<WindowId> {
@@ -768,7 +768,7 @@ impl Platform for WindowsPlatform {
         *self.app_identity.borrow_mut() = Some((identifier.to_string(), name.to_string()));
     }
 
-    fn show_system_notification(&self, notification: gpui::SystemNotification) {
+    fn show_system_notification(&self, notification: gpui_platform_core::SystemNotification) {
         let app_identity = self.app_identity.borrow().clone();
         self.system_notifications
             .borrow_mut()
@@ -788,7 +788,7 @@ impl Platform for WindowsPlatform {
 
     fn on_system_notification_response(
         &self,
-        callback: Box<dyn FnMut(gpui::SystemNotificationResponse)>,
+        callback: Box<dyn FnMut(gpui_platform_core::SystemNotificationResponse)>,
     ) {
         self.system_notifications
             .borrow_mut()
@@ -1616,7 +1616,7 @@ mod tests {
     use std::ffi::{OsStr, OsString};
 
     use crate::{read_from_clipboard, write_to_clipboard};
-    use gpui::ClipboardItem;
+    use gpui_platform_core::ClipboardItem;
 
     use super::encode_restart_arguments;
 

@@ -1,5 +1,7 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
-use gpui::{ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
+use gpui_platform_core::{
+    ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant,
+};
 use gpui_util::ResultExt;
 use mach2::{
     kern_return::KERN_SUCCESS,
@@ -201,7 +203,7 @@ extern "C" fn trampoline(context: *mut c_void) {
 
     let location = runnable.metadata().location;
     let spawned = runnable.metadata().spawned;
-    gpui::profiler::update_running_task(spawned, location);
+    gpui_platform_core::profiler::update_running_task(spawned, location);
     runnable.run();
-    gpui::profiler::save_task_timing();
+    gpui_platform_core::profiler::save_task_timing();
 }

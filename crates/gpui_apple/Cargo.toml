@@ -13,12 +13,12 @@ path = "src/gpui_apple.rs"
 
 [features]
 default = []
-bench-support = ["gpui/bench-support"]
-test-support = ["gpui/test-support"]
+bench-support = ["gpui_platform_core/bench-support"]
+test-support = ["gpui_platform_core/test-support"]
 runtime_shaders = []
 
 [dependencies]
-gpui.workspace = true
+gpui_platform_core.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow.workspace = true

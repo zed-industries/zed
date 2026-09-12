@@ -12,12 +12,12 @@ workspace = true
 path = "src/gpui_windows.rs"
 
 [features]
-default = ["gpui/default"]
-test-support = ["gpui/test-support"]
-screen-capture = ["gpui/screen-capture", "scap"]
+default = ["gpui_platform_core/default"]
+test-support = ["gpui_platform_core/test-support"]
+screen-capture = ["gpui_platform_core/screen-capture", "scap"]
 
 [dependencies]
-gpui.workspace = true
+gpui_platform_core.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 accesskit.workspace = true

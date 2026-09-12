@@ -6,7 +6,7 @@ use crate::keyboard::WebKeyboardLayout;
 use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
-use gpui::{
+use gpui_platform_core::{
     ActivityGuard, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardReadError,
     ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor, GestureTuning, Image,
     ImageFormat, MenuCommandId, PathPromptOptions, Platform, PlatformDisplay, PlatformGestures,
@@ -26,7 +26,7 @@ use wasm_bindgen::prelude::*;
 /// Provides the GPUI platform implementation for web browsers.
 ///
 /// The platform starts with an empty font database. Applications must add fonts
-/// through [`gpui::App::text_system`] before opening a window.
+/// through the application's text system before opening a window.
 pub struct WebPlatform {
     browser_window: web_sys::Window,
     dispatcher: Arc<WebDispatcher>,

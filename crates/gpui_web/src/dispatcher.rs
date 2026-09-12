@@ -1,4 +1,4 @@
-use gpui::{
+use gpui_platform_core::{
     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
 };
 use std::cell::{Cell, RefCell};

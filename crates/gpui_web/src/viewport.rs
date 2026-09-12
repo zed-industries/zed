@@ -4,7 +4,7 @@
 //! Safe-area padding is resolved by CSS so display cutouts use the browser's
 //! own environment values rather than device-specific assumptions.
 
-use gpui::{Bounds, Edges, Pixels, WindowInsets, point, px, size};
+use gpui_platform_core::{Bounds, Edges, Pixels, WindowInsets, point, px, size};
 use wasm_bindgen::JsCast;
 
 pub(crate) struct WebViewport {
