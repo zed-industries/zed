@@ -74,6 +74,7 @@ zed_actions.workspace = true
 ztracing.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 ctor.workspace = true
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
@@ -89,6 +90,7 @@ search.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task.workspace = true
 unindent.workspace = true
+url.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 
