@@ -3324,9 +3324,12 @@ impl LspCommand for GetCompletions {
                             .unwrap_or(&lsp_completion.label)
                             .clone();
 
+                        let insert_range = default_edit_range
+                            .is_none()
+                            .then(|| range.start..snapshot.anchor_after(self.position));
                         ParsedCompletionEdit {
                             replace_range: range,
-                            insert_range: None,
+                            insert_range,
                             new_text: text,
                         }
                     }
