@@ -24,6 +24,9 @@ pub struct CanvasFallback {
 /// Returns a presentation only when `grapheme` is exactly one supported extended
 /// grapheme cluster. No normalization, splitting, or font-coverage decision occurs.
 pub fn classify_canvas_fallback(grapheme: &str) -> Option<CanvasFallback> {
+    if grapheme.is_ascii() {
+        return None;
+    }
     let mut graphemes = grapheme.graphemes(true);
     if graphemes.next()? != grapheme || graphemes.next().is_some() {
         return None;
@@ -196,6 +199,27 @@ fn is_supported_zwj_sequence(grapheme: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_is_ineligible_but_keycaps_are_preserved() {
+        for byte in 0..=0x7f_u8 {
+            assert_eq!(classify_canvas_fallback(&(byte as char).to_string()), None);
+        }
+        for text in ["", "Hello", "0123456789#*", "\r\n"] {
+            assert_eq!(classify_canvas_fallback(text), None);
+        }
+        for base in "0123456789#*".chars() {
+            for text in [format!("{base}\u{20e3}"), format!("{base}\u{fe0f}\u{20e3}")] {
+                assert_eq!(
+                    classify_canvas_fallback(&text),
+                    Some(CanvasFallback {
+                        emoji_presentation: true,
+                    }),
+                    "{text:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn ordinary_cjk_clusters() {

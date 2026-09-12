@@ -1,15 +1,16 @@
 use crate::canvas_fallback::classify_canvas_fallback;
 use crate::canvas_text::{self, CanvasTextMetrics};
+use crate::glyph_cache::{CanvasGlyph, GlyphCache};
+use crate::run_replacements::{Replacement, apply_replacements, collect_candidates};
 use anyhow::{Context as _, Result, ensure};
 use gpui::{
     Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, FontStyle, GlyphId, Hsla, LineLayout,
     Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point, px, size,
+    ShapedGlyph, Size, TextRenderingMode, point, px, size,
 };
 use gpui_wgpu::CosmicTextSystem;
 use parking_lot::RwLock;
-use std::{borrow::Cow, collections::HashMap, ops::Range, sync::Arc};
-use unicode_segmentation::UnicodeSegmentation;
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 // Cosmic's font IDs index its loaded-font vector. Keep browser IDs in a disjoint namespace.
 const CANVAS_FONT_BIT: usize = 1 << (usize::BITS - 1);
@@ -25,8 +26,7 @@ struct State {
     descriptors: HashMap<FontId, Font>,
     canvas_fonts: Vec<Arc<CanvasFont>>,
     canvas_font_ids: HashMap<FontId, FontId>,
-    glyphs: Vec<CanvasGlyph>,
-    glyph_ids: HashMap<(FontId, SharedString, bool), GlyphId>,
+    glyphs: GlyphCache,
     measurements: HashMap<(FontId, GlyphId, Pixels), CanvasTextMetrics>,
 }
 
@@ -36,28 +36,19 @@ struct CanvasFont {
     monospace: bool,
 }
 
-#[derive(Clone)]
-struct CanvasGlyph {
-    font_id: FontId,
-    text: SharedString,
-    color: bool,
-}
-
-struct Candidate {
-    source: Range<usize>,
-    font_id: FontId,
-    color: bool,
-    glyph_range: Option<Range<usize>>,
-    contiguous: bool,
-    missing: bool,
-    native_color: bool,
-}
-
-struct Replacement {
-    glyph_range: Range<usize>,
-    font_id: FontId,
-    glyph: ShapedGlyph,
-    width_delta: Pixels,
+impl State {
+    fn cached_fallback(
+        &self,
+        native_id: FontId,
+        text: &str,
+        color: bool,
+        font_size: Pixels,
+    ) -> Option<(FontId, GlyphId, CanvasTextMetrics)> {
+        let font_id = *self.canvas_font_ids.get(&native_id)?;
+        let glyph_id = self.glyphs.id_for(font_id, text, color)?;
+        let metrics = *self.measurements.get(&(font_id, glyph_id, font_size))?;
+        Some((font_id, glyph_id, metrics))
+    }
 }
 
 impl WebTextSystem {
@@ -125,27 +116,21 @@ impl WebTextSystem {
     }
 
     fn register_glyph(&self, font_id: FontId, text: &str, color: bool) -> Result<GlyphId> {
-        let key = (font_id, SharedString::from(text.to_owned()), color);
-        let mut state = self.state.write();
-        if let Some(glyph_id) = state.glyph_ids.get(&key) {
-            return Ok(*glyph_id);
+        if let Some(glyph_id) = self.state.read().glyphs.id_for(font_id, text, color) {
+            return Ok(glyph_id);
         }
-        let glyph_id = GlyphId(u32::try_from(state.glyphs.len())?);
-        state.glyphs.push(CanvasGlyph {
-            font_id,
-            text: key.1.clone(),
-            color,
-        });
-        state.glyph_ids.insert(key, glyph_id);
-        Ok(glyph_id)
+        // Another thread may register the same glyph between the read and write locks.
+        self.state
+            .write()
+            .glyphs
+            .get_or_insert(font_id, text, color)
     }
 
     fn canvas_glyph(&self, font_id: FontId, glyph_id: GlyphId) -> Result<CanvasGlyph> {
         self.state
             .read()
             .glyphs
-            .get(glyph_id.0 as usize)
-            .filter(|glyph| glyph.font_id == font_id)
+            .glyph(font_id, glyph_id)
             .cloned()
             .context("invalid Canvas glyph ID")
     }
@@ -174,85 +159,41 @@ impl WebTextSystem {
         Ok(metrics)
     }
 
+    fn fallback_glyph(
+        &self,
+        native_id: FontId,
+        text: &str,
+        color: bool,
+        font_size: Pixels,
+    ) -> Result<(FontId, GlyphId, CanvasTextMetrics)> {
+        if let Some(cached) = self
+            .state
+            .read()
+            .cached_fallback(native_id, text, color, font_size)
+        {
+            return Ok(cached);
+        }
+        let font_id = self.canvas_font_id(native_id)?;
+        let glyph_id = self.register_glyph(font_id, text, color)?;
+        let metrics = self.measure(font_id, glyph_id, font_size)?;
+        Ok((font_id, glyph_id, metrics))
+    }
+
     fn apply_fallback(&self, text: &str, font_runs: &[FontRun], layout: &mut LineLayout) {
         if text.is_ascii() || !f32::from(layout.font_size).is_finite() || layout.font_size <= px(0.)
         {
             return;
         }
-        let mut font_runs = font_runs.iter();
-        let mut font_run = font_runs.next();
-        let mut run_end = font_run.map_or(0, |run| run.len);
-        let mut candidates = Vec::new();
-        for (start, grapheme) in text.grapheme_indices(true) {
-            while start >= run_end {
-                font_run = font_runs.next();
-                let Some(run) = font_run else { break };
-                run_end += run.len;
-            }
-            let Some(run) = font_run else { break };
-            let end = start + grapheme.len();
-            if end > run_end {
-                continue;
-            }
-            let Some(fallback) = classify_canvas_fallback(grapheme) else {
-                continue;
-            };
-            candidates.push(Candidate {
-                source: start..end,
-                font_id: run.font_id,
-                color: fallback.emoji_presentation,
-                glyph_range: None,
-                contiguous: true,
-                missing: false,
-                native_color: true,
-            });
-        }
-        if candidates.is_empty() {
-            return;
-        }
-
-        let glyphs: Vec<_> = layout
-            .runs
-            .iter()
-            .flat_map(|run| run.glyphs.iter().map(move |glyph| (run.font_id, glyph)))
-            .collect();
-        for (index, (_, glyph)) in glyphs.iter().enumerate() {
-            let candidate_index =
-                candidates.partition_point(|candidate| candidate.source.end <= glyph.index);
-            let Some(candidate) = candidates
-                .get_mut(candidate_index)
-                .filter(|candidate| candidate.source.contains(&glyph.index))
-            else {
-                continue;
-            };
-            match &mut candidate.glyph_range {
-                Some(range) => {
-                    candidate.contiguous &= range.end == index;
-                    range.end = index + 1;
-                }
-                range => *range = Some(index..index + 1),
-            }
-            candidate.missing |= glyph.id.0 == 0;
-            candidate.native_color &= glyph.is_emoji;
-        }
-
         let mut replacements = Vec::new();
-        for candidate in candidates {
-            if !candidate.contiguous
-                || !(candidate.missing || (candidate.color && !candidate.native_color))
+        for candidate in collect_candidates(text, font_runs, layout) {
+            let Some(glyphs) = candidate.glyphs else {
+                continue;
+            };
+            if !glyphs.contiguous || !(glyphs.missing || (candidate.color && !glyphs.native_color))
             {
                 continue;
             }
-            let Some(glyph_range) = candidate.glyph_range else {
-                continue;
-            };
-            let Some((_, first)) = glyphs.get(glyph_range.start) else {
-                continue;
-            };
-            let end_x = glyphs
-                .get(glyph_range.end)
-                .map_or(layout.width, |(_, glyph)| glyph.position.x);
-            let old_width = end_x - first.position.x;
+            let old_width = glyphs.end_x - glyphs.position.x;
             if old_width < px(0.) {
                 continue;
             }
@@ -260,15 +201,18 @@ impl WebTextSystem {
                 let text = text
                     .get(candidate.source.clone())
                     .context("invalid Canvas fallback source range")?;
-                let font_id = self.canvas_font_id(candidate.font_id)?;
-                let glyph_id = self.register_glyph(font_id, text, candidate.color)?;
-                let metrics = self.measure(font_id, glyph_id, layout.font_size)?;
+                let (font_id, glyph_id, metrics) = self.fallback_glyph(
+                    candidate.font_id,
+                    text,
+                    candidate.color,
+                    layout.font_size,
+                )?;
                 Ok(Replacement {
-                    glyph_range,
+                    glyph_range: glyphs.range,
                     font_id,
                     glyph: ShapedGlyph {
                         id: glyph_id,
-                        position: first.position,
+                        position: glyphs.position,
                         index: candidate.source.start,
                         is_emoji: candidate.color,
                     },
@@ -284,40 +228,9 @@ impl WebTextSystem {
             return;
         }
         replacements.sort_unstable_by_key(|replacement| replacement.glyph_range.start);
-        drop(glyphs);
-
-        let mut replacements = replacements.into_iter().peekable();
-        let mut glyphs = std::mem::take(&mut layout.runs)
-            .into_iter()
-            .flat_map(|run| {
-                run.glyphs
-                    .into_iter()
-                    .map(move |glyph| (run.font_id, glyph))
-            })
-            .enumerate();
-        let mut shift = Pixels::ZERO;
-        while let Some((index, (font_id, mut glyph))) = glyphs.next() {
-            if replacements
-                .peek()
-                .is_some_and(|replacement| replacement.glyph_range.start == index)
-            {
-                let Some(mut replacement) = replacements.next() else {
-                    break;
-                };
-                for _ in index + 1..replacement.glyph_range.end {
-                    glyphs.next();
-                }
-                replacement.glyph.position.x += shift;
-                shift += replacement.width_delta;
-                push_glyph(&mut layout.runs, replacement.font_id, replacement.glyph);
-            } else {
-                glyph.position.x += shift;
-                push_glyph(&mut layout.runs, font_id, glyph);
-            }
-        }
-        layout.width += shift;
         // Keep the primary font's baseline and line spacing stable. Browser ink
         // extents affect raster bounds, not the surrounding editor's line metrics.
+        apply_replacements(layout, replacements);
     }
 }
 
@@ -349,6 +262,12 @@ impl PlatformTextSystem for WebTextSystem {
     }
 
     fn prewarm_fonts(&self, font_ids: &[FontId]) {
+        if font_ids
+            .iter()
+            .all(|font_id| font_id.0 & CANVAS_FONT_BIT == 0)
+        {
+            return self.native.prewarm_fonts(font_ids);
+        }
         let native_ids: Vec<_> = font_ids
             .iter()
             .map(|font_id| self.native_font_id(*font_id))
@@ -462,23 +381,20 @@ impl PlatformTextSystem for WebTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        let mut native_runs: Vec<_> = runs
-            .iter()
-            .map(|run| FontRun {
-                len: run.len,
-                font_id: self.native_font_id(run.font_id),
-            })
-            .collect();
+        let native_runs: Cow<'_, [FontRun]> =
+            if runs.iter().any(|run| run.font_id.0 & CANVAS_FONT_BIT != 0) {
+                Cow::Owned(
+                    runs.iter()
+                        .map(|run| FontRun {
+                            len: run.len,
+                            font_id: self.native_font_id(run.font_id),
+                        })
+                        .collect(),
+                )
+            } else {
+                Cow::Borrowed(runs)
+            };
         let mut layout = self.native.layout_line(text, font_size, &native_runs);
-        // Preserve native shaping boundaries, but do not let paint-only run splits
-        // prevent fallback for one complete grapheme in the same font.
-        native_runs.dedup_by(|run, previous| {
-            if run.font_id != previous.font_id {
-                return false;
-            }
-            previous.len += run.len;
-            true
-        });
         self.apply_fallback(text, &native_runs, &mut layout);
         layout
     }
@@ -559,15 +475,4 @@ fn subpixel_offset(params: &RenderGlyphParams) -> (f32, f32) {
         f32::from(params.subpixel_variant.x) / SUBPIXEL_VARIANTS_X as f32,
         f32::from(params.subpixel_variant.y) / SUBPIXEL_VARIANTS_Y as f32,
     )
-}
-
-fn push_glyph(runs: &mut Vec<ShapedRun>, font_id: FontId, glyph: ShapedGlyph) {
-    if let Some(run) = runs.last_mut().filter(|run| run.font_id == font_id) {
-        run.glyphs.push(glyph);
-    } else {
-        runs.push(ShapedRun {
-            font_id,
-            glyphs: vec![glyph],
-        });
-    }
 }

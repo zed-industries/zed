@@ -29,8 +29,17 @@ impl TextCanvas {
     fn new() -> Result<Self> {
         let canvas = OffscreenCanvas::new(1, 1)
             .map_err(|error| anyhow!("creating text OffscreenCanvas: {error:?}"))?;
+        let options = js_sys::Object::new();
+        // Every rasterized glyph is read back for upload into GPUI's atlas.
+        let assigned = js_sys::Reflect::set(
+            &options,
+            &JsValue::from_str("willReadFrequently"),
+            &JsValue::TRUE,
+        )
+        .map_err(|error| anyhow!("setting Canvas readback option: {error:?}"))?;
+        ensure!(assigned, "Canvas readback option could not be set");
         let context = canvas
-            .get_context("2d")
+            .get_context_with_context_options("2d", &options)
             .map_err(|error| anyhow!("getting OffscreenCanvas 2D context: {error:?}"))?
             .context("OffscreenCanvas 2D text rendering is unavailable")?
             .dyn_into::<OffscreenCanvasRenderingContext2d>()

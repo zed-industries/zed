@@ -63,7 +63,8 @@ try {
             if (message.error) request.reject(new Error(JSON.stringify(message.error)));
             else request.resolve(message.result);
         } else if (message.method === "Runtime.exceptionThrown" ||
-            (message.method === "Runtime.consoleAPICalled" && message.params.type === "error")) {
+            (message.method === "Runtime.consoleAPICalled" && message.params.type === "error") ||
+            (message.method === "Log.entryAdded" && message.params.entry.text.includes("willReadFrequently"))) {
             errors.push(message.params);
         }
     });
@@ -86,6 +87,7 @@ try {
     };
     await call("Runtime.enable");
     await call("Page.enable");
+    await call("Log.enable");
     await call("Emulation.setDeviceMetricsOverride", {
         width: 1280, height: 900, deviceScaleFactor: 1, mobile: false,
     });
@@ -94,7 +96,10 @@ try {
         for (const name of ["measureText", "fillText"]) {
             const original = OffscreenCanvasRenderingContext2D.prototype[name];
             OffscreenCanvasRenderingContext2D.prototype[name] = function(...args) {
-                canvasCalls.push({ type: name, text: args[0], font: this.font });
+                canvasCalls.push({
+                    type: name, text: args[0], font: this.font,
+                    willReadFrequently: this.getContextAttributes().willReadFrequently,
+                });
                 return original.apply(this, args);
             };
         }
@@ -155,6 +160,10 @@ try {
     for (const grapheme of ["中", "文", "が", "か\u3099", "각", "각", "❤️", "👍🏽", "🇯🇵", "👩‍💻", "👨‍👩‍👧‍👦"]) {
         assert.ok(await rasterCount(grapheme) > 0, `Missing whole-grapheme raster: ${grapheme}`);
     }
+    assert.ok(
+        await evaluate("canvasCalls.every(call => call.willReadFrequently === true)"),
+        "Glyph canvases should be configured for frequent readback",
+    );
     const screenshot = await call("Page.captureScreenshot", { format: "png" });
     fs.writeFileSync(path.join(output, "input.png"), Buffer.from(screenshot.data, "base64"));
     await key("Backspace");
