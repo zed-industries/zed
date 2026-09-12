@@ -192,6 +192,7 @@ reqwest.workspace = true
 reqwest_client.workspace = true
 rope.workspace = true
 sandbox.workspace = true
+screencast.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_json.workspace = true

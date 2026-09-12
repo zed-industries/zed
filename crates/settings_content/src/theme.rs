@@ -269,6 +269,35 @@ impl From<f32> for FontSize {
         Self(value)
     }
 }
+/// A font size value in pixels, wrapping around `f32` for custom screencasting overlay rendering.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct ScreencastFontSize(
+    #[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32,
+);
+
+impl Display for ScreencastFontSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}", self.0)
+    }
+}
+
+impl From<f32> for ScreencastFontSize {
+    fn from(value: f32) -> Self {
+        Self(value)
+    }
+}
 
 #[derive(
     Clone,

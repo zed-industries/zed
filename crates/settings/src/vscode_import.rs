@@ -239,6 +239,7 @@ impl VsCodeSettings {
             modeline_lines: None,
             feature_flags: None,
             instrumentation: None,
+            screencast: self.screencast_settings_content(),
         }
     }
 
@@ -1030,6 +1031,16 @@ impl VsCodeSettings {
         }
     }
 
+    fn screencast_settings_content(&self) -> Option<ScreencastSettingsContent> {
+        skip_default(ScreencastSettingsContent {
+            font_size: self
+                .read_f32("screencastMode.fontSize")
+                .map(ScreencastFontSize::from),
+            vertical_offset: self.read_f32("screencastMode.verticalOffset"),
+            keyboard_overlay_timeout: self.read_u64("screencastMode.keyboardOverlayTimeout"),
+        })
+    }
+
     fn workspace_settings_content(&self) -> WorkspaceSettingsContent {
         WorkspaceSettingsContent {
             active_pane_modifiers: self.active_pane_modifiers(),
@@ -1223,6 +1234,48 @@ mod tests {
             .unwrap()
             .settings_content()
             .reduce_motion
+    }
+
+    fn imported_screencast(content: &str) -> Option<ScreencastSettingsContent> {
+        VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+            .unwrap()
+            .settings_content()
+            .screencast
+    }
+
+    #[test]
+    fn test_import_empty_screencast_settings() {
+        assert_eq!(imported_screencast("{}"), None);
+    }
+
+    #[test]
+    fn test_import_screencast_settings() {
+        assert_eq!(
+            imported_screencast(
+                r#"{
+                    "screencastMode.fontSize": 64,
+                    "screencastMode.verticalOffset": 30,
+                    "screencastMode.keyboardOverlayTimeout": 1200
+                }"#,
+            ),
+            Some(ScreencastSettingsContent {
+                font_size: Some(ScreencastFontSize::from(64.0)),
+                vertical_offset: Some(30.0),
+                keyboard_overlay_timeout: Some(1200),
+            })
+        );
+    }
+
+    #[test]
+    fn test_import_partial_screencast_settings() {
+        assert_eq!(
+            imported_screencast(r#"{ "screencastMode.verticalOffset": 40 }"#),
+            Some(ScreencastSettingsContent {
+                font_size: None,
+                vertical_offset: Some(40.0),
+                keyboard_overlay_timeout: None,
+            })
+        );
     }
 
     #[test]
