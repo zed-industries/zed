@@ -100,6 +100,7 @@ language_model = { workspace = true, features = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 node_runtime = { workspace = true, features = ["test-support"] }
+parking_lot.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }

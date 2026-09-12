@@ -1,11 +1,15 @@
 use std::{
     cell::LazyCell,
     collections::BTreeSet,
+    future::Future,
     io::{Cursor, ErrorKind, Read},
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -20,6 +24,7 @@ use language::{Buffer, BufferSnapshot, Point};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
+use smol::future::yield_now;
 use text::Rope;
 
 use encoding_rs::Encoding;
@@ -32,7 +37,7 @@ use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
     buffer_store::BufferStore,
-    search::{MatchPositionHint, SearchQuery, SearchResult},
+    search::{MatchPositionHint, SearchOmission, SearchOmissionReason, SearchQuery, SearchResult},
     worktree_store::WorktreeStore,
 };
 
@@ -41,6 +46,7 @@ pub struct Search {
     worktree_store: Entity<WorktreeStore>,
     limit: usize,
     kind: SearchKind,
+    include_private_omissions: bool,
 }
 
 /// Represents search setup, before it is actually kicked off with Search::into_results
@@ -67,18 +73,43 @@ enum SearchKind {
 pub struct SearchResultsHandle {
     results: Receiver<SearchResult>,
     matching_buffers: Receiver<(Entity<Buffer>, MatchPositionHint)>,
+    omissions: Receiver<Vec<SearchOmission>>,
+    omissions_status: SearchOmissionsStatus,
     trigger_search: Box<dyn FnOnce(&mut App) -> Task<()> + Send + Sync>,
 }
 
 pub struct SearchResults<T> {
     pub task_handle: Task<()>,
     pub rx: Receiver<T>,
+    pub omissions: Receiver<Vec<SearchOmission>>,
+    pub omissions_status: SearchOmissionsStatus,
 }
+
+#[derive(Clone, Default)]
+pub struct SearchOmissionsStatus(Arc<AtomicBool>);
+
+impl SearchOmissionsStatus {
+    pub fn is_complete(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn mark_complete(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 impl SearchResultsHandle {
+    pub fn without_omissions(self) -> Self {
+        self.omissions.close();
+        self
+    }
+
     pub fn results(self, cx: &mut App) -> SearchResults<SearchResult> {
         SearchResults {
             task_handle: (self.trigger_search)(cx),
             rx: self.results,
+            omissions: self.omissions,
+            omissions_status: self.omissions_status,
         }
     }
     pub fn matching_buffers(
@@ -88,6 +119,8 @@ impl SearchResultsHandle {
         SearchResults {
             task_handle: (self.trigger_search)(cx),
             rx: self.matching_buffers,
+            omissions: self.omissions,
+            omissions_status: self.omissions_status,
         }
     }
 }
@@ -127,10 +160,16 @@ impl Search {
         worktrees.sort_by_key(|worktree| worktree.read(cx).id());
         Self {
             kind: SearchKind::Local { fs, worktrees },
+            include_private_omissions: true,
             buffer_store,
             worktree_store,
             limit,
         }
+    }
+
+    pub fn include_private_omissions(mut self, include_private_omissions: bool) -> Self {
+        self.include_private_omissions = include_private_omissions;
+        self
     }
 
     pub(crate) fn remote(
@@ -140,6 +179,7 @@ impl Search {
         client_state: (AnyProtoClient, u64, Arc<Mutex<RemotelyCreatedModels>>),
     ) -> Self {
         Self {
+            include_private_omissions: true,
             kind: SearchKind::Remote {
                 client: client_state.0,
                 remote_id: client_state.1,
@@ -157,6 +197,7 @@ impl Search {
     ) -> Self {
         Self {
             kind: SearchKind::OpenBuffersOnly,
+            include_private_omissions: true,
             buffer_store,
             worktree_store,
             limit,
@@ -205,6 +246,9 @@ impl Search {
         let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
+        let (omissions_tx, omissions) = unbounded();
+        let omissions_status = SearchOmissionsStatus::default();
+        let search_omissions_status = omissions_status.clone();
         let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) =
             unbounded::<(Entity<Buffer>, MatchPositionHint)>();
         let matching_buffers = grab_buffer_snapshot_rx.clone();
@@ -221,6 +265,8 @@ impl Search {
                 let query = Arc::new(query);
                 let (candidate_searcher, tasks) = match self.kind {
                     SearchKind::OpenBuffersOnly => {
+                        search_omissions_status.mark_complete();
+                        drop(omissions_tx);
                         let open_buffers = cx.update(|cx| self.all_loaded_buffers(&query, cx));
                         let fill_requests = cx
                             .background_spawn(async move {
@@ -254,6 +300,8 @@ impl Search {
                                 input_paths_tx,
                                 sorted_search_results_tx,
                                 tx.clone(),
+                                (omissions_tx, search_omissions_status),
+                                self.include_private_omissions,
                             ))
                             .boxed_local(),
                             Self::open_buffers(
@@ -286,9 +334,24 @@ impl Search {
                         remote_id,
                         models,
                     } => {
-                        let (handle, rx) = self
-                            .buffer_store
-                            .update(cx, |this, _| this.register_project_search_result_handle());
+                        let report_omissions = !omissions_tx.is_closed();
+                        let (handle, rx) = self.buffer_store.update(cx, |this, _| {
+                            this.register_project_search_result_handle(
+                                omissions_tx,
+                                search_omissions_status,
+                            )
+                        });
+                        let unregister_search = util::defer({
+                            let buffer_store = self.buffer_store.downgrade();
+                            let mut cx = cx.clone();
+                            move || {
+                                buffer_store
+                                    .update(&mut cx, |this, _| {
+                                        this.unregister_project_search_result_handle(handle);
+                                    })
+                                    .ok();
+                            }
+                        });
 
                         let cancel_ongoing_search = util::defer({
                             let client = client.clone();
@@ -304,6 +367,8 @@ impl Search {
                             query: Some(query.to_proto()),
                             limit: self.limit as _,
                             handle,
+                            report_omissions,
+                            include_private_omissions: self.include_private_omissions,
                         });
 
                         let buffer_store = self.buffer_store;
@@ -318,6 +383,7 @@ impl Search {
 
                         let issue_remote_buffers_request = cx
                             .spawn(async move |cx| {
+                                let _unregister_search = unregister_search;
                                 let _ = maybe!(async move {
                                     request.await?;
 
@@ -438,6 +504,8 @@ impl Search {
         SearchResultsHandle {
             results: rx,
             matching_buffers,
+            omissions,
+            omissions_status,
             trigger_search,
         }
     }
@@ -448,11 +516,15 @@ impl Search {
         tx: Sender<InputPath>,
         results: Sender<oneshot::Receiver<(ProjectPath, MatchPositionHint)>>,
         results_tx: Sender<SearchResult>,
+        omissions: (Sender<Vec<SearchOmission>>, SearchOmissionsStatus),
+        include_private_omissions: bool,
     ) -> impl AsyncFnOnce(&mut AsyncApp) {
+        let (omissions_tx, omissions_status) = omissions;
         async move |cx| {
             _ = maybe!(async move {
                 let gitignored_tracker = PathInclusionMatcher::new(query.clone());
                 let include_ignored = query.include_ignored();
+                let mut omissions_budget = Task::ready(Some(MAX_SEARCH_OMISSIONS));
                 for worktree in worktrees {
                     let scan_complete = worktree.read_with(cx, |worktree, _| {
                         worktree.as_local().map(|local| local.scan_complete())
@@ -500,6 +572,28 @@ impl Search {
                     let tx = tx.clone();
                     let results = results.clone();
                     let snapshot = Arc::new(snapshot);
+                    omissions_budget = cx.background_spawn({
+                        let previous_budget = omissions_budget;
+                        let snapshot = snapshot.clone();
+                        let omissions_tx = omissions_tx.clone();
+                        async move {
+                            let budget = previous_budget.await?;
+                            let mut omissions = collect_search_omissions(
+                                &snapshot,
+                                &worktree_settings,
+                                include_ignored,
+                                include_private_omissions,
+                                budget,
+                                &omissions_tx,
+                            )
+                            .await?;
+                            let truncated = omissions.len() > budget;
+                            omissions.truncate(budget);
+                            let budget = budget - omissions.len();
+                            omissions_tx.send(omissions).await.ok()?;
+                            (!truncated).then_some(budget)
+                        }
+                    });
 
                     cx.background_executor()
                         .spawn(async move {
@@ -522,6 +616,11 @@ impl Search {
                             }
                         })
                         .await;
+                }
+                drop(tx);
+                drop(results);
+                if omissions_budget.await.is_some() && !omissions_tx.is_closed() {
+                    omissions_status.mark_complete();
                 }
                 anyhow::Ok(())
             })
@@ -695,6 +794,181 @@ impl Search {
 
         buffers
     }
+}
+
+pub async fn forward_search_omissions(
+    omissions: Receiver<Vec<SearchOmission>>,
+    omissions_status: SearchOmissionsStatus,
+    client: AnyProtoClient,
+    project_id: u64,
+    peer_id: proto::PeerId,
+    handle: u64,
+) -> anyhow::Result<u64> {
+    forward_search_omissions_with(
+        omissions,
+        omissions_status,
+        project_id,
+        peer_id,
+        handle,
+        |chunk| client.request(chunk),
+    )
+    .await
+}
+
+pub const MAX_SEARCH_OMISSIONS: usize = 10_240;
+pub(crate) const MAX_CONCURRENT_OMISSION_REQUESTS: usize = 16;
+
+async fn forward_search_omissions_with<F>(
+    omissions: Receiver<Vec<SearchOmission>>,
+    omissions_status: SearchOmissionsStatus,
+    project_id: u64,
+    peer_id: proto::PeerId,
+    handle: u64,
+    mut send: impl FnMut(proto::FindSearchCandidatesChunk) -> F,
+) -> anyhow::Result<u64>
+where
+    F: Future<Output = anyhow::Result<proto::Ack>>,
+{
+    let mut requests = FuturesOrdered::<F>::new();
+    let mut sequence = 0;
+    let mut result = Ok(());
+    'batches: loop {
+        let omissions = if requests.is_empty() {
+            omissions.recv().await
+        } else {
+            select_biased! {
+                response = requests.next() => {
+                    if let Some(Err(error)) = response {
+                        result = Err(error);
+                        break 'batches;
+                    }
+                    continue;
+                }
+                omissions = omissions.recv().fuse() => omissions,
+            }
+        };
+        let Ok(omissions) = omissions else {
+            break;
+        };
+        for batch in omissions.chunks(256) {
+            if requests.len() == MAX_CONCURRENT_OMISSION_REQUESTS
+                && let Some(Err(error)) = requests.next().await
+            {
+                result = Err(error);
+                break 'batches;
+            }
+            requests.push_back(send(proto::FindSearchCandidatesChunk {
+                project_id,
+                peer_id: Some(peer_id),
+                handle,
+                variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
+                    proto::FindSearchCandidatesMatches {
+                        buffer_ids: Vec::new(),
+                    },
+                )),
+                omissions: batch.iter().map(SearchOmission::to_proto).collect(),
+                omissions_sequence: Some(sequence),
+            }));
+            sequence += 1;
+        }
+    }
+    while let Some(response) = requests.next().await {
+        if let Err(error) = response {
+            if result.is_ok() {
+                result = Err(error);
+            } else {
+                log::error!("Failed to forward search omissions: {error:#}");
+            }
+        }
+    }
+    result?;
+    anyhow::ensure!(
+        omissions_status.is_complete(),
+        "Search omission report is incomplete"
+    );
+    Ok(sequence)
+}
+
+async fn collect_search_omissions(
+    snapshot: &Snapshot,
+    worktree_settings: &WorktreeSettings,
+    include_ignored: bool,
+    include_private_omissions: bool,
+    limit: usize,
+    sender: &Sender<Vec<SearchOmission>>,
+) -> Option<Vec<SearchOmission>> {
+    let mut omissions = Vec::new();
+    let mut not_indexed_root: Option<Arc<RelPath>> = None;
+    let gitignored_root = Mutex::new(None::<Arc<RelPath>>);
+    for (index, entry) in snapshot
+        .search_omission_entries(include_ignored, |max_path| {
+            gitignored_root
+                .lock()
+                .as_ref()
+                .is_some_and(|root| max_path.starts_with(root))
+        })
+        .enumerate()
+    {
+        if index % 256 == 0 {
+            yield_now().await;
+        }
+        if sender.is_closed() {
+            return None;
+        }
+        let reason = if entry.is_ignored && !entry.is_always_included && !include_ignored {
+            SearchOmissionReason::GitIgnored
+        } else {
+            SearchOmissionReason::NotIndexed
+        };
+        let previous_root = match reason {
+            SearchOmissionReason::NotIndexed => not_indexed_root.clone(),
+            SearchOmissionReason::GitIgnored => gitignored_root.lock().clone(),
+        };
+        if previous_root.is_some_and(|root| entry.path.starts_with(&root)) {
+            continue;
+        }
+        let mut root = entry;
+        if reason == SearchOmissionReason::GitIgnored {
+            for ancestor in entry.path.ancestors().skip(1) {
+                if let Some(ancestor) = snapshot.entry_for_path(ancestor)
+                    && ancestor.is_dir()
+                    && ancestor.is_ignored
+                {
+                    root = ancestor;
+                }
+            }
+        }
+        match reason {
+            SearchOmissionReason::NotIndexed => not_indexed_root = Some(root.path.clone()),
+            SearchOmissionReason::GitIgnored => *gitignored_root.lock() = Some(root.path.clone()),
+        }
+        if !include_private_omissions
+            && (root.is_private || worktree_settings.is_path_private(&root.path))
+        {
+            continue;
+        }
+        omissions.push(SearchOmission {
+            path: ProjectPath {
+                worktree_id: snapshot.id(),
+                path: root.path.clone(),
+            },
+            reason,
+            is_dir: root.is_dir(),
+        });
+        if omissions.len() > limit {
+            break;
+        }
+    }
+    if sender.is_closed() {
+        return None;
+    }
+    omissions.sort_unstable_by(|left, right| {
+        left.path
+            .path
+            .cmp(&right.path.path)
+            .then(left.reason.cmp(&right.reason))
+    });
+    (!sender.is_closed()).then_some(omissions)
 }
 
 fn path_key_sort_key(
@@ -1195,5 +1469,338 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
     pub async fn flush(self) {
         _ = self.flush_batch.send(true).await;
         self._batch_task.await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use std::sync::atomic::AtomicUsize;
+    use util::{
+        path,
+        paths::{PathMatcher, PathStyle},
+    };
+    use worktree::WorktreeId;
+
+    #[gpui::test]
+    async fn test_forward_search_omissions_limits_requests_and_orders_completion(
+        cx: &mut TestAppContext,
+    ) {
+        let (sender, omissions) = unbounded();
+        sender.send(test_omissions(8193)).await.unwrap();
+        let status = SearchOmissionsStatus::default();
+        status.mark_complete();
+        let (requests_sender, requests) = unbounded();
+        let consumed_responses = Arc::new(AtomicUsize::new(0));
+        let task = cx.background_spawn(forward_search_omissions_with(
+            omissions,
+            status,
+            1,
+            proto::PeerId::default(),
+            1,
+            {
+                let consumed_responses = consumed_responses.clone();
+                move |chunk| {
+                    let (sender, receiver) = unbounded();
+                    requests_sender.try_send((chunk, sender)).unwrap();
+                    let consumed_responses = consumed_responses.clone();
+                    async move {
+                        let response = receiver.recv().await?;
+                        consumed_responses.fetch_add(1, Ordering::SeqCst);
+                        response
+                    }
+                }
+            },
+        ));
+        for first_sequence in [0, 16] {
+            let mut responses = Vec::new();
+            for sequence in first_sequence..first_sequence + 16 {
+                let (chunk, response) = requests.recv().await.unwrap();
+                assert_eq!(chunk.omissions_sequence, Some(sequence));
+                assert_eq!(chunk.omissions.len(), 256);
+                responses.push(response);
+            }
+            cx.run_until_parked();
+            assert_eq!(
+                requests.try_recv().err(),
+                Some(async_channel::TryRecvError::Empty)
+            );
+            let first = responses.remove(0);
+            for response in responses.into_iter().rev() {
+                response.send(Ok(proto::Ack {})).await.unwrap();
+            }
+            cx.run_until_parked();
+            assert_eq!(
+                requests.try_recv().err(),
+                Some(async_channel::TryRecvError::Empty)
+            );
+            first.send(Ok(proto::Ack {})).await.unwrap();
+        }
+        let (chunk, response) = requests.recv().await.unwrap();
+        assert_eq!(chunk.omissions_sequence, Some(32));
+        assert_eq!(chunk.omissions.len(), 1);
+        cx.run_until_parked();
+        assert_eq!(
+            requests.try_recv().err(),
+            Some(async_channel::TryRecvError::Empty)
+        );
+        response.send(Ok(proto::Ack {})).await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(consumed_responses.load(Ordering::SeqCst), 33);
+        assert_eq!(
+            requests.try_recv().err(),
+            Some(async_channel::TryRecvError::Empty)
+        );
+        drop(sender);
+        assert_eq!(task.await.unwrap(), 33);
+        assert_eq!(
+            requests.try_recv().err(),
+            Some(async_channel::TryRecvError::Closed)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_forward_search_omissions_drains_in_flight_requests_after_failure(
+        cx: &mut TestAppContext,
+    ) {
+        let (sender, omissions) = unbounded();
+        sender.send(test_omissions(8193)).await.unwrap();
+        drop(sender);
+        let status = SearchOmissionsStatus::default();
+        status.mark_complete();
+        let (requests_sender, requests) = unbounded();
+        let task = cx.background_spawn(forward_search_omissions_with(
+            omissions,
+            status,
+            1,
+            proto::PeerId::default(),
+            1,
+            move |chunk| {
+                let (sender, receiver) = unbounded();
+                requests_sender.try_send((chunk, sender)).unwrap();
+                async move { receiver.recv().await? }
+            },
+        ));
+        let mut responses = Vec::new();
+        for sequence in 0..16 {
+            let (chunk, response) = requests.recv().await.unwrap();
+            assert_eq!(chunk.omissions_sequence, Some(sequence));
+            responses.push(response);
+        }
+        responses
+            .remove(0)
+            .send(Err(anyhow::anyhow!("Injected omission failure")))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            requests.try_recv().err(),
+            Some(async_channel::TryRecvError::Empty)
+        );
+        for response in responses {
+            response.send(Ok(proto::Ack {})).await.unwrap();
+        }
+        assert_eq!(
+            task.await.unwrap_err().to_string(),
+            "Injected omission failure"
+        );
+        assert_eq!(
+            requests.try_recv().err(),
+            Some(async_channel::TryRecvError::Closed)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_forward_search_omissions_requires_complete_source() {
+        for complete in [false, true] {
+            let (sender, omissions) = unbounded();
+            drop(sender);
+            let status = SearchOmissionsStatus::default();
+            if complete {
+                status.mark_complete();
+            }
+            let mut sent = Vec::new();
+            let result = forward_search_omissions_with(
+                omissions,
+                status,
+                1,
+                proto::PeerId::default(),
+                1,
+                |chunk| {
+                    sent.push(chunk);
+                    async { Ok(proto::Ack {}) }
+                },
+            )
+            .await;
+            assert_eq!(sent, Vec::new());
+            if complete {
+                assert_eq!(result.unwrap(), 0);
+            } else {
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "Search omission report is incomplete"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_collect_search_omissions_compacts_expanded_ignored_roots() {
+        let (sender, _receiver) = unbounded();
+        for (ignored_parent, unloaded_children) in
+            [("ignored/", true), ("ignored/", false), ("secret/", false)]
+        {
+            let (snapshot, settings) = omission_snapshot(ignored_parent, unloaded_children);
+            let (omissions, polls) = collect_counting_polls(&snapshot, &settings, &sender);
+            assert_eq!(polls, 2);
+            let mut expected = vec![
+                ("ignored", SearchOmissionReason::GitIgnored),
+                ("ignored/external", SearchOmissionReason::NotIndexed),
+                ("ignored-", SearchOmissionReason::GitIgnored),
+            ];
+            if ignored_parent == "secret/" {
+                expected.remove(0);
+            }
+            assert_eq!(
+                omissions
+                    .iter()
+                    .map(|omission| (omission.path.path.as_unix_str(), omission.reason))
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+        let (snapshot, settings) = omission_snapshot("ignored/", false);
+        let omissions = collect_search_omissions(
+            &snapshot,
+            &settings,
+            true,
+            false,
+            MAX_SEARCH_OMISSIONS,
+            &sender,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            omissions
+                .iter()
+                .map(|omission| (omission.path.path.as_unix_str(), omission.reason))
+                .collect::<Vec<_>>(),
+            vec![
+                ("ignored/external", SearchOmissionReason::NotIndexed),
+                ("ignored-", SearchOmissionReason::NotIndexed),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_collect_search_omissions_cancels_after_traversal_started() {
+        let (snapshot, settings) = omission_snapshot("", true);
+        let (sender, receiver) = unbounded();
+        let mut collect = pin!(collect_search_omissions(
+            &snapshot,
+            &settings,
+            false,
+            true,
+            MAX_SEARCH_OMISSIONS,
+            &sender
+        ));
+        assert!(collect.as_mut().now_or_never().is_none());
+        assert!(collect.as_mut().now_or_never().is_none());
+        drop(receiver);
+        assert_eq!(collect.await, None);
+    }
+
+    fn omission_snapshot(
+        ignored_parent: &str,
+        unloaded_children: bool,
+    ) -> (Snapshot, WorktreeSettings) {
+        let settings = WorktreeSettings {
+            prevent_sharing_in_public_channels: false,
+            file_scan_exclusions: PathMatcher::default(),
+            file_scan_inclusions: PathMatcher::default(),
+            parent_dir_scan_inclusions: PathMatcher::default(),
+            scan_symlinks: settings::ScanSymlinksSetting::Always,
+            file_scan_depth: None,
+            private_files: PathMatcher::new(["secret"], PathStyle::Unix).unwrap(),
+            hidden_files: PathMatcher::default(),
+            read_only_files: PathMatcher::default(),
+        };
+        let mut snapshot = Snapshot::new(
+            WorktreeId::from_proto(1),
+            Arc::from(RelPath::from_unix_str("root").unwrap()),
+            Arc::from(Path::new(path!("/root"))),
+            PathStyle::Unix,
+        );
+        let mut entries = [
+            ("ignored", false),
+            ("ignored/external", true),
+            ("ignored-", true),
+            ("secret", true),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (path, unloaded))| proto::Entry {
+            id: index as u64 + 1,
+            path: path.to_owned(),
+            is_dir: true,
+            is_ignored: true,
+            is_unloaded: unloaded,
+            ..proto::Entry::default()
+        })
+        .collect::<Vec<_>>();
+        entries.extend((0..4096).map(|index| proto::Entry {
+            id: index + 5,
+            path: format!("{ignored_parent}{index:04}"),
+            is_dir: unloaded_children,
+            is_ignored: true,
+            is_unloaded: unloaded_children,
+            ..proto::Entry::default()
+        }));
+        snapshot.apply_remote_update(
+            proto::UpdateWorktree {
+                root_name: "root".to_owned(),
+                abs_path: path!("/root").to_owned(),
+                updated_entries: entries,
+                ..proto::UpdateWorktree::default()
+            },
+            &PathMatcher::new(["ignored/external"], PathStyle::Unix).unwrap(),
+        );
+        (snapshot, settings)
+    }
+
+    fn collect_counting_polls(
+        snapshot: &Snapshot,
+        settings: &WorktreeSettings,
+        sender: &Sender<Vec<SearchOmission>>,
+    ) -> (Vec<SearchOmission>, usize) {
+        let mut collect = pin!(collect_search_omissions(
+            snapshot,
+            settings,
+            false,
+            false,
+            MAX_SEARCH_OMISSIONS,
+            sender
+        ));
+        let mut polls = 1;
+        loop {
+            if let Some(omissions) = collect.as_mut().now_or_never() {
+                return (omissions.unwrap(), polls);
+            }
+            polls += 1;
+        }
+    }
+
+    fn test_omissions(count: usize) -> Vec<SearchOmission> {
+        (0..count)
+            .map(|index| SearchOmission {
+                path: ProjectPath {
+                    worktree_id: WorktreeId::from_proto(1),
+                    path: Arc::from(RelPath::from_unix_str(&format!("{index:05}.log")).unwrap()),
+                },
+                reason: SearchOmissionReason::GitIgnored,
+                is_dir: false,
+            })
+            .collect()
     }
 }

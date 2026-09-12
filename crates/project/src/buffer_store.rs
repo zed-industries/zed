@@ -1,6 +1,10 @@
 use crate::{
     ProjectPath,
     lsp_store::OpenLspBufferHandle,
+    project_search::{
+        MAX_CONCURRENT_OMISSION_REQUESTS, MAX_SEARCH_OMISSIONS, SearchOmissionsStatus,
+    },
+    search::SearchOmission,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -25,7 +29,7 @@ use rpc::{
 };
 
 use settings::Settings;
-use std::{io, sync::Arc, time::Instant};
+use std::{collections::BTreeMap, io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
@@ -48,11 +52,24 @@ pub struct BufferStore {
 #[derive(Default)]
 struct RemoteProjectSearchState {
     // List of ongoing project search chunks from our remote host. Used by the side issuing a search RPC request.
-    chunks: HashMap<u64, async_channel::Sender<BufferId>>,
+    chunks: HashMap<u64, RemoteSearchChannels>,
     // Monotonously-increasing handle to hand out to remote host in order to identify the project search result chunk.
     next_id: u64,
     // Used by the side running the actual search for match candidates to potentially cancel the search prematurely.
     searches_in_progress: HashMap<(PeerId, u64), Task<Result<()>>>,
+}
+
+struct RemoteSearchChannels {
+    buffers: async_channel::Sender<BufferId>,
+    omissions: Option<RemoteSearchOmissions>,
+}
+
+struct RemoteSearchOmissions {
+    sender: async_channel::Sender<Vec<SearchOmission>>,
+    status: SearchOmissionsStatus,
+    next_sequence: u64,
+    pending: BTreeMap<u64, Vec<SearchOmission>>,
+    received: usize,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -1157,6 +1174,7 @@ impl BufferStore {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut App) {
+        self.project_search.chunks.clear();
         for open_buffer in self.opened_buffers.values_mut() {
             if let Some(buffer) = open_buffer.upgrade() {
                 buffer.update(cx, |buffer, _| buffer.give_up_waiting());
@@ -1829,12 +1847,30 @@ impl BufferStore {
 
     pub(crate) fn register_project_search_result_handle(
         &mut self,
+        omissions: async_channel::Sender<Vec<SearchOmission>>,
+        omissions_status: SearchOmissionsStatus,
     ) -> (u64, async_channel::Receiver<BufferId>) {
         let (tx, rx) = async_channel::unbounded();
         let handle = util::post_inc(&mut self.project_search.next_id);
-        let _old_entry = self.project_search.chunks.insert(handle, tx);
+        let _old_entry = self.project_search.chunks.insert(
+            handle,
+            RemoteSearchChannels {
+                buffers: tx,
+                omissions: Some(RemoteSearchOmissions {
+                    sender: omissions,
+                    status: omissions_status,
+                    next_sequence: 0,
+                    pending: BTreeMap::new(),
+                    received: 0,
+                }),
+            },
+        );
         debug_assert!(_old_entry.is_none());
         (handle, rx)
+    }
+
+    pub(crate) fn unregister_project_search_result_handle(&mut self, handle: u64) {
+        self.project_search.chunks.remove(&handle);
     }
 
     pub fn register_ongoing_project_search(
@@ -1863,11 +1899,25 @@ impl BufferStore {
 
     pub(crate) async fn handle_find_search_candidates_chunk(
         this: Entity<Self>,
-        envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
+        mut envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         use proto::find_search_candidates_chunk::Variant;
         let handle = envelope.payload.handle;
+        let Some(sender) = this.update(&mut cx, |this, _| {
+            let channels = this.project_search.chunks.get_mut(&handle)?;
+            if let Some(omissions) = channels.omissions.as_mut()
+                && omissions
+                    .receive(&mut envelope.payload)
+                    .log_err()
+                    .unwrap_or(true)
+            {
+                channels.omissions.take();
+            }
+            Some(channels.buffers.clone())
+        }) else {
+            return Ok(proto::Ack {});
+        };
 
         let buffer_ids = match envelope
             .payload
@@ -1879,19 +1929,16 @@ impl BufferStore {
                 .into_iter()
                 .filter_map(|buffer_id| BufferId::new(buffer_id).ok())
                 .collect::<Vec<_>>(),
-            Variant::Done(_) => {
+            Variant::Done(done) => {
+                if done.matches_failed {
+                    log::error!("Project search host failed to send all matches");
+                }
                 this.update(&mut cx, |this, _| {
                     this.project_search.chunks.remove(&handle)
                 });
                 return Ok(proto::Ack {});
             }
         };
-        let Some(sender) = this.read_with(&mut cx, |this, _| {
-            this.project_search.chunks.get(&handle).cloned()
-        }) else {
-            return Ok(proto::Ack {});
-        };
-
         for buffer_id in buffer_ids {
             let Ok(_) = sender.send(buffer_id).await else {
                 this.update(&mut cx, |this, _| {
@@ -1901,6 +1948,57 @@ impl BufferStore {
             };
         }
         Ok(proto::Ack {})
+    }
+}
+
+impl RemoteSearchOmissions {
+    fn receive(&mut self, chunk: &mut proto::FindSearchCandidatesChunk) -> Result<bool> {
+        if self.sender.is_closed() {
+            return Ok(true);
+        }
+        if let Some(proto::find_search_candidates_chunk::Variant::Done(done)) = &chunk.variant {
+            if !done.omissions_failed
+                && !done.matches_failed
+                && let Some(sequence) = chunk.omissions_sequence
+            {
+                anyhow::ensure!(
+                    self.pending.is_empty() && sequence == self.next_sequence,
+                    "Search omission report ended with missing batches"
+                );
+                self.status.mark_complete();
+            }
+            return Ok(true);
+        }
+        if chunk.omissions.is_empty() {
+            return Ok(false);
+        }
+        anyhow::ensure!(
+            chunk.omissions.len() <= 256,
+            "Search omission batch is too large"
+        );
+        let sequence = chunk.omissions_sequence.unwrap_or(self.next_sequence);
+        if sequence < self.next_sequence || self.pending.contains_key(&sequence) {
+            return Ok(false);
+        }
+        anyhow::ensure!(
+            sequence - self.next_sequence < MAX_CONCURRENT_OMISSION_REQUESTS as u64,
+            "Invalid search omission batch sequence"
+        );
+        self.received += chunk.omissions.len();
+        anyhow::ensure!(
+            self.received <= MAX_SEARCH_OMISSIONS,
+            "Search omission report is too large"
+        );
+        let omissions = std::mem::take(&mut chunk.omissions)
+            .into_iter()
+            .map(SearchOmission::from_proto)
+            .collect::<Result<Vec<_>>>()?;
+        self.pending.insert(sequence, omissions);
+        while let Some(omissions) = self.pending.remove(&self.next_sequence) {
+            self.sender.try_send(omissions)?;
+            self.next_sequence += 1;
+        }
+        Ok(false)
     }
 }
 
@@ -1938,5 +2036,189 @@ fn apply_initial_line_ending(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
     };
     if buffer.line_ending() != desired {
         buffer.set_line_ending(desired, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::SearchOmissionReason;
+
+    #[test]
+    fn test_search_omissions_reorders_batches_before_completion() {
+        let (sender, receiver) = async_channel::unbounded();
+        let status = SearchOmissionsStatus::default();
+        let mut omissions = RemoteSearchOmissions {
+            sender,
+            status: status.clone(),
+            next_sequence: 0,
+            pending: BTreeMap::new(),
+            received: 0,
+        };
+        for sequence in (1..16).rev() {
+            assert!(!omissions.receive(&mut omission_chunk(sequence)).unwrap());
+        }
+        assert!(!omissions.receive(&mut omission_chunk(5)).unwrap());
+        assert_eq!(omissions.pending.len(), 15);
+        assert_eq!(receiver.try_recv(), Err(async_channel::TryRecvError::Empty));
+        assert!(!omissions.receive(&mut omission_chunk(0)).unwrap());
+        assert_eq!(omissions.pending.len(), 0);
+        assert!(!omissions.receive(&mut omission_chunk(3)).unwrap());
+        let mut paths = Vec::new();
+        while let Ok(batch) = receiver.try_recv() {
+            paths.extend(
+                batch
+                    .into_iter()
+                    .map(|omission| omission.path.path.as_unix_str().to_owned()),
+            );
+        }
+        assert_eq!(
+            paths,
+            (0..16)
+                .map(|sequence| format!("{sequence:02}.log"))
+                .collect::<Vec<_>>()
+        );
+        assert!(!status.is_complete());
+        assert!(
+            omissions
+                .receive(&mut done_chunk(Some(16), false, false))
+                .unwrap()
+        );
+        drop(omissions);
+        assert_eq!(
+            receiver.try_recv(),
+            Err(async_channel::TryRecvError::Closed)
+        );
+        assert!(status.is_complete());
+    }
+
+    #[test]
+    fn test_search_omissions_missing_batch_is_not_complete() {
+        let (sender, receiver) = async_channel::unbounded();
+        let status = SearchOmissionsStatus::default();
+        let mut omissions = RemoteSearchOmissions {
+            sender,
+            status: status.clone(),
+            next_sequence: 0,
+            pending: BTreeMap::new(),
+            received: 0,
+        };
+        assert!(!omissions.receive(&mut omission_chunk(1)).unwrap());
+        assert!(
+            omissions
+                .receive(&mut done_chunk(Some(2), false, false))
+                .is_err()
+        );
+        drop(omissions);
+        assert!(!status.is_complete());
+        assert_eq!(
+            receiver.try_recv(),
+            Err(async_channel::TryRecvError::Closed)
+        );
+    }
+
+    #[test]
+    fn test_search_omissions_completion_requires_reported_sequence() {
+        for (reported_batch, omissions_sequence, omissions_failed, matches_failed, complete) in [
+            (false, None, false, false, false),
+            (false, Some(0), false, false, true),
+            (false, Some(0), true, false, false),
+            (false, Some(0), false, true, false),
+            (true, Some(0), false, false, false),
+        ] {
+            let (sender, _receiver) = async_channel::unbounded();
+            let status = SearchOmissionsStatus::default();
+            let mut omissions = RemoteSearchOmissions {
+                sender,
+                status: status.clone(),
+                next_sequence: 0,
+                pending: BTreeMap::new(),
+                received: 0,
+            };
+            if reported_batch {
+                assert!(!omissions.receive(&mut omission_chunk(0)).unwrap());
+            }
+            assert!(
+                omissions
+                    .receive(&mut done_chunk(
+                        omissions_sequence,
+                        omissions_failed,
+                        matches_failed
+                    ))
+                    .unwrap_or(true)
+            );
+            assert_eq!(status.is_complete(), complete);
+        }
+    }
+
+    #[test]
+    fn test_search_omissions_rejects_invalid_batches() {
+        let mut invalid_path = omission_chunk(0);
+        invalid_path.omissions[0].path.as_mut().unwrap().path = "../private".to_owned();
+        let mut invalid_reason = omission_chunk(0);
+        invalid_reason.omissions[0].reason = 0;
+        let mut oversized = omission_chunk(0);
+        oversized.omissions = vec![oversized.omissions[0].clone(); 257];
+        for (mut chunk, received) in [
+            (invalid_path, 0),
+            (invalid_reason, 0),
+            (oversized, 0),
+            (omission_chunk(16), 0),
+            (omission_chunk(0), MAX_SEARCH_OMISSIONS),
+        ] {
+            let (sender, receiver) = async_channel::unbounded();
+            let status = SearchOmissionsStatus::default();
+            let mut omissions = RemoteSearchOmissions {
+                sender,
+                status: status.clone(),
+                next_sequence: 0,
+                pending: BTreeMap::new(),
+                received,
+            };
+            assert!(omissions.receive(&mut chunk).is_err());
+            drop(omissions);
+            assert!(!status.is_complete());
+            assert_eq!(
+                receiver.try_recv(),
+                Err(async_channel::TryRecvError::Closed)
+            );
+        }
+    }
+
+    fn done_chunk(
+        omissions_sequence: Option<u64>,
+        omissions_failed: bool,
+        matches_failed: bool,
+    ) -> proto::FindSearchCandidatesChunk {
+        proto::FindSearchCandidatesChunk {
+            variant: Some(proto::find_search_candidates_chunk::Variant::Done(
+                proto::FindSearchCandidatesDone {
+                    omissions_failed,
+                    matches_failed,
+                },
+            )),
+            omissions_sequence,
+            ..proto::FindSearchCandidatesChunk::default()
+        }
+    }
+
+    fn omission_chunk(sequence: u64) -> proto::FindSearchCandidatesChunk {
+        proto::FindSearchCandidatesChunk {
+            omissions: vec![
+                SearchOmission {
+                    path: ProjectPath {
+                        worktree_id: WorktreeId::from_proto(1),
+                        path: Arc::from(
+                            RelPath::from_unix_str(&format!("{sequence:02}.log")).unwrap(),
+                        ),
+                    },
+                    reason: SearchOmissionReason::GitIgnored,
+                    is_dir: false,
+                }
+                .to_proto(),
+            ],
+            omissions_sequence: Some(sequence),
+            ..proto::FindSearchCandidatesChunk::default()
+        }
     }
 }

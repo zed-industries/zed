@@ -5068,7 +5068,8 @@ This is separate from `project_panel.sticky_scroll`, which controls sticky folde
     "include_ignored": false,
     "regex": false,
     "center_on_match": false,
-    "search_on_type": true
+    "search_on_type": true,
+    "show_omitted_paths": true
   }
 }
 ```
@@ -5116,6 +5117,29 @@ This is separate from `project_panel.sticky_scroll`, which controls sticky folde
 - Description: Start searching as you type in project search, without pressing Enter.
 - Setting: `search_on_type`
 - Default: `true`
+
+### Show Omitted Paths {#search-show-omitted-paths}
+
+- Description: Show an informational banner when project paths are not fully searched.
+- Setting: `show_omitted_paths`
+- Default: `true`
+
+The banner says "Some project paths were not fully searched."
+If the search or its omission reporting did not finish, it says "Could not report all project paths that were not fully searched." instead.
+Click **Learn More** or run {#action project_search::OpenSearchOmissions} to open a buffer with a grouped report of omitted paths.
+
+To hide the banner, open the Settings Editor and turn off **Show Omitted Paths** under **Search & Files > Search**.
+This hides only the banner and does not change the search scope; {#action project_search::OpenSearchOmissions} still opens the report.
+
+Or add this to your settings.json:
+
+```json [settings]
+{
+  "search": {
+    "show_omitted_paths": false
+  }
+}
+```
 
 ## Search Wrap
 
