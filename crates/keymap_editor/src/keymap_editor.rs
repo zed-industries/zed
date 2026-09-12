@@ -927,8 +927,9 @@ impl KeymapEditor {
                 binding_is_unbound_by_unbind(key_binding, binding_index, &key_bindings);
             let binding = KeyBinding::new(key_binding, source);
 
-            let context = key_binding
-                .predicate()
+            let context_predicate = key_binding.predicate();
+            let context = context_predicate
+                .as_ref()
                 .map(|predicate| {
                     KeybindContextString::Local(
                         predicate.to_string().into(),
@@ -958,6 +959,7 @@ impl KeymapEditor {
                 keystroke_text,
                 binding,
                 context,
+                context_predicate,
                 source,
                 source_occurrence,
                 is_no_action,
@@ -1954,6 +1956,7 @@ struct KeybindInformation {
     keystroke_text: SharedString,
     binding: KeyBinding,
     context: KeybindContextString,
+    context_predicate: Option<Rc<gpui::KeyBindingContextPredicate>>,
     source: KeybindSource,
     source_occurrence: usize,
     is_no_action: bool,
@@ -2008,6 +2011,7 @@ impl ProcessedBinding {
         keystroke_text: impl Into<SharedString>,
         binding: KeyBinding,
         context: KeybindContextString,
+        context_predicate: Option<Rc<gpui::KeyBindingContextPredicate>>,
         source: KeybindSource,
         source_occurrence: usize,
         is_no_action: bool,
@@ -2020,6 +2024,7 @@ impl ProcessedBinding {
                 keystroke_text: keystroke_text.into(),
                 binding,
                 context,
+                context_predicate,
                 source,
                 source_occurrence,
                 is_no_action,
@@ -2062,6 +2067,11 @@ impl ProcessedBinding {
 
     fn context(&self) -> Option<&KeybindContextString> {
         self.keybind_information().map(|keybind| &keybind.context)
+    }
+
+    fn context_predicate(&self) -> Option<&Rc<gpui::KeyBindingContextPredicate>> {
+        self.keybind_information()
+            .and_then(|keybind| keybind.context_predicate.as_ref())
     }
 
     fn key_binding(&self) -> Option<&KeyBinding> {
@@ -3999,6 +4009,7 @@ async fn restore_keybinding(
         },
         target_keybind_source: existing.keybind_source().unwrap_or(KeybindSource::User),
         target_keybind_occurrence: existing.source_occurrence().unwrap_or(0),
+        target_context_predicate: existing.context_predicate().cloned(),
     };
 
     let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
@@ -4327,8 +4338,14 @@ mod tests {
         cx.update(|cx| {
             let mut key_bindings = match KeymapFile::load(&content, cx) {
                 KeymapFileLoadResult::Success { key_bindings } => key_bindings,
-                KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
-                    panic!("keymap failed to load: {error_message:?}")
+                // Mirror production partial loading (crates/zed/src/zed.rs):
+                // install the valid bindings instead of failing the test.
+                KeymapFileLoadResult::SomeFailedToLoad {
+                    key_bindings,
+                    error_message,
+                } => {
+                    log::warn!("keymap partially loaded: {error_message:?}");
+                    key_bindings
                 }
                 KeymapFileLoadResult::JsonParseFailure { error } => {
                     panic!("keymap json parse failure: {error}")
@@ -4733,6 +4750,120 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_restore_sequence_ignores_rejected_unbind(cx: &mut gpui::TestAppContext) {
+        // The boolean-payload unbind never loads, so it never suppresses:
+        // restoring must remove only the valid unbind section.
+        let keymap_content = r#"[
+    {
+        "bindings": {
+            "tab": ["action::Sequence", ["zed::OpenKeymap"]]
+        }
+    },
+    {
+        "unbind": {
+            "tab": ["action::Sequence", false]
+        }
+    },
+    {
+        "unbind": {
+            "tab": ["action::Sequence", ["zed::OpenKeymap"]]
+        }
+    }
+]"#;
+        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut cx;
+
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "action::Sequence")
+        });
+        assert_eq!(rows.len(), 1);
+        keymap_editor.read_with(cx, |editor, _| {
+            let binding = &editor.keybindings[editor.matches[rows[0]].candidate_id];
+            assert!(
+                binding.is_unbound_by_user_unbind(),
+                "the sequence binding should be suppressed by the valid unbind"
+            );
+        });
+
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.selected_index = Some(rows[0]);
+            editor.restore_binding(&RestoreBinding, window, cx);
+        });
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert_eq!(
+            content,
+            r#"[
+    {
+        "bindings": {
+            "tab": ["action::Sequence", ["zed::OpenKeymap"]]
+        }
+    },
+    {
+        "unbind": {
+            "tab": ["action::Sequence", false]
+        }
+    }
+]"#
+        );
+
+        reload_keymap_from_file(&fs, cx).await;
+        cx.run_until_parked();
+
+        keymap_editor.read_with(cx, |editor, _| {
+            let rows = visible_rows_for_action(editor, "action::Sequence");
+            assert_eq!(rows.len(), 1);
+            let binding = &editor.keybindings[editor.matches[rows[0]].candidate_id];
+            assert!(
+                !binding.is_unbound_by_unbind(),
+                "the binding should no longer be suppressed after restore"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restore_binding_unbound_in_bindings(cx: &mut gpui::TestAppContext) {
+        let keymap_content = r#"[
+    {
+        "bindings": {
+            "tab": "zed::OpenKeymap"
+        }
+    },
+    {
+        "bindings": {
+            "tab": ["zed::Unbind", "zed::OpenKeymap"]
+        }
+    }
+]"#;
+        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut cx;
+
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "zed::OpenKeymap")
+        });
+        assert_eq!(rows.len(), 1);
+
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.selected_index = Some(rows[0]);
+            editor.restore_binding(&RestoreBinding, window, cx);
+        });
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert_eq!(
+            content,
+            r#"[
+    {
+        "bindings": {
+            "tab": "zed::OpenKeymap"
+        }
+    }
+]"#
+        );
+    }
+
     #[test]
     fn normalized_ctx_cmp() {
         #[track_caller]
@@ -4947,7 +5078,7 @@ mod tests {
         ));
         assert!(action_inputs_equal(None, None));
         assert!(!action_inputs_equal(None, Some("{}")));
-        // Unparseable inputs fall back to exact string equality.
+        // Inputs that don't parse as JSON fall back to exact string equality.
         assert!(action_inputs_equal(Some("{"), Some("{")));
         assert!(!action_inputs_equal(Some("{"), Some("}")));
 
