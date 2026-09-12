@@ -7717,6 +7717,8 @@ dependencies = [
  "log",
  "num_cpus",
  "parking",
+ "parking_lot",
+ "rand 0.9.4",
  "scheduler",
  "schemars 1.0.4",
  "seahash",

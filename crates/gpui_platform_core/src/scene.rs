@@ -4,9 +4,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, DrawOrder, Edges, Hsla,
-    Pixels, Point, Radians, ScaledPixels, Shadow, Size, bounds_tree::BoundsTree, point,
+use crate::{AtlasTextureId, AtlasTile, bounds_tree::BoundsTree};
+use gpui_types::{
+    Background, Bounds, ContentMask, Corners, DrawOrder, Edges, Hsla, Pixels, Point, Radians,
+    ScaledPixels, Shadow, Size, point,
 };
 use std::{
     fmt::Debug,
@@ -605,7 +606,7 @@ impl TransformationMatrix {
     }
 
     /// Move the origin by a given point
-    pub fn translate(mut self, point: Point<ScaledPixels>) -> Self {
+    pub fn translate(self, point: Point<ScaledPixels>) -> Self {
         self.compose(Self {
             rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
             translation: [point.x.0, point.y.0],

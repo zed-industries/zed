@@ -8,6 +8,10 @@ license = "Apache-2.0"
 [lints]
 workspace = true
 
+[dev-dependencies]
+parking_lot.workspace = true
+rand.workspace = true
+
 [lib]
 path = "src/gpui_platform_core.rs"
 doctest = false

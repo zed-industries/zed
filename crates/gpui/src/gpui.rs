@@ -12,7 +12,6 @@ mod app;
 mod arena;
 mod asset_cache;
 mod assets;
-mod bounds_tree;
 /// The default colors used by GPUI.
 pub mod colors;
 #[cfg(feature = "profiler")]
@@ -42,7 +41,6 @@ pub mod profiler;
 ))]
 #[expect(missing_docs)]
 pub mod queue;
-mod scene;
 mod shared_uri;
 mod spring;
 mod style;
@@ -143,7 +141,6 @@ pub use profiler::*;
 #[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
-pub use scene::*;
 pub use shared_uri::*;
 use std::{any::Any, future::Future};
 pub use style::*;

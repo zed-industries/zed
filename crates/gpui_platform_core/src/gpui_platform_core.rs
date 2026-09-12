@@ -13,6 +13,7 @@
 
 mod app;
 mod atlas;
+mod bounds_tree;
 mod clipboard;
 mod cursor;
 mod dispatcher;
@@ -33,6 +34,7 @@ pub mod popup;
 pub mod profiler;
 mod prompt;
 mod render;
+mod scene;
 mod screen_capture;
 #[cfg(any(test, feature = "test-support"))]
 mod test_dispatcher;
@@ -60,6 +62,7 @@ pub use platform_scheduler::*;
 pub use profiler::*;
 pub use prompt::*;
 pub use render::*;
+pub use scene::*;
 pub use screen_capture::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_dispatcher::*;
