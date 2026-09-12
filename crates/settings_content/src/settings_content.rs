@@ -808,6 +808,34 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: project_diff
     pub entry_primary_click_action: Option<GitPanelClickBehavior>,
+
+    /// Whether the commit message editor is shown in the Git panel by default.
+    ///
+    /// Default: expanded
+    pub commit_editor: Option<GitPanelCommitEditor>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelCommitEditor {
+    /// Show the commit message editor.
+    #[default]
+    Expanded,
+    /// Hide the commit message editor, leaving only the commit button row.
+    Collapsed,
 }
 
 #[derive(
