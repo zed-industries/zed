@@ -761,6 +761,12 @@ fn run() -> Result<()> {
                     }
                 }
 
+                // A Zed that does not know the request drops the connection without an answer.
+                if args.focus_terminal.is_some() && exit_status.lock().is_none() {
+                    eprintln!("Zed closed the connection without answering: does it support --focus-terminal?");
+                    exit_status.lock().replace(1);
+                }
+
                 Ok(())
             }
         })
