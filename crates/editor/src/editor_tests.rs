@@ -33156,11 +33156,10 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
 
     // When both features are enabled, the meta text advertises the
     // modifier-click alternative.
-    let meta = tooltip.meta_text(primary_intent);
+    let meta = tooltip.meta_text();
     assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+    assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
     assert!(meta.contains("right-click for more options"));
-    let meta = tooltip.meta_text(secondary_intent);
-    assert!(meta.contains("-click to add a breakpoint"), "got: {meta}");
 
     // When only one feature is enabled (primary == secondary), a
     // modifier-click repeats the primary action, so the tooltip must not
@@ -33170,7 +33169,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         secondary: GutterButtonIntent::SetBreakpoint,
         focus_handle: tooltip.focus_handle,
     };
-    let meta = single_feature_tooltip.meta_text(GutterButtonIntent::SetBreakpoint);
+    let meta = single_feature_tooltip.meta_text();
     assert_eq!(meta, "right-click for more options");
 }
 
