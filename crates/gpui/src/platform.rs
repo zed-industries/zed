@@ -15,23 +15,13 @@ mod visual_test;
 ))]
 pub mod scap_screen_capture;
 
-#[cfg(all(
-    any(target_os = "windows", target_os = "linux"),
-    feature = "screen-capture"
-))]
-pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
-#[cfg(not(feature = "screen-capture"))]
-pub(crate) type PlatformScreenCaptureFrame = ();
-#[cfg(all(target_os = "macos", feature = "screen-capture"))]
-pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBuffer;
-
 use crate::{
     Action, ActivityGuard, App, AppLifecyclePhase, AsyncWindowContext, BackgroundExecutor, Bounds,
     BoundsExt, ClipboardItem, ClipboardReadError, CursorStyle, ForegroundExecutor, Image,
     ImageFormat, ImageSource, Keymap, PathPromptOptions, Pixels, PlatformDisplay, PlatformGestures,
     PlatformInputHandler, PlatformInputHandlerDelegate, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, RenderImage, Size,
-    SourceMetadata, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, RenderImage,
+    ScreenCaptureSource, Size, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
     TextInputConfiguration, ThermalState, UTF16Selection, Window, WindowAppearance, WindowBounds,
     WindowButtonLayout, WindowId, WindowParams,
 };
@@ -314,29 +304,6 @@ pub trait Platform: 'static {
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 }
-
-/// A source of on-screen video content that can be captured.
-pub trait ScreenCaptureSource {
-    /// Returns metadata for this source.
-    fn metadata(&self) -> Result<SourceMetadata>;
-
-    /// Start capture video from this source, invoking the given callback
-    /// with each frame.
-    fn stream(
-        &self,
-        foreground_executor: &ForegroundExecutor,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
-    ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
-}
-
-/// A video stream captured from a screen.
-pub trait ScreenCaptureStream {
-    /// Returns metadata for this source.
-    fn metadata(&self) -> Result<SourceMetadata>;
-}
-
-/// A frame of video captured from a screen.
-pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 #[doc(hidden)]
 pub enum TasksIncluded {

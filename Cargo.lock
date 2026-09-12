@@ -7708,6 +7708,7 @@ dependencies = [
  "bitflags 2.13.1",
  "chrono",
  "collections",
+ "core-video",
  "derive_more",
  "etagere",
  "futures 0.3.34",
@@ -7733,6 +7734,7 @@ dependencies = [
  "uuid",
  "waker-fn",
  "windows 0.62.2",
+ "zed-scap",
 ]
 
 [[package]]

@@ -40,6 +40,7 @@ x11 = [
 ]
 screen-capture = [
     "scap",
+    "gpui_platform_core/screen-capture",
 ]
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram", "gpui_platform_core/profiler"]

@@ -22,7 +22,8 @@ test-support = []
 bench-support = ["test-support"]
 profiler = []
 wayland = []
-x11 = []
+x11 = ["scap?/x11"]
+screen-capture = ["dep:scap"]
 
 [dependencies]
 accesskit.workspace = true
@@ -56,3 +57,9 @@ waker-fn = "1.2.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true, features = ["Win32_Foundation"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
+scap = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-video.workspace = true
