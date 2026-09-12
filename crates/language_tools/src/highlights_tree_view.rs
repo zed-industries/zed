@@ -1190,7 +1190,8 @@ fn build_highlight_entries(
             .collect::<Vec<_>>();
 
         for capture in captures {
-            let Some(highlight_id) = highlight_maps[capture.grammar_index].get(capture.index)
+            let Some(highlight_id) =
+                highlight_maps[capture.grammar_index].get(language::CaptureId(capture.index))
             else {
                 continue;
             };

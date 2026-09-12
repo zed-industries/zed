@@ -7,12 +7,12 @@ use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardReadError,
-    ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor, GestureTuning, Image,
-    ImageFormat, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, ScrollPhysics, Task, ThermalState, WindowAppearance, WindowKind, WindowParams,
-    popup::PopupNotSupportedError,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
+    ClipboardReadError, ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor,
+    GestureTuning, Image, ImageFormat, Keymap, Menu, MenuItem, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, ScrollPhysics, Task, ThermalState, WindowAppearance,
+    WindowKind, WindowParams, popup::PopupNotSupportedError,
 };
 use gpui_wgpu::{PreparedWebGraphics, WebBackendPreference, WgpuContext, wgpu};
 use std::{
@@ -493,6 +493,10 @@ impl Platform for WebPlatform {
         self.callbacks.borrow_mut().reopen = Some(callback);
     }
 
+    // Browsers expose no system sleep or wake signal; the nearest thing is the
+    // Page Visibility API, which drives `WindowVisibility` instead.
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
@@ -517,6 +521,12 @@ impl Platform for WebPlatform {
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.borrow_mut().thermal_state_change = Some(callback);
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Idle sleep prevention for {reason:?} is not supported in the browser"
+        )))
     }
 
     fn compositor_name(&self) -> &'static str {

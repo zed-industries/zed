@@ -3989,6 +3989,7 @@ impl InlayHints {
                             }
                         }),
                         location: Some(server_id).zip(lsp_part.location),
+                        command: Some(server_id).zip(lsp_part.command),
                     });
                 }
                 InlayHintLabel::LabelParts(parts)
@@ -3999,6 +4000,7 @@ impl InlayHints {
     }
 
     pub fn project_to_proto_hint(response_hint: InlayHint) -> proto::InlayHint {
+        let position = response_hint.position;
         let (state, lsp_resolve_state) = match response_hint.resolve_state {
             ResolveState::Resolved => (0, None),
             ResolveState::CanResolve(server_id, resolve_data) => (
@@ -4046,6 +4048,12 @@ impl InlayHints {
                                 location_range_start,
                                 location_range_end,
                                 language_server_id: label_part.location.as_ref().map(|(server_id, _)| server_id.0 as u64),
+                                command: label_part.command.map(|(server_id, command)| LspStore::serialize_code_action(&CodeAction {
+                                    server_id,
+                                    range: position..position,
+                                    lsp_action: LspAction::Command(command),
+                                    resolved: true,
+                                })),
                             }}).collect()
                         })
                     }
@@ -4164,6 +4172,23 @@ impl InlayHints {
                                     None => None,
                                 }
                             },
+                            command: match part.command {
+                                Some(command) => {
+                                    let action = LspStore::deserialize_code_action(command)
+                                        .context("invalid command in inlay hint label part")?;
+                                    match action.lsp_action {
+                                        LspAction::Command(command) => {
+                                            Some((action.server_id, command))
+                                        }
+                                        LspAction::Action(_) | LspAction::CodeLens(_) => {
+                                            anyhow::bail!(
+                                                "unexpected non-command action in inlay hint label part"
+                                            )
+                                        }
+                                    }
+                                }
+                                None => None,
+                            },
                         });
                     }
 
@@ -4249,7 +4274,7 @@ impl InlayHints {
                                 })
                             }),
                             location: part.location.map(|(_, location)| location),
-                            command: None,
+                            command: part.command.map(|(_, command)| command),
                         })
                         .collect(),
                 ),

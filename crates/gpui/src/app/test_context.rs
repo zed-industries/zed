@@ -6,7 +6,7 @@ use crate::{
     Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
     SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
     TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, window::ElementArenaScope,
+    WindowVisibility, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -167,6 +167,21 @@ impl TestAppContext {
     /// Checks whether there have been any new path prompts received by the platform.
     pub fn did_prompt_for_new_path(&self) -> bool {
         self.test_platform.did_prompt_for_new_path()
+    }
+
+    /// Returns the number of active idle sleep prevention tokens.
+    pub fn active_idle_sleep_preventions(&self) -> usize {
+        self.test_platform.active_idle_sleep_preventions()
+    }
+
+    /// Sets the delay for subsequent idle sleep prevention acquisitions.
+    pub fn set_idle_sleep_prevention_delay(&self, delay: Duration) {
+        self.test_platform.set_idle_sleep_prevention_delay(delay);
+    }
+
+    /// Makes subsequent idle sleep prevention acquisitions fail or succeed.
+    pub fn set_idle_sleep_prevention_fails(&self, fails: bool) {
+        self.test_platform.set_idle_sleep_prevention_fails(fails);
     }
 
     /// returns a new `TestAppContext` re-using the same executors to interleave tasks.
@@ -401,6 +416,26 @@ impl TestAppContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
+    }
+
+    /// Simulates a change in whether the platform is presenting the window.
+    pub fn simulate_window_visibility_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        visibility: WindowVisibility,
+    ) {
+        self.test_window(window_handle)
+            .simulate_visibility_change(visibility);
+    }
+
+    /// Simulates visible viewport changes without resizing the window's layout area.
+    pub fn simulate_window_visual_viewport_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        bounds: Bounds<Pixels>,
+    ) {
+        self.test_window(window_handle)
+            .simulate_visual_viewport_change(bounds);
     }
 
     /// Simulates the window moving to a display with a different scale factor.
@@ -892,6 +927,11 @@ impl VisualTestContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_resize(&self, size: Size<Pixels>) {
         self.simulate_window_resize(self.window, size)
+    }
+
+    /// Simulates a change in whether the platform is presenting this window.
+    pub fn simulate_visibility_change(&self, visibility: WindowVisibility) {
+        self.simulate_window_visibility_change(self.window, visibility);
     }
 
     /// Simulates the window moving to a display with a different scale factor.
