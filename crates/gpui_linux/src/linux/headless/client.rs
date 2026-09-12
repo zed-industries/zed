@@ -7,8 +7,8 @@ use gpui_util::ResultExt;
 use crate::linux::headless::window::{HeadlessDisplay, HeadlessWindow};
 use crate::linux::{LinuxClient, LinuxCommon, LinuxKeyboardLayout};
 use gpui::{
-    AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformWindow, WindowParams,
+    CursorStyle, DisplayId, PlatformDisplay, PlatformKeyboardLayout, PlatformWindow, WindowId,
+    WindowParams,
 };
 
 pub struct HeadlessClientState {
@@ -89,17 +89,17 @@ impl LinuxClient for HeadlessClient {
         rx
     }
 
-    fn active_window(&self) -> Option<AnyWindowHandle> {
+    fn active_window(&self) -> Option<WindowId> {
         None
     }
 
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+    fn window_stack(&self) -> Option<Vec<WindowId>> {
         None
     }
 
     fn open_window(
         &self,
-        _handle: AnyWindowHandle,
+        _handle: WindowId,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         Ok(Box::new(HeadlessWindow::new(

@@ -33,11 +33,11 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload, GpuSpecs,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowControls, WindowDecorations, WindowKind, WindowParams,
+    Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload, GpuSpecs, Modifiers, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    WindowDecorations, WindowId, WindowKind, WindowParams,
     layer_shell::{Anchor, LayerShellNotSupportedError},
     popup::PopupOptions,
     px, size,
@@ -119,7 +119,7 @@ pub struct WaylandWindowState {
     tiling: Tiling,
     window_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
-    handle: AnyWindowHandle,
+    handle: WindowId,
     active: bool,
     hovered: bool,
     redraw_requested: bool,
@@ -543,7 +543,7 @@ pub struct WaylandWindowStatePtr {
 
 impl WaylandWindowState {
     pub(crate) fn new(
-        handle: AnyWindowHandle,
+        handle: WindowId,
         surface: wl_surface::WlSurface,
         surface_state: WaylandSurfaceState,
         appearance: WindowAppearance,
@@ -811,7 +811,7 @@ impl WaylandWindow {
     }
 
     pub fn new(
-        handle: AnyWindowHandle,
+        handle: WindowId,
         globals: Globals,
         gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
@@ -869,7 +869,7 @@ impl WaylandWindow {
 }
 
 impl WaylandWindowStatePtr {
-    pub fn handle(&self) -> AnyWindowHandle {
+    pub fn handle(&self) -> WindowId {
         self.state.borrow().handle
     }
 

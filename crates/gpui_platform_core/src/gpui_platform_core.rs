@@ -35,6 +35,7 @@ mod test_dispatcher;
 mod text_input;
 mod text_system;
 mod window;
+mod window_id;
 
 pub use app::*;
 pub use atlas::*;
@@ -60,3 +61,4 @@ pub use test_dispatcher::*;
 pub use text_input::*;
 pub use text_system::*;
 pub use window::*;
+pub use window_id::*;

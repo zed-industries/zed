@@ -3,12 +3,12 @@ use crate::NoopTextSystem;
 #[cfg(any(test, feature = "test-support"))]
 use crate::PathPromptOptions;
 use crate::{
-    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
+    ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SharedString,
     SourceMetadata, SystemNotification, SystemNotificationResponse, Task, TestDisplay, TestWindow,
-    ThermalState, WindowAppearance, WindowParams, size,
+    ThermalState, WindowAppearance, WindowId, WindowParams, size,
 };
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
@@ -482,7 +482,7 @@ impl Platform for TestPlatform {
         rx
     }
 
-    fn active_window(&self) -> Option<crate::AnyWindowHandle> {
+    fn active_window(&self) -> Option<WindowId> {
         self.active_window
             .borrow()
             .as_ref()
@@ -491,7 +491,7 @@ impl Platform for TestPlatform {
 
     fn open_window(
         &self,
-        handle: AnyWindowHandle,
+        handle: WindowId,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
         let renderer = self.headless_renderer_factory.as_ref().and_then(|f| f());

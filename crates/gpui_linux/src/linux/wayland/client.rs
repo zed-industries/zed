@@ -96,12 +96,13 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalDragPayload,
-    FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalDragPayload, FileDragPaths,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
-    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, profiler, px, size,
+    Size, TouchPhase, WindowButtonLayout, WindowId, WindowKind, WindowParams, point, profiler, px,
+    size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -1037,7 +1038,7 @@ impl LinuxClient for WaylandClient {
 
     fn open_window(
         &self,
-        handle: AnyWindowHandle,
+        handle: WindowId,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
@@ -1048,7 +1049,7 @@ impl LinuxClient for WaylandClient {
                 let parent = state
                     .windows
                     .values()
-                    .find(|window| window.handle() == options.parent)
+                    .find(|window| window.handle() == options.parent.window_id())
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("popup parent window not found"))?;
                 // A popup grab must reference a press event or the compositor declines it and
@@ -1264,7 +1265,7 @@ impl LinuxClient for WaylandClient {
         self.0.borrow_mut().clipboard.read()
     }
 
-    fn active_window(&self) -> Option<AnyWindowHandle> {
+    fn active_window(&self) -> Option<WindowId> {
         self.0
             .borrow_mut()
             .keyboard_focused_window
@@ -1272,7 +1273,7 @@ impl LinuxClient for WaylandClient {
             .map(|window| window.handle())
     }
 
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+    fn window_stack(&self) -> Option<Vec<WindowId>> {
         None
     }
 

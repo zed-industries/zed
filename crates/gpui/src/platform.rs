@@ -35,17 +35,17 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use crate::DevicePixels;
 use crate::{
-    Action, ActivityGuard, AnyWindowHandle, App, AppLifecyclePhase, AsyncWindowContext,
-    BackgroundExecutor, Bounds, BoundsExt, Capslock, ClipboardItem, ClipboardReadError,
-    CursorStyle, Decorations, DispatchEventResult, DisplayId, ExternalDragPayload,
-    ForegroundExecutor, GpuSpecs, Image, ImageFormat, ImageSource, Keymap, Modifiers,
-    PathPromptOptions, Pixels, PlatformAtlas, PlatformDisplay, PlatformGestures, PlatformInput,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, Point, PromptButton,
-    PromptLevel, RenderImage, RequestFrameOptions, ResizeEdge, Scene, SharedString, Size,
-    SourceMetadata, SvgRenderer, SystemNotification, SystemNotificationResponse, SystemWindowTab,
-    Task, TextInputConfiguration, TextInputStateChange, ThermalState, Window, WindowAppearance,
-    WindowBackgroundAppearance, WindowButtonLayout, WindowControlArea, WindowControls,
-    WindowDecorations, WindowInsets, px,
+    Action, ActivityGuard, App, AppLifecyclePhase, AsyncWindowContext, BackgroundExecutor, Bounds,
+    BoundsExt, Capslock, ClipboardItem, ClipboardReadError, CursorStyle, Decorations,
+    DispatchEventResult, DisplayId, ExternalDragPayload, ForegroundExecutor, GpuSpecs, Image,
+    ImageFormat, ImageSource, Keymap, Modifiers, PathPromptOptions, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformGestures, PlatformInput, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, Point, PromptButton, PromptLevel, RenderImage,
+    RequestFrameOptions, ResizeEdge, Scene, SharedString, Size, SourceMetadata, SvgRenderer,
+    SystemNotification, SystemNotificationResponse, SystemWindowTab, Task, TextInputConfiguration,
+    TextInputStateChange, ThermalState, Window, WindowAppearance, WindowBackgroundAppearance,
+    WindowButtonLayout, WindowControlArea, WindowControls, WindowDecorations, WindowId,
+    WindowInsets, px,
 };
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
@@ -129,8 +129,8 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
-    fn active_window(&self) -> Option<AnyWindowHandle>;
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+    fn active_window(&self) -> Option<WindowId>;
+    fn window_stack(&self) -> Option<Vec<WindowId>> {
         None
     }
 
@@ -152,7 +152,7 @@ pub trait Platform: 'static {
 
     fn open_window(
         &self,
-        handle: AnyWindowHandle,
+        handle: WindowId,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>>;
 

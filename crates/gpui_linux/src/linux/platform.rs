@@ -32,11 +32,11 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use gpui::{
-    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DisplayId, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
+    Action, ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
-    WindowButtonLayout, WindowParams,
+    WindowButtonLayout, WindowId, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui_types::{Pixels, Point, px};
@@ -85,7 +85,7 @@ pub(crate) trait LinuxClient {
 
     fn open_window(
         &self,
-        handle: AnyWindowHandle,
+        handle: WindowId,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>>;
     fn set_cursor_style(&self, style: CursorStyle);
@@ -99,8 +99,8 @@ pub(crate) trait LinuxClient {
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
-    fn active_window(&self) -> Option<AnyWindowHandle>;
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
+    fn active_window(&self) -> Option<WindowId>;
+    fn window_stack(&self) -> Option<Vec<WindowId>>;
     fn run(&self);
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -408,17 +408,17 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.screen_capture_sources()
     }
 
-    fn active_window(&self) -> Option<AnyWindowHandle> {
+    fn active_window(&self) -> Option<WindowId> {
         self.inner.active_window()
     }
 
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+    fn window_stack(&self) -> Option<Vec<WindowId>> {
         self.inner.window_stack()
     }
 
     fn open_window(
         &self,
-        handle: AnyWindowHandle,
+        handle: WindowId,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         self.inner.open_window(handle, options)

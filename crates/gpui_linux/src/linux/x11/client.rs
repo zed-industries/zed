@@ -60,10 +60,10 @@ use crate::linux::{
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
+    Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowButtonLayout, WindowParams, point, px,
+    TouchPhase, WindowButtonLayout, WindowId, WindowParams, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -87,7 +87,7 @@ pub(crate) struct WindowRef {
 }
 
 impl WindowRef {
-    pub fn handle(&self) -> AnyWindowHandle {
+    pub fn handle(&self) -> WindowId {
         self.window.state.borrow().handle
     }
 }
@@ -1604,7 +1604,7 @@ impl LinuxClient for X11Client {
 
     fn open_window(
         &self,
-        handle: AnyWindowHandle,
+        handle: WindowId,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
@@ -1811,7 +1811,7 @@ impl LinuxClient for X11Client {
         event_loop.run(None, &mut self.clone(), |_| {}).log_err();
     }
 
-    fn active_window(&self) -> Option<AnyWindowHandle> {
+    fn active_window(&self) -> Option<WindowId> {
         let state = self.0.borrow();
         state.keyboard_focused_window.and_then(|focused_window| {
             state
@@ -1821,7 +1821,7 @@ impl LinuxClient for X11Client {
         })
     }
 
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+    fn window_stack(&self) -> Option<Vec<WindowId>> {
         let state = self.0.borrow();
         let root = state.xcb_connection.setup().roots[state.x_root_index].root;
 

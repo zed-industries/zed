@@ -1249,12 +1249,26 @@ impl App {
     ///
     /// This method returns None if the platform doesn't implement the method yet.
     pub fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
-        self.platform.window_stack()
+        self.platform.window_stack().map(|window_ids| {
+            window_ids
+                .into_iter()
+                .filter_map(|window_id| self.any_window_handle(window_id))
+                .collect()
+        })
     }
 
     /// Returns a handle to the window that is currently focused at the platform level, if one exists.
     pub fn active_window(&self) -> Option<AnyWindowHandle> {
-        self.platform.active_window()
+        self.platform
+            .active_window()
+            .and_then(|window_id| self.any_window_handle(window_id))
+    }
+
+    fn any_window_handle(&self, window_id: WindowId) -> Option<AnyWindowHandle> {
+        self.windows
+            .get(window_id)
+            .and_then(|window| window.as_ref())
+            .map(|window| window.handle)
     }
 
     /// Opens a new window with the given option and the root view returned by the given function.

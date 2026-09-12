@@ -37,6 +37,7 @@ schemars.workspace = true
 seahash = "4.1"
 serde.workspace = true
 serde_json.workspace = true
+slotmap.workspace = true
 smallvec.workspace = true
 strum.workspace = true
 uuid.workspace = true

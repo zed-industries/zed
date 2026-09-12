@@ -970,7 +970,7 @@ impl VisualTestContext {
 
     /// Simulates the user blurring the window.
     pub fn deactivate_window(&mut self) {
-        if Some(self.window) == self.test_platform.active_window() {
+        if Some(self.window.window_id()) == self.test_platform.active_window() {
             self.test_platform.set_active_window(None)
         }
         self.background_executor.run_until_parked();

@@ -1,10 +1,10 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
-    DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TextInputConfiguration,
-    TextInputStateChange, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowInsets, WindowParams,
+    AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels, DispatchEventResult, GpuSpecs,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions, Scene, Size,
+    TestPlatform, TextInputConfiguration, TextInputStateChange, TileId, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowId, WindowInsets,
+    WindowParams,
 };
 use collections::HashMap;
 use gpui_util::ResultExt as _;
@@ -21,7 +21,7 @@ use std::{
 
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
-    pub(crate) handle: AnyWindowHandle,
+    pub(crate) handle: WindowId,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
@@ -81,7 +81,7 @@ impl HasDisplayHandle for TestWindow {
 
 impl TestWindow {
     pub(crate) fn new(
-        handle: AnyWindowHandle,
+        handle: WindowId,
         params: WindowParams,
         platform: Weak<TestPlatform>,
         display: Rc<dyn PlatformDisplay>,
