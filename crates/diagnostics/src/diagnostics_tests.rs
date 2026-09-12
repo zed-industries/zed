@@ -142,7 +142,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
              § move occurs because `y` has type `Vec<char>`, which does not implement
              § the `Copy` trait (back)
                  a(x); § value moved here (back)
-                 b(y); § value moved here
+                 b(y); § value moved here (back)
                  // comment 1
                  // comment 2
                  c(y);
@@ -222,7 +222,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
              § move occurs because `y` has type `Vec<char>`, which does not implement
              § the `Copy` trait (back)
                  a(x); § value moved here (back)
-                 b(y); § value moved here
+                 b(y); § value moved here (back)
                  // comment 1
                  // comment 2
                  c(y);
@@ -313,7 +313,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
              § move occurs because `y` has type `Vec<char>`, which does not implement
              § the `Copy` trait (back)
                  a(x); § value moved here (back)
-                 b(y); § value moved here
+                 b(y); § value moved here (back)
                  // comment 1
                  // comment 2
                  c(y);
@@ -433,7 +433,7 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
         indoc::indoc! {
             "§ main.js
              § -----
-             function test() { § method `test` defined here
+             function test() { § method `test` defined here (back)
                  return 1
              };
 
@@ -1348,6 +1348,52 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_nearby_related_diagnostic_links_back_to_primary(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let primary = language::Diagnostic {
+        message: "the trait bound `(): HasTest` is not satisfied".into(),
+        group_id: 1,
+        is_primary: true,
+        ..Default::default()
+    };
+    let related = language::Diagnostic {
+        message: "required by a bound in `Test::TestAssoc`".into(),
+        group_id: 1,
+        ..Default::default()
+    };
+
+    cx.update(|cx| {
+        let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+            vec![
+                language::DiagnosticEntryRef {
+                    range: text::Point::new(10, 4)..text::Point::new(10, 16),
+                    diagnostic: &primary,
+                },
+                language::DiagnosticEntryRef {
+                    range: text::Point::new(13, 0)..text::Point::new(13, 22),
+                    diagnostic: &related,
+                },
+            ],
+            language::BufferId::new(1).unwrap(),
+            None,
+            None,
+            cx,
+        );
+
+        assert!(
+            blocks[1]
+                .markdown
+                .read(cx)
+                .source()
+                .contains("([back](file://#diagnostic-1-1-0))"),
+            "related diagnostic should link back to the primary diagnostic, got: {}",
+            blocks[1].markdown.read(cx).source()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -2085,9 +2131,9 @@ async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
              § the `Copy` trait (back)
                  let y = vec![];
              § move occurs because `y` has type `Vec<char>`, which does not implement
-             § the `Copy` trait
-                 a(x); § value moved here
-                 b(y); § value moved here
+             § the `Copy` trait (back)
+                 a(x); § value moved here (back)
+                 b(y); § value moved here (back)
                  c(y);
              § use of moved value
              § value used here after move
@@ -2221,7 +2267,7 @@ async fn test_buffer_diagnostics_without_warnings(cx: &mut TestAppContext) {
              § move occurs because `x` has type `Vec<char>`, which does not implement
              § the `Copy` trait (back)
                  let y = vec![];
-                 a(x); § value moved here
+                 a(x); § value moved here (back)
                  b(y);
                  c(y);
                  d(x);
