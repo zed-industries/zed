@@ -1,7 +1,6 @@
 use anyhow::Error;
-use etagere::euclid::{Point2D, Vector2D};
+use etagere::euclid::Vector2D;
 use lyon::geom::Angle;
-use lyon::math::{Vector, vector};
 use lyon::path::traits::SvgPathBuilder;
 use lyon::path::{ArcFlags, Polygon};
 use lyon::tessellation::{
@@ -11,7 +10,7 @@ use lyon::tessellation::{
 pub use lyon::math::Transform;
 pub use lyon::tessellation::{FillOptions, FillRule, StrokeOptions};
 
-use crate::{Path, Pixels, Point, point, px};
+use crate::{Path, Pixels, Point, point};
 
 /// Style of the PathBuilder
 pub enum PathStyle {
@@ -45,30 +44,6 @@ impl From<lyon::path::builder::WithSvg<lyon::path::BuilderImpl>> for PathBuilder
             raw,
             ..Default::default()
         }
-    }
-}
-
-impl From<lyon::math::Point> for Point<Pixels> {
-    fn from(p: lyon::math::Point) -> Self {
-        point(px(p.x), px(p.y))
-    }
-}
-
-impl From<Point<Pixels>> for lyon::math::Point {
-    fn from(p: Point<Pixels>) -> Self {
-        lyon::math::point(p.x.0, p.y.0)
-    }
-}
-
-impl From<Point<Pixels>> for Vector {
-    fn from(p: Point<Pixels>) -> Self {
-        vector(p.x.0, p.y.0)
-    }
-}
-
-impl From<Point<Pixels>> for Point2D<f32, Pixels> {
-    fn from(p: Point<Pixels>) -> Self {
-        Point2D::new(p.x.0, p.y.0)
     }
 }
 

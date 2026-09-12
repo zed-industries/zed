@@ -21,6 +21,7 @@ default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
     "collections/test-support",
+    "gpui_types/test-support",
     "http_client/test-support",
     "wayland",
     "x11",
@@ -62,6 +63,7 @@ futures.workspace = true
 futures-concurrency.workspace = true
 gpui_macros.workspace = true
 gpui_shared_string.workspace = true
+gpui_types = { workspace = true, features = ["lyon"] }
 http_client.workspace = true
 image.workspace = true
 inventory.workspace = true

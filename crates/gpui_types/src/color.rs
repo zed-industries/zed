@@ -740,12 +740,17 @@ impl<'de> Deserialize<'de> for Hsla {
     }
 }
 
+/// Identifies which kind of [`Background`] is being described.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
-pub(crate) enum BackgroundTag {
+pub enum BackgroundTag {
+    /// A single solid color.
     Solid = 0,
+    /// A linear gradient between two color stops.
     LinearGradient = 1,
+    /// A diagonal hash pattern.
     PatternSlash = 2,
+    /// A checkerboard pattern.
     Checkerboard = 3,
 }
 
@@ -777,11 +782,14 @@ impl Display for ColorSpace {
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Background {
-    pub(crate) tag: BackgroundTag,
+    /// Which kind of background this is, which determines the meaning of the other fields.
+    pub tag: BackgroundTag,
     pub(crate) color_space: ColorSpace,
-    pub(crate) solid: Hsla,
+    /// The solid color. Used by solid, pattern, and checkerboard backgrounds.
+    pub solid: Hsla,
     pub(crate) gradient_angle_or_pattern_height: f32,
-    pub(crate) colors: [LinearColorStop; 2],
+    /// The two color stops of a linear gradient.
+    pub colors: [LinearColorStop; 2],
     /// Padding for alignment for repr(C) layout.
     pad: u32,
 }

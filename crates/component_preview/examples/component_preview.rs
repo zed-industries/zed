@@ -3,7 +3,9 @@
 //! Run with: `cargo run -p component_preview --example component_preview"`
 use assets::Assets;
 use fs::RealFs;
-use gpui::{AppContext as _, Bounds, KeyBinding, WindowBounds, WindowOptions, actions, size};
+use gpui::{
+    AppContext as _, Bounds, BoundsExt, KeyBinding, WindowBounds, WindowOptions, actions, size,
+};
 
 use client::{Client, UserStore};
 use language::LanguageRegistry;

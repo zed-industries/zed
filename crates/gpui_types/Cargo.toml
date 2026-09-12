@@ -1,0 +1,33 @@
+[package]
+name = "gpui_types"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_types.rs"
+doctest = false
+
+[features]
+default = []
+lyon = ["dep:lyon", "dep:etagere"]
+proptest = ["dep:proptest"]
+test-support = ["proptest"]
+
+[dependencies]
+anyhow.workspace = true
+derive_more.workspace = true
+etagere = { workspace = true, optional = true }
+lyon = { version = "1.0", optional = true }
+refineable.workspace = true
+schemars.workspace = true
+serde.workspace = true
+taffy = "=0.13.0"
+proptest = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
