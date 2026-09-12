@@ -7,9 +7,9 @@ pub use line_layout::*;
 pub use line_wrapper::*;
 
 use crate::{
-    Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, Hsla, Pixels, PlatformTextSystem,
-    RenderGlyphParams, Result, SharedString, Size, StrikethroughStyle, TextRenderingMode,
-    UnderlineStyle, font, px,
+    Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, Hsla, LineLayout, Pixels,
+    PlatformTextSystem, RenderGlyphParams, Result, SharedString, Size, StrikethroughStyle,
+    TextRenderingMode, UnderlineStyle, font, px,
 };
 use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;

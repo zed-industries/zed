@@ -1,8 +1,9 @@
 //! Font identity, metrics, and rendering parameter types shared by `gpui` and its platform backends.
 
+use anyhow::Result;
 use derive_more::{Add, FromStr, Sub};
 use gpui_shared_string::SharedString;
-use gpui_types::{Bounds, Pixels, Point, px};
+use gpui_types::{Bounds, DevicePixels, Hsla, Pixels, Point, Size, point, px, size};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -306,4 +307,347 @@ pub enum TextRenderingMode {
     Subpixel,
     /// Use grayscale text rendering.
     Grayscale,
+}
+
+/// A laid out and styled line of text
+#[derive(Default, Debug)]
+pub struct LineLayout {
+    /// The font size for this line
+    pub font_size: Pixels,
+    /// The width of the line
+    pub width: Pixels,
+    /// The ascent of the line
+    pub ascent: Pixels,
+    /// The descent of the line
+    pub descent: Pixels,
+    /// The shaped runs that make up this line
+    pub runs: Vec<ShapedRun>,
+    /// The length of the line in utf-8 bytes
+    pub len: usize,
+}
+
+/// A run of text that has been shaped .
+#[derive(Debug, Clone)]
+pub struct ShapedRun {
+    /// The font id for this run
+    pub font_id: FontId,
+    /// The glyphs that make up this run
+    pub glyphs: Vec<ShapedGlyph>,
+}
+
+/// A single glyph, ready to paint.
+#[derive(Clone, Debug)]
+pub struct ShapedGlyph {
+    /// The ID for this glyph, as determined by the text system.
+    pub id: GlyphId,
+
+    /// The position of this glyph in its containing line.
+    pub position: Point<Pixels>,
+
+    /// The index of this glyph in the original text.
+    pub index: usize,
+
+    /// Whether this glyph is an emoji
+    pub is_emoji: bool,
+}
+
+impl LineLayout {
+    /// The index for the character at the given x coordinate
+    pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
+        if x >= self.width {
+            None
+        } else {
+            for run in self.runs.iter().rev() {
+                for glyph in run.glyphs.iter().rev() {
+                    if glyph.position.x <= x {
+                        return Some(glyph.index);
+                    }
+                }
+            }
+            Some(0)
+        }
+    }
+
+    /// closest_index_for_x returns the character boundary closest to the given x coordinate
+    /// (e.g. to handle aligning up/down arrow keys)
+    pub fn closest_index_for_x(&self, x: Pixels) -> usize {
+        let mut prev_index = 0;
+        let mut prev_x = px(0.);
+
+        for run in self.runs.iter() {
+            for glyph in run.glyphs.iter() {
+                if glyph.position.x >= x {
+                    if glyph.position.x - x < x - prev_x {
+                        return glyph.index;
+                    } else {
+                        return prev_index;
+                    }
+                }
+                prev_index = glyph.index;
+                prev_x = glyph.position.x;
+            }
+        }
+
+        if self.len == 1 {
+            if x > self.width / 2. {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+
+        self.len
+    }
+
+    /// The x position of the character at the given index
+    pub fn x_for_index(&self, index: usize) -> Pixels {
+        for run in &self.runs {
+            for glyph in &run.glyphs {
+                if glyph.index >= index {
+                    return glyph.position.x;
+                }
+            }
+        }
+        self.width
+    }
+
+    /// The corresponding Font at the given index
+    pub fn font_id_for_index(&self, index: usize) -> Option<FontId> {
+        for run in &self.runs {
+            for glyph in &run.glyphs {
+                if glyph.index >= index {
+                    return Some(run.font_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Split this layout at a byte index, returning `(prefix, suffix)`.
+    ///
+    /// - `prefix` contains glyphs for bytes `[0, byte_index)` with original positions.
+    ///   Its width equals the x-advance up to the split point.
+    /// - `suffix` contains glyphs for bytes `[byte_index, len)` with positions
+    ///   shifted left so the first glyph starts at x=0, and byte indices rebased to 0.
+    /// - `font_size`, `ascent`, and `descent` are copied to both halves.
+    pub fn split_at(&self, byte_index: usize) -> (LineLayout, LineLayout) {
+        let x_offset = self.x_for_index(byte_index);
+
+        // Partition glyph runs. A single run may contribute glyphs to both halves.
+        let mut left_runs = Vec::new();
+        let mut right_runs = Vec::new();
+
+        for run in &self.runs {
+            let split_pos = run.glyphs.partition_point(|g| g.index < byte_index);
+
+            if split_pos > 0 {
+                left_runs.push(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs: run.glyphs[..split_pos].to_vec(),
+                });
+            }
+
+            if split_pos < run.glyphs.len() {
+                let right_glyphs = run.glyphs[split_pos..]
+                    .iter()
+                    .map(|g| ShapedGlyph {
+                        id: g.id,
+                        position: point(g.position.x - x_offset, g.position.y),
+                        index: g.index - byte_index,
+                        is_emoji: g.is_emoji,
+                    })
+                    .collect();
+                right_runs.push(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs: right_glyphs,
+                });
+            }
+        }
+
+        let left = LineLayout {
+            font_size: self.font_size,
+            width: x_offset,
+            ascent: self.ascent,
+            descent: self.descent,
+            runs: left_runs,
+            len: byte_index,
+        };
+
+        let right = LineLayout {
+            font_size: self.font_size,
+            width: self.width - x_offset,
+            ascent: self.ascent,
+            descent: self.descent,
+            runs: right_runs,
+            len: self.len - byte_index,
+        };
+
+        (left, right)
+    }
+}
+
+#[expect(missing_docs)]
+pub trait PlatformTextSystem: Send + Sync {
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
+    /// Get all available font names.
+    fn all_font_names(&self) -> Vec<String>;
+    /// Get the font ID for a font descriptor.
+    fn font_id(&self, descriptor: &Font) -> Result<FontId>;
+    /// Prewarm any system font caches needed to shape text.
+    fn prewarm_fonts(&self, _font_ids: &[FontId]) {}
+    /// Get metrics for a font.
+    fn font_metrics(&self, font_id: FontId) -> FontMetrics;
+    /// Get typographic bounds for a glyph.
+    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
+    /// Get the advance width for a glyph.
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
+    /// Get the glyph ID for a character.
+    fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
+    /// Get raster bounds for a glyph.
+    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
+    /// Rasterize a glyph.
+    fn rasterize_glyph(
+        &self,
+        params: &RenderGlyphParams,
+        raster_bounds: Bounds<DevicePixels>,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
+    /// Layout a line of text with the given font runs.
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    /// Returns the recommended text rendering mode for the given font and size.
+    fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
+    -> TextRenderingMode;
+    /// Returns the dilation level to use for a glyph painted in the given color.
+    fn glyph_dilation_for_color(&self, _color: Hsla) -> u8 {
+        0
+    }
+}
+
+#[expect(missing_docs)]
+pub struct NoopTextSystem;
+
+#[expect(missing_docs)]
+impl NoopTextSystem {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl PlatformTextSystem for NoopTextSystem {
+    fn add_fonts(&self, _fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+        Ok(())
+    }
+
+    fn all_font_names(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn font_id(&self, _descriptor: &Font) -> Result<FontId> {
+        Ok(FontId(1))
+    }
+
+    fn font_metrics(&self, _font_id: FontId) -> FontMetrics {
+        FontMetrics {
+            units_per_em: 1000,
+            ascent: 1025.0,
+            descent: -275.0,
+            line_gap: 0.0,
+            underline_position: -95.0,
+            underline_thickness: 60.0,
+            cap_height: 698.0,
+            x_height: 516.0,
+            bounding_box: Bounds {
+                origin: Point {
+                    x: -260.0,
+                    y: -245.0,
+                },
+                size: Size {
+                    width: 1501.0,
+                    height: 1364.0,
+                },
+            },
+        }
+    }
+
+    fn typographic_bounds(&self, _font_id: FontId, _glyph_id: GlyphId) -> Result<Bounds<f32>> {
+        Ok(Bounds {
+            origin: Point { x: 54.0, y: 0.0 },
+            size: size(392.0, 528.0),
+        })
+    }
+
+    fn advance(&self, _font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
+        Ok(size(600.0 * glyph_id.0 as f32, 0.0))
+    }
+
+    fn glyph_for_char(&self, _font_id: FontId, ch: char) -> Option<GlyphId> {
+        Some(GlyphId(ch.len_utf16() as u32))
+    }
+
+    fn glyph_raster_bounds(&self, _params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        Ok(Default::default())
+    }
+
+    fn rasterize_glyph(
+        &self,
+        _params: &RenderGlyphParams,
+        raster_bounds: Bounds<DevicePixels>,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+        Ok((raster_bounds.size, Vec::new()))
+    }
+
+    fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
+        let mut position = px(0.);
+        let metrics = self.font_metrics(FontId(0));
+        let em_width = font_size
+            * self
+                .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
+                .unwrap()
+                .width
+            / metrics.units_per_em as f32;
+        let mut glyphs = Vec::new();
+        for (ix, c) in text.char_indices() {
+            if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
+                glyphs.push(ShapedGlyph {
+                    id: glyph,
+                    position: point(position, px(0.)),
+                    index: ix,
+                    is_emoji: glyph.0 == 2,
+                });
+                if glyph.0 == 2 {
+                    position += em_width * 2.0;
+                } else {
+                    position += em_width;
+                }
+            } else {
+                position += em_width
+            }
+        }
+        let mut runs = Vec::default();
+        if !glyphs.is_empty() {
+            runs.push(ShapedRun {
+                font_id: FontId(0),
+                glyphs,
+            });
+        } else {
+            position = px(0.);
+        }
+
+        LineLayout {
+            font_size,
+            width: position,
+            ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
+            descent: font_size * (metrics.descent / metrics.units_per_em as f32),
+            runs,
+            len: text.len(),
+        }
+    }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        TextRenderingMode::Grayscale
+    }
 }
