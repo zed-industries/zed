@@ -51,18 +51,18 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                   | Anthropic | Output              | $5.00                        | $5.50                   |
 |                   | Anthropic | Input - Cache Write | $1.25                        | $1.375                  |
 |                   | Anthropic | Input - Cache Read  | $0.10                        | $0.11                   |
-| GPT-5.6 Sol       | OpenAI    | Input               | $5.00                        | $5.50                   |
-|                   | OpenAI    | Output              | $30.00                       | $33.00                  |
-|                   | OpenAI    | Input - Cache Write | $6.25                        | $6.875                  |
-|                   | OpenAI    | Cached Input        | $0.50                        | $0.55                   |
-| GPT-5.6 Terra     | OpenAI    | Input               | $2.50                        | $2.75                   |
-|                   | OpenAI    | Output              | $15.00                       | $16.50                  |
-|                   | OpenAI    | Input - Cache Write | $3.125                       | $3.4375                 |
-|                   | OpenAI    | Cached Input        | $0.25                        | $0.275                  |
-| GPT-5.6 Luna      | OpenAI    | Input               | $1.00                        | $1.10                   |
-|                   | OpenAI    | Output              | $6.00                        | $6.60                   |
-|                   | OpenAI    | Input - Cache Write | $1.25                        | $1.375                  |
-|                   | OpenAI    | Cached Input        | $0.10                        | $0.11                   |
+| GPT-5.6 Sol       | OpenAI    | Input               | $4.00                        | $4.40                   |
+|                   | OpenAI    | Output              | $20.00                       | $22.00                  |
+|                   | OpenAI    | Input - Cache Write | $5.00                        | $5.50                   |
+|                   | OpenAI    | Cached Input        | $0.40                        | $0.44                   |
+| GPT-5.6 Terra     | OpenAI    | Input               | $2.00                        | $2.20                   |
+|                   | OpenAI    | Output              | $12.00                       | $13.20                  |
+|                   | OpenAI    | Input - Cache Write | $2.50                        | $2.75                   |
+|                   | OpenAI    | Cached Input        | $0.20                        | $0.22                   |
+| GPT-5.6 Luna      | OpenAI    | Input               | $0.20                        | $0.22                   |
+|                   | OpenAI    | Output              | $1.20                        | $1.32                   |
+|                   | OpenAI    | Input - Cache Write | $0.25                        | $0.275                  |
+|                   | OpenAI    | Cached Input        | $0.02                        | $0.022                  |
 | GPT-5.5 pro       | OpenAI    | Input               | $30.00                       | $33.00                  |
 |                   | OpenAI    | Output              | $180.00                      | $198.00                 |
 | GPT-5.5           | OpenAI    | Input               | $5.00                        | $5.50                   |
@@ -72,7 +72,7 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                   | OpenAI    | Output              | $180.00                      | $198.00                 |
 | GPT-5.4           | OpenAI    | Input               | $2.50                        | $2.75                   |
 |                   | OpenAI    | Output              | $15.00                       | $16.50                  |
-|                   | OpenAI    | Cached Input        | $0.025                       | $0.0275                 |
+|                   | OpenAI    | Cached Input        | $0.25                        | $0.275                  |
 | GPT-5.3-Codex     | OpenAI    | Input               | $1.75                        | $1.925                  |
 |                   | OpenAI    | Output              | $14.00                       | $15.40                  |
 |                   | OpenAI    | Cached Input        | $0.175                       | $0.1925                 |
@@ -97,7 +97,7 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 
 > **Warn:** Anthropic retains prompts and outputs sent to Claude Fable 5 for at least 30 days for trust and safety purposes. The no-training commitment still applies, and Zed does not retain your prompts or outputs. See [Provider Safety Retention for Designated Models](../ai/privacy-and-security.md#provider-safety-retention).
 
-The Claude Sonnet 5 prices shown above use Anthropic's introductory pricing through August 31, 2026.
+The GPT-5.6 Sol prices shown above use OpenAI's promotional pricing, available at least through November 21, 2026.
 
 ## Recent Model Retirements {#recent-model-retirements}
 
