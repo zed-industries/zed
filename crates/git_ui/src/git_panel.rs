@@ -26,8 +26,8 @@ use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset, SizingBehavior};
 use editor::{EditorStyle, RewrapOptions};
 use file_icons::FileIcons;
-use futures::StreamExt as _;
 use futures::channel::oneshot::Canceled;
+use futures::{FutureExt as _, StreamExt as _, future::Shared};
 use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
@@ -491,13 +491,23 @@ fn git_panel_view_options_menu(
     })
 }
 
-// We only allow a single remote operation at a time to avoid concurrent
-// credential prompts and competing ref/working-tree updates.
+// Remote workflows are queued to avoid concurrent credential prompts and
+// competing ref/working-tree updates.
 #[derive(Clone, Copy)]
 pub(crate) enum RemoteOperationKind {
     Fetch,
     Pull,
     Push,
+}
+
+impl RemoteOperationKind {
+    fn action_name(self) -> &'static str {
+        match self {
+            Self::Fetch => "fetch",
+            Self::Pull => "pull",
+            Self::Push => "push",
+        }
+    }
 }
 
 pub fn register(workspace: &mut Workspace) {
@@ -1125,6 +1135,7 @@ pub struct GitPanel {
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
     pending_remote_operation: Option<RemoteOperationKind>,
+    remote_operation_task: Option<Shared<Task<()>>>,
     amend_pending: bool,
     original_commit_message: Option<String>,
     pending_commit_message_restores: BTreeMap<String, SerializedCommitMessage>,
@@ -1427,6 +1438,7 @@ impl GitPanel {
                 diff_stat_total: DiffStat::default(),
                 pending_commit: None,
                 pending_remote_operation: None,
+                remote_operation_task: None,
                 amend_pending,
                 original_commit_message,
                 pending_commit_message_restores,
@@ -4209,14 +4221,13 @@ impl GitPanel {
 
     fn get_fetch_options(
         &self,
+        repo: Entity<Repository>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<FetchOptions>> {
-        let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |_, cx| {
-            let repo = repo?;
             let remotes = repo
                 .update(cx, |repo, _| repo.get_remotes(None, false))
                 .await
@@ -4256,25 +4267,21 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        if !self.start_remote_operation(RemoteOperationKind::Fetch, cx) {
-            return;
-        }
 
         telemetry::event!("Git Fetched");
         let askpass = self.askpass_delegate("git fetch", window, cx);
-        let this = cx.weak_entity();
-
-        let fetch_options = if is_fetch_all {
-            Task::ready(Some(FetchOptions::All))
-        } else {
-            self.get_fetch_options(window, cx)
-        };
-
-        window
-            .spawn(cx, async move |cx| {
-                let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
-                    this.clear_remote_operation(cx);
-                });
+        self.spawn_remote_operation(
+            RemoteOperationKind::Fetch,
+            window,
+            cx,
+            async move |this, cx| {
+                let fetch_options = if is_fetch_all {
+                    Task::ready(Some(FetchOptions::All))
+                } else {
+                    this.update_in(cx, |this, window, cx| {
+                        this.get_fetch_options(repo.clone(), window, cx)
+                    })?
+                };
 
                 let Some(fetch_options) = fetch_options.await else {
                     return Ok(());
@@ -4301,8 +4308,8 @@ impl GitPanel {
                 })
                 .ok();
                 anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            },
+        );
     }
 
     pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -4409,58 +4416,71 @@ impl GitPanel {
         let Some(branch) = repo.read(cx).branch.clone() else {
             return;
         };
-        if !self.start_remote_operation(RemoteOperationKind::Pull, cx) {
-            return;
-        }
 
         telemetry::event!("Git Pulled");
         let remote = self.get_remote(false, false, window, cx);
-        cx.spawn_in(window, async move |this, cx| {
-            let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
-                this.clear_remote_operation(cx);
-            });
-
-            let remote = match remote.await {
-                Ok(Some(remote)) => remote,
-                Ok(None) => {
+        self.spawn_remote_operation(
+            RemoteOperationKind::Pull,
+            window,
+            cx,
+            async move |this, cx| {
+                if !repo.update(cx, |repo, _| {
+                    repo.branch
+                        .as_ref()
+                        .is_some_and(|current| current.name() == branch.name())
+                }) {
                     return Ok(());
                 }
-                Err(e) => {
-                    log::error!("Failed to get current remote: {}", e);
-                    this.update(cx, |this, cx| this.show_error_toast("pull", e, cx))
-                        .ok();
+
+                let remote = match remote.await {
+                    Ok(Some(remote)) => remote,
+                    Ok(None) => {
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log::error!("Failed to get current remote: {}", e);
+                        this.update(cx, |this, cx| this.show_error_toast("pull", e, cx))
+                            .ok();
+                        return Ok(());
+                    }
+                };
+
+                let askpass = this.update_in(cx, |this, window, cx| {
+                    this.askpass_delegate(format!("git pull {}", remote.name), window, cx)
+                })?;
+
+                let branch_name = branch
+                    .upstream
+                    .is_none()
+                    .then(|| branch.name().to_owned().into());
+
+                if !repo.update(cx, |repo, _| {
+                    repo.branch
+                        .as_ref()
+                        .is_some_and(|current| current.name() == branch.name())
+                }) {
                     return Ok(());
                 }
-            };
 
-            let askpass = this.update_in(cx, |this, window, cx| {
-                this.askpass_delegate(format!("git pull {}", remote.name), window, cx)
-            })?;
+                let pull = repo.update(cx, |repo, cx| {
+                    repo.pull(branch_name, remote.name.clone(), rebase, askpass, cx)
+                });
 
-            let branch_name = branch
-                .upstream
-                .is_none()
-                .then(|| branch.name().to_owned().into());
+                let remote_message = pull.await?;
 
-            let pull = repo.update(cx, |repo, cx| {
-                repo.pull(branch_name, remote.name.clone(), rebase, askpass, cx)
-            });
+                let action = RemoteAction::Pull(remote);
+                this.update(cx, |this, cx| match remote_message {
+                    Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
+                    Err(e) => {
+                        log::error!("Error while pulling {:?}", e);
+                        this.show_error_toast(action.name(), e, cx)
+                    }
+                })
+                .ok();
 
-            let remote_message = pull.await?;
-
-            let action = RemoteAction::Pull(remote);
-            this.update(cx, |this, cx| match remote_message {
-                Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
-                Err(e) => {
-                    log::error!("Error while pulling {:?}", e);
-                    this.show_error_toast(action.name(), e, cx)
-                }
-            })
-            .ok();
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                anyhow::Ok(())
+            },
+        );
     }
 
     pub(crate) fn push(
@@ -4479,9 +4499,6 @@ impl GitPanel {
         let Some(branch) = repo.read(cx).branch.clone() else {
             return;
         };
-        if !self.start_remote_operation(RemoteOperationKind::Push, cx) {
-            return;
-        }
 
         telemetry::event!("Git Pushed");
 
@@ -4499,10 +4516,14 @@ impl GitPanel {
         };
         let remote = self.get_remote(select_remote, true, window, cx);
 
-        cx.spawn_in(window, async move |this, cx| {
-            let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
-                this.clear_remote_operation(cx);
-            });
+        self.spawn_remote_operation(RemoteOperationKind::Push, window, cx, async move |this, cx| {
+            if !repo.update(cx, |repo, _| {
+                repo.branch
+                    .as_ref()
+                    .is_some_and(|current| current.name() == branch.name())
+            }) {
+                return Ok(());
+            }
 
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
@@ -4528,6 +4549,14 @@ impl GitPanel {
             let askpass_delegate = this.update_in(cx, |this, window, cx| {
                 this.askpass_delegate(format!("git push {}", remote.name), window, cx)
             })?;
+
+            if !repo.update(cx, |repo, _| {
+                repo.branch
+                    .as_ref()
+                    .is_some_and(|current| current.name() == branch.name())
+            }) {
+                return Ok(());
+            }
 
             let push = repo.update(cx, |repo, cx| {
                 repo.push(
@@ -4559,8 +4588,7 @@ impl GitPanel {
             })?;
 
             anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        });
     }
 
     /// Updates git's configuration, adding the directory of the current
@@ -4690,18 +4718,45 @@ impl GitPanel {
         !self.project.read(cx).is_via_collab()
     }
 
-    fn start_remote_operation(
+    fn spawn_remote_operation(
         &mut self,
         kind: RemoteOperationKind,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
-        if self.pending_remote_operation.is_some() {
-            return false;
+        operation: impl AsyncFnOnce(WeakEntity<Self>, &mut AsyncWindowContext) -> anyhow::Result<()>
+        + 'static,
+    ) {
+        let previous_operation = self.remote_operation_task.take();
+        if self.pending_remote_operation.is_none() {
+            self.pending_remote_operation = Some(kind);
+            cx.notify();
         }
-
-        self.pending_remote_operation = Some(kind);
-        cx.notify();
-        true
+        self.remote_operation_task = Some(
+            cx.spawn_in(window, async move |this, cx| {
+                if let Some(previous_operation) = previous_operation {
+                    previous_operation.await;
+                }
+                if this
+                    .update(cx, |this, cx| {
+                        this.pending_remote_operation = Some(kind);
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
+                    this.clear_remote_operation(cx);
+                });
+                if let Err(error) = operation(this.clone(), cx).await {
+                    this.update(cx, |this, cx| {
+                        this.show_error_toast(kind.action_name(), error, cx);
+                    })
+                    .log_err();
+                }
+            })
+            .shared(),
+        );
     }
 
     fn clear_remote_operation(&mut self, cx: &mut Context<Self>) {
@@ -12638,24 +12693,57 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
         let panel = workspace.update_in(cx, GitPanel::new);
 
-        panel.update(cx, |panel, cx| {
-            // The first remote operation starts and records its kind, which the
-            // button uses to render an "in progress" tooltip.
-            assert!(panel.start_remote_operation(RemoteOperationKind::Fetch, cx));
-            assert!(matches!(
-                panel.pending_remote_operation,
-                Some(RemoteOperationKind::Fetch)
-            ));
-
-            // A second remote operation is refused while one is pending, even a
-            // different kind: we serialize all remote ops.
-            assert!(!panel.start_remote_operation(RemoteOperationKind::Push, cx));
-
-            // Clearing the pending operation re-opens the gate.
-            panel.clear_remote_operation(cx);
-            assert!(panel.pending_remote_operation.is_none());
-            assert!(panel.start_remote_operation(RemoteOperationKind::Pull, cx));
+        let operations = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let (finish_fetch, fetch_finished) = futures::channel::oneshot::channel::<()>();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.spawn_remote_operation(RemoteOperationKind::Fetch, window, cx, {
+                let operations = operations.clone();
+                async move |_, _| {
+                    operations.borrow_mut().push("fetch started");
+                    fetch_finished.await?;
+                    operations.borrow_mut().push("fetch finished");
+                    Ok(())
+                }
+            });
+            panel.spawn_remote_operation(RemoteOperationKind::Pull, window, cx, {
+                let operations = operations.clone();
+                async move |_, _| {
+                    operations.borrow_mut().push("pull");
+                    anyhow::bail!("local test remote rejected pull")
+                }
+            });
+            panel.spawn_remote_operation(RemoteOperationKind::Push, window, cx, {
+                let operations = operations.clone();
+                async move |_, _| {
+                    operations.borrow_mut().push("push");
+                    Ok(())
+                }
+            });
         });
+
+        cx.run_until_parked();
+        assert_eq!(*operations.borrow(), ["fetch started"]);
+        assert!(matches!(
+            panel.read_with(cx, |panel, _| panel.pending_remote_operation),
+            Some(RemoteOperationKind::Fetch)
+        ));
+
+        finish_fetch
+            .send(())
+            .expect("fetch should still be waiting");
+        panel
+            .read_with(cx, |panel, _| panel.remote_operation_task.clone())
+            .expect("queued operations")
+            .await;
+        assert_eq!(
+            *operations.borrow(),
+            ["fetch started", "fetch finished", "pull", "push"]
+        );
+        assert!(
+            panel
+                .read_with(cx, |panel, _| panel.pending_remote_operation)
+                .is_none()
+        );
     }
 
     #[gpui::test]
