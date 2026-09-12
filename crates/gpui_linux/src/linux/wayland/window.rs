@@ -1109,7 +1109,11 @@ impl WaylandWindowStatePtr {
                     }
                     drop(state);
                     if visibility_changed {
-                        self.report_visibility(visibility_from_suspended(configure.suspended));
+                        self.report_visibility(if configure.suspended {
+                            WindowVisibility::Hidden
+                        } else {
+                            WindowVisibility::Visible
+                        });
                     }
                     if throttled {
                         return;
@@ -1578,9 +1582,9 @@ impl WaylandWindowStatePtr {
 
     fn report_visibility(&self, visibility: WindowVisibility) {
         let callback = self.callbacks.borrow_mut().visibility_change.take();
-        if let Some(mut fun) = callback {
-            fun(visibility);
-            self.callbacks.borrow_mut().visibility_change = Some(fun);
+        if let Some(mut callback) = callback {
+            callback(visibility);
+            self.callbacks.borrow_mut().visibility_change = Some(callback);
         }
     }
 
@@ -1604,14 +1608,6 @@ impl WaylandWindowStatePtr {
 
     pub fn primary_output_scale(&self) -> i32 {
         self.state.borrow_mut().primary_output_scale()
-    }
-}
-
-fn visibility_from_suspended(suspended: bool) -> WindowVisibility {
-    if suspended {
-        WindowVisibility::Hidden
-    } else {
-        WindowVisibility::Visible
     }
 }
 
@@ -1818,7 +1814,11 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn visibility(&self) -> WindowVisibility {
-        visibility_from_suspended(self.borrow().suspended)
+        if self.borrow().suspended {
+            WindowVisibility::Hidden
+        } else {
+            WindowVisibility::Visible
+        }
     }
 
     fn is_hovered(&self) -> bool {
