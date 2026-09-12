@@ -607,7 +607,8 @@ impl Editor {
     /// like we are not previewing and the LSP autocomplete menu is visible
     /// or we are in `when_holding_modifier` mode.
     pub fn edit_prediction_visible_in_cursor_popover(&self, has_completion: bool) -> bool {
-        if self.edit_prediction_preview_is_active()
+        if self.edit_predictions_hidden_for_vim_mode
+            || self.edit_prediction_preview_is_active()
             || !self.show_edit_predictions_in_menu()
             || !self.edit_predictions_enabled()
         {
