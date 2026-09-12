@@ -77,7 +77,7 @@ x11rb::atom_manager! {
         TEXT,
         TEXT_MIME_UNKNOWN: b"text/plain",
 
-        // HTML: b"text/html",
+        HTML: b"text/html",
         // URI_LIST: b"text/uri-list",
 
         PNG__MIME: ImageFormat::mime_type(ImageFormat::Png ).as_bytes(),
@@ -988,6 +988,21 @@ impl Clipboard {
             format: self.inner.atoms.UTF8_STRING,
         }];
         self.inner.write(data, selection, wait)
+    }
+
+    pub(crate) fn set_item(&self, item: &ClipboardItem) -> Result<()> {
+        let mut data = vec![ClipboardData {
+            bytes: item.text().unwrap_or_default().into_bytes(),
+            format: self.inner.atoms.UTF8_STRING,
+        }];
+        if let Some(html) = item.html() {
+            data.push(ClipboardData {
+                bytes: html.as_bytes().to_vec(),
+                format: self.inner.atoms.HTML,
+            });
+        }
+        self.inner
+            .write(data, ClipboardKind::Clipboard, WaitConfig::None)
     }
 
     fn image_format_atom(&self, format: ImageFormat) -> Atom {

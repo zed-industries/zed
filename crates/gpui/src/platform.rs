@@ -2536,7 +2536,27 @@ impl ClipboardItem {
             entries: vec![ClipboardEntry::String(ClipboardString {
                 text,
                 metadata: Some(metadata),
+                html: None,
             })],
+        }
+    }
+
+    /// Create a clipboard item with HTML and a plain-text fallback.
+    pub fn new_string_with_html(text: String, html: String) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::String(ClipboardString {
+                text,
+                metadata: None,
+                html: Some(html),
+            })],
+        }
+    }
+
+    /// Returns the HTML representation of a single string entry, if present.
+    pub fn html(&self) -> Option<&str> {
+        match self.entries.as_slice() {
+            [ClipboardEntry::String(string)] => string.html.as_deref(),
+            _ => None,
         }
     }
 
@@ -2562,7 +2582,7 @@ impl ClipboardItem {
         let mut answer = String::new();
 
         for entry in self.entries.iter() {
-            if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
+            if let ClipboardEntry::String(ClipboardString { text, .. }) = entry {
                 answer.push_str(text);
             }
         }
@@ -2883,6 +2903,8 @@ pub struct ClipboardString {
     pub text: String,
     /// Optional metadata associated with this clipboard string.
     pub metadata: Option<String>,
+    /// Optional HTML representation of the text for rich-text destinations.
+    pub html: Option<String>,
 }
 
 impl ClipboardString {
@@ -2891,6 +2913,7 @@ impl ClipboardString {
         Self {
             text,
             metadata: None,
+            html: None,
         }
     }
 
@@ -2932,10 +2955,7 @@ impl ClipboardString {
 
 impl From<String> for ClipboardString {
     fn from(value: String) -> Self {
-        Self {
-            text: value,
-            metadata: None,
-        }
+        Self::new(value)
     }
 }
 

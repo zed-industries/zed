@@ -567,7 +567,11 @@ actions!(
         /// Copies the selected text to the clipboard.
         Copy,
         /// Copies the selected text as markdown to the clipboard.
-        CopyAsMarkdown
+        CopyAsMarkdown,
+        /// Copies the selected rendered content as HTML with a plain-text fallback.
+        CopyAsHtml,
+        /// Selects all rendered Markdown content.
+        SelectAll
     ]
 );
 
@@ -1126,6 +1130,40 @@ impl Markdown {
 
     pub fn active_search_highlight(&self) -> Option<usize> {
         self.active_search_highlight
+    }
+
+    pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.context_menu_selected_markdown = None;
+        self.context_menu_selected_text = None;
+        self.selection = Selection {
+            start: 0,
+            end: self.source.len(),
+            ..Default::default()
+        };
+        cx.notify();
+    }
+
+    pub fn clipboard_item_as_html(text: String, markdown: &str) -> ClipboardItem {
+        let mut html = String::new();
+        pulldown_cmark::html::push_html(
+            &mut html,
+            pulldown_cmark::Parser::new_ext(markdown, parser::PARSE_OPTIONS),
+        );
+        ClipboardItem::new_string_with_html(text, html)
+    }
+
+    fn copy_as_html(&mut self, text: &RenderedText, cx: &mut Context<Self>) {
+        if !self.has_selection() {
+            return;
+        }
+        let range = self.selection.start..self.selection.end;
+        let markdown = self
+            .parsed_markdown
+            .rebalanced_markdown_for_selection(range.clone());
+        cx.write_to_clipboard(Self::clipboard_item_as_html(
+            text.text_for_range(range),
+            &markdown,
+        ));
     }
 
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
@@ -3345,6 +3383,24 @@ impl Element for MarkdownElement {
             move |_, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
                     entity.update(cx, move |this, cx| this.copy_as_markdown(window, cx))
+                }
+            }
+        });
+
+        window.on_action(std::any::TypeId::of::<crate::CopyAsHtml>(), {
+            let entity = self.markdown.clone();
+            let text = rendered_markdown.text.clone();
+            move |_, phase, _, cx| {
+                if phase == DispatchPhase::Bubble {
+                    entity.update(cx, |this, cx| this.copy_as_html(&text, cx));
+                }
+            }
+        });
+        window.on_action(std::any::TypeId::of::<crate::SelectAll>(), {
+            let entity = self.markdown.clone();
+            move |_, phase, _, cx| {
+                if phase == DispatchPhase::Bubble {
+                    entity.update(cx, |this, cx| this.select_all(cx));
                 }
             }
         });
@@ -6358,6 +6414,107 @@ mod tests {
             selected_text,
             "Hello world\nThis is a test\nwith multiple lines"
         );
+    }
+
+    #[gpui::test]
+    fn test_select_all_and_copy_as_html(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let source = "# Olá\n\n**bold** and [link](https://example.com)\n\n- one\n- two\n\n```rust\n<&>\n```";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+        let rendered = render_markdown_entity_in_view(
+            markdown.clone(),
+            MarkdownStyle::default(),
+            None,
+            None,
+            cx,
+        );
+        markdown.update(cx, |markdown, cx| {
+            markdown.select_all(cx);
+            assert_eq!(markdown.selected_source(), Some(source));
+            assert!(!markdown.selection.pending);
+            markdown.copy_as_html(&rendered, cx);
+        });
+        let clipboard = cx
+            .read_from_clipboard()
+            .expect("clipboard should contain HTML");
+        assert_eq!(
+            clipboard.text(),
+            Some(rendered.text_for_range(0..source.len()))
+        );
+        let html = clipboard
+            .html()
+            .expect("HTML representation should be present");
+        assert!(html.contains("<h1>Olá</h1>"));
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("<a href=\"https://example.com\">link</a>"));
+        assert!(html.contains("<li>one</li>"));
+        assert!(html.contains("&lt;&amp;&gt;"));
+
+        markdown.update(cx, |markdown, cx| {
+            let start = source.find("bold").expect("bold is in source");
+            markdown.selection = Selection {
+                start,
+                end: start + 4,
+                ..Default::default()
+            };
+            markdown.copy_as_html(&rendered, cx);
+        });
+        let clipboard = cx
+            .read_from_clipboard()
+            .expect("selection should be copied");
+        assert_eq!(clipboard.text().as_deref(), Some("bold"));
+        assert_eq!(clipboard.html(), Some("<p><strong>bold</strong></p>\n"));
+    }
+
+    #[gpui::test]
+    fn test_select_all_and_copy_actions(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        cx.update(|cx| {
+            cx.bind_keys([
+                gpui::KeyBinding::new("ctrl-a", SelectAll, Some("Markdown")),
+                gpui::KeyBinding::new("ctrl-c", Copy, Some("Markdown")),
+            ]);
+        });
+        let source = "# Title\n\n**Hello**, 世界!";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            markdown.focus_handle(cx).focus(window, cx);
+            MarkdownTestView {
+                markdown: markdown.clone(),
+                style: MarkdownStyle::default(),
+                code_span_link: None,
+                rendered_text: Rc::default(),
+            }
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-a ctrl-c");
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("Title\nHello, 世界!")
+        );
+        cx.dispatch_action(CopyAsHtml);
+        assert!(
+            cx.read_from_clipboard()
+                .expect("HTML should be copied")
+                .html()
+                .is_some()
+        );
+        cx.dispatch_action(CopyAsMarkdown);
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some(source)
+        );
+
+        markdown.update(cx, |markdown, cx| markdown.reset("".into(), cx));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-a");
+        markdown.read_with(cx, |markdown, _| assert!(!markdown.has_selection()));
     }
 
     fn nbsp(n: usize) -> String {
