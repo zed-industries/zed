@@ -56,17 +56,6 @@
   "formatter": "auto",
   "remove_trailing_whitespace_on_save": true,
   "ensure_final_newline_on_save": true,
-  "file_scan_exclusions": [
-    "crates/agent/src/tools/evals/fixtures",
-    "**/.git",
-    "**/.svn",
-    "**/.hg",
-    "**/.jj",
-    "**/CVS",
-    "**/.DS_Store",
-    "**/Thumbs.db",
-    "**/.classpath",
-    "**/.settings",
-  ],
+  "file_scan_exclusions": ["...", "crates/agent/src/tools/evals/fixtures"],
   "read_only_files": ["**/.rustup/**", "**/.cargo/registry/**", "**/.cargo/git/**", "target/**/*.rs", "**/*.lock"],
 }
