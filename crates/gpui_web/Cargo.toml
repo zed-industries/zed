@@ -16,6 +16,11 @@ multithreaded = ["dep:wasm_thread", "scheduler/wasm-threads"]
 [lib]
 path = "src/gpui_web.rs"
 
+[dependencies]
+unicode-properties = "=0.1.3"
+unicode-script = "0.5.7"
+unicode-segmentation = "1.10"
+
 [target.'cfg(target_family = "wasm")'.dependencies]
 gpui.workspace = true
 scheduler.workspace = true
@@ -32,6 +37,7 @@ web-time.workspace = true
 console_error_panic_hook.workspace = true
 js-sys.workspace = true
 raw-window-handle.workspace = true
+smallvec.workspace = true
 # Forked because upstream is unmaintained and its worker bootstrap still calls
 # the wasm-bindgen init function with the positional arguments deprecated in 0.2.93.
 wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", version = "0.3", features = [
@@ -60,6 +66,7 @@ web-sys = { version = "0.3", features = [
     "HtmlTextAreaElement",
     "IdleDeadline",
     "IdleRequestOptions",
+    "ImageData",
     "InputEvent",
     "KeyboardEvent",
     "Location",
@@ -67,6 +74,8 @@ web-sys = { version = "0.3", features = [
     "MediaQueryListEvent",
     "MouseEvent",
     "Navigator",
+    "OffscreenCanvas",
+    "OffscreenCanvasRenderingContext2d",
     "PointerEvent",
     "ReadableStream",
     "ReadableStreamDefaultReader",
@@ -78,6 +87,7 @@ web-sys = { version = "0.3", features = [
     "ResizeObserverOptions",
     "Screen",
     "Storage",
+    "TextMetrics",
     "VisualViewport",
     "Headers",
     "Request",
@@ -88,6 +98,11 @@ web-sys = { version = "0.3", features = [
     "WheelEvent",
     "Window",
 ] }
+
+[dev-dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+smallvec.workspace = true
 
 [package.metadata.cargo-shear]
 ignored = ["scheduler"]
