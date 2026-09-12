@@ -28,8 +28,8 @@ use crate::{
     AnyWindowHandle, App, AppCell, AppContext, AsyncApp, BackgroundExecutor, BorrowAppContext,
     Bounds, BoundsExt, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent,
     Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
-    PlatformTextSystem, Point, Render, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    PlatformTextSystem, Point, Render, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    TextSystem, Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
@@ -473,7 +473,11 @@ impl<V: 'static + Render> TestAppWindow<V> {
         let window_id = self.handle.window_id();
         let mut app = self.app.borrow_mut();
         if let Some(Some(window)) = app.windows.get_mut(window_id) {
-            if let Some(test_window) = window.platform_window.as_test() {
+            if let Some(test_window) = window
+                .platform_window
+                .as_test()
+                .and_then(|any| any.downcast_mut::<TestWindow>())
+            {
                 test_window.simulate_resize(size);
             }
         }
@@ -489,8 +493,13 @@ impl<V: 'static + Render> TestAppWindow<V> {
             app.windows
                 .get_mut(window_id)
                 .and_then(|window| window.as_mut())
-                .and_then(|window| window.platform_window.as_test())
-                .cloned()
+                .and_then(|window| {
+                    window
+                        .platform_window
+                        .as_test()
+                        .and_then(|any| any.downcast_mut::<TestWindow>())
+                })
+                .map(|test_window| test_window.clone())
         };
         // The resize callback needs to borrow the app again synchronously.
         if let Some(mut test_window) = test_window {

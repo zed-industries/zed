@@ -79,6 +79,7 @@ impl HasDisplayHandle for TestWindow {
     }
 }
 
+#[allow(dead_code)]
 impl TestWindow {
     pub(crate) fn new(
         handle: WindowId,
@@ -526,7 +527,7 @@ impl PlatformWindow for TestWindow {
         }
     }
 
-    fn as_test(&mut self) -> Option<&mut TestWindow> {
+    fn as_test(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
 

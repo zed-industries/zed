@@ -573,6 +573,7 @@ impl TestAppContext {
             .unwrap()
             .platform_window
             .as_test()
+            .and_then(|any| any.downcast_mut::<TestWindow>())
             .unwrap()
             .clone()
     }
@@ -985,6 +986,7 @@ impl VisualTestContext {
                 window
                     .platform_window
                     .as_test()
+                    .and_then(|any| any.downcast_mut::<TestWindow>())
                     .unwrap()
                     .0
                     .lock()

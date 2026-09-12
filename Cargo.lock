@@ -7702,6 +7702,7 @@ dependencies = [
 name = "gpui_platform_core"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
  "anyhow",
  "async-task",
  "bitflags 2.13.1",
@@ -7719,6 +7720,7 @@ dependencies = [
  "parking",
  "parking_lot",
  "rand 0.9.4",
+ "raw-window-handle",
  "scheduler",
  "schemars 1.0.4",
  "seahash",
@@ -7730,6 +7732,7 @@ dependencies = [
  "thiserror 2.0.17",
  "uuid",
  "waker-fn",
+ "windows 0.62.2",
 ]
 
 [[package]]
