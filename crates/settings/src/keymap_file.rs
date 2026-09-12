@@ -545,7 +545,7 @@ impl KeymapFile {
                 match action_input {
                     Some(action_input) => (
                         ActionSequence::build_sequence(action_input.clone(), cx),
-                        None,
+                        Some(action_input.to_string()),
                     ),
                     None => (Err(ActionSequence::expected_array_error()), None),
                 }
@@ -970,6 +970,93 @@ impl KeymapFile {
             }
         }
 
+        if let KeybindUpdateOperation::RemoveUnbind {
+            target,
+            target_keybind_source,
+            target_keybind_occurrence,
+            target_context_predicate,
+        } = &operation
+        {
+            let target_action_value = target
+                .action_value()
+                .context("Failed to generate target action JSON value")?;
+            // Match against the loaded predicate identity when the caller
+            // supplies it, falling back to parsing `target.context` for
+            // callers that only have the string. Either way the predicate is
+            // normalized so structurally different but semantically equal
+            // contexts (`Editor || (Terminal || Workspace)` vs its flattened
+            // display form) compare and superset-check identically.
+            let target_context = match target_context_predicate.as_ref() {
+                Some(predicate) => Some(predicate.normalized()),
+                None => match parse_context_predicate(target.context.unwrap_or("")) {
+                    Ok(context) => context.map(|predicate| predicate.normalized()),
+                    Err(()) => anyhow::bail!("Failed to parse target context to restore"),
+                },
+            };
+            // Default rows are not stored in the user file, so every user
+            // unbind is a candidate (search from 0). User rows are only
+            // suppressed by later entries, mirroring runtime precedence
+            // (keymap_editor.rs `binding_is_unbound_by_unbind`), so start
+            // after the user binding itself. Bail instead of falling back
+            // to 0 when a user binding is not found: falling back would
+            // delete earlier unbinds that cannot suppress it.
+            let start_index = if *target_keybind_source == KeybindSource::User {
+                let Some(index) = find_target_binding_section_index(
+                    &keymap,
+                    target,
+                    target_context.as_ref(),
+                    &target_action_value,
+                    keyboard_mapper,
+                    deprecated_aliases,
+                    *target_keybind_occurrence,
+                ) else {
+                    anyhow::bail!("Failed to find user binding to restore");
+                };
+                index + 1
+            } else {
+                0
+            };
+            let mut removed_any = false;
+            loop {
+                let keymap = Self::parse(&keymap_contents).context("Failed to parse keymap")?;
+                let Some(binding_location) = find_unbind_entry(
+                    &keymap,
+                    target,
+                    target_context.as_ref(),
+                    &target_action_value,
+                    keyboard_mapper,
+                    deprecated_aliases,
+                    start_index,
+                ) else {
+                    break;
+                };
+                let is_only_binding = binding_location.is_only_entry_in_section(&keymap);
+                let key_path: &[&str] = if is_only_binding {
+                    &[]
+                } else {
+                    &[
+                        binding_location.kind.key_path(),
+                        binding_location.keystrokes_str,
+                    ]
+                };
+                let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                    &keymap_contents,
+                    key_path,
+                    None,
+                    None,
+                    binding_location.index,
+                    tab_size,
+                );
+                keymap_contents.replace_range(replace_range, &replace_value);
+                removed_any = true;
+            }
+            if !removed_any {
+                anyhow::bail!("Failed to find unbind entry to remove");
+            }
+
+            return Ok(keymap_contents);
+        }
+
         if let KeybindUpdateOperation::Replace { source, target, .. } = operation {
             let target_action_value = target
                 .action_value()
@@ -1151,6 +1238,9 @@ impl KeymapFile {
                     keyboard_mapper,
                     deprecated_aliases,
                     |action| &action.0,
+                    false,
+                    false,
+                    false,
                 ) {
                     return Some(binding_location);
                 }
@@ -1164,8 +1254,180 @@ impl KeymapFile {
                     keyboard_mapper,
                     deprecated_aliases,
                     |action| &action.0,
+                    false,
+                    false,
+                    false,
                 ) {
                     return Some(binding_location);
+                }
+            }
+            None
+        }
+
+        /// Finds the section index of a particular occurrence of the target
+        /// binding in file order. The occurrence distinguishes identical user
+        /// bindings separated by unbind entries.
+        fn find_target_binding_section_index<'a>(
+            keymap: &KeymapFile,
+            target: &KeybindUpdateTarget<'a>,
+            target_context: Option<&KeyBindingContextPredicate>,
+            target_action_value: &Value,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
+            deprecated_aliases: &HashMap<&'static str, &'static str>,
+            target_occurrence: usize,
+        ) -> Option<usize> {
+            // `target_context` is the normalized loaded identity; each section
+            // context is normalized the same way so redundant grouping never
+            // hides an otherwise exact match (see
+            // `KeyBindingContextPredicate::normalized`).
+            let mut matches_to_skip = target_occurrence;
+            for (index, section) in keymap.0.iter().enumerate() {
+                let Ok(section_context) = parse_context_predicate(&section.context) else {
+                    continue;
+                };
+                let section_context = section_context.map(|predicate| predicate.normalized());
+                if section_context.as_ref() != target_context {
+                    continue;
+                }
+                if let Some(binding_location) = find_nth_binding_in_entries(
+                    section.bindings.as_ref(),
+                    BindingKind::Binding,
+                    index,
+                    target,
+                    target_action_value,
+                    keyboard_mapper,
+                    deprecated_aliases,
+                    |action| &action.0,
+                    keymap.0[index].use_key_equivalents,
+                    false,
+                    true,
+                    &mut matches_to_skip,
+                ) {
+                    return Some(binding_location.index);
+                }
+            }
+            None
+        }
+
+        /// Finds the unbind entry matching the target binding, searching
+        /// both unbind and bindings sections at or after `start_index`. Used
+        /// when restoring a binding suppressed by an unbind entry.
+        fn find_unbind_entry<'a, 'b>(
+            keymap: &'b KeymapFile,
+            target: &KeybindUpdateTarget<'a>,
+            target_context: Option<&KeyBindingContextPredicate>,
+            target_action_value: &Value,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
+            deprecated_aliases: &HashMap<&'static str, &'static str>,
+            start_index: usize,
+        ) -> Option<BindingLocation<'b>> {
+            for (index, section) in keymap.sections().enumerate().skip(start_index) {
+                let section_context = match parse_context_predicate(&section.context) {
+                    Ok(context) => context.map(|predicate| predicate.normalized()),
+                    Err(()) => continue,
+                };
+                // Section contexts may be a superset of the target (a global
+                // unbind suppresses a contexted binding), matching runtime
+                // suppression. `None` on the section means global and matches
+                // everything; `None` on the target with a some section is a
+                // narrower suppressor and does not match.
+                let context_matches = match (&section_context, target_context) {
+                    (None, _) => true,
+                    (Some(_), None) => false,
+                    (Some(section_predicate), Some(target_predicate)) => {
+                        section_predicate.is_superset(target_predicate)
+                    }
+                };
+                if !context_matches {
+                    continue;
+                }
+
+                if let Some(binding_location) = find_binding_in_entries(
+                    section.unbind.as_ref(),
+                    BindingKind::Unbind,
+                    index,
+                    target,
+                    target_action_value,
+                    keyboard_mapper,
+                    deprecated_aliases,
+                    |action| &action.0,
+                    keymap.0[index].use_key_equivalents,
+                    true,
+                    true,
+                ) {
+                    return Some(binding_location);
+                }
+
+                if let Some(binding_location) = find_unbind_in_bindings(
+                    section.bindings.as_ref(),
+                    index,
+                    target,
+                    target_action_value,
+                    keyboard_mapper,
+                    deprecated_aliases,
+                    keymap.0[index].use_key_equivalents,
+                ) {
+                    return Some(binding_location);
+                }
+            }
+            None
+        }
+
+        fn unbind_target_from_binding_action<'a>(
+            action_value: &'a Value,
+            deprecated_aliases: &HashMap<&'static str, &'static str>,
+        ) -> Option<&'a Value> {
+            let Ok(Some((name, Some(unbind_target)))) =
+                KeymapFile::parse_action_value(action_value)
+            else {
+                return None;
+            };
+            let canonical_name = deprecated_aliases
+                .get(name.as_str())
+                .copied()
+                .unwrap_or(name.as_str());
+            if canonical_name == Unbind::name_for_type() {
+                Some(unbind_target)
+            } else {
+                None
+            }
+        }
+
+        fn find_unbind_in_bindings<'a, 'b>(
+            bindings: Option<&'b IndexMap<String, KeymapAction>>,
+            index: usize,
+            target: &KeybindUpdateTarget<'a>,
+            target_action_value: &Value,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
+            deprecated_aliases: &HashMap<&'static str, &'static str>,
+            use_key_equivalents: bool,
+        ) -> Option<BindingLocation<'b>> {
+            let entries = bindings?;
+            for (keystrokes_str, action) in entries {
+                let Some(unbind_target) =
+                    unbind_target_from_binding_action(&action.0, deprecated_aliases)
+                else {
+                    continue;
+                };
+                if !parse_and_match_keystrokes(
+                    keystrokes_str,
+                    target.keystrokes,
+                    use_key_equivalents,
+                    keyboard_mapper,
+                    true,
+                ) {
+                    continue;
+                }
+                if unbind_action_name_matches_target(
+                    unbind_target,
+                    target_action_value,
+                    deprecated_aliases,
+                ) {
+                    return Some(BindingLocation {
+                        index,
+                        kind: BindingKind::Binding,
+                        keystrokes_str,
+                    });
                 }
             }
             None
@@ -1180,36 +1442,112 @@ impl KeymapFile {
             keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
             deprecated_aliases: &HashMap<&'static str, &'static str>,
             action_value: impl Fn(&T) -> &Value,
+            use_key_equivalents: bool,
+            action_name_only: bool,
+            keystrokes_exact: bool,
+        ) -> Option<BindingLocation<'b>> {
+            let mut matches_to_skip = 0;
+            find_nth_binding_in_entries(
+                entries,
+                kind,
+                index,
+                target,
+                target_action_value,
+                keyboard_mapper,
+                deprecated_aliases,
+                action_value,
+                use_key_equivalents,
+                action_name_only,
+                keystrokes_exact,
+                &mut matches_to_skip,
+            )
+        }
+
+        fn keystrokes_exact_match(
+            keystrokes: &[KeybindingKeystroke],
+            target: &[KeybindingKeystroke],
+        ) -> bool {
+            keystrokes.len() == target.len()
+                && keystrokes.iter().zip(target).all(|(a, b)| {
+                    a.inner().key == b.inner().key && a.inner().modifiers == b.inner().modifiers
+                })
+        }
+
+        fn parse_and_match_keystrokes(
+            keystrokes_str: &str,
+            target_keystrokes: &[KeybindingKeystroke],
+            use_key_equivalents: bool,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
+            keystrokes_exact: bool,
+        ) -> bool {
+            let Ok(keystrokes) = keystrokes_str
+                .split_whitespace()
+                .map(|source| {
+                    let keystroke = Keystroke::parse(source)?;
+                    Ok(KeybindingKeystroke::new_with_mapper(
+                        keystroke,
+                        use_key_equivalents,
+                        keyboard_mapper,
+                    ))
+                })
+                .collect::<Result<Vec<_>, InvalidKeystrokeError>>()
+            else {
+                return false;
+            };
+            if keystrokes_exact {
+                keystrokes_exact_match(&keystrokes, target_keystrokes)
+            } else {
+                keystrokes.len() == target_keystrokes.len()
+                    && keystrokes
+                        .iter()
+                        .zip(target_keystrokes)
+                        .all(|(a, b)| a.inner().should_match(b))
+            }
+        }
+
+        fn find_nth_binding_in_entries<'a, 'b, T>(
+            entries: Option<&'b IndexMap<String, T>>,
+            kind: BindingKind,
+            index: usize,
+            target: &KeybindUpdateTarget<'a>,
+            target_action_value: &Value,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
+            deprecated_aliases: &HashMap<&'static str, &'static str>,
+            action_value: impl Fn(&T) -> &Value,
+            use_key_equivalents: bool,
+            action_name_only: bool,
+            keystrokes_exact: bool,
+            matches_to_skip: &mut usize,
         ) -> Option<BindingLocation<'b>> {
             let entries = entries?;
             for (keystrokes_str, action) in entries {
-                let Ok(keystrokes) = keystrokes_str
-                    .split_whitespace()
-                    .map(|source| {
-                        let keystroke = Keystroke::parse(source)?;
-                        Ok(KeybindingKeystroke::new_with_mapper(
-                            keystroke,
-                            false,
-                            keyboard_mapper,
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, InvalidKeystrokeError>>()
-                else {
-                    continue;
-                };
-                if keystrokes.len() != target.keystrokes.len()
-                    || !keystrokes
-                        .iter()
-                        .zip(target.keystrokes)
-                        .all(|(a, b)| a.inner().should_match(b))
-                {
+                if !parse_and_match_keystrokes(
+                    keystrokes_str,
+                    target.keystrokes,
+                    use_key_equivalents,
+                    keyboard_mapper,
+                    keystrokes_exact,
+                ) {
                     continue;
                 }
-                if !action_value_matches_target(
-                    action_value(action),
-                    target_action_value,
-                    deprecated_aliases,
-                ) {
+                let action_matches = if action_name_only {
+                    unbind_action_name_matches_target(
+                        action_value(action),
+                        target_action_value,
+                        deprecated_aliases,
+                    )
+                } else {
+                    action_value_matches_target(
+                        action_value(action),
+                        target_action_value,
+                        deprecated_aliases,
+                    )
+                };
+                if !action_matches {
+                    continue;
+                }
+                if *matches_to_skip > 0 {
+                    *matches_to_skip -= 1;
                     continue;
                 }
                 return Some(BindingLocation {
@@ -1253,6 +1591,60 @@ impl KeymapFile {
                 },
                 _ => false,
             }
+        }
+
+        /// Parses a binding-context string for lookup purposes.
+        fn parse_context_predicate(
+            context: &str,
+        ) -> Result<Option<KeyBindingContextPredicate>, ()> {
+            if context.is_empty() {
+                return Ok(None);
+            }
+            KeyBindingContextPredicate::parse(context)
+                .map(Some)
+                .map_err(|_| ())
+        }
+
+        /// Extracts the action name from a keymap action value.
+        fn action_value_name(action_value: &Value) -> Option<&str> {
+            match action_value {
+                Value::String(name) => Some(name.as_str()),
+                Value::Array(items) => match items.as_slice() {
+                    [Value::String(name), _] => Some(name.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+
+        fn unbind_action_name_matches_target(
+            action_value: &Value,
+            target_action_value: &Value,
+            deprecated_aliases: &HashMap<&'static str, &'static str>,
+        ) -> bool {
+            let Some(entry_name) = action_value_name(action_value) else {
+                return false;
+            };
+            let Some(target_name) = action_value_name(target_action_value) else {
+                return false;
+            };
+            let canonical_entry_name = deprecated_aliases
+                .get(entry_name)
+                .copied()
+                .unwrap_or(entry_name);
+            // Entries the loader rejects can never produce a runtime
+            // suppressor: `action::Sequence` requires an array payload
+            // (`build_sequence`), so a bare name or non-array payload is
+            // inert and must not match, even by name.
+            if canonical_entry_name == ActionSequence::name_for_type()
+                && !matches!(
+                    action_value,
+                    Value::Array(items) if matches!(items.as_slice(), [_, Value::Array(_)])
+                )
+            {
+                return false;
+            }
+            canonical_entry_name == target_name
         }
 
         #[derive(Copy, Clone)]
@@ -1304,6 +1696,18 @@ pub enum KeybindUpdateOperation<'a> {
         target: KeybindUpdateTarget<'a>,
         target_keybind_source: KeybindSource,
     },
+    RemoveUnbind {
+        target: KeybindUpdateTarget<'a>,
+        target_keybind_source: KeybindSource,
+        target_keybind_occurrence: usize,
+        /// The loaded context predicate of the binding being restored. Carried
+        /// as the parsed identity rather than reconstructed from `target.context`
+        /// so matching does not depend on display text: `Display` flattens
+        /// nested same-operator groups while `parse` is left-associative, so a
+        /// round-tripped string can no longer match the file's structured
+        /// context. `None` means the binding is global (no context).
+        target_context_predicate: Option<Rc<KeyBindingContextPredicate>>,
+    },
 }
 
 impl KeybindUpdateOperation<'_> {
@@ -1327,6 +1731,11 @@ impl KeybindUpdateOperation<'_> {
             KeybindUpdateOperation::Remove {
                 target,
                 target_keybind_source,
+            } => (None, Some(target), Some(*target_keybind_source)),
+            KeybindUpdateOperation::RemoveUnbind {
+                target,
+                target_keybind_source,
+                ..
             } => (None, Some(target), Some(*target_keybind_source)),
         };
 
@@ -1577,8 +1986,12 @@ impl Action for ActionSequence {
 #[cfg(test)]
 mod tests {
     use collections::HashMap;
-    use gpui::{Action, App, DummyKeyboardMapper, KeybindingKeystroke, Keystroke, Unbind};
+    use gpui::{
+        Action, App, DummyKeyboardMapper, KeyBindingContextPredicate, KeybindingKeystroke,
+        Keystroke, Unbind,
+    };
     use serde_json::Value;
+    use std::rc::Rc;
     use unindent::Unindent;
 
     use crate::{
@@ -1687,6 +2100,35 @@ mod tests {
                 .as_ref()
                 .map(ToString::to_string),
             Some("{}".to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn keymap_loads_sequence_action_with_input(cx: &mut App) {
+        let key_bindings = match KeymapFile::load(
+            indoc::indoc! {r#"
+                [
+                    {
+                        "bindings": {
+                            "alt-cmd-shift-c": ["action::Sequence", ["test_keymap_file::StringAction"]]
+                        }
+                    }
+                ]
+            "#},
+            cx,
+        ) {
+            crate::keymap_file::KeymapFileLoadResult::Success { key_bindings } => key_bindings,
+            other => panic!("expected Success, got {other:?}"),
+        };
+
+        assert_eq!(key_bindings.len(), 1);
+        assert_eq!(key_bindings[0].action().name(), "action::Sequence");
+        assert_eq!(
+            key_bindings[0]
+                .action_input()
+                .as_ref()
+                .map(ToString::to_string),
+            Some(r#"["test_keymap_file::StringAction"]"#.to_string())
         );
     }
 
@@ -2797,6 +3239,1124 @@ mod tests {
               },
             ]
             "#,
+        );
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase",
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              },
+              {
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor && vim_mode"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // All matching unbind entries must be removed, including when some
+        // sections are dropped wholesale and others keep unrelated entries.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase",
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // A malformed section context loads nothing and is inert, so it must
+        // not be matched (or deleted) as though it were the context-less
+        // suppressor of a global binding.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor &&",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              },
+              {
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor &&",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Restoring a binding defined in keymap.json must only remove unbind
+        // entries positioned after that binding in file order, mirroring runtime
+        // precedence so that earlier suppressors for other bindings are not
+        // deleted wrongly.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("vim"),
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Restoring the broad binding in the same file must remove its own unbind
+        // without affecting the later narrow unbind.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // A section with whitespace-only context fails predicate parsing and is
+        // inert, so it must not be treated as a global context or deleted.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": " ",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              },
+              {
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": " ",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // A default binding re-declared in the user file after its unbind:
+        // restoring the default row must still find the earlier unbind
+        // instead of starting the search after the user copy.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "unbind": {
+                  "cmd-s": "workspace::Save"
+                }
+              },
+              {
+                "bindings": {
+                  "cmd-s": "workspace::Save"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("cmd-s"),
+                    action_name: "workspace::Save",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "cmd-s": "workspace::Save"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Sequence payloads are preserved at load time, so the restore target carries the full sequence array.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
+                }
+              },
+              {
+                "unbind": {
+                  "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("alt-cmd-shift-c"),
+                    action_name: "action::Sequence",
+                    action_arguments: Some(r#"["zed::OpenKeymap"]"#),
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // An unbind entry the loader rejects (boolean sequence payload) never
+        // produces a suppressor, so only the valid unbind section is removed
+        // and the inert declaration is left untouched.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "tab": ["action::Sequence", ["zed::OpenKeymap"]]
+                }
+              },
+              {
+                "unbind": {
+                  "tab": ["action::Sequence", false]
+                }
+              },
+              {
+                "unbind": {
+                  "tab": ["action::Sequence", ["zed::OpenKeymap"]]
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("tab"),
+                    action_name: "action::Sequence",
+                    action_arguments: Some(r#"["zed::OpenKeymap"]"#),
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "tab": ["action::Sequence", ["zed::OpenKeymap"]]
+                }
+              },
+              {
+                "unbind": {
+                  "tab": ["action::Sequence", false]
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 1,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": ["test::Action", {"binding": "first"}]
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "bindings": {
+                  "shift-a": ["test::Action", {"binding": "second"}]
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: Some(r#"{"binding": "second"}"#),
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": ["test::Action", {"binding": "first"}]
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "bindings": {
+                  "shift-a": ["test::Action", {"binding": "second"}]
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // A user binding that is not present in the file must bail instead
+        // of falling back to index 0 and deleting unrelated earlier unbinds.
+        let result = KeymapFile::update_keybinding(
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("vim"),
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            4,
+            &gpui::DummyKeyboardMapper,
+            &HashMap::default(),
+        );
+        assert!(result.is_err(), "expected bail for missing user binding");
+    }
+
+    #[test]
+    fn test_remove_unbind_declared_in_bindings() {
+        // Restoring a user binding suppressed by ["zed::Unbind", ...] in section.bindings
+        check_keymap_update(
+            r#"
+            [
+              {"bindings":{"tab":"zed::OpenKeymap"}},
+              {"bindings":{"tab":["zed::Unbind","zed::OpenKeymap"]}}
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("tab"),
+                    action_name: "zed::OpenKeymap",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {"bindings":{"tab":"zed::OpenKeymap"}}
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Restoring a user binding when the suppressor in bindings is alongside other bindings
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "tab": "zed::OpenKeymap"
+                }
+              },
+              {
+                "bindings": {
+                  "tab": ["zed::Unbind", "zed::OpenKeymap"],
+                  "enter": "editor::Newline"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("tab"),
+                    action_name: "zed::OpenKeymap",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "tab": "zed::OpenKeymap"
+                }
+              },
+              {
+                "bindings": {
+                  "enter": "editor::Newline"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Restoring a default binding suppressed by ["zed::Unbind", ...] in bindings
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "enter": "editor::Newline"
+                }
+              },
+              {
+                "bindings": {
+                  "tab": ["zed::Unbind", "zed::OpenKeymap"]
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("tab"),
+                    action_name: "zed::OpenKeymap",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "enter": "editor::Newline"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Multiple suppressors across unbind and bindings blocks for the same target
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "tab": "zed::OpenKeymap"
+                }
+              },
+              {
+                "unbind": {
+                  "tab": "zed::OpenKeymap"
+                },
+                "bindings": {
+                  "tab": ["zed::Unbind", "zed::OpenKeymap"]
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("tab"),
+                    action_name: "zed::OpenKeymap",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "tab": "zed::OpenKeymap"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_remove_unbind_parenthesized_context() {
+        // The editor round-trips contexts through display text, which
+        // flattens `Editor || (Terminal || Workspace)` to
+        // `Editor || Terminal || Workspace`. The lookup must compare the
+        // canonical display form so the flattened target still matches.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "context": "Editor || (Terminal || Workspace)",
+                "bindings": {
+                  "tab": "zed::OpenKeymap"
+                }
+              },
+              {
+                "context": "Editor || (Terminal || Workspace)",
+                "unbind": {
+                  "tab": "zed::OpenKeymap"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor || Terminal || Workspace"),
+                    keystrokes: &parse_keystrokes("tab"),
+                    action_name: "zed::OpenKeymap",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "context": "Editor || (Terminal || Workspace)",
+                "bindings": {
+                  "tab": "zed::OpenKeymap"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Genuinely different contexts must still not match.
+        let result = KeymapFile::update_keybinding(
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor || Terminal"),
+                    keystrokes: &parse_keystrokes("tab"),
+                    action_name: "zed::OpenKeymap",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: None,
+            },
+            r#"
+            [
+              {
+                "context": "Editor || (Terminal || Workspace)",
+                "bindings": {
+                  "tab": "zed::OpenKeymap"
+                }
+              },
+              {
+                "context": "Editor || (Terminal || Workspace)",
+                "unbind": {
+                  "tab": "zed::OpenKeymap"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            4,
+            &gpui::DummyKeyboardMapper,
+            &HashMap::default(),
+        );
+        assert!(result.is_err(), "expected bail for mismatched context");
+    }
+
+    #[test]
+    fn test_remove_unbind_matches_by_loaded_context_predicate() {
+        // The editor carries the loaded predicate identity, so the exact
+        // structure from the file is available even though the row's display
+        // string is flattened. Matching must use that identity and ignore the
+        // lossy `target.context` string.
+        let structured =
+            KeyBindingContextPredicate::parse("Editor || (Terminal || Workspace)").unwrap();
+        assert_eq!(
+            structured.to_string(),
+            "Editor || Terminal || Workspace",
+            "precondition: display text flattens the right-associated group"
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "context": "Editor || (Terminal || Workspace)",
+                "bindings": {
+                  "tab": "zed::OpenKeymap"
+                }
+              },
+              {
+                "context": "Editor || (Terminal || Workspace)",
+                "unbind": {
+                  "tab": "zed::OpenKeymap"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    // The flattened display string, as the editor stores it.
+                    context: Some("Editor || Terminal || Workspace"),
+                    keystrokes: &parse_keystrokes("tab"),
+                    action_name: "zed::OpenKeymap",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+                target_context_predicate: Some(Rc::new(structured)),
+            },
+            r#"
+            [
+              {
+                "context": "Editor || (Terminal || Workspace)",
+                "bindings": {
+                  "tab": "zed::OpenKeymap"
+                }
+              }
+            ]
+            "#
+            .unindent(),
         );
     }
 }

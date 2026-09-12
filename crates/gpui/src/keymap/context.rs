@@ -256,6 +256,66 @@ impl KeyBindingContextPredicate {
         }
     }
 
+    /// Returns a structurally-canonical copy of this predicate for equality
+    /// comparison. Chains of the same associative operator (`&&`, `||`) are
+    /// flattened and rebuilt left-associatively, so predicates that differ
+    /// only by redundant grouping compare equal: `A || (B || C)` and
+    /// `A || B || C` both canonicalize to the same tree.
+    pub fn normalized(&self) -> Self {
+        fn collect(
+            predicate: &KeyBindingContextPredicate,
+            is_and: bool,
+            operands: &mut Vec<KeyBindingContextPredicate>,
+        ) {
+            match predicate {
+                KeyBindingContextPredicate::And(left, right) if is_and => {
+                    collect(left, is_and, operands);
+                    collect(right, is_and, operands);
+                }
+                KeyBindingContextPredicate::Or(left, right) if !is_and => {
+                    collect(left, is_and, operands);
+                    collect(right, is_and, operands);
+                }
+                other => operands.push(other.normalized()),
+            }
+        }
+
+        fn rebuild(
+            operands: Vec<KeyBindingContextPredicate>,
+            is_and: bool,
+        ) -> KeyBindingContextPredicate {
+            operands
+                .into_iter()
+                .reduce(|left, right| {
+                    let (left, right) = (Box::new(left), Box::new(right));
+                    if is_and {
+                        KeyBindingContextPredicate::And(left, right)
+                    } else {
+                        KeyBindingContextPredicate::Or(left, right)
+                    }
+                })
+                .expect("collect always pushes at least the initial operator's operands")
+        }
+
+        match self {
+            Self::And(..) => {
+                let mut operands = Vec::new();
+                collect(self, true, &mut operands);
+                rebuild(operands, true)
+            }
+            Self::Or(..) => {
+                let mut operands = Vec::new();
+                collect(self, false, &mut operands);
+                rebuild(operands, false)
+            }
+            Self::Not(predicate) => Self::Not(Box::new(predicate.normalized())),
+            Self::Descendant(parent, child) => {
+                Self::Descendant(Box::new(parent.normalized()), Box::new(child.normalized()))
+            }
+            Self::Identifier(_) | Self::Equal(..) | Self::NotEqual(..) => self.clone(),
+        }
+    }
+
     /// Find the deepest depth at which the predicate matches.
     pub fn depth_of(&self, contexts: &[KeyContext]) -> Option<usize> {
         for depth in (0..=contexts.len()).rev() {
@@ -887,5 +947,56 @@ mod tests {
             let parsed = KeyBindingContextPredicate::parse(&actual).unwrap();
             assert_eq!(parsed, *predicate);
         }
+    }
+
+    #[test]
+    fn test_normalized() {
+        fn parse(source: &str) -> KeyBindingContextPredicate {
+            KeyBindingContextPredicate::parse(source).unwrap()
+        }
+
+        // Redundant same-operator grouping is canonicalized away, so the
+        // right-associated file form and the left-associated display form
+        // compare equal.
+        assert_eq!(
+            parse("Editor || (Terminal || Workspace)").normalized(),
+            parse("Editor || Terminal || Workspace").normalized(),
+        );
+        assert_eq!(
+            parse("a && (b && c)").normalized(),
+            parse("a && b && c").normalized(),
+        );
+
+        // Normalization is idempotent and agrees with a display round-trip.
+        let canonical = parse("a || (b || (c || d))").normalized();
+        assert_eq!(canonical.normalized(), canonical);
+        assert_eq!(parse(&canonical.to_string()).normalized(), canonical);
+
+        // Operand order is preserved: this is an exact match, not a
+        // commutative or superset comparison.
+        assert_ne!(parse("a || b").normalized(), parse("b || a").normalized());
+        assert_ne!(parse("a").normalized(), parse("a && b").normalized());
+
+        // Mixed operators keep their grouping.
+        assert_ne!(
+            parse("a && (b || c)").normalized(),
+            parse("(a && b) || c").normalized(),
+        );
+
+        // The non-associative descendant operator keeps its structure.
+        assert_ne!(
+            parse("a > (b > c)").normalized(),
+            parse("a > b > c").normalized(),
+        );
+
+        // Subtrees under other operators are normalized recursively.
+        assert_eq!(
+            parse("!(a || (b || c))").normalized(),
+            parse("!(a || b || c)").normalized(),
+        );
+        assert_eq!(
+            parse("root > (a || (b || c))").normalized(),
+            parse("root > (a || b || c)").normalized(),
+        );
     }
 }
