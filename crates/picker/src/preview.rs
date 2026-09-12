@@ -75,6 +75,17 @@ pub enum PreviewSource {
     /// matched symbol. The highlight is derived from the symbol once its buffer
     /// loads, so callers don't supply a [`MatchLocation`].
     Symbol(Symbol),
+    /// The buffer is identified by its absolute path and a position in it to
+    /// highlight and scroll to; the preview opens the buffer directly,
+    /// without a language server.
+    ///
+    /// Used by pickers whose matches know a file position but are not backed
+    /// by a language-server symbol (e.g. tree-sitter indexed symbols). The
+    /// highlight is derived from the position once the buffer loads.
+    PathAtPoint {
+        path: PathBuf,
+        position: language::Point,
+    },
     /// No buffer to show; display this message centered in the preview instead.
     ///
     /// Used by pickers that have a selection without a previewable buffer (like
@@ -133,6 +144,18 @@ impl Update {
     pub fn from_symbol(symbol: Symbol) -> Self {
         Self {
             source: PreviewSource::Symbol(symbol),
+            match_location: None,
+        }
+    }
+
+    /// Preview the buffer at `abs_path`, highlighting and scrolling to the
+    /// line containing `position`, without a language server.
+    ///
+    /// The buffer is opened and the highlight derived by the preview once the
+    /// buffer loads.
+    pub fn from_path_at_point(path: PathBuf, position: language::Point) -> Self {
+        Self {
+            source: PreviewSource::PathAtPoint { path, position },
             match_location: None,
         }
     }

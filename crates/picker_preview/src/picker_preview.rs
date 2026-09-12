@@ -123,6 +123,9 @@ impl EditorPreview {
             PreviewSource::Path(abs_path) => {
                 self.update_from_path(abs_path, highlight, window, cx);
             }
+            PreviewSource::PathAtPoint { path, position } => {
+                self.update_from_path_at_point(path, position, window, cx);
+            }
             PreviewSource::Buffer(buffer) => {
                 self.update_from_buffer(buffer, highlight, window, cx);
                 cx.notify();
@@ -137,15 +140,13 @@ impl EditorPreview {
         }
     }
 
-    fn update_from_path(
+    fn open_buffer_by_abs_path(
         &mut self,
-        abs_path: std::path::PathBuf,
-        highlight: Option<MatchLocation>,
-        window: &mut Window,
+        abs_path: &std::path::PathBuf,
         cx: &mut Context<Self>,
-    ) {
-        let open_task = self.project.update(cx, |project, cx| {
-            match project.project_path_for_absolute_path(&abs_path, cx) {
+    ) -> Task<anyhow::Result<Entity<Buffer>>> {
+        self.project.update(cx, |project, cx| {
+            match project.project_path_for_absolute_path(abs_path, cx) {
                 Some(project_path) => {
                     if let Some(buffer) = project.get_open_buffer(&project_path, cx) {
                         Task::ready(Ok(buffer))
@@ -155,7 +156,17 @@ impl EditorPreview {
                 }
                 None => project.open_local_buffer(&abs_path, cx),
             }
-        });
+        })
+    }
+
+    fn update_from_path(
+        &mut self,
+        abs_path: std::path::PathBuf,
+        highlight: Option<MatchLocation>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open_task = self.open_buffer_by_abs_path(&abs_path, cx);
 
         self.pending_update = cx.spawn_in(window, async move |this, cx| {
             let Some(buffer) = open_task.await.log_err() else {
@@ -163,6 +174,37 @@ impl EditorPreview {
             };
             this.update_in(cx, |this, window, cx| {
                 this.update_from_buffer(buffer, highlight, window, cx);
+                cx.notify();
+            })
+            .ok();
+        });
+    }
+
+    fn update_from_path_at_point(
+        &mut self,
+        abs_path: std::path::PathBuf,
+        position: Point,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open_task = self.open_buffer_by_abs_path(&abs_path, cx);
+
+        self.pending_update = cx.spawn_in(window, async move |this, cx| {
+            let Some(buffer) = open_task.await.log_err() else {
+                return;
+            };
+            this.update_in(cx, |this, window, cx| {
+                // Derive the highlight from the position once the buffer has
+                // loaded, like the language-server symbol path does.
+                let snapshot = buffer.read(cx).text_snapshot();
+                let point = snapshot.clip_point(position, Bias::Left);
+                let anchor_range = snapshot.anchor_before(point)..snapshot.anchor_after(point);
+                let offset = snapshot.point_to_offset(point);
+                let highlight = MatchLocation {
+                    anchor_range,
+                    range: offset..offset,
+                };
+                this.update_from_buffer(buffer, Some(highlight), window, cx);
                 cx.notify();
             })
             .ok();
