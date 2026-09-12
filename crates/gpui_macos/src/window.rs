@@ -1737,6 +1737,10 @@ impl PlatformWindow for MacWindow {
             let button = alert.addButtonWithTitle(&title);
             button.setTag(ix as NSInteger);
 
+            if answer.is_destructive() {
+                button.setHasDestructiveAction(true);
+            }
+
             if answer.is_cancel() {
                 if let Some(key) = core::char::from_u32(crate::events::ESCAPE_KEY as u32) {
                     let key = NSString::from_str(&key.to_string());
