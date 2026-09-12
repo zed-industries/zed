@@ -34,7 +34,7 @@ use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_shm_pool, wl_surface, wl_touch,
     },
 };
 use wayland_protocols::wp::pointer_gestures::zv1::client::{
@@ -101,7 +101,8 @@ use gpui::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
-    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, profiler, px, size,
+    Size, TouchEvent, TouchId, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point,
+    profiler, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -322,6 +323,16 @@ pub(crate) struct WaylandClientState {
     pinch_gesture: Option<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1>,
     pinch_scale: f32,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
+    wl_touch: Option<wl_touch::WlTouch>,
+    // Surface for each in-flight touch, keyed by touch id. Only `Down` carries
+    // the surface, so we remember it to route later Motion/Up events to the
+    // window under that finger.
+    touch_surfaces: HashMap<u64, ObjectId>,
+    // Last known position for each in-flight touch, keyed by touch id. The
+    // recognizer resolves a tap from the *release* event's position, and
+    // wl_touch `Up` carries no coordinates, so we replay the finger's last
+    // reported position on release.
+    touch_positions: HashMap<u64, Point<Pixels>>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
     primary_selection: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
@@ -907,6 +918,9 @@ impl WaylandClient {
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
+            wl_touch: None,
+            touch_surfaces: HashMap::default(),
+            touch_positions: HashMap::default(),
             pinch_gesture: None,
             pinch_scale: 1.0,
             cursor_shape_device: None,
@@ -1741,6 +1755,113 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
 
                 state.wl_pointer = Some(pointer);
             }
+            if capabilities.contains(wl_seat::Capability::Touch) {
+                let touch = seat.get_touch(qh, ());
+
+                if let Some(old_touch) = state.wl_touch.take() {
+                    old_touch.release();
+                }
+
+                state.wl_touch = Some(touch);
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _wl_touch: &wl_touch::WlTouch,
+        event: wl_touch::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        match event {
+            wl_touch::Event::Down {
+                serial,
+                surface,
+                id,
+                x,
+                y,
+                ..
+            } => {
+                state.serial_tracker.update(SerialKind::Touch, serial);
+                let touch_id = TouchId(id as u64);
+                // Only `Down` carries the touched surface; remember it so the
+                // follow-up Motion/Up events for this id can be routed to the
+                // window under that finger.
+                state.touch_surfaces.insert(touch_id.0, surface.id());
+
+                let position = point(px(x as f32), px(y as f32));
+                state.touch_positions.insert(touch_id.0, position);
+                if let Some(window) = get_window(&mut state, &surface.id()) {
+                    let input = PlatformInput::Touch(TouchEvent {
+                        id: touch_id,
+                        phase: TouchPhase::Started,
+                        position,
+                        predicted_position: None,
+                        force: None,
+                    });
+                    drop(state);
+                    window.handle_input(input);
+                }
+            }
+            wl_touch::Event::Motion { id, x, y, .. } => {
+                let touch_id = TouchId(id as u64);
+                let position = point(px(x as f32), px(y as f32));
+                state.touch_positions.insert(touch_id.0, position);
+
+                if let Some(surface_id) = state.touch_surfaces.get(&touch_id.0).cloned() {
+                    if let Some(window) = get_window(&mut state, &surface_id) {
+                        let input = PlatformInput::Touch(TouchEvent {
+                            id: touch_id,
+                            phase: TouchPhase::Moved,
+                            position,
+                            predicted_position: None,
+                            force: None,
+                        });
+                        drop(state);
+                        window.handle_input(input);
+                    }
+                }
+            }
+            wl_touch::Event::Up { id, .. } => {
+                let touch_id = TouchId(id as u64);
+
+                if let Some(surface_id) = state.touch_surfaces.remove(&touch_id.0) {
+                    // Replay the finger's last reported position: wl_touch `Up`
+                    // carries no coordinates, and the recognizer resolves the
+                    // tap from this release position.
+                    let position = state
+                        .touch_positions
+                        .remove(&touch_id.0)
+                        .unwrap_or_default();
+                    if let Some(window) = get_window(&mut state, &surface_id) {
+                        let input = PlatformInput::Touch(TouchEvent {
+                            id: touch_id,
+                            phase: TouchPhase::Ended,
+                            position,
+                            predicted_position: None,
+                            force: None,
+                        });
+                        drop(state);
+                        window.handle_input(input);
+                    }
+                }
+            }
+            wl_touch::Event::Cancel => {
+                // wl_touch v1 carries no per-touch id on Cancel, so we can't
+                // target a specific touch. Most compositors send an Up per
+                // touch before Cancel, and the recognizer recovers on the
+                // next Started, so this is intentionally left as a no-op.
+                state.touch_surfaces.clear();
+                state.touch_positions.clear();
+            }
+            _ => {}
         }
     }
 }
