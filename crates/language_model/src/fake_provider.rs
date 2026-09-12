@@ -253,6 +253,14 @@ impl FakeLanguageModel {
             .retain(|(req, _)| req != request);
     }
 
+    pub fn is_completion_stream_closed(&self, request: &LanguageModelRequest) -> bool {
+        self.current_completion_txs
+            .lock()
+            .iter()
+            .find(|(pending_request, _)| pending_request == request)
+            .is_none_or(|(_, sender)| sender.is_closed())
+    }
+
     pub fn send_last_completion_stream_text_chunk(&self, chunk: impl Into<String>) {
         self.send_completion_stream_text_chunk(self.pending_completions().last().unwrap(), chunk);
     }
