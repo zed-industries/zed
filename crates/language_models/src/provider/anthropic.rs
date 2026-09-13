@@ -9,7 +9,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyConfiguration, ApiKeyState,
-    AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
+    AuthenticateError, CompactionResult, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
@@ -19,6 +19,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
 
+use anthropic::completion::collect_compaction_result;
 pub use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
@@ -119,7 +120,8 @@ impl State {
                 api_key.as_ref(),
                 &extra_headers,
             )
-            .await?;
+            .await
+            .map_err(LanguageModelCompletionError::from)?;
 
             this.update(cx, |this, cx| {
                 this.fetched_models = models;
@@ -345,6 +347,13 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
     {
         extra_beta_headers.push(anthropic::FAST_MODE_BETA_HEADER.to_string());
     }
+    if anthropic::binds_thinking_blocks_to_prefix(&available.name)
+        && !extra_beta_headers
+            .iter()
+            .any(|header| header.trim() == anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER)
+    {
+        extra_beta_headers.push(anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string());
+    }
 
     anthropic::Model {
         display_name: available
@@ -380,6 +389,11 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::AsyncReadExt as _;
+    use http_client::{AsyncBody, FakeHttpClient};
+    use language_model::{LanguageModelRequestMessage, MessageContent};
+    use serde_json::json;
+    use std::sync::Mutex;
 
     fn parse_available_model(json: &str) -> AvailableModel {
         serde_json::from_str(json).expect("test fixture should parse")
@@ -443,6 +457,232 @@ mod tests {
         assert!(!model.supports_thinking);
         assert!(!model.supports_adaptive_thinking);
         assert!(model.supported_effort_levels.is_empty());
+    }
+
+    #[gpui::test]
+    fn direct_anthropic_supports_explicit_compaction_after_minimum_input(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let provider = direct_anthropic_test_provider(FakeHttpClient::with_404_response(), cx);
+        let model = direct_anthropic_test_model(&provider);
+
+        assert!(model.supports_explicit_compaction());
+        assert_eq!(
+            model.minimum_explicit_compaction_input_tokens(),
+            Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
+        );
+    }
+
+    #[gpui::test]
+    async fn direct_anthropic_explicit_compaction_uses_paused_completion(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let captured_request = Arc::new(Mutex::new(None));
+        let captured_request_for_handler = captured_request.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            let captured_request = captured_request_for_handler.clone();
+            async move {
+                if request.uri().path() == "/v1/models" {
+                    return Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(r#"{"data":[]}"#))?);
+                }
+
+                let beta_header = request
+                    .headers()
+                    .get("Anthropic-Beta")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let mut body = request.into_body();
+                let mut body_text = String::new();
+                body.read_to_string(&mut body_text).await?;
+                *captured_request.lock().unwrap() = Some((beta_header, body_text));
+
+                let response_lines = [
+                    json!({
+                        "type": "message_start",
+                        "message": {
+                            "id": "msg_compact",
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [],
+                            "model": "claude-opus-4-6",
+                            "stop_reason": null,
+                            "stop_sequence": null,
+                            "usage": {
+                                "input_tokens": 0,
+                                "output_tokens": 0
+                            }
+                        }
+                    }),
+                    json!({
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {
+                            "type": "compaction",
+                            "content": null,
+                            "encrypted_content": null
+                        }
+                    }),
+                    json!({
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {
+                            "type": "compaction_delta",
+                            "content": "Summary of the conversation.",
+                            "encrypted_content": "opaque-state"
+                        }
+                    }),
+                    json!({
+                        "type": "content_block_stop",
+                        "index": 0
+                    }),
+                    json!({
+                        "type": "message_delta",
+                        "delta": {
+                            "stop_reason": "compaction",
+                            "stop_sequence": null
+                        },
+                        "usage": {
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "iterations": [{
+                                "type": "compaction",
+                                "input_tokens": 60_000,
+                                "output_tokens": 1_000
+                            }]
+                        }
+                    }),
+                    json!({"type": "message_stop"}),
+                ]
+                .into_iter()
+                .map(|line| format!("data: {line}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(format!("{response_lines}\n")))?)
+            }
+        });
+        let provider = direct_anthropic_test_provider(http_client, cx);
+        let store_key = cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx));
+        store_key.await.unwrap();
+        let model = direct_anthropic_test_model(&provider);
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: language_model::Role::User,
+                content: vec![MessageContent::Text("Retain this context.".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let result = model.compact(request, &cx.to_async()).await.unwrap();
+
+        assert_eq!(
+            result.usage,
+            language_model::TokenUsage {
+                input_tokens: 60_000,
+                output_tokens: 1_000,
+                ..Default::default()
+            }
+        );
+        let language_model::CompactedContext::Summary {
+            content,
+            provider_state,
+        } = result.context
+        else {
+            panic!("expected summary compaction");
+        };
+        assert_eq!(content.as_ref(), "Summary of the conversation.");
+        assert_eq!(
+            anthropic::completion::provider_compaction_encrypted_content(
+                &provider_state.expect("expected opaque provider state"),
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap()
+            .as_deref(),
+            Some("opaque-state")
+        );
+
+        let (beta_header, body) = captured_request.lock().unwrap().take().unwrap();
+        assert!(
+            beta_header
+                .as_deref()
+                .is_some_and(|header| header.contains(anthropic::COMPACTION_BETA_HEADER))
+        );
+        let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
+        assert_eq!(
+            body["context_management"],
+            json!({
+                "edits": [{
+                    "type": "compact_20260112",
+                    "trigger": {
+                        "type": "input_tokens",
+                        "value": anthropic::MIN_COMPACTION_TRIGGER_TOKENS
+                    },
+                    "pause_after_compaction": true
+                }]
+            })
+        );
+        assert!(body["tools"].is_null());
+    }
+
+    fn direct_anthropic_test_provider(
+        http_client: Arc<dyn HttpClient>,
+        cx: &mut gpui::TestAppContext,
+    ) -> AnthropicLanguageModelProvider {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            AnthropicLanguageModelProvider::new(http_client, Arc::new(TestCredentialsProvider), cx)
+        })
+    }
+
+    fn direct_anthropic_test_model(
+        provider: &AnthropicLanguageModelProvider,
+    ) -> Arc<dyn LanguageModel> {
+        provider.create_language_model(anthropic::Model::from_listed(anthropic::ListModelEntry {
+            id: "claude-opus-4-6".to_string(),
+            display_name: "Claude Opus 4.6".to_string(),
+            max_input_tokens: 1_000_000,
+            max_tokens: 128_000,
+            capabilities: None,
+        }))
+    }
+
+    struct TestCredentialsProvider;
+
+    impl CredentialsProvider for TestCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
     }
 }
 
@@ -529,9 +769,8 @@ impl LanguageModel for AnthropicModel {
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto
-            | LanguageModelToolChoice::Any
-            | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Any => anthropic::supports_forced_tool_use(&self.model.id),
         }
     }
 
@@ -553,6 +792,56 @@ impl LanguageModel for AnthropicModel {
 
     fn supports_server_side_compaction(&self) -> bool {
         self.model.supports_compaction
+    }
+
+    fn supports_explicit_compaction(&self) -> bool {
+        self.model.supports_compaction
+    }
+
+    fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
+        self.supports_explicit_compaction()
+            .then_some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
+    }
+
+    fn compact(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        if !self.supports_explicit_compaction() {
+            return async {
+                Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                    "this Anthropic model does not support explicit compaction"
+                )))
+            }
+            .boxed();
+        }
+
+        let mut request = match into_anthropic(
+            request,
+            self.model.request_id(false).to_string(),
+            self.model.default_temperature,
+            self.model.max_output_tokens,
+            self.model.mode.clone(),
+            AnthropicPromptCacheMode::Automatic,
+            &PROVIDER_ID,
+        ) {
+            Ok(request) => request.into_compact_request(),
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        if !self.model.supports_speed {
+            request.speed = None;
+        }
+        let request = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
+        let future = self.request_limiter.run(async move {
+            let response = request.await?;
+            let stream = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response);
+            let stream = language_model::stream_in_background(stream.boxed(), executor);
+            let (context, usage) = collect_compaction_result(stream.boxed(), PROVIDER_NAME).await?;
+            Ok(CompactionResult { context, usage })
+        });
+        future.boxed()
     }
 
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
@@ -625,9 +914,14 @@ impl LanguageModel for AnthropicModel {
             request.speed = None;
         }
         let request = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            Ok(AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response))
+            let events = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response);
+            Ok(language_model::stream_in_background(
+                events.boxed(),
+                executor,
+            ))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }

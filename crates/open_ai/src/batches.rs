@@ -182,7 +182,7 @@ pub async fn upload_batch_file(
             provider: "openai".to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
@@ -229,7 +229,7 @@ pub async fn create_batch(
             provider: "openai".to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
@@ -273,7 +273,7 @@ pub async fn retrieve_batch(
             provider: "openai".to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
@@ -317,7 +317,7 @@ pub async fn download_file(
             provider: "openai".to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }

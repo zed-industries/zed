@@ -16,6 +16,8 @@ doctest = true
 
 [features]
 test-support = ["rand", "util_macros", "path/test-support"]
+# Embed `fs_embed!` assets at compile time even in debug builds.
+debug-embed = ["rust-embed/debug-embed"]
 
 [dependencies]
 anyhow.workspace = true
@@ -54,17 +56,16 @@ dirs.workspace = true
 [target.'cfg(unix)'.dependencies]
 command-fds = "0.3.1"
 libc.workspace = true
-nix = { workspace = true, features = ["user"] }
+nix = { workspace = true, features = ["resource", "user"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-tendril = "0.4.3"
+tendril = "0.5"
 windows.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
 util_macros.workspace = true
-pretty_assertions.workspace = true
 path = { workspace = true, features = ["test-support"] }

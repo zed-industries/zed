@@ -3,13 +3,13 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer, MultiBuffer,
     SplittableEditor, ToPoint, actions::DiffClipboardWithSelectionData,
 };
 use futures::{FutureExt, select_biased};
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, Task, Window,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, Render, Task, Window,
 };
 use language::{self, Buffer, Capability, OffsetRangeExt, Point};
 use project::{Project, ProjectPath};
@@ -22,12 +22,12 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
+use ui::{Color, Icon, IconName, SharedString};
 use util::paths::PathExt;
 
 use workspace::{
     Item, ItemNavHistory, Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -117,12 +117,13 @@ impl TextDiffView {
             cx,
         );
         let diff_buffer = cx.new(|cx| {
-            BufferDiff::new_with_base_text_buffer(
+            let mut diff = BufferDiff::new_with_base_text_buffer(
                 &source_buffer_snapshot.text,
                 clipboard_buffer.clone(),
-                buffer_diff::DiffBaseKind::Custom,
                 cx,
-            )
+            );
+            diff.set_operations(Arc::new(buffer_diff::RestoreDiffOperations));
+            diff
         });
 
         let task = window.spawn(cx, async move |cx| {
@@ -185,8 +186,7 @@ impl TextDiffView {
                 window,
                 cx,
             );
-            splittable
-                .set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
+            splittable.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
             splittable
         });
 
@@ -316,16 +316,6 @@ impl Item for TextDiffView {
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff).color(Color::Muted))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {

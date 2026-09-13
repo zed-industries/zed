@@ -387,17 +387,27 @@ fn create_worktree_askpass_delegate(
 ) -> AskPassDelegate {
     let operation = operation.into();
     let window = window.window_handle();
-    AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
-        window
-            .update(cx, |_, window, cx| {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
-                    });
+    AskPassDelegate::new_with_cancellation(
+        &mut cx.to_async(),
+        move |prompt, tx, cancellation, cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            AskPassModal::new(
+                                operation.clone(),
+                                prompt.into(),
+                                tx,
+                                cancellation,
+                                window,
+                                cx,
+                            )
+                        });
+                    })
                 })
-            })
-            .ok();
-    })
+                .ok();
+        },
+    )
 }
 
 async fn fetch_remote_for_worktree_base(
