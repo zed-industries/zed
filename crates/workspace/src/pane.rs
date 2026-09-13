@@ -2576,6 +2576,17 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mode = if mode == SplitMode::ClonePane
+            && self.items.len() > 1
+            && self
+                .active_item()
+                .is_some_and(|active_item| !active_item.can_split(cx))
+        {
+            SplitMode::MovePane
+        } else {
+            mode
+        };
+
         if self.items.len() <= 1 && mode == SplitMode::MovePane {
             // MovePane with only one pane present behaves like a SplitEmpty in the opposite direction
             let active_item = self.active_item();
@@ -8895,6 +8906,69 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_split_clone_moves_non_clonable_active_item(cx: &mut TestAppContext) {
+        for split_direction in SplitDirection::all() {
+            test_single_pane_split_with_active_item_can_split(
+                ["A", "B"],
+                split_direction,
+                SplitMode::ClonePane,
+                SplitMode::MovePane,
+                false,
+                cx,
+            )
+            .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_split_action_moves_non_clonable_active_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane_before = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        add_labeled_item_with_can_split(&pane_before, "A", false, true, cx);
+        add_labeled_item_with_can_split(&pane_before, "B", false, false, cx);
+        cx.executor().run_until_parked();
+        pane_before.update_in(cx, |pane, window, cx| {
+            pane.focus_active_item(window, cx);
+        });
+
+        cx.dispatch_action(SplitRight::default());
+        cx.executor().run_until_parked();
+
+        let pane_after = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        assert_ne!(pane_before, pane_after);
+        assert_item_labels(&pane_before, ["A*"], cx);
+        assert_item_labels(&pane_after, ["B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_split_clone_non_clonable_single_item_is_noop(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        add_labeled_item_with_can_split(&pane, "A", false, false, cx);
+
+        for split_direction in SplitDirection::all() {
+            pane.update_in(cx, |pane, window, cx| {
+                pane.split(split_direction, SplitMode::ClonePane, window, cx)
+            });
+            cx.executor().run_until_parked();
+
+            assert_eq!(
+                workspace.read_with(cx, |workspace, _| workspace.panes().len()),
+                1
+            );
+            assert_item_labels(&pane, ["A*"], cx);
+        }
+    }
+
+    #[gpui::test]
     async fn test_split_move_right_on_single_pane(cx: &mut TestAppContext) {
         test_single_pane_split(["A"], SplitDirection::Right, SplitMode::MovePane, cx).await;
     }
@@ -9080,9 +9154,23 @@ mod tests {
         is_dirty: bool,
         cx: &mut VisualTestContext,
     ) -> Box<Entity<TestItem>> {
+        add_labeled_item_with_can_split(pane, label, is_dirty, true, cx)
+    }
+
+    fn add_labeled_item_with_can_split(
+        pane: &Entity<Pane>,
+        label: &str,
+        is_dirty: bool,
+        can_split: bool,
+        cx: &mut VisualTestContext,
+    ) -> Box<Entity<TestItem>> {
         pane.update_in(cx, |pane, window, cx| {
-            let labeled_item =
-                Box::new(cx.new(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)));
+            let labeled_item = Box::new(cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_label(label)
+                    .with_dirty(is_dirty)
+                    .with_can_split(can_split)
+            }));
             pane.add_item(labeled_item.clone(), false, false, None, window, cx);
             labeled_item
         })
@@ -9223,7 +9311,26 @@ mod tests {
     async fn test_single_pane_split<const COUNT: usize>(
         pane_labels: [&str; COUNT],
         direction: SplitDirection,
-        operation: SplitMode,
+        mode: SplitMode,
+        cx: &mut TestAppContext,
+    ) {
+        test_single_pane_split_with_active_item_can_split(
+            pane_labels,
+            direction,
+            mode,
+            mode,
+            true,
+            cx,
+        )
+        .await;
+    }
+
+    async fn test_single_pane_split_with_active_item_can_split<const COUNT: usize>(
+        pane_labels: [&str; COUNT],
+        direction: SplitDirection,
+        requested_mode: SplitMode,
+        expected_mode: SplitMode,
+        active_item_can_split: bool,
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -9234,11 +9341,12 @@ mod tests {
 
         let mut pane_before =
             workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-        for label in pane_labels {
-            add_labeled_item(&pane_before, label, false, cx);
+        for (index, label) in pane_labels.iter().copied().enumerate() {
+            let can_split = index + 1 != COUNT || active_item_can_split;
+            add_labeled_item_with_can_split(&pane_before, label, false, can_split, cx);
         }
         pane_before.update_in(cx, |pane, window, cx| {
-            pane.split(direction, operation, window, cx)
+            pane.split(direction, requested_mode, window, cx)
         });
         cx.executor().run_until_parked();
         let pane_after = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
@@ -9247,7 +9355,7 @@ mod tests {
         let last_as_active = format!("{}*", String::from(pane_labels[num_labels - 1]));
 
         // check labels for all split operations
-        match operation {
+        match expected_mode {
             SplitMode::EmptyPane => {
                 assert_item_labels_active_index(&pane_before, &pane_labels, num_labels - 1, cx);
                 assert_item_labels(&pane_after, [], cx);
@@ -9303,7 +9411,7 @@ mod tests {
         };
 
         // check pane axes for all operations
-        match operation {
+        match expected_mode {
             SplitMode::EmptyPane | SplitMode::ClonePane => {
                 assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
             }
