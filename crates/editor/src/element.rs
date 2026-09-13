@@ -272,7 +272,7 @@ impl EditorElement {
         self.split_side = Some(side);
     }
 
-    fn register_actions(&self, window: &mut Window, cx: &mut App) {
+    fn register_actions(&self, snapshot: &EditorSnapshot, window: &mut Window, cx: &mut App) {
         let editor = &self.editor;
         editor.update(cx, |editor, cx| {
             for action in editor.editor_actions.borrow().values() {
@@ -498,6 +498,9 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_edit_predictions);
         if editor.read(cx).lsp_data_enabled() {
             register_action(editor, window, Editor::toggle_inlay_hints);
+            if editor.read(cx).can_accept_inlay_hint(snapshot, cx) {
+                register_action(editor, window, Editor::accept_inlay_hint);
+            }
             register_action(editor, window, Editor::toggle_code_lens_action);
             register_action(editor, window, Editor::toggle_semantic_highlights);
             register_action(editor, window, Editor::toggle_diagnostics);
@@ -9627,7 +9630,7 @@ impl Element for EditorElement {
                 ElementInputHandler::new(bounds, self.editor.clone()),
                 cx,
             );
-            self.register_actions(window, cx);
+            self.register_actions(&layout.position_map.snapshot, window, cx);
             self.register_key_listeners(window, cx, layout);
         }
 

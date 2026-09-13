@@ -1064,7 +1064,7 @@ fn surrounding_filename(
 mod tests {
     use super::*;
     use crate::{
-        DisplayPoint,
+        AcceptInlayHint, DisplayPoint, MoveLeft, MoveRight, Undo,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
         inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
@@ -1075,9 +1075,10 @@ mod tests {
         Modifiers, MouseButton, MouseDownEvent, MousePressureEvent, MouseUpEvent, PressureStage,
     };
     use indoc::indoc;
-    use language::Point;
+    use language::{FakeLspAdapter, Point, rust_lang};
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
     use multi_buffer::{MultiBufferOffset, PathKey};
+    use parking_lot::Mutex;
     use settings::InlayHintSettingsContent;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -1696,6 +1697,180 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_accept_inlay_hint(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                ..InlayHintSettingsContent::default()
+            });
+        });
+        let position = lsp::Position::new(0, 21);
+        let edits = vec![
+            lsp::TextEdit {
+                range: lsp::Range::new(position, position),
+                new_text: ": u32".to_string(),
+            },
+            lsp::TextEdit {
+                range: lsp::Range::default(),
+                new_text: "use std::primitive::u32;\n".to_string(),
+            },
+        ];
+        let hints = Arc::new(Mutex::new(None::<Vec<lsp::InlayHint>>));
+        let mut cx = EditorLspTestContext::new_with_lsp_adapter(
+            Arc::into_inner(rust_lang()).expect("test language"),
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Right(
+                        lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                            resolve_provider: Some(true),
+                            ..lsp::InlayHintOptions::default()
+                        }),
+                    )),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let hints = hints.clone();
+                    let edits = edits.clone();
+                    move |server| {
+                        let hints = hints.clone();
+                        server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |_, _| {
+                                let hints = hints.lock().take();
+                                async move { Ok(hints) }
+                            },
+                        );
+                        let edits = edits.clone();
+                        server.set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
+                            move |mut hint, _| {
+                                if hint.data != Some(serde_json::Value::Bool(false)) {
+                                    hint.text_edits = Some(edits.clone());
+                                }
+                                if hint.data == Some(serde_json::Value::Bool(true))
+                                    && let lsp::InlayHintLabel::LabelParts(parts) = &mut hint.label
+                                {
+                                    for part in parts {
+                                        part.command = Some(lsp::Command {
+                                            title: "Apply".to_string(),
+                                            command: "apply".to_string(),
+                                            arguments: None,
+                                        });
+                                    }
+                                }
+                                async move { Ok(hint) }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+            cx,
+        )
+        .await;
+        let source = "fn main() { let valueˇ = 1; }\n";
+        for (double_click, has_command) in [(true, false), (false, false), (true, true)] {
+            let hint = lsp::InlayHint {
+                position,
+                label: lsp::InlayHintLabel::LabelParts(vec![lsp::InlayHintLabelPart {
+                    value: ": Number".to_string(),
+                    ..lsp::InlayHintLabelPart::default()
+                }]),
+                text_edits: double_click.then(|| edits.clone()),
+                kind: Some(if double_click {
+                    lsp::InlayHintKind::TYPE
+                } else {
+                    lsp::InlayHintKind::PARAMETER
+                }),
+                tooltip: None,
+                padding_left: None,
+                padding_right: None,
+                data: has_command.then_some(serde_json::Value::Bool(true)),
+            };
+            let mut response = Vec::new();
+            if !double_click {
+                let mut informational = hint.clone();
+                informational.label = lsp::InlayHintLabel::String("informational".to_string());
+                informational.data = Some(serde_json::Value::Bool(false));
+                response.push(informational);
+            }
+            response.push(hint);
+            *hints.lock() = Some(response);
+            cx.set_state(source);
+            cx.run_until_parked();
+            for (read_only, lsp_enabled) in [(true, true), (false, false), (false, true)] {
+                cx.update_editor(|editor, _, cx| {
+                    editor.set_read_only(read_only);
+                    editor.enable_lsp_data = lsp_enabled;
+                    cx.notify();
+                });
+                if read_only {
+                    cx.dispatch_action(MoveLeft);
+                    cx.dispatch_action(MoveRight);
+                }
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    if read_only || !lsp_enabled {
+                        assert!(!window.is_action_available(&AcceptInlayHint, cx));
+                    } else {
+                        assert!(window.is_action_available(&AcceptInlayHint, cx));
+                    }
+                });
+            }
+            if double_click {
+                let start = cx.display_point(source);
+                let point =
+                    cx.pixel_position_for(DisplayPoint::new(start.row(), start.column() + 4));
+                cx.simulate_click(point, Modifiers::none());
+                assert_eq!(cx.buffer_text(), "fn main() { let value = 1; }\n");
+                cx.simulate_event(MouseDownEvent {
+                    position: point,
+                    modifiers: Modifiers::none(),
+                    button: MouseButton::Left,
+                    click_count: 2,
+                    first_mouse: false,
+                });
+                cx.simulate_event(MouseUpEvent {
+                    position: point,
+                    modifiers: Modifiers::none(),
+                    button: MouseButton::Left,
+                    click_count: 2,
+                });
+            } else {
+                cx.dispatch_action(AcceptInlayHint);
+            }
+            cx.run_until_parked();
+            if has_command {
+                assert_eq!(cx.buffer_text(), "fn main() { let value = 1; }\n");
+                cx.dispatch_action(AcceptInlayHint);
+                cx.run_until_parked();
+            }
+            assert_eq!(
+                cx.buffer_text(),
+                "use std::primitive::u32;\nfn main() { let value: u32 = 1; }\n",
+            );
+            cx.update_editor(|editor, window, cx| editor.undo(&Undo, window, cx));
+            assert_eq!(cx.buffer_text(), "fn main() { let value = 1; }\n");
+            cx.run_until_parked();
+        }
+        *hints.lock() = Some(vec![lsp::InlayHint {
+            position,
+            label: lsp::InlayHintLabel::String(": Number".to_string()),
+            text_edits: None,
+            kind: None,
+            tooltip: None,
+            padding_left: None,
+            padding_right: None,
+            data: Some(serde_json::Value::Bool(false)),
+        }]);
+        cx.set_state("fn main() { let valueˇ = 2; }\n");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(!window.is_action_available(&AcceptInlayHint, cx));
+        });
+    }
+
+    #[gpui::test]
     async fn test_inlay_hover_links(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
@@ -1770,7 +1945,10 @@ mod tests {
                             ..lsp::InlayHintLabelPart::default()
                         }]),
                         kind: Some(lsp::InlayHintKind::TYPE),
-                        text_edits: None,
+                        text_edits: Some(vec![lsp::TextEdit {
+                            range: lsp::Range::new(hint_position, hint_position),
+                            new_text: ": TestStruct".to_string(),
+                        }]),
                         tooltip: None,
                         padding_left: Some(false),
                         padding_right: Some(false),

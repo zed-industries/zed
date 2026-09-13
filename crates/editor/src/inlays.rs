@@ -161,9 +161,11 @@ impl Editor {
                 inlay_hints.remove_inlay(id_to_remove);
             }
         }
-        self.display_map.update(cx, |display_map, cx| {
-            display_map.splice_inlays(to_remove, to_insert, cx)
+        let snapshot = self.display_map.update(cx, |display_map, cx| {
+            display_map.splice_inlays(to_remove, to_insert, cx);
+            display_map.snapshot(cx)
         });
+        self.refresh_cursor_inlay_hint(&snapshot, cx);
         cx.notify();
     }
 

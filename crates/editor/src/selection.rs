@@ -1624,6 +1624,7 @@ impl Editor {
         let display_map = self
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
+        self.refresh_cursor_inlay_hint(&display_map, cx);
         let buffer = display_map.buffer_snapshot();
         if self.selections.count() == 1 {
             self.add_selections_state = None;

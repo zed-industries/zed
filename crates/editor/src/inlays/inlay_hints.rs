@@ -14,9 +14,9 @@ use language::{
     language_settings::{InlayHintKind, InlayHintSettings},
 };
 use lsp::LanguageServerId;
-use multi_buffer::{Anchor, MultiBufferSnapshot};
+use multi_buffer::{Anchor, MultiBufferSnapshot, ToOffset as _};
 use project::{
-    CodeAction, HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip,
+    CodeAction, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPartTooltip,
     InlayHintTooltip, InvalidationStrategy, LspAction, ResolveState,
     lsp_store::{CacheInlayHints, ResolvedHint},
 };
@@ -26,8 +26,9 @@ use util::debug_panic;
 
 use super::{Inlay, InlayId};
 use crate::{
-    Editor, EditorSnapshot, PointForPosition, ToggleInlayHints, ToggleInlineValues, debounce_value,
-    display_map::{DisplayMap, InlayOffset},
+    AcceptInlayHint, Editor, EditorSnapshot, PointForPosition, ToggleInlayHints,
+    ToggleInlineValues, debounce_value,
+    display_map::{DisplayMap, DisplaySnapshot, InlayOffset},
     hover_links::{InlayHighlight, TriggerPoint, show_link_definition},
     hover_popover::{self, InlayHover},
     inlays::InlaySplice,
@@ -54,10 +55,15 @@ impl HoveredInlayHintCommand {
         }
         let hovered_offset =
             snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left);
-        let hint_start = snapshot.anchor_to_inlay_offset(self.highlight.inlay_position);
-        let part_range = InlayOffset(hint_start.0 + self.highlight.range.start)
-            ..InlayOffset(hint_start.0 + self.highlight.range.end);
-        part_range.contains(&hovered_offset)
+        let Some((hint, hint_start)) = snapshot.inlay_snapshot().inlay_at_offset(hovered_offset)
+        else {
+            return false;
+        };
+        hint.id == self.highlight.inlay
+            && self
+                .highlight
+                .range
+                .contains(&(hovered_offset - hint_start))
     }
 }
 
@@ -82,6 +88,16 @@ pub struct LspInlayHintData {
     invalidate_hints_for_buffers: HashSet<BufferId>,
     pub added_hints: HashMap<InlayId, Option<InlayHintKind>>,
     hovered_command: Option<HoveredInlayHintCommand>,
+    cursor_hint: Option<CursorInlayHint>,
+    accept_task: Option<(Inlay, Task<()>)>,
+}
+
+#[derive(Debug)]
+struct CursorInlayHint {
+    cursor: Anchor,
+    version: usize,
+    hint: Option<Inlay>,
+    _task: Task<()>,
 }
 
 impl LspInlayHintData {
@@ -98,6 +114,8 @@ impl LspInlayHintData {
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
             hovered_command: None,
+            cursor_hint: None,
+            accept_task: None,
         }
     }
 
@@ -131,6 +149,8 @@ impl LspInlayHintData {
         self.hint_chunk_fetching.clear();
         self.added_hints.clear();
         self.hovered_command = None;
+        self.cursor_hint = None;
+        self.accept_task = None;
     }
 
     /// Like `clear`, but only wipes tracking state for the given buffer IDs.
@@ -148,6 +168,22 @@ impl LspInlayHintData {
             .is_some_and(|command| buffer_ids.contains(&command.buffer_id))
         {
             self.hovered_command = None;
+        }
+        if self
+            .cursor_hint
+            .as_ref()
+            .and_then(|hint| hint.cursor.raw_text_anchor())
+            .is_some_and(|anchor| buffer_ids.contains(&anchor.buffer_id))
+        {
+            self.cursor_hint = None;
+        }
+        if self
+            .accept_task
+            .as_ref()
+            .and_then(|(hint, _)| hint.position.raw_text_anchor())
+            .is_some_and(|anchor| buffer_ids.contains(&anchor.buffer_id))
+        {
+            self.accept_task = None;
         }
         for buffer_id in buffer_ids {
             self.hint_refresh_tasks.remove(buffer_id);
@@ -264,6 +300,14 @@ impl LspInlayHintData {
 
     pub(super) fn remove_inlay(&mut self, inlay_id: &InlayId) {
         self.added_hints.remove(inlay_id);
+        self.cursor_hint = None;
+        if self
+            .accept_task
+            .as_ref()
+            .is_some_and(|(hint, _)| hint.id == *inlay_id)
+        {
+            self.accept_task = None;
+        }
         if self
             .hovered_command
             .as_ref()
@@ -332,6 +376,276 @@ impl Editor {
             InlayHintRefreshReason::Toggle(!self.inlay_hints_enabled()),
             cx,
         );
+    }
+
+    pub fn accept_inlay_hint(
+        &mut self,
+        _: &AcceptInlayHint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hint = self
+            .inlay_hints
+            .as_ref()
+            .and_then(|hints| hints.cursor_hint.as_ref())
+            .filter(|hint| hint.cursor == self.selections.newest_anchor().head())
+            .and_then(|hint| hint.hint.clone());
+        if let Some(hint) = hint {
+            self.accept_inlay_hint_with_id(hint, true, window, cx);
+        }
+    }
+
+    pub(crate) fn refresh_cursor_inlay_hint(
+        &mut self,
+        snapshot: &DisplaySnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.lsp_data_enabled() {
+            if let Some(inlay_hints) = self.inlay_hints.as_mut() {
+                inlay_hints.cursor_hint = None;
+                inlay_hints.accept_task = None;
+            }
+            return;
+        }
+        let cursor = self.selections.newest_anchor().head();
+        let version = snapshot.inlay_snapshot().version;
+        let Some(inlay_hints) = self.inlay_hints.as_mut() else {
+            return;
+        };
+        if inlay_hints
+            .cursor_hint
+            .as_ref()
+            .is_some_and(|hint| hint.cursor == cursor && hint.version == version)
+        {
+            return;
+        }
+        inlay_hints.cursor_hint = Some(CursorInlayHint {
+            cursor,
+            version,
+            hint: None,
+            _task: Task::ready(()),
+        });
+        let Some(lsp_store) = self.project().map(|project| project.read(cx).lsp_store()) else {
+            return;
+        };
+        let buffer_snapshot = snapshot.buffer_snapshot();
+        let cursor_offset = cursor.to_offset(buffer_snapshot);
+        let inlays = self.display_map.read(cx).current_inlays();
+        let start = inlays
+            .as_slice()
+            .partition_point(|hint| hint.position.to_offset(buffer_snapshot) < cursor_offset);
+        let hints = inlays
+            .skip(start)
+            .take_while(|hint| hint.position.to_offset(buffer_snapshot) == cursor_offset)
+            .filter(|hint| matches!(hint.id, InlayId::Hint(_)))
+            .cloned()
+            .collect::<Vec<_>>();
+        let ready_hint = hints
+            .iter()
+            .find(|hint| {
+                hint.position
+                    .raw_text_anchor()
+                    .and_then(|anchor| {
+                        lsp_store
+                            .read(cx)
+                            .cached_inlay_hint(anchor.buffer_id, hint.id)
+                    })
+                    .is_some_and(|hint| {
+                        hint.text_edits
+                            .as_ref()
+                            .is_some_and(|edits| !edits.edits.is_empty())
+                    })
+            })
+            .cloned();
+        if ready_hint.is_some() || hints.is_empty() {
+            if let Some(cursor_hint) = self
+                .inlay_hints
+                .as_mut()
+                .and_then(|hints| hints.cursor_hint.as_mut())
+            {
+                cursor_hint.hint = ready_hint;
+            }
+            return;
+        }
+        let task = cx.spawn(async move |editor, cx| {
+            for hint in hints {
+                let Some(anchor) = hint.position.raw_text_anchor() else {
+                    continue;
+                };
+                let resolved = lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_store.resolved_hint(anchor.buffer_id, hint.id, cx)
+                });
+                if let Some(ResolvedHint::Resolving(task)) = resolved {
+                    task.await;
+                }
+                let has_edits = lsp_store.read_with(cx, |lsp_store, _| {
+                    lsp_store
+                        .cached_inlay_hint(anchor.buffer_id, hint.id)
+                        .and_then(|hint| hint.text_edits.as_ref())
+                        .is_some_and(|edits| !edits.edits.is_empty())
+                });
+                if has_edits {
+                    editor
+                        .update(cx, |editor, cx| {
+                            if let Some(cursor_hint) = editor
+                                .inlay_hints
+                                .as_mut()
+                                .and_then(|hints| hints.cursor_hint.as_mut())
+                                .filter(|hint| hint.cursor == cursor && hint.version == version)
+                            {
+                                cursor_hint.hint = Some(hint);
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    break;
+                }
+            }
+        });
+        if let Some(cursor_hint) = self
+            .inlay_hints
+            .as_mut()
+            .and_then(|hints| hints.cursor_hint.as_mut())
+        {
+            cursor_hint._task = task;
+        }
+    }
+
+    pub(crate) fn can_accept_inlay_hint(&self, snapshot: &EditorSnapshot, cx: &App) -> bool {
+        if !self.lsp_data_enabled() || self.read_only(cx) {
+            return false;
+        }
+        let Some(hint) = self
+            .inlay_hints
+            .as_ref()
+            .and_then(|hints| hints.cursor_hint.as_ref())
+            .filter(|hint| hint.cursor == self.selections.newest_anchor().head())
+            .and_then(|hint| hint.hint.as_ref())
+        else {
+            return false;
+        };
+        let Some(anchor) = hint.position.raw_text_anchor() else {
+            return false;
+        };
+        let Some(buffer) = self.buffer.read(cx).buffer(anchor.buffer_id) else {
+            return false;
+        };
+        if buffer.read(cx).read_only() {
+            return false;
+        }
+        let Some(lsp_store) = self.project().map(|project| project.read(cx).lsp_store()) else {
+            return false;
+        };
+        let Some(buffer_snapshot) = snapshot.buffer_snapshot().buffer_for_id(anchor.buffer_id)
+        else {
+            return false;
+        };
+        lsp_store
+            .read(cx)
+            .cached_inlay_hint(anchor.buffer_id, hint.id)
+            .and_then(|hint| hint.text_edits.as_ref())
+            .is_some_and(|edits| {
+                !edits.edits.is_empty() && &edits.buffer_version == buffer_snapshot.version()
+            })
+    }
+
+    pub(crate) fn accept_inlay_hint_with_id(
+        &mut self,
+        hint: Inlay,
+        allow_commands: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.lsp_data_enabled() || self.read_only(cx) || self.inlay_hints.is_none() {
+            return false;
+        }
+        let Some(anchor) = hint.position.raw_text_anchor() else {
+            return false;
+        };
+        let Some(buffer) = self.buffer.read(cx).buffer(anchor.buffer_id) else {
+            return false;
+        };
+        let Some(lsp_store) = self.project().map(|project| project.read(cx).lsp_store()) else {
+            return false;
+        };
+        let buffer_version = buffer.read(cx).version();
+        let Some(cached_hint) = lsp_store
+            .read(cx)
+            .cached_inlay_hint(anchor.buffer_id, hint.id)
+        else {
+            return false;
+        };
+        if !allow_commands && inlay_hint_has_command(cached_hint) {
+            return false;
+        }
+        let resolved_hint = if allow_commands
+            && cached_hint
+                .text_edits
+                .as_ref()
+                .is_some_and(|edits| !edits.edits.is_empty())
+        {
+            ResolvedHint::Resolved(cached_hint.clone())
+        } else {
+            let Some(hint) = lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store.resolved_hint(anchor.buffer_id, hint.id, cx)
+            }) else {
+                return false;
+            };
+            hint
+        };
+        if let ResolvedHint::Resolved(hint) = &resolved_hint
+            && hint
+                .text_edits
+                .as_ref()
+                .is_none_or(|edits| edits.edits.is_empty())
+        {
+            return false;
+        }
+        let accepted_hint = hint.clone();
+        let task = cx.spawn_in(window, async move |editor, cx| {
+            let resolved_hint = match resolved_hint {
+                ResolvedHint::Resolved(hint) => Some(hint),
+                ResolvedHint::Resolving(task) => {
+                    task.await;
+                    lsp_store.read_with(cx, |lsp_store, _| {
+                        lsp_store
+                            .cached_inlay_hint(anchor.buffer_id, hint.id)
+                            .filter(|hint| hint.resolve_state == ResolveState::Resolved)
+                            .cloned()
+                    })
+                }
+            };
+            if let Some(text_edits) = resolved_hint
+                .filter(|hint| allow_commands || !inlay_hint_has_command(hint))
+                .and_then(|hint| hint.text_edits)
+                && !text_edits.edits.is_empty()
+            {
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        if !editor.lsp_data_enabled()
+                            || editor.read_only(cx)
+                            || buffer.read(cx).read_only()
+                            || buffer.read(cx).version() != buffer_version
+                            || text_edits.buffer_version != buffer_version
+                            || !editor.inlay_hints.as_ref().is_some_and(|inlay_hints| {
+                                inlay_hints.added_hints.contains_key(&hint.id)
+                            })
+                        {
+                            return;
+                        }
+                        editor.finalize_last_transaction(cx);
+                        editor.transact(window, cx, |_, _, cx| {
+                            buffer.update(cx, |buffer, cx| buffer.edit(text_edits.edits, None, cx));
+                        });
+                        editor.finalize_last_transaction(cx);
+                    })
+                    .ok();
+            }
+        });
+        if let Some(inlay_hints) = self.inlay_hints.as_mut() {
+            inlay_hints.accept_task = Some((accepted_hint, task));
+        }
+        true
     }
 
     pub fn inlay_hints_enabled(&self) -> bool {
@@ -651,27 +965,11 @@ impl Editor {
         let mut inlay_command_updated = false;
         if let Some(hovered_offset) = hovered_offset {
             let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-            let previous_valid_anchor = buffer_snapshot.anchor_at(
-                point_for_position.previous_valid.to_point(snapshot),
-                Bias::Left,
-            );
-            let next_valid_anchor = buffer_snapshot.anchor_at(
-                point_for_position.next_valid.to_point(snapshot),
-                Bias::Right,
-            );
-            if let Some(hovered_hint) = Self::visible_inlay_hints(self.display_map.read(cx))
-                .filter(|hint| snapshot.can_resolve(&hint.position))
-                .skip_while(|hint| {
-                    hint.position
-                        .cmp(&previous_valid_anchor, &buffer_snapshot)
-                        .is_lt()
-                })
-                .take_while(|hint| {
-                    hint.position
-                        .cmp(&next_valid_anchor, &buffer_snapshot)
-                        .is_le()
-                })
-                .max_by_key(|hint| hint.id)
+            if let Some((hovered_hint, hint_start)) = snapshot
+                .inlay_snapshot()
+                .inlay_at_offset(hovered_offset)
+                .filter(|(hint, _)| matches!(hint.id, InlayId::Hint(_)))
+                .filter(|(hint, _)| snapshot.can_resolve(&hint.position))
             {
                 if let Some((buffer_anchor, _)) =
                     buffer_snapshot.anchor_to_buffer_anchor(hovered_hint.position)
@@ -728,8 +1026,6 @@ impl Editor {
                                     }
                                 }
                                 InlayHintLabel::LabelParts(label_parts) => {
-                                    let hint_start =
-                                        snapshot.anchor_to_inlay_offset(hovered_hint.position);
                                     let content_start =
                                         InlayOffset(hint_start.0 + actual_left_padding);
                                     if let Some((hovered_hint_part, part_range)) =
@@ -1050,6 +1346,13 @@ struct VisibleExcerpts {
     ranges: Vec<Range<text::Anchor>>,
     buffer_version: Global,
     buffer: Entity<language::Buffer>,
+}
+
+fn inlay_hint_has_command(hint: &InlayHint) -> bool {
+    match &hint.label {
+        InlayHintLabel::LabelParts(parts) => parts.iter().any(|part| part.command.is_some()),
+        InlayHintLabel::String(_) => false,
+    }
 }
 
 fn spawn_editor_hints_refresh(
