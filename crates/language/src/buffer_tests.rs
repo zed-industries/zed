@@ -2664,6 +2664,33 @@ fn test_autoindent_block_mode_with_newline(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_autoindent_block_mode_with_blank_first_line(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    for (inserted, expected) in [
+        ("\n\n    c();", "fn a() {\n    b();\n\n    c();\n}\n"),
+        (
+            "\n    \n        c();",
+            "fn a() {\n    b();\n    \n    c();\n}\n",
+        ),
+    ] {
+        cx.new(|cx| {
+            let mut buffer =
+                Buffer::local("fn a() {\n    b();\n}\n", cx).with_language(rust_lang(), cx);
+            buffer.edit(
+                [(Point::new(1, 8)..Point::new(1, 8), inserted)],
+                Some(AutoindentMode::Block {
+                    original_indent_columns: vec![Some(0)],
+                }),
+                cx,
+            );
+            assert_eq!(buffer.text(), expected);
+            buffer
+        });
+    }
+}
+
+#[gpui::test]
 fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
     init_settings(cx, |_| {});
 
