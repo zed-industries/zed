@@ -31218,6 +31218,78 @@ async fn test_find_all_references_with_reversed_server_range(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_find_all_references_multibuffer_default_folded(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+    cx.update(|_, cx| {
+        let mut editor_settings = EditorSettings::get_global(cx).clone();
+        editor_settings.multibuffer_default_folded = true;
+        EditorSettings::override_global(editor_settings, cx);
+    });
+
+    cx.set_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+
+        fn two() {}"#
+            .unindent(),
+    );
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(1, 16), lsp::Position::new(1, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(4, 4), lsp::Position::new(4, 7)),
+                },
+            ]))
+        });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
+        })
+        .expect("should have spawned a references request")
+        .await
+        .expect("references request should succeed");
+    assert_eq!(navigated, Navigated::Yes);
+
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, test_editor_cx| {
+        let references_editor = editors
+            .into_iter()
+            .find(|new_editor| *new_editor != test_editor_cx.entity())
+            .expect("should have one non-test editor");
+        let editor_ref = references_editor.read(test_editor_cx);
+        let buffer_id = editor_ref
+            .buffer()
+            .read(test_editor_cx)
+            .all_buffers_iter()
+            .next()
+            .expect("should have a buffer")
+            .read(test_editor_cx)
+            .remote_id();
+        assert!(
+            editor_ref.is_buffer_folded(buffer_id, test_editor_cx),
+            "references should start folded when multibuffer_default_folded is enabled"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.update(|cx| {

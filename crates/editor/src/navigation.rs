@@ -2265,6 +2265,15 @@ impl Editor {
                     cx,
                 );
                 editor.lookup_key = Some(Box::new(key));
+                if EditorSettings::get_global(cx).multibuffer_default_folded {
+                    let buffer_ids: Vec<_> = editor
+                        .buffer()
+                        .read(cx)
+                        .all_buffers_iter()
+                        .map(|buffer| buffer.read(cx).remote_id())
+                        .collect();
+                    editor.fold_buffers(buffer_ids, cx);
+                }
                 editor
             })
         });
