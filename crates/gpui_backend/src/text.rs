@@ -16,8 +16,7 @@ pub const SUBPIXEL_VARIANTS_X: u8 = 4;
 /// Number of subpixel glyph variants along the Y axis.
 pub const SUBPIXEL_VARIANTS_Y: u8 = 1;
 
-use crate::{FontFallbacks, FontFeatures};
-use gpui_backend::{FontId, GlyphId, RenderGlyphParams};
+use crate::{FontFallbacks, FontFeatures, FontId, GlyphId, RenderGlyphParams};
 
 /// An opaque identifier for a specific font family.
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]

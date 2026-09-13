@@ -18,8 +18,6 @@ mod dispatcher;
 mod display;
 mod executor;
 mod executor_runtime;
-mod font_fallbacks;
-mod font_features;
 mod gestures;
 mod gpu;
 mod input;
@@ -54,7 +52,6 @@ mod screen_capture;
 #[cfg(any(test, feature = "test-support"))]
 mod test_dispatcher;
 mod text_input;
-mod text_system;
 mod window;
 mod window_id;
 
@@ -65,8 +62,6 @@ pub use dispatcher::*;
 pub use display::*;
 pub use executor::*;
 pub use executor_runtime::*;
-pub use font_fallbacks::*;
-pub use font_features::*;
 pub use gestures::*;
 pub use gpu::*;
 pub use gpui_backend::*;
@@ -97,6 +92,5 @@ pub use screen_capture::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_dispatcher::*;
 pub use text_input::*;
-pub use text_system::*;
 pub use window::*;
 pub use window_id::*;

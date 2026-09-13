@@ -21,11 +21,14 @@ bench-support = ["test-support"]
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+derive_more.workspace = true
 etagere.workspace = true
 gpui_shared_string.workspace = true
 gpui_types.workspace = true
 image.workspace = true
+log.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 stacksafe = { workspace = true, optional = true }
 taffy = "=0.13.0"

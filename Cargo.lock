@@ -7590,12 +7590,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "derive_more",
  "etagere",
  "gpui_shared_string",
  "gpui_types",
  "image",
+ "log",
  "schemars 1.0.4",
  "serde",
+ "serde_json",
  "stacksafe",
  "taffy",
 ]
