@@ -28,7 +28,7 @@ use core_foundation::{
 use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
-use gpui_backend::{NoopTextSystem, PlatformTextSystem};
+use gpui_backend::PlatformTextSystem;
 use gpui_platform::{
     ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     MenuCommandId, OsAction, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
@@ -210,7 +210,7 @@ impl MacPlatform {
                     "gpui_macos was compiled without the `font-kit` feature, so no text will be rendered."
                 );
             }
-            Arc::new(NoopTextSystem::new())
+            Arc::new(gpui_backend::NoopTextSystem::new())
         };
 
         let keyboard_layout = MacKeyboardLayout::new();
