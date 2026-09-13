@@ -71,7 +71,7 @@ screen-capture = [
 ]
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram", "gpui_platform/profiler"]
-stacker = ["dep:stacksafe"]
+stacker = ["dep:stacksafe", "gpui_backend/stacker"]
 font-kit = ["dep:font-kit", "gpui_macos?/font-kit"]
 
 [lib]

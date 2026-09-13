@@ -125,40 +125,12 @@ pub(crate) fn atomic_incr_if_not_zero(counter: &AtomicUsize) -> usize {
     }
 }
 
-/// Rounds to the nearest integer with 0.5 ties toward zero.
-#[inline]
-pub(crate) fn round_half_toward_zero(value: f32) -> f32 {
-    (value.abs() - 0.5).ceil().copysign(value)
-}
-
-#[inline]
-pub(crate) fn round_half_toward_zero_f64(value: f64) -> f64 {
-    (value.abs() - 0.5).ceil().copysign(value)
-}
-
-#[inline]
-pub(crate) fn round_to_device_pixel(logical: f32, scale_factor: f32) -> f32 {
-    round_half_toward_zero(logical * scale_factor)
-}
-
-#[inline]
-pub(crate) fn round_stroke_to_device_pixel(logical: f32, scale_factor: f32) -> f32 {
-    if logical == 0.0 {
-        0.0
-    } else {
-        round_to_device_pixel(logical.max(0.0), scale_factor).max(1.0)
-    }
-}
-
-#[inline]
-pub(crate) fn floor_to_device_pixel(logical: f32, scale_factor: f32) -> f32 {
-    (logical * scale_factor).floor()
-}
-
-#[inline]
-pub(crate) fn ceil_to_device_pixel(logical: f32, scale_factor: f32) -> f32 {
-    (logical * scale_factor).ceil()
-}
+// Device-pixel snapping helpers live in `gpui_types` so the layout engine and
+// the facade snap identically.
+pub(crate) use gpui_types::{
+    ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
+    round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
+};
 
 #[cfg(test)]
 mod tests {

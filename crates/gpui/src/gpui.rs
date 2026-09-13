@@ -117,6 +117,7 @@ macro_rules! bench_main {
         criterion::criterion_main!($($tokens)*);
     };
 }
+pub use gpui_backend::{LayoutId, TaffyLayoutEngine};
 pub use gpui_platform::*;
 pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;
@@ -138,8 +139,6 @@ pub use styled::*;
 pub use subscription::*;
 pub use svg_renderer::*;
 pub(crate) use tab_stop::*;
-pub use taffy::LayoutId;
-use taffy::TaffyLayoutEngine;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;

@@ -11,16 +11,16 @@ use crate::{
     Decorations, DevicePixels, DispatchActionListener, DispatchEventResult, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
     Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
-    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, MeasureContext,
+    Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+    TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode,
+    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowDecorations, WindowId, WindowOptions, WindowParams, WindowTextSystem,
     new_platform_input_handler, point, prelude::*, px, rems, size, transparent_black,
@@ -71,6 +71,7 @@ pub use a11y::A11ySubtreeBuilder;
 use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
 use self::a11y::ROOT_NODE_ID;
+use crate::taffy::to_taffy_style;
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
@@ -83,6 +84,19 @@ pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
     width: Pixels(900.),
     height: Pixels(750.),
 };
+
+/// Bridges GPUI's window and app handles to the layout engine's erased
+/// [`MeasureContext`] so custom measure callbacks can recover them.
+struct WindowMeasureContext<'a> {
+    window: &'a mut Window,
+    cx: &'a mut App,
+}
+
+impl MeasureContext for WindowMeasureContext<'_> {
+    fn handles(&mut self) -> (&mut dyn Any, &mut dyn Any) {
+        (&mut *self.window, &mut *self.cx)
+    }
+}
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -4851,13 +4865,12 @@ impl Window {
         cx.layout_id_buffer.extend(children);
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        let taffy_style = to_taffy_style(&style, rem_size, scale_factor);
 
-        self.layout_engine.as_mut().unwrap().request_layout(
-            style,
-            rem_size,
-            scale_factor,
-            &cx.layout_id_buffer,
-        )
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .request_layout(taffy_style, &cx.layout_id_buffer)
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -4877,10 +4890,21 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        let taffy_style = to_taffy_style(&style, rem_size, scale_factor);
+        let measure = move |known_dimensions, available_space, context: &mut dyn MeasureContext| {
+            let (window, cx) = context.handles();
+            let window = window
+                .downcast_mut::<Window>()
+                .expect("measure context window should be a Window");
+            let cx = cx
+                .downcast_mut::<App>()
+                .expect("measure context app should be an App");
+            measure(known_dimensions, available_space, window, cx)
+        };
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(taffy_style, measure)
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -4896,8 +4920,14 @@ impl Window {
     ) {
         self.invalidator.debug_assert_prepaint();
 
+        let scale_factor = self.scale_factor();
         let mut layout_engine = self.layout_engine.take().unwrap();
-        layout_engine.compute_layout(layout_id, available_space, self, cx);
+        layout_engine.compute_layout(
+            layout_id,
+            available_space,
+            scale_factor,
+            &mut WindowMeasureContext { window: self, cx },
+        );
         self.layout_engine = Some(layout_engine);
     }
 

@@ -17,6 +17,7 @@ mod geometry;
 mod input;
 mod keyboard;
 mod layout;
+mod math;
 mod scene;
 mod style;
 
@@ -28,5 +29,6 @@ pub use geometry::*;
 pub use input::*;
 pub use keyboard::*;
 pub use layout::*;
+pub use math::*;
 pub use scene::*;
 pub use style::*;
