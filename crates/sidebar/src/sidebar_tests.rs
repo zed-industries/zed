@@ -14,7 +14,7 @@ use agent_ui::{
 };
 use chrono::DateTime;
 use fs::{FakeFs, Fs};
-use gpui::TestAppContext;
+use gpui::{TestAppContext, UpdateGlobal};
 use pretty_assertions::assert_eq;
 use project::AgentId;
 use settings::SettingsStore;
@@ -44,6 +44,7 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        AgentSettings::register(cx);
         // Use an isolated DB so parallel tests can't see each other's
         // persisted records (e.g. created-worktree records).
         cx.set_global(db::AppDatabase::test_new());
@@ -829,6 +830,34 @@ async fn test_collapse_changes_entry_shape(cx: &mut TestAppContext) {
         before, after,
         "collapsing the project group should change the shape sequence so the list resets"
     );
+}
+
+#[gpui::test]
+async fn test_thread_sidebar_default_width(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar_closed(&multi_workspace, cx);
+
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(300.));
+
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.set_width(Some(px(500.)), cx);
+    });
+
+    cx.update(|_window, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "thread_sidebar": { "default_width": 420 } } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.));
 }
 
 #[gpui::test]

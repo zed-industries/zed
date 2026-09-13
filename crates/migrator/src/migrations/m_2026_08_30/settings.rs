@@ -12,10 +12,10 @@ const KEY_MAPPINGS: &[(&str, &str)] = &[
 ];
 
 pub fn nest_markdown_preview_settings(value: &mut Value) -> Result<()> {
-    migrate_settings(value, &mut migrate_one)
+    migrate_settings(value, &mut migrate_markdown_preview_settings)
 }
 
-fn migrate_one(object: &mut serde_json::Map<String, Value>) -> Result<()> {
+fn migrate_markdown_preview_settings(object: &mut serde_json::Map<String, Value>) -> Result<()> {
     let has_legacy_settings = KEY_MAPPINGS
         .iter()
         .any(|(old_key, _)| object.contains_key(*old_key));
@@ -50,6 +50,48 @@ fn migrate_one(object: &mut serde_json::Map<String, Value>) -> Result<()> {
 
     for (key, value) in migrated_settings {
         markdown_preview.entry(key).or_insert(value);
+    }
+
+    Ok(())
+}
+
+const AGENT_KEY: &str = "agent";
+const OLD_KEY: &str = "sidebar_side";
+const THREAD_SIDEBAR_KEY: &str = "thread_sidebar";
+const POSITION_KEY: &str = "position";
+
+pub fn nest_agent_sidebar_side_under_thread_sidebar_position(value: &mut Value) -> Result<()> {
+    migrate_settings(value, &mut migrate_agent_sidebar_side)
+}
+
+fn migrate_agent_sidebar_side(object: &mut serde_json::Map<String, Value>) -> Result<()> {
+    let Some(agent) = object.get_mut(AGENT_KEY).and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+
+    if agent
+        .get(THREAD_SIDEBAR_KEY)
+        .is_some_and(|thread_sidebar| !thread_sidebar.is_object())
+    {
+        return Ok(());
+    }
+
+    let Some(sidebar_side) = agent.remove(OLD_KEY) else {
+        return Ok(());
+    };
+
+    if let Some(thread_sidebar) = agent
+        .get_mut(THREAD_SIDEBAR_KEY)
+        .and_then(Value::as_object_mut)
+    {
+        thread_sidebar.entry(POSITION_KEY).or_insert(sidebar_side);
+    } else {
+        let mut thread_sidebar = serde_json::Map::new();
+        thread_sidebar.insert(POSITION_KEY.to_string(), sidebar_side);
+        agent.insert(
+            THREAD_SIDEBAR_KEY.to_string(),
+            Value::Object(thread_sidebar),
+        );
     }
 
     Ok(())
