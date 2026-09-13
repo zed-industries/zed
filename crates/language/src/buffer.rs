@@ -4586,15 +4586,20 @@ impl BufferSnapshot {
         result
     }
 
-    /// Find the previous sibling syntax node at the given range.
+    /// Find the previous named sibling syntax node at the given range.
     ///
     /// This function locates the syntax node that precedes the node containing
     /// the given range. It searches hierarchically by:
     /// 1. Finding the node that contains the given range
-    /// 2. Looking for the previous sibling at the same tree level
+    /// 2. Looking for the previous named sibling at the same tree level
     /// 3. If no sibling is found, moving up to parent levels and searching for siblings
     ///
-    /// Returns `None` if there is no previous sibling at any ancestor level.
+    /// Anonymous nodes such as punctuation, delimiters and keywords are
+    /// skipped, so that stepping between siblings settles on the same nodes
+    /// that `SelectLargerSyntaxNode` settles on. If every remaining sibling at
+    /// a level is anonymous, the search continues at the parent level.
+    ///
+    /// Returns `None` if there is no previous named sibling at any ancestor level.
     pub fn syntax_prev_sibling<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
@@ -4618,6 +4623,12 @@ impl BufferSnapshot {
                 if cursor.goto_previous_sibling() {
                     let layer_result = cursor.node();
 
+                    // Punctuation and other anonymous tokens aren't nodes a
+                    // reader thinks in terms of, so keep scanning past them.
+                    if !layer_result.is_named() {
+                        continue;
+                    }
+
                     if let Some(previous_result) = &result {
                         if previous_result.byte_range().end < layer_result.byte_range().end {
                             continue;
@@ -4637,15 +4648,20 @@ impl BufferSnapshot {
         result
     }
 
-    /// Find the next sibling syntax node at the given range.
+    /// Find the next named sibling syntax node at the given range.
     ///
     /// This function locates the syntax node that follows the node containing
     /// the given range. It searches hierarchically by:
     /// 1. Finding the node that contains the given range
-    /// 2. Looking for the next sibling at the same tree level
+    /// 2. Looking for the next named sibling at the same tree level
     /// 3. If no sibling is found, moving up to parent levels and searching for siblings
     ///
-    /// Returns `None` if there is no next sibling at any ancestor level.
+    /// Anonymous nodes such as punctuation, delimiters and keywords are
+    /// skipped, so that stepping between siblings settles on the same nodes
+    /// that `SelectLargerSyntaxNode` settles on. If every remaining sibling at
+    /// a level is anonymous, the search continues at the parent level.
+    ///
+    /// Returns `None` if there is no next named sibling at any ancestor level.
     pub fn syntax_next_sibling<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
@@ -4668,6 +4684,12 @@ impl BufferSnapshot {
             loop {
                 if cursor.goto_next_sibling() {
                     let layer_result = cursor.node();
+
+                    // Punctuation and other anonymous tokens aren't nodes a
+                    // reader thinks in terms of, so keep scanning past them.
+                    if !layer_result.is_named() {
+                        continue;
+                    }
 
                     if let Some(previous_result) = &result {
                         if previous_result.byte_range().start > layer_result.byte_range().start {
