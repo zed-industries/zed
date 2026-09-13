@@ -69,6 +69,21 @@ pub(crate) fn release_dropped_entities(cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
+fn without_user_message_timestamps(
+    messages: &[LanguageModelRequestMessage],
+) -> Vec<LanguageModelRequestMessage> {
+    messages
+        .iter()
+        .cloned()
+        .map(|mut message| {
+            message.content.retain(
+                |content| !matches!(content, MessageContent::Text(text) if text.starts_with("<time>")),
+            );
+            message
+        })
+        .collect()
+}
+
 pub(crate) struct FakeTerminalHandle {
     killed: Arc<AtomicBool>,
     stopped_by_user: Arc<AtomicBool>,
@@ -629,7 +644,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
 
     let completion = fake_model.pending_completions().pop().unwrap();
     assert_eq!(
-        completion.messages[1..],
+        without_user_message_timestamps(&completion.messages[1..]),
         vec![LanguageModelRequestMessage {
             role: Role::User,
             content: vec!["Message 1".into()],
@@ -653,7 +668,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
 
     let completion = fake_model.pending_completions().pop().unwrap();
     assert_eq!(
-        completion.messages[1..],
+        without_user_message_timestamps(&completion.messages[1..]),
         vec![
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -712,7 +727,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
         output: Some("test".into()),
     };
     assert_eq!(
-        completion.messages[1..],
+        without_user_message_timestamps(&completion.messages[1..]),
         vec![
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -4137,7 +4152,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
         })
         .unwrap();
     assert_eq!(
-        request.messages[1..],
+        without_user_message_timestamps(&request.messages[1..]),
         vec![
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -4525,7 +4540,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
         )));
     let completion = fake_model.pending_completions().pop().unwrap();
     assert_eq!(
-        completion.messages[1..],
+        without_user_message_timestamps(&completion.messages[1..]),
         vec![
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -4699,7 +4714,7 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
         .pop()
         .expect("No running turn");
     assert_eq!(
-        completion.messages[1..],
+        without_user_message_timestamps(&completion.messages[1..]),
         vec![
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -8487,7 +8502,7 @@ async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestA
     let last_completion = completions.last().unwrap();
 
     assert_eq!(
-        last_completion.messages[1..],
+        without_user_message_timestamps(&last_completion.messages[1..]),
         vec![
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -8593,7 +8608,7 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
     let last_completion = completions.last().unwrap();
 
     assert_eq!(
-        last_completion.messages[1..],
+        without_user_message_timestamps(&last_completion.messages[1..]),
         vec![
             LanguageModelRequestMessage {
                 role: Role::User,

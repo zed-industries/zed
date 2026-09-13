@@ -4121,14 +4121,12 @@ mod internal_tests {
             request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
-        assert_eq!(
-            request_texts_after_system(&request.messages),
-            vec![
-                "old user".to_string(),
-                "old assistant".to_string(),
-                COMPACTION_PROMPT.to_string(),
-            ]
-        );
+        let request_texts = request_texts_after_system(&request.messages);
+        assert_eq!(request_texts.len(), 3);
+        assert!(request_texts[0].starts_with("<time>"));
+        assert!(request_texts[0].ends_with("old user"));
+        assert_eq!(request_texts[1], "old assistant");
+        assert_eq!(request_texts[2], COMPACTION_PROMPT);
 
         model.send_completion_stream_text_chunk(&request, "summary");
         model.end_completion_stream(&request);
