@@ -2745,7 +2745,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn minimap_section() -> [SettingsPageItem; 7] {
+    fn minimap_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Minimap"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2879,6 +2879,66 @@ fn editor_page() -> SettingsPage {
                             .minimap
                             .get_or_insert_default()
                             .max_width_columns = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Git Diff",
+                description: "Show Git diff indicators in the minimap.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("minimap.git_diff"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()
+                            .and_then(|minimap| minimap.git_diff.as_ref())
+                            .or(settings_content
+                                .editor
+                                .scrollbar
+                                .as_ref()?
+                                .git_diff
+                                .as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .git_diff = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diagnostics",
+                description: "Which diagnostic indicators to show in the minimap.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("minimap.diagnostics"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()
+                            .and_then(|minimap| minimap.diagnostics.as_ref())
+                            .or(settings_content
+                                .editor
+                                .scrollbar
+                                .as_ref()?
+                                .diagnostics
+                                .as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .diagnostics = value;
                     },
                 }),
                 metadata: None,

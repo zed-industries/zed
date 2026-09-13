@@ -594,7 +594,7 @@ impl Editor {
 
         cx.notify();
 
-        self.scrollbar_marker_state.dirty = true;
+        self.dirty_marker_states();
         self.update_data_on_scroll(false, window, cx);
         self.folds_did_change(cx);
     }
@@ -708,8 +708,13 @@ impl Editor {
         widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.display_map
-            .update(cx, |map, cx| map.update_fold_widths(widths, cx))
+        let widths_changed = self
+            .display_map
+            .update(cx, |map, cx| map.update_fold_widths(widths, cx));
+        if widths_changed {
+            self.minimap_marker_state.dirty = true;
+        }
+        widths_changed
     }
 
     pub fn default_fold_placeholder(&self, cx: &App) -> FoldPlaceholder {
@@ -1089,7 +1094,7 @@ impl Editor {
         }
 
         cx.notify();
-        self.scrollbar_marker_state.dirty = true;
+        self.dirty_marker_states();
         self.active_indent_guides_state.dirty = true;
     }
 }

@@ -1222,7 +1222,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
     "show": "never",
     "thumb": "always",
     "thumb_border": "left_open",
-    "current_line_highlight": null
+    "current_line_highlight": null,
+    "git_diff": null,
+    "diagnostics": null
   }
 }
 ```
@@ -1405,6 +1407,43 @@ or
 {
   "minimap": {
     "current_line_highlight": "none"
+  }
+}
+```
+
+### Git Diff
+
+- Description: Whether to show git diff indicators in the minimap.
+- Setting: `git_diff`
+- Default: `null`, which inherits `scrollbar.git_diff`
+
+```json [settings]
+{
+  "minimap": {
+    "git_diff": true
+  }
+}
+```
+
+### Diagnostics
+
+- Description: Which diagnostic indicators to show in the minimap.
+- Setting: `diagnostics`
+- Default: `null`, which inherits `scrollbar.diagnostics`
+
+**Options**
+
+1. Inherit the scrollbar setting: `null`
+2. Show all diagnostics: `"all"`
+3. Show information, warning, and error: `"information"`
+4. Show warning and error: `"warning"`
+5. Show only errors: `"error"`
+6. Show no diagnostics: `"none"`
+
+```json [settings]
+{
+  "minimap": {
+    "diagnostics": "all"
   }
 }
 ```
