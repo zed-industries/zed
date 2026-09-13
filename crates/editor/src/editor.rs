@@ -1667,12 +1667,12 @@ pub(crate) struct FocusedBlock {
 pub enum JumpData {
     MultiBufferRow {
         row: MultiBufferRow,
-        line_offset_from_top: u32,
+        line_offset_from_top: ScrollOffset,
     },
     MultiBufferPoint {
         anchor: language::Anchor,
         position: Point,
-        line_offset_from_top: u32,
+        line_offset_from_top: ScrollOffset,
     },
 }
 
@@ -10472,15 +10472,30 @@ impl Editor {
                 }
             }
             None => {
-                let selections = self
-                    .selections
-                    .all::<MultiBufferOffset>(&self.display_snapshot(cx));
+                let display_snapshot = self.display_snapshot(cx);
+                let scroll_top = self.scroll_position(cx).y;
+                let selections = self.selections.all::<MultiBufferOffset>(&display_snapshot);
                 let multi_buffer = self.buffer.read(cx);
                 let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+                let single_cursor = selections.len() == 1
+                    && selections
+                        .first()
+                        .is_some_and(|selection| selection.is_empty());
                 for selection in selections {
-                    for (snapshot, range, anchor) in multi_buffer_snapshot
+                    let buffer_ranges = multi_buffer_snapshot
                         .range_to_buffer_ranges_with_deleted_hunks(selection.range())
-                    {
+                        .collect::<Vec<_>>();
+                    let line_offset_from_top =
+                        (single_cursor && buffer_ranges.len() == 1).then(|| {
+                            let cursor = selection.head().to_point(&multi_buffer_snapshot);
+                            (display_snapshot
+                                .point_to_display_point(cursor, Bias::Left)
+                                .row()
+                                .as_f64()
+                                - scroll_top)
+                                .max(0.0)
+                        });
+                    for (snapshot, range, anchor) in buffer_ranges {
                         if let Some((text_anchor, _)) = anchor.and_then(|anchor| {
                             multi_buffer_snapshot.anchor_to_buffer_anchor(anchor)
                         }) {
@@ -10495,7 +10510,7 @@ impl Editor {
                             let range = BufferOffset(offset)..BufferOffset(offset);
                             new_selections_by_buffer
                                 .entry(buffer_handle)
-                                .or_insert((Vec::new(), None))
+                                .or_insert((Vec::new(), line_offset_from_top))
                                 .0
                                 .push(range)
                         } else {
@@ -10505,7 +10520,7 @@ impl Editor {
                             };
                             new_selections_by_buffer
                                 .entry(buffer_handle)
-                                .or_insert((Vec::new(), None))
+                                .or_insert((Vec::new(), line_offset_from_top))
                                 .0
                                 .push(range)
                         }
@@ -10553,7 +10568,7 @@ impl Editor {
         workspace: WeakEntity<Workspace>,
         new_selections_by_buffer: HashMap<
             Entity<language::Buffer>,
-            (Vec<Range<BufferOffset>>, Option<u32>),
+            (Vec<Range<BufferOffset>>, Option<ScrollOffset>),
         >,
         split: bool,
         window: &mut Window,
@@ -10631,9 +10646,7 @@ impl Editor {
                                 editor.set_read_only(true);
                             }
                             let autoscroll = match scroll_offset {
-                                Some(scroll_offset) => {
-                                    Autoscroll::top_relative(scroll_offset as ScrollOffset)
-                                }
+                                Some(scroll_offset) => Autoscroll::top_relative(scroll_offset),
                                 None => Autoscroll::newest(),
                             };
                             let nav_history = editor.nav_history.take();
@@ -12334,7 +12347,7 @@ impl Deref for EditorSnapshot {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum EditorEvent {
     /// Emitted when the stored review comments change (added, removed, or updated).
     ReviewCommentsChanged {
@@ -12369,7 +12382,7 @@ pub enum EditorEvent {
         direction: ExpandExcerptDirection,
     },
     OpenExcerptsRequested {
-        selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)>,
+        selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<ScrollOffset>)>,
         split: bool,
     },
     /// Emitted when an underlying buffer changes, including edits made through another editor.

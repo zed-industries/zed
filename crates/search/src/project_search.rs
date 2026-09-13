@@ -1019,7 +1019,7 @@ async fn apply_reused_chunk(
     Some(())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ViewEvent {
     UpdateTab,
     Activate,

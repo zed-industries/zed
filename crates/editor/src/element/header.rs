@@ -600,12 +600,12 @@ pub(crate) fn header_jump_data(
     };
 
     let line_offset_from_top = (block_row_start.0 + height + rows_from_excerpt_start)
-        .saturating_sub(
-            editor_snapshot
-                .scroll_anchor
-                .scroll_position(&editor_snapshot.display_snapshot)
-                .y as u32,
-        );
+        as ScrollOffset
+        - editor_snapshot
+            .scroll_anchor
+            .scroll_position(&editor_snapshot.display_snapshot)
+            .y;
+    let line_offset_from_top = line_offset_from_top.max(0.0);
 
     JumpData::MultiBufferPoint {
         anchor: jump_anchor,
