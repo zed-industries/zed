@@ -2,6 +2,7 @@ use db::kvp::KeyValueStore;
 use dev_container::find_configs_in_snapshot;
 use gpui::{App, SharedString, Window};
 use project::{Project, WorktreeId};
+use remote::remote_connection_identity;
 use std::path::Path;
 use std::sync::LazyLock;
 use ui::Tooltip;
@@ -63,10 +64,33 @@ fn dismiss_path_for_worktree(
         .max_by_key(|(work_dir_len, _)| *work_dir_len)
         .map(|(_, common_dir)| common_dir);
 
-    match common_dir {
+    let path = match common_dir {
         Some(common_dir) => common_dir.to_string_lossy().to_string(),
         None => worktree_abs_path.to_string_lossy().to_string(),
+    };
+
+    // The path alone is ambiguous once projects can live on other machines:
+    // `/home/user/project` names a different project on every host.
+    match project.read(cx).remote_client() {
+        Some(client) => {
+            let options = client.read(cx).connection_options();
+            format!(
+                "{}:{path}",
+                remote_connection_identity(&options).persistence_key()
+            )
+        }
+        None => path,
     }
+}
+
+/// Whether this project is already open inside a dev container.
+pub fn is_dev_container_project(project: &gpui::Entity<Project>, cx: &App) -> bool {
+    project.read(cx).remote_client().is_some_and(|client| {
+        matches!(
+            client.read(cx).connection_options(),
+            remote::RemoteConnectionOptions::Docker(_)
+        )
+    })
 }
 
 pub fn suggest_on_worktree_updated(
@@ -94,13 +118,50 @@ pub fn suggest_on_worktree_updated(
         return;
     };
 
-    let worktree = worktree.read(cx);
-
-    if !worktree.is_local() {
+    // A container is provisioned on the machine holding the project, which for a
+    // collab guest is someone else's — there is no connection to build it over.
+    if project.read(cx).is_via_collab() {
         return;
     }
 
-    if find_configs_in_snapshot(worktree).is_empty() {
+    // The project inside a dev container still contains the configuration that
+    // built it, so suggesting it again would offer to do what has already been
+    // done — and a container cannot host a container.
+    if is_dev_container_project(project, cx) {
+        return;
+    }
+
+    let worktree = worktree.read(cx);
+
+    let has_configs = !find_configs_in_snapshot(worktree).is_empty();
+
+    if cli_auto_open {
+        workspace.set_open_in_dev_container(false);
+        let task = cx.spawn_in(window, async move |workspace, cx| {
+            let scans_complete =
+                workspace.update(cx, |workspace, cx| workspace.worktree_scans_complete(cx))?;
+            scans_complete.await;
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let has_configs = workspace
+                    .project()
+                    .read(cx)
+                    .worktrees(cx)
+                    .any(|wt| !find_configs_in_snapshot(wt.read(cx)).is_empty());
+                if has_configs {
+                    cx.on_next_frame(window, move |_workspace, window, cx| {
+                        window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
+                    });
+                } else {
+                    log::warn!("--dev-container: no devcontainer configuration found in project");
+                }
+            })
+        });
+        workspace.set_dev_container_task(task);
+        return;
+    }
+
+    if !has_configs {
         return;
     }
 

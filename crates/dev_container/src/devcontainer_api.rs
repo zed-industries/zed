@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::TryFutureExt;
-use gpui::{AsyncWindowContext, Entity};
+use gpui::{AsyncApp, AsyncWindowContext, Entity};
 use project::Worktree;
 use serde::Deserialize;
 use settings::{DevContainerConnection, infer_json_indent_size, replace_value_in_json_text};
@@ -86,6 +86,10 @@ pub enum DevContainerError {
     /// expects those labels to be unique per project, so Zed can't choose
     /// which one to connect to. The user must remove the duplicate(s).
     MultipleMatchingContainers(Vec<String>),
+    /// The project is open on a kind of remote host that a dev container
+    /// connection cannot name, so the container could be built but never
+    /// reached.
+    UnsupportedHost(String),
 }
 
 impl Display for DevContainerError {
@@ -125,6 +129,8 @@ impl Display for DevContainerError {
                      `docker stop <id>` and `docker rm <id>`, then try again.",
                     ids.join(", ")
                 ),
+                DevContainerError::UnsupportedHost(kind) =>
+                    format!("Dev containers are not supported for a project opened over {kind}"),
             }
         )
     }
@@ -252,12 +258,18 @@ pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> 
     configs
 }
 
+/// Returns the container, the host its engine runs on, and the directory to
+/// open inside it. The host is returned rather than left for the caller to
+/// work out, because connecting to a container built on one machine from a
+/// connection that names another silently reaches the wrong daemon.
 pub async fn start_dev_container_with_config(
     context: DevContainerContext,
     config: Option<DevContainerConfig>,
     environment: HashMap<String, String>,
-) -> Result<(DevContainerConnection, String), DevContainerError> {
-    check_for_docker(context.use_podman).await?;
+    cx: &mut AsyncApp,
+) -> Result<(DevContainerConnection, remote::DockerHost, String), DevContainerError> {
+    let docker_host = context.host.docker_host()?;
+    check_for_docker(&context).await?;
 
     let Some(actual_config) = config.clone() else {
         return Err(DevContainerError::NotInValidProject);
@@ -268,6 +280,7 @@ pub async fn start_dev_container_with_config(
         environment.clone(),
         actual_config.clone(),
         context.project_directory.clone().as_ref(),
+        cx,
     )
     .await
     {
@@ -296,7 +309,7 @@ pub async fn start_dev_container_with_config(
                 remote_env: remote_env.into_iter().collect(),
             };
 
-            Ok((connection, remote_workspace_folder))
+            Ok((connection, docker_host, remote_workspace_folder))
         }
         Err(err @ DevContainerError::MultipleMatchingContainers(_)) => Err(err),
         Err(err) => {
@@ -306,18 +319,32 @@ pub async fn start_dev_container_with_config(
     }
 }
 
-async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
-    let mut command = if use_podman {
-        util::command::new_command("podman")
+/// The engine has to be on the machine that will build the container, which is
+/// not this one when the project is open on a remote host.
+async fn check_for_docker(context: &DevContainerContext) -> Result<(), DevContainerError> {
+    let program = if context.use_podman {
+        "podman"
     } else {
-        util::command::new_command("docker")
+        "docker"
     };
-    command.arg("--version");
+    let mut command = context.host.command(
+        program,
+        &["--version".to_string()],
+        &HashMap::default(),
+        None,
+    )?;
 
     match command.output().await {
-        Ok(_) => Ok(()),
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            log::error!(
+                "`{program} --version` on the dev container host exited with {}",
+                output.status
+            );
+            Err(DevContainerError::DockerNotAvailable)
+        }
         Err(e) => {
-            log::error!("Unable to find docker in $PATH: {:?}", e);
+            log::error!("Unable to run {program} on the dev container host: {:?}", e);
             Err(DevContainerError::DockerNotAvailable)
         }
     }

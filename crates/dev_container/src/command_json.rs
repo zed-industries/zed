@@ -4,8 +4,6 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use util::command::Command;
 
-use crate::devcontainer_api::DevContainerError;
-
 pub(crate) struct DefaultCommandRunner;
 
 impl DefaultCommandRunner {
@@ -24,40 +22,6 @@ impl CommandRunner for DefaultCommandRunner {
 #[async_trait]
 pub(crate) trait CommandRunner: Send + Sync {
     async fn run_command(&self, command: &mut Command) -> Result<Output, std::io::Error>;
-}
-
-pub(crate) async fn evaluate_json_command<T>(
-    mut command: Command,
-) -> Result<Option<T>, DevContainerError>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    let output = command.output().await.map_err(|e| {
-        log::error!("Error running command {:?}: {e}", command);
-        DevContainerError::CommandFailed(command.get_program().display().to_string())
-    })?;
-
-    deserialize_json_output(output).map_err(|e| {
-        log::error!("Error running command {:?}: {e}", command);
-        DevContainerError::CommandFailed(command.get_program().display().to_string())
-    })
-}
-
-pub(crate) async fn evaluate_yaml_command<T>(
-    mut command: Command,
-) -> Result<Option<T>, DevContainerError>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    let output = command.output().await.map_err(|e| {
-        log::error!("Error running command {:?}: {e}", command);
-        DevContainerError::CommandFailed(command.get_program().display().to_string())
-    })?;
-
-    deserialize_yaml_output(output).map_err(|e| {
-        log::error!("Error running command {:?}: {e}", command);
-        DevContainerError::CommandFailed(command.get_program().display().to_string())
-    })
 }
 
 pub(crate) fn deserialize_yaml_output<T>(output: Output) -> Result<Option<T>, String>
