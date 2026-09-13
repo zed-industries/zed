@@ -987,14 +987,14 @@ impl PlatformWindow for WindowsWindow {
 
     fn with_renderer(&mut self, f: &mut dyn FnMut(&mut dyn SceneRenderer)) {
         let mut renderer = self.state.renderer.borrow_mut();
-        f(renderer.as_mut());
+        f(&mut *renderer);
     }
 
     fn present(&mut self, f: &mut dyn FnMut(&mut dyn SceneRenderer) -> bool) {
         let background_appearance = self.state.background_appearance.get();
         let mut renderer = self.state.renderer.borrow_mut();
         renderer.set_background_appearance(background_appearance);
-        f(renderer.as_mut());
+        f(&mut *renderer);
     }
 
     fn get_raw_handle(&self) -> HWND {

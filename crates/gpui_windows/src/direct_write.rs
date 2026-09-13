@@ -474,7 +474,7 @@ impl DirectWriteState {
         let family = if family == SYSTEM_UI_FONT_NAME {
             system_ui_font_name
         } else {
-            gpui_platform::font_name_with_fallbacks_shared(&family, &system_ui_font_name)
+            gpui_backend::font_name_with_fallbacks_shared(&family, &system_ui_font_name)
         };
         let fontset = unsafe { collection.GetFontSet().log_err()? };
         let font_family_h = HSTRING::from(family.as_str());
