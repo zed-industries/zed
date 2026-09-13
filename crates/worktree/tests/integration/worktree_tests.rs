@@ -1732,8 +1732,8 @@ async fn test_recreated_directory_is_rescanned_on_refresh(cx: &mut TestAppContex
     )
     .await
     .unwrap();
-    fs.clear_buffered_events();
     fs.create_dir(Path::new("/root/dir")).await.unwrap();
+    fs.clear_buffered_events();
     fs.emit_fs_event("/root/dir", Some(PathEventKind::Removed));
     fs.emit_fs_event("/root/dir", Some(PathEventKind::Created));
     fs.unpause_events_and_flush();

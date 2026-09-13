@@ -5312,9 +5312,12 @@ impl BackgroundScanner {
             let state = self.state.lock().await;
             for (path, abs_path) in &directories_to_rescan {
                 if let Some(entry) = state.snapshot.entry_for_path(path) {
-                    // Drop any existing watch registration and let the scan
-                    // below install a fresh one on the recreated dir.
+                    // Re-establish the watch before scanning: drop any leftover
+                    // registration and immediately re-add, so there is no window
+                    // where the recreated dir is unwatched. `scan_dir`'s later
+                    // add then no-ops on the existing key.
                     self.watcher.remove(abs_path).log_err();
+                    self.watcher.add(abs_path).log_err();
                     state
                         .enqueue_scan_dir(
                             abs_path.clone().into(),
