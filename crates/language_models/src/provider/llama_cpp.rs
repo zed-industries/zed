@@ -853,8 +853,8 @@ fn build_llama_cpp_request(
         model: model_name.to_string(),
         messages,
         stream: true,
-        // Let the server decide the output length (its `n_predict` default).
-        max_tokens: None,
+        // Without an explicit limit, preserve the server's `n_predict` default.
+        max_tokens: request.max_output_tokens.map(i32::try_from).transpose()?,
         stop: if request.stop.is_empty() {
             None
         } else {
@@ -1505,6 +1505,31 @@ mod tests {
     use language_model::LanguageModelToolUse;
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn request_output_limits_reach_llama_cpp_payloads() -> Result<()> {
+        for limit in [None, Some(1024)] {
+            let request = build_llama_cpp_request(
+                "test-model",
+                false,
+                LiveCapabilities {
+                    max_tokens: 8192,
+                    supports_tools: false,
+                    supports_thinking: false,
+                },
+                LanguageModelRequest {
+                    max_output_tokens: limit,
+                    ..Default::default()
+                },
+            )?;
+            let payload = serde_json::to_value(request)?;
+            assert_eq!(
+                payload.get("max_tokens").cloned(),
+                limit.map(|value| serde_json::json!(value))
+            );
+        }
+        Ok(())
+    }
 
     struct FakeCredentialsProvider {
         api_key: Vec<u8>,

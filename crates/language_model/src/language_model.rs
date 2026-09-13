@@ -171,6 +171,11 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Whether native compaction honors `LanguageModelRequest::max_output_tokens`.
+    fn supports_explicit_compaction_output_limit(&self) -> bool {
+        false
+    }
+
     /// The provider-enforced input size required for explicit compaction.
     fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
         None
@@ -210,7 +215,31 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Returns the input token ceiling.
     fn max_token_count(&self) -> u64;
+
+    /// Counts request input without generating output, when supported by the provider.
+    ///
+    /// Counts may be estimates and differ from subsequent measured usage. Callers
+    /// choose the content to count; this does not infer which input is already
+    /// covered by a previous usage report. Unsupported providers return `None`.
+    fn count_input_tokens(
+        &self,
+        _request: LanguageModelRequest,
+        _cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        async { Ok(None) }.boxed()
+    }
+
+    /// Returns the combined input and output ceiling, if one applies.
+    ///
+    /// The conservative default shares the input ceiling with output. `None`
+    /// means generation does not consume that window, not merely that the API
+    /// validates input separately or stops generation at the window boundary.
+    fn max_total_tokens(&self) -> Option<u64> {
+        Some(self.max_token_count())
+    }
+
     fn max_output_tokens(&self) -> Option<u64> {
         None
     }

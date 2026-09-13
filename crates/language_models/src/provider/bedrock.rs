@@ -2004,6 +2004,9 @@ pub fn into_bedrock(
     guardrail_identifier: Option<String>,
     guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
+    let max_output_tokens = request
+        .max_output_tokens
+        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
     if request.contains_custom_tool_input() {
         anyhow::bail!("Bedrock does not support custom tools");
     }
@@ -2924,6 +2927,28 @@ mod tests {
     use open_ai::responses::{
         ResponseFunctionToolCall, ResponseOutputMessage, ResponseReasoningItem,
     };
+
+    #[test]
+    fn request_output_limits_reach_bedrock_payloads() -> Result<()> {
+        for (limit, expected) in [(None, 4096), (Some(1024), 1024), (Some(8192), 4096)] {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    max_output_tokens: limit,
+                    ..Default::default()
+                },
+                "claude-sonnet-4-5".into(),
+                1.0,
+                4096,
+                BedrockModelMode::Default,
+                false,
+                false,
+                None,
+                None,
+            )?;
+            assert_eq!(request.max_tokens, expected);
+        }
+        Ok(())
+    }
 
     fn into_bedrock_request(messages: Vec<LanguageModelRequestMessage>) -> bedrock::Request {
         into_bedrock(

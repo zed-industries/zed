@@ -458,6 +458,7 @@ pub fn into_open_router(
     model: &Model,
     max_output_tokens: Option<u64>,
 ) -> Result<open_router::Request> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request.contains_custom_tool_input() {
         anyhow::bail!("OpenRouter does not support custom tools");
     }
@@ -775,6 +776,34 @@ fn add_message_content_part(
 mod tests {
     use super::*;
 
+    #[test]
+    fn request_output_limits_reach_open_router_payloads() -> Result<()> {
+        let model = open_router::Model::new(
+            "openai/gpt-4o",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        for (limit, expected) in [(None, 4096), (Some(1024), 1024), (Some(8192), 4096)] {
+            let request = into_open_router(
+                LanguageModelRequest {
+                    max_output_tokens: limit,
+                    ..Default::default()
+                },
+                &model,
+                Some(4096),
+            )?;
+            assert_eq!(serde_json::to_value(request)?["max_tokens"], expected);
+        }
+        Ok(())
+    }
+
     #[gpui::test]
     async fn test_session_id_is_stable_without_exposing_thread_id() {
         let model = open_router::Model::new(
@@ -867,6 +896,7 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1009,6 +1039,7 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1075,6 +1106,7 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();

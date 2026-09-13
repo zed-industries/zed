@@ -467,6 +467,7 @@ mod tests {
         let model = direct_anthropic_test_model(&provider);
 
         assert!(model.supports_explicit_compaction());
+        assert_eq!(model.max_total_tokens(), Some(model.max_token_count()));
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
@@ -798,6 +799,10 @@ impl LanguageModel for AnthropicModel {
         self.model.supports_compaction
     }
 
+    fn supports_explicit_compaction_output_limit(&self) -> bool {
+        self.supports_explicit_compaction()
+    }
+
     fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
         self.supports_explicit_compaction()
             .then_some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
@@ -883,6 +888,51 @@ impl LanguageModel for AnthropicModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         Some(self.model.max_output_tokens)
+    }
+
+    fn count_input_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        let request_id = self.model.request_id(!request.tools.is_empty()).to_string();
+        let request = into_anthropic(
+            request,
+            request_id,
+            self.model.default_temperature,
+            self.model.max_output_tokens,
+            self.model.mode.clone(),
+            AnthropicPromptCacheMode::Automatic,
+            &PROVIDER_ID,
+        );
+        let http_client = self.http_client.clone();
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = AnthropicLanguageModelProvider::api_url(cx);
+            let extra_headers = AnthropicLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+        let beta_headers = self.model.beta_headers();
+        self.request_limiter
+            .run(async move {
+                let request = request?.into_count_tokens_request();
+                let api_key = api_key.ok_or(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                })?;
+                anthropic::count_input_tokens(
+                    http_client.as_ref(),
+                    &api_url,
+                    &api_key,
+                    request,
+                    beta_headers,
+                    &extra_headers,
+                )
+                .await
+                .map(Some)
+                .map_err(Into::into)
+            })
+            .boxed()
     }
 
     fn stream_completion(
