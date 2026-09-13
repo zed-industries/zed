@@ -3248,6 +3248,68 @@ async fn test_thread_switcher_can_activate_agent_panel_terminal(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_thread_switcher_confirms_on_aux_click(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let build_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Build", true, window, cx)
+        })
+        .expect("build test terminal should be inserted");
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Server", true, window, cx)
+        })
+        .expect("server test terminal should be inserted");
+    cx.run_until_parked();
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    let selector = sidebar.read_with(cx, |sidebar, cx| {
+        let switcher = sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open")
+            .read(cx);
+        let entry = switcher
+            .entries()
+            .iter()
+            .find(|entry| entry.terminal_id() == Some(build_terminal_id))
+            .expect("switcher should list the build terminal");
+        format!("THREAD_ITEM-{}", entry.element_id())
+    });
+    let bounds = cx
+        .debug_bounds(&selector)
+        .expect("switcher entry should be rendered");
+
+    cx.simulate_mouse_down(
+        bounds.center(),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_up(
+        bounds.center(),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(sidebar.thread_switcher.is_none(), "switcher should close");
+    });
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(panel.active_terminal_id(), Some(build_terminal_id));
+    });
+}
+
+#[gpui::test]
 async fn test_thread_switcher_includes_terminal_metadata_for_open_project_group(
     cx: &mut TestAppContext,
 ) {

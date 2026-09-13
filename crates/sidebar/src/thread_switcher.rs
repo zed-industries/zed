@@ -5,7 +5,7 @@ use agent_ui::{
     terminal_thread_metadata_store::TerminalThreadMetadata, thread_metadata_store::ThreadMetadata,
 };
 use gpui::{
-    Action as _, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
+    Action as _, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
     ModifiersChangedEvent, Render, ScrollHandle, SharedString, prelude::*,
 };
 use ui::{AgentThreadStatus, ThreadItem, ThreadItemWorktreeInfo, WithScrollbar, prelude::*};
@@ -73,7 +73,7 @@ impl ThreadSwitcherEntry {
         }
     }
 
-    fn element_id(&self) -> SharedString {
+    pub(crate) fn element_id(&self) -> SharedString {
         match self {
             Self::Thread(entry) => SharedString::from(format!(
                 "thread-switcher-thread-{:?}",
@@ -407,9 +407,13 @@ impl Render for ThreadSwitcher {
                                     this.select_index(ix, cx);
                                 }
                             }))
-                            // TODO: This is not properly propagating to the tread item.
-                            .on_click(cx.listener(
-                                move |this, _event: &gpui::ClickEvent, _window, cx| {
+                            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                                this.select_and_confirm(ix, cx);
+                            }))
+                            // gpui's macOS backend maps ctrl-left clicks to right clicks, and the
+                            // switcher is usually clicked while ctrl is still held.
+                            .on_aux_click(cx.listener(
+                                move |this, _event: &ClickEvent, _window, cx| {
                                     this.select_and_confirm(ix, cx);
                                 },
                             ))
