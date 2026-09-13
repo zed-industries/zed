@@ -9,7 +9,7 @@
       "style": {
         "border": "#3f4043ff",
         "border.variant": "#2d2f34ff",
-        "border.focused": "#1b4a6eff",
+        "border.focused": "#5ac1feff",
         "border.selected": "#1b4a6eff",
         "border.transparent": "#00000000",
         "border.disabled": "#383a3eff",
@@ -416,7 +416,7 @@
       "style": {
         "border": "#cfd1d2ff",
         "border.variant": "#dfe0e1ff",
-        "border.focused": "#c4daf6ff",
+        "border.focused": "#214c76ff",
         "border.selected": "#c4daf6ff",
         "border.transparent": "#00000000",
         "border.disabled": "#d5d6d8ff",
@@ -823,7 +823,7 @@
       "style": {
         "border": "#53565dff",
         "border.variant": "#43464fff",
-        "border.focused": "#24556fff",
+        "border.focused": "#72cffeff",
         "border.selected": "#24556fff",
         "border.transparent": "#00000000",
         "border.disabled": "#4d5058ff",
