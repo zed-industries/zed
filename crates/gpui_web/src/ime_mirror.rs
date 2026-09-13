@@ -110,7 +110,7 @@ impl ImeMirror {
         style.set_property("font-size", "16px").ok();
         body.append_child(&element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
-        element.focus().ok();
+        Self::focus_element(&element);
         // The element must stay focused to receive hardware-key and IME
         // events, but on touch-first devices a focused *editable* element
         // invites the browser to summon the virtual keyboard on the next
@@ -183,7 +183,17 @@ impl ImeMirror {
     }
 
     pub(crate) fn focus(&self) {
-        self.element.focus().ok();
+        Self::focus_element(&self.element);
+    }
+
+    fn focus_element(element: &web_sys::HtmlTextAreaElement) {
+        // The hidden mirror is not a scroll target: revealing its caret can
+        // pan Android Chrome's visual viewport when the keyboard opens.
+        let options = web_sys::FocusOptions::new();
+        options.set_prevent_scroll(true);
+        if let Err(error) = element.focus_with_options(&options) {
+            log::warn!("Failed to focus IME mirror: {error:?}");
+        }
     }
 
     pub(crate) fn is_focused(&self) -> bool {

@@ -1317,6 +1317,13 @@ fn completion_error_from_anthropic_api_with_status(
                 ProviderErrorCategory::PromptTooLarge {
                     tokens: Some(tokens),
                 }
+            } else if error
+                .message
+                .starts_with("Your credit balance is too low to access the Anthropic API.")
+            {
+                // Anthropic sends credit exhaustion as invalid_request_error rather than
+                // the billing_error documented at https://platform.claude.com/docs/en/api/errors.
+                ProviderErrorCategory::PaymentRequired
             } else {
                 ProviderErrorCategory::InvalidRequest
             }
