@@ -325,7 +325,11 @@ impl MetalRenderer {
         );
 
         let command_queue = device.new_command_queue();
-        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu));
+        let sprite_atlas = Arc::new(MetalAtlas::new(
+            device.clone(),
+            is_apple_gpu,
+            command_queue.clone(),
+        ));
         let core_video_texture_cache =
             CVMetalTextureCache::new(None, device.clone(), None).unwrap();
 
@@ -493,6 +497,11 @@ impl MetalRenderer {
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
     ) -> Result<metal::CommandBuffer> {
+        // Flush dynamic-texture uploads on their own command buffer. Committing
+        // here (rather than encoding into the frame command buffer) guarantees
+        // accepted updates survive a later frame-encoding error, while queue
+        // ordering still places them before the frame that samples the textures.
+        self.sprite_atlas.commit_pending_uploads();
         let mut writer = InstanceBufferWriter::new(
             &self.device,
             &self.instance_buffer_pool,
