@@ -3,8 +3,9 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, IntoGpui, ProjectPanelEntrySpacing, ProjectPanelSortMode, ProjectPanelSortOrder,
-    RegisterSetting, Settings, ShowDiagnostics, ShowIndentGuides,
+    DockSide, FolderIndicator, IntoGpui, ProjectPanelEntrySpacing, ProjectPanelSortMode,
+    ProjectPanelSortOrder, ProjectPanelTitleTooltipDelay, RegisterSetting, Settings,
+    ShowDiagnostics, ShowIndentGuides,
 };
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
@@ -13,10 +14,11 @@ pub struct ProjectPanelSettings {
     pub button: bool,
     pub hide_gitignore: bool,
     pub default_width: Pixels,
+    pub title_tooltip_delay: ProjectPanelTitleTooltipDelay,
     pub dock: DockSide,
     pub entry_spacing: ProjectPanelEntrySpacing,
     pub file_icons: bool,
-    pub folder_icons: bool,
+    pub folder_indicator: FolderIndicator,
     pub git_status: bool,
     pub indent_size: f32,
     pub indent_guides: IndentGuidesSettings,
@@ -99,9 +101,10 @@ impl Settings for ProjectPanelSettings {
             hide_gitignore: project_panel.hide_gitignore.unwrap(),
             default_width: project_panel.default_width.unwrap().into_gpui(),
             dock: project_panel.dock.unwrap(),
+            title_tooltip_delay: project_panel.title_tooltip_delay.unwrap(),
             entry_spacing: project_panel.entry_spacing.unwrap(),
             file_icons: project_panel.file_icons.unwrap(),
-            folder_icons: project_panel.folder_icons.unwrap(),
+            folder_indicator: project_panel.folder_indicator.unwrap(),
             git_status: project_panel.git_status.unwrap()
                 && content
                     .git

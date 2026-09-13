@@ -1,4 +1,4 @@
-use std::{collections::hash_map, ops::Range, slice::ChunksExact, sync::Arc};
+use std::{ops::Range, slice::ChunksExact, sync::Arc};
 
 use anyhow::Result;
 
@@ -10,7 +10,7 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, ReadGlobal as _, SharedString, Task};
 use language::{Buffer, LanguageName, language_settings::all_language_settings};
-use lsp::{AdapterServerCapabilities, LanguageServerId};
+use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
 use settings::{
     DefaultSemanticTokenRules, SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore,
@@ -26,12 +26,17 @@ use crate::{
         LspCommand, SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFull,
         SemanticTokensResponse,
     },
-    lsp_store::missing_servers_to_query,
+    lsp_store::{
+        LanguageServerState, document_selector_context_for_language, document_selector_matches,
+        missing_servers_to_query,
+    },
     project_settings::ProjectSettings,
 };
 
+type StylizerKey = (LanguageServerId, Option<LanguageName>);
+
 pub(super) struct SemanticTokenConfig {
-    stylizers: HashMap<(LanguageServerId, Option<LanguageName>), SemanticTokenStylizer>,
+    stylizers: HashMap<StylizerKey, (lsp::SemanticTokensLegend, SemanticTokenStylizer)>,
     rules: SemanticTokenRules,
     global_mode: settings::SemanticTokens,
 }
@@ -88,27 +93,54 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> SemanticTokensTask {
         let version_queried_for = buffer.read(cx).version();
-        let current_servers = self.relevant_server_ids_for_capability_check(&buffer, cx);
+        let capability_probe = SemanticTokensFull { for_server: None };
+        let current_servers = self.language_server_ids_for_request(&buffer, &capability_probe, cx);
+        let empty_current_servers_are_authoritative = self.as_local().is_some();
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
-        let mut refreshed_servers = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
-        refreshed_servers.retain(|server_id| current_servers.contains(server_id));
-        if !refreshed_servers.is_empty() {
+        let pending_refreshes = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
+        let current_servers_are_authoritative =
+            !current_servers.is_empty() || empty_current_servers_are_authoritative;
+        let server_set_shrank = current_servers_are_authoritative
+            && (semantic_tokens_data
+                .raw_tokens
+                .servers
+                .keys()
+                .any(|server_id| !current_servers.contains(server_id))
+                || semantic_tokens_data
+                    .fetched_servers
+                    .iter()
+                    .any(|server_id| !current_servers.contains(server_id)));
+        let cache_invalidated = !pending_refreshes.is_empty() || server_set_shrank;
+        if cache_invalidated {
             semantic_tokens_data.update = None;
             semantic_tokens_data.generation += 1;
         }
-        for refreshed_server in &refreshed_servers {
+        for refreshed_server in &pending_refreshes {
             semantic_tokens_data
                 .raw_tokens
                 .servers
                 .remove(refreshed_server);
+            semantic_tokens_data
+                .fetched_servers
+                .remove(refreshed_server);
         }
-        let missing_servers = missing_servers_to_query(
-            &mut semantic_tokens_data.raw_tokens.servers,
-            &mut semantic_tokens_data.fetched_servers,
-            &current_servers,
-        )
-        .unwrap_or_default();
+        let refreshed_servers = pending_refreshes
+            .into_iter()
+            .filter(|server_id| current_servers.contains(server_id))
+            .collect::<HashSet<_>>();
+        let missing_servers = if current_servers.is_empty() && current_servers_are_authoritative {
+            semantic_tokens_data.raw_tokens.servers.clear();
+            semantic_tokens_data.fetched_servers.clear();
+            HashSet::default()
+        } else {
+            missing_servers_to_query(
+                &mut semantic_tokens_data.raw_tokens.servers,
+                &mut semantic_tokens_data.fetched_servers,
+                &current_servers,
+            )
+            .unwrap_or_default()
+        };
         if !missing_servers.is_empty() {
             semantic_tokens_data.update = None;
         }
@@ -122,6 +154,7 @@ impl LspStore {
 
         let mut servers_to_fetch = refreshed_servers;
         servers_to_fetch.extend(missing_servers);
+        let rebuild_from_cache_only = cache_invalidated && servers_to_fetch.is_empty();
         let for_server = if servers_to_fetch.len() == 1 {
             servers_to_fetch.iter().next().copied()
         } else {
@@ -130,13 +163,19 @@ impl LspStore {
             // with cheap deltas.
             None
         };
-        semantic_tokens_data
-            .fetched_servers
-            .extend(match for_server {
-                Some(server_id) => HashSet::from_iter([server_id]),
-                None => current_servers,
-            });
-        let new_tokens = self.fetch_semantic_tokens_for_buffer(&buffer, for_server, cx);
+        if !rebuild_from_cache_only {
+            semantic_tokens_data
+                .fetched_servers
+                .extend(match for_server {
+                    Some(server_id) => HashSet::from_iter([server_id]),
+                    None => current_servers,
+                });
+        }
+        let new_tokens = if rebuild_from_cache_only {
+            Task::ready(None)
+        } else {
+            self.fetch_semantic_tokens_for_buffer(&buffer, for_server, cx)
+        };
 
         let task_buffer = buffer.clone();
         let task_version_queried_for = version_queried_for.clone();
@@ -199,7 +238,13 @@ impl LspStore {
                             && let Some(semantic_tokens) = current_lsp_data.semantic_tokens.as_mut()
                             && semantic_tokens.generation == query_generation
                         {
-                            if for_server.is_none() || semantic_tokens.raw_tokens.servers.is_empty()
+                            if rebuild_from_cache_only {
+                                let buffer_snapshot =
+                                    buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                                remaining_tokens =
+                                    Some((semantic_tokens.raw_tokens.clone(), buffer_snapshot));
+                            } else if for_server.is_none()
+                                || semantic_tokens.raw_tokens.servers.is_empty()
                             {
                                 semantic_tokens.evict_all();
                             } else {
@@ -296,61 +341,50 @@ impl LspStore {
                 Some(tokens)
             })
         } else {
+            let full_request = SemanticTokensFull { for_server: None };
             let token_tasks = self
-                .local_lsp_servers_for_buffer(&buffer, cx)
+                .language_server_ids_for_request(buffer, &full_request, cx)
                 .into_iter()
                 .filter(|&server_id| {
                     for_server.is_none_or(|for_server_id| for_server_id == server_id)
                 })
-                .filter_map(|server_id| {
-                    let capabilities = AdapterServerCapabilities {
-                        server_capabilities: self.lsp_server_capabilities.get(&server_id)?.clone(),
-                        code_action_kinds: None,
-                    };
+                .map(|server_id| {
                     let request_task = match self.semantic_tokens_result_id(server_id, buffer, cx) {
                         Some(result_id) => {
                             let delta_request = SemanticTokensDelta {
                                 previous_result_id: result_id,
                             };
-                            if !delta_request.check_capabilities(capabilities.clone()) {
-                                let full_request = SemanticTokensFull {
-                                    for_server: Some(server_id),
-                                };
-                                if !full_request.check_capabilities(capabilities) {
-                                    return None;
-                                }
-
-                                self.request_lsp(
-                                    buffer.clone(),
-                                    LanguageServerToQuery::Other(server_id),
-                                    full_request,
-                                    cx,
-                                )
-                            } else {
+                            if self
+                                .language_server_ids_for_request(buffer, &delta_request, cx)
+                                .contains(&server_id)
+                            {
                                 self.request_lsp(
                                     buffer.clone(),
                                     LanguageServerToQuery::Other(server_id),
                                     delta_request,
                                     cx,
                                 )
+                            } else {
+                                self.request_lsp(
+                                    buffer.clone(),
+                                    LanguageServerToQuery::Other(server_id),
+                                    SemanticTokensFull {
+                                        for_server: Some(server_id),
+                                    },
+                                    cx,
+                                )
                             }
                         }
-                        None => {
-                            let request = SemanticTokensFull {
+                        None => self.request_lsp(
+                            buffer.clone(),
+                            LanguageServerToQuery::Other(server_id),
+                            SemanticTokensFull {
                                 for_server: Some(server_id),
-                            };
-                            if !request.check_capabilities(capabilities) {
-                                return None;
-                            }
-                            self.request_lsp(
-                                buffer.clone(),
-                                LanguageServerToQuery::Other(server_id),
-                                request,
-                                cx,
-                            )
-                        }
+                            },
+                            cx,
+                        ),
                     };
-                    Some(async move { (server_id, request_task.await) })
+                    async move { (server_id, request_task.await) }
                 })
                 .collect::<Vec<_>>();
             if token_tasks.is_empty() {
@@ -478,34 +512,119 @@ impl LspStore {
         language: Option<&LanguageName>,
         cx: &mut App,
     ) -> Option<&SemanticTokenStylizer> {
-        let stylizer = match self
+        let key = (server_id, language.cloned());
+        let legend = self.semantic_tokens_legend(server_id, language)?;
+        let up_to_date = self
             .semantic_token_config
             .stylizers
-            .entry((server_id, language.cloned()))
+            .get(&key)
+            .is_some_and(|(cached_legend, _)| cached_legend == legend);
+        if !up_to_date {
+            let legend = legend.clone();
+            let language_rules = language.and_then(|language| {
+                SettingsStore::global(cx).language_semantic_token_rules(language.as_ref())
+            });
+            let stylizer = SemanticTokenStylizer::new(server_id, &legend, language_rules, cx);
+            self.semantic_token_config
+                .stylizers
+                .insert(key.clone(), (legend, stylizer));
+        }
+        self.semantic_token_config
+            .stylizers
+            .get(&key)
+            .map(|(_, stylizer)| stylizer)
+    }
+
+    fn semantic_tokens_legend(
+        &self,
+        server_id: LanguageServerId,
+        language: Option<&LanguageName>,
+    ) -> Option<&lsp::SemanticTokensLegend> {
+        if let Some(local) = self.as_local()
+            && let Some(language) = language
+            && let Some(LanguageServerState::Running { adapter, .. }) =
+                local.language_servers.get(&server_id)
         {
-            hash_map::Entry::Occupied(o) => o.into_mut(),
-            hash_map::Entry::Vacant(v) => {
-                let tokens_provider = self
-                    .lsp_server_capabilities
-                    .get(&server_id)?
-                    .semantic_tokens_provider
-                    .as_ref()?;
-                let legend = match tokens_provider {
-                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => {
-                        &opts.legend
+            let context = document_selector_context_for_language(language, adapter);
+            if let Some(registrations) = local
+                .language_server_dynamic_registrations
+                .get(&server_id)
+                .and_then(|registrations| {
+                    registrations
+                        .text_documents
+                        .get("textDocument/semanticTokens")
+                })
+            {
+                for registration in registrations.values().rev() {
+                    if document_selector_matches(registration.document_selector.as_ref(), &context)
+                        && let Some(provider) = registration
+                            .server_capabilities
+                            .semantic_tokens_provider
+                            .as_ref()
+                    {
+                        return Some(semantic_tokens_provider_legend(provider));
                     }
-                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
-                        opts,
-                    ) => &opts.semantic_tokens_options.legend,
-                };
-                let language_rules = language.and_then(|language| {
-                    SettingsStore::global(cx).language_semantic_token_rules(language.as_ref())
-                });
-                let stylizer = SemanticTokenStylizer::new(server_id, legend, language_rules, cx);
-                v.insert(stylizer)
+                }
             }
-        };
-        Some(stylizer)
+            if let Some(provider) = local
+                .initial_server_capabilities
+                .get(&server_id)
+                .and_then(|capabilities| capabilities.semantic_tokens_provider.as_ref())
+            {
+                return Some(semantic_tokens_provider_legend(provider));
+            }
+        }
+
+        if let Some(initial_capabilities) = self.lsp_server_initial_capabilities.get(&server_id) {
+            let context = self.remote_document_selector_context(server_id, language);
+            if let Some(registrations) = self
+                .lsp_server_text_document_registrations
+                .get(&server_id)
+                .and_then(|registrations| registrations.get("textDocument/semanticTokens"))
+            {
+                // Token indices are only meaningful with the provider's legend, so do not
+                // guess when the guest cannot reconstruct the host's selector context.
+                for registration in registrations.values().rev() {
+                    let matches = match context.as_ref() {
+                        Some(context) => document_selector_matches(
+                            registration.document_selector.as_ref(),
+                            context,
+                        ),
+                        None if registration.document_selector.is_none() => true,
+                        None => return None,
+                    };
+                    if matches
+                        && let Some(provider) = registration
+                            .server_capabilities
+                            .semantic_tokens_provider
+                            .as_ref()
+                    {
+                        return Some(semantic_tokens_provider_legend(provider));
+                    }
+                }
+            }
+
+            let provider = initial_capabilities.semantic_tokens_provider.as_ref()?;
+            return Some(semantic_tokens_provider_legend(provider));
+        }
+
+        let tokens_provider = self
+            .lsp_server_capabilities
+            .get(&server_id)?
+            .semantic_tokens_provider
+            .as_ref()?;
+        Some(semantic_tokens_provider_legend(tokens_provider))
+    }
+}
+
+fn semantic_tokens_provider_legend(
+    provider: &lsp::SemanticTokensServerCapabilities,
+) -> &lsp::SemanticTokensLegend {
+    match provider {
+        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => &options.legend,
+        lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
+            &options.semantic_tokens_options.legend
+        }
     }
 }
 

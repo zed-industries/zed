@@ -3,8 +3,16 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=0" />
-        <title>GPUI Web: hello_web</title>
+        <title>GPUI Web Examples</title>
         <link data-trunk rel="rust" data-bin="hello_web" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
+        <!-- Trunk's worker pipelines build auxiliary modules without starting them.
+             The gallery imports these on the main thread, not in Web Workers. -->
+        <link data-trunk rel="rust" data-type="worker" data-bin="hello_world" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
+        <link data-trunk rel="rust" data-type="worker" data-bin="text" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
+        <link data-trunk rel="rust" data-type="worker" data-bin="text_layout" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
+        <link data-trunk rel="rust" data-type="worker" data-bin="text_wrapper" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
+        <link data-trunk rel="rust" data-type="worker" data-bin="input" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
+        <script data-trunk type="module" src="gallery.js"></script>
         <style>
             * {
                 margin: 0;
@@ -15,6 +23,61 @@
             body {
                 margin: 0;
                 height: 100%;
+            }
+            body {
+                font-family: system-ui, sans-serif;
+                color: #202030;
+                background: #f5f5f8;
+            }
+            main {
+                max-width: 48rem;
+                margin: 0 auto;
+                padding: 3rem 1.5rem;
+            }
+            h1, main > p {
+                margin-bottom: 1.5rem;
+            }
+            ul {
+                list-style: none;
+                display: grid;
+                gap: 0.75rem;
+            }
+            li a {
+                display: block;
+                padding: 1rem;
+                border: 1px solid #d0d0dc;
+                border-radius: 0.5rem;
+                color: inherit;
+                background: white;
+                text-decoration: none;
+            }
+            li a:hover, li a:focus-visible {
+                border-color: #5050a0;
+            }
+            li span {
+                display: block;
+                margin-top: 0.25rem;
+                color: #555566;
+            }
+            #back {
+                position: fixed;
+                right: 0.75rem;
+                bottom: 0.75rem;
+                z-index: 1;
+                padding: 0.5rem 0.75rem;
+                border-radius: 0.25rem;
+                color: #202030;
+                background: #ffffffee;
+            }
+            #status {
+                position: fixed;
+                top: 1rem;
+                left: 1rem;
+                right: 1rem;
+                z-index: 1;
+                padding: 1rem;
+                background: white;
+                white-space: pre-wrap;
             }
             canvas {
                 display: block;
@@ -27,5 +90,20 @@
             }
         </style>
     </head>
-    <body></body>
+    <body>
+        <main id="gallery">
+            <h1>GPUI Web Examples</h1>
+            <p>Each example runs in its own WebAssembly instance. Choose an example to open it.</p>
+            <ul>
+                <li><a href="/hello-world" data-module="hello_world"><strong>Hello world</strong><span>Basic GPUI layout and styling.</span></a></li>
+                <li><a href="/text" data-module="text"><strong>Styled text</strong><span>Typography, font sizes, and line heights.</span></a></li>
+                <li><a href="/text-layout" data-module="text_layout"><strong>Text layout</strong><span>Alignment, decorations, and font weights.</span></a></li>
+                <li><a href="/text-wrapper" data-module="text_wrapper"><strong>Text wrapping</strong><span>Wrapping and truncation, including CJK sample text.</span></a></li>
+                <li><a href="/input" data-module="input"><strong>Text input</strong><span>Typing, cursor movement, and selections.</span></a></li>
+                <li><a href="/prime-sieve" data-module="hello_web"><strong>Prime sieve</strong><span>Background tasks and progress updates.</span></a></li>
+            </ul>
+        </main>
+        <a id="back" href="/" hidden>All examples</a>
+        <p id="status" role="status" hidden></p>
+    </body>
 </html>
