@@ -1379,6 +1379,15 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
+        // `accesskit_macos::SubclassingAdapter::for_window` strong-retains the
+        // window's content view, and that content view keeps the `GPUIView` it
+        // hosts alive. Together with the `Arc<Mutex<MacWindowState>>` parked in
+        // both views' `windowState` ivar, that forms
+        // `MacWindowState -> adapter -> content view -> GPUIView -> MacWindowState`,
+        // a cycle the delegate/`frame_source` teardown below cannot break. Drop
+        // the adapter here so the native view, its `CAMetalLayer` and the
+        // renderer's command queue are actually released with the window.
+        drop(this.accesskit_adapter.take());
         this.renderer.destroy();
         let window = this.native_window;
         let sheet_parent = this.sheet_parent.take();
