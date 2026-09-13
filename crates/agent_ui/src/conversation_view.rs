@@ -6965,9 +6965,9 @@ pub(crate) mod tests {
         // parent's action log through the linked-log mechanism.
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
             acp::ToolCall::new("spawn1", "Subagent task")
+                .name("spawn_agent")
                 .kind(acp::ToolKind::Other)
-                .status(acp::ToolCallStatus::Completed)
-                .meta(acp_thread::meta_with_tool_name("spawn_agent")),
+                .status(acp::ToolCallStatus::Completed),
         )]);
 
         thread

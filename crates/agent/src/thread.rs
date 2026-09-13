@@ -1640,6 +1640,7 @@ impl Thread {
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
                     acp::ToolCall::new(tool_call_id.clone(), tool_use.name.to_string())
+                        .name(tool_use.name.to_string())
                         .status(status)
                         .raw_input(tool_use.input.to_display_json()),
                 )))
@@ -5323,9 +5324,9 @@ impl ThreadEventStream {
         input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall::new(id.clone(), title)
+            .name(tool_name)
             .kind(kind)
             .raw_input(input)
-            .meta(acp_thread::meta_with_tool_name(tool_name))
     }
 
     fn update_tool_call_fields(
@@ -8596,35 +8597,50 @@ mod tests {
             })
         });
 
+        let registered_tool_call_id = scoped_tool_call_id(0, &registered_tool_use_id).to_string();
+        let missing_tool_call_id = scoped_tool_call_id(0, &missing_tool_use_id).to_string();
+        let mut tool_names_by_id = HashMap::default();
         let mut tool_use_ids_with_image_content = HashSet::default();
         while let Some(event) = replay_events.next().await {
             let event = event.unwrap();
-            if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
-                event
-                && let Some(content) = &update.fields.content
-                && content.iter().any(|content| {
-                    matches!(
-                        content,
-                        acp::ToolCallContent::Content(acp::Content {
-                            content: acp::ContentBlock::Image(_),
-                            ..
+            match event {
+                ThreadEvent::ToolCall(tool_call) => {
+                    tool_names_by_id.insert(tool_call.tool_call_id.to_string(), tool_call.name);
+                }
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
+                    if update.fields.content.as_ref().is_some_and(|content| {
+                        content.iter().any(|content| {
+                            matches!(
+                                content,
+                                acp::ToolCallContent::Content(acp::Content {
+                                    content: acp::ContentBlock::Image(_),
+                                    ..
+                                })
+                            )
                         })
-                    )
-                })
-            {
-                tool_use_ids_with_image_content.insert(update.tool_call_id.to_string());
+                    }) =>
+                {
+                    tool_use_ids_with_image_content.insert(update.tool_call_id.to_string());
+                }
+                _ => {}
             }
         }
 
         // Both tool uses live in the message pushed above, at index 0 (see
         // `scoped_tool_call_id`).
-        assert!(
-            tool_use_ids_with_image_content
-                .contains(&scoped_tool_call_id(0, &registered_tool_use_id).to_string())
+        assert!(tool_use_ids_with_image_content.contains(&registered_tool_call_id));
+        assert!(tool_use_ids_with_image_content.contains(&missing_tool_call_id));
+        assert_eq!(
+            tool_names_by_id
+                .get(&registered_tool_call_id)
+                .and_then(Option::as_deref),
+            Some(ReplayImageTool::NAME)
         );
-        assert!(
-            tool_use_ids_with_image_content
-                .contains(&scoped_tool_call_id(0, &missing_tool_use_id).to_string())
+        assert_eq!(
+            tool_names_by_id
+                .get(&missing_tool_call_id)
+                .and_then(Option::as_deref),
+            Some("missing_image_tool")
         );
     }
 
