@@ -311,8 +311,8 @@ async fn test_ssh_collaboration_git_branches(
     assert_eq!(&branches_b, &branches_set);
 
     cx_b.update(|cx| {
-        repo_b.update(cx, |repo_b, _cx| {
-            repo_b.change_branch(new_branch.to_string())
+        repo_b.update(cx, |repo_b, cx| {
+            repo_b.change_branch(new_branch.to_string(), cx)
         })
     })
     .await
@@ -351,8 +351,8 @@ async fn test_ssh_collaboration_git_branches(
     .unwrap();
 
     cx_b.update(|cx| {
-        repo_b.update(cx, |repo_b, _cx| {
-            repo_b.change_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repo_b, cx| {
+            repo_b.change_branch("totally-new-branch".to_string(), cx)
         })
     })
     .await

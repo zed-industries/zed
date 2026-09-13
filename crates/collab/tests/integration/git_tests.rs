@@ -968,8 +968,8 @@ async fn test_branch_list_sync(
     .unwrap();
 
     cx_b.update(|cx| {
-        repo_b.update(cx, |repository, _cx| {
-            repository.change_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repository, cx| {
+            repository.change_branch("totally-new-branch".to_string(), cx)
         })
     })
     .await
