@@ -57,6 +57,14 @@ pub mod lsp {
 /// A result returned from a Zed extension.
 pub type Result<T, E = String> = core::result::Result<T, E>;
 
+/// A command handled by Zed instead of being forwarded to the language server.
+pub enum ClientCommand {
+    /// Show a list of locations from the LSP command arguments.
+    ShowLocations,
+    /// Schedule a Zed task.
+    ScheduleTask(TaskTemplate),
+}
+
 /// Updates the installation status for the given language server.
 pub fn set_language_server_installation_status(
     language_server_id: &LanguageServerId,
@@ -139,6 +147,16 @@ pub trait Extension: Send + Sync {
         _target_language_server_id: &LanguageServerId,
         _worktree: &Worktree,
     ) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
+    /// Maps an LSP command to a Zed client command.
+    fn language_server_client_command(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        _command: String,
+        _arguments: Vec<serde_json::Value>,
+    ) -> Result<Option<ClientCommand>> {
         Ok(None)
     }
 
@@ -361,6 +379,26 @@ mod wit {
 
 wit::export!(Component);
 
+impl From<ClientCommand> for wit::ClientCommand {
+    fn from(command: ClientCommand) -> Self {
+        match command {
+            ClientCommand::ShowLocations => Self::ShowLocations,
+            ClientCommand::ScheduleTask(task_template) => Self::ScheduleTask(task_template),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn show_locations_client_command_converts_to_wit() {
+        let command: wit::ClientCommand = ClientCommand::ShowLocations.into();
+        assert!(matches!(command, wit::ClientCommand::ShowLocations));
+    }
+}
+
 struct Component;
 
 impl wit::Guest for Component {
@@ -442,6 +480,19 @@ impl wit::Guest for Component {
                 worktree,
             )?
             .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn language_server_client_command(
+        language_server_id: String,
+        command: String,
+        arguments: String,
+    ) -> Result<Option<wit::ClientCommand>, String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        let arguments = serde_json::from_str(&arguments)
+            .map_err(|err| format!("failed to parse client command arguments: {err}"))?;
+        extension()
+            .language_server_client_command(&language_server_id, command, arguments)
+            .map(|command| command.map(Into::into))
     }
 
     fn labels_for_completions(
