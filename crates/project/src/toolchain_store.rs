@@ -3,7 +3,8 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 use anyhow::{Context as _, Result, bail};
 
 use async_trait::async_trait;
-use collections::{BTreeMap, IndexSet};
+use collections::{BTreeMap, HashMap, IndexSet};
+use futures::{FutureExt as _, future::Shared};
 
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
@@ -69,6 +70,7 @@ impl ToolchainStore {
             worktree_store: worktree_store.clone(),
             project_environment,
             active_toolchains: Default::default(),
+            toolchain_lists: Default::default(),
             manifest_tree,
         });
         let _sub = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
@@ -416,6 +418,12 @@ pub struct LocalToolchainStore {
     worktree_store: Entity<WorktreeStore>,
     project_environment: Entity<ProjectEnvironment>,
     active_toolchains: BTreeMap<(WorktreeId, LanguageName), BTreeMap<Arc<RelPath>, Toolchain>>,
+    // Toolchain discovery (e.g. Python's `pet` interpreter scan) is expensive and blocks a
+    // background thread, so results are memoized per subproject root. UI like the status-bar
+    // toolchain item re-requests this on every buffer/tab change; without this cache those
+    // uncached scans pile up and exhaust the background thread pool (see issue #60472).
+    toolchain_lists:
+        HashMap<(WorktreeId, Arc<RelPath>, LanguageName), Shared<Task<Option<ToolchainList>>>>,
     manifest_tree: Entity<ManifestTree>,
 }
 
@@ -548,15 +556,26 @@ impl LocalToolchainStore {
                 })
                 .await;
 
-            cx.background_spawn(async move {
-                Some((
-                    toolchains
-                        .list(worktree_root, relative_path.path.clone(), project_env)
-                        .await,
-                    relative_path.path,
-                ))
-            })
-            .await
+            let list = this
+                .update(cx, |this, cx| {
+                    this.toolchain_lists
+                        .entry((worktree_id, relative_path.path.clone(), language_name.clone()))
+                        .or_insert_with(|| {
+                            let relative_path = relative_path.path.clone();
+                            cx.background_spawn(async move {
+                                Some(
+                                    toolchains
+                                        .list(worktree_root, relative_path, project_env)
+                                        .await,
+                                )
+                            })
+                            .shared()
+                        })
+                        .clone()
+                })
+                .ok()?
+                .await?;
+            Some((list, relative_path.path))
         })
     }
     pub(crate) fn active_toolchain(
