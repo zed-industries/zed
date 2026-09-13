@@ -5,8 +5,8 @@ use crate::PathPromptOptions;
 use crate::{
     ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, MenuCommandId, Platform, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformMenu,
-    PlatformMenuItem, PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem,
+    PlatformTextSystem, PromptButton, SceneRenderer, ScreenCaptureFrame, ScreenCaptureSource,
     ScreenCaptureStream, SharedString, SourceMetadata, SystemNotification,
     SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
     WindowId, WindowParams, size,
@@ -51,7 +51,7 @@ pub(crate) struct TestPlatform {
     idle_sleep_prevention_count: Arc<AtomicUsize>,
     idle_sleep_prevention_delay: Cell<Duration>,
     idle_sleep_prevention_fails: Cell<bool>,
-    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn SceneRenderer>>>>,
     weak: Weak<Self>,
 }
 
@@ -143,9 +143,7 @@ impl TestPlatform {
         executor: BackgroundExecutor,
         foreground_executor: ForegroundExecutor,
         text_system: Arc<dyn PlatformTextSystem>,
-        headless_renderer_factory: Option<
-            Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>,
-        >,
+        headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn SceneRenderer>>>>,
     ) -> Rc<Self> {
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,

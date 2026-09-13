@@ -14,8 +14,8 @@ doctest = false
 
 [features]
 default = []
-test-support = []
-bench-support = ["test-support"]
+test-support = ["gpui_backend/test-support"]
+bench-support = ["test-support", "gpui_backend/bench-support"]
 profiler = []
 wayland = []
 x11 = ["scap?/x11"]

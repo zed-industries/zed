@@ -17,20 +17,11 @@ pub const SUBPIXEL_VARIANTS_X: u8 = 4;
 pub const SUBPIXEL_VARIANTS_Y: u8 = 1;
 
 use crate::{FontFallbacks, FontFeatures};
-
-/// An opaque identifier for a specific font.
-#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
-#[repr(C)]
-pub struct FontId(pub usize);
+use gpui_backend::{FontId, GlyphId, RenderGlyphParams};
 
 /// An opaque identifier for a specific font family.
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
-
-/// An identifier for a specific glyph, as returned by the platform text system.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(C)]
-pub struct GlyphId(pub u32);
 
 /// The degree of blackness or stroke thickness of a font. This value ranges from 100.0 to 900.0,
 /// with 400.0 as normal.
@@ -259,39 +250,6 @@ impl FontMetrics {
     /// Returns the outer limits of the area that the font covers in pixels.
     pub fn bounding_box(&self, font_size: Pixels) -> Bounds<Pixels> {
         (self.bounding_box / self.units_per_em as f32 * font_size.0).map(px)
-    }
-}
-
-/// Parameters for rendering a glyph, used as cache keys for raster bounds.
-///
-/// This struct identifies a specific glyph rendering configuration including
-/// font, size, subpixel positioning, and scale factor. It's used to look up
-/// cached raster bounds and sprite atlas entries.
-#[derive(Clone, Debug, PartialEq)]
-#[expect(missing_docs)]
-pub struct RenderGlyphParams {
-    pub font_id: FontId,
-    pub glyph_id: GlyphId,
-    pub font_size: Pixels,
-    pub subpixel_variant: Point<u8>,
-    pub scale_factor: f32,
-    pub is_emoji: bool,
-    pub subpixel_rendering: bool,
-    pub dilation: u8,
-}
-
-impl Eq for RenderGlyphParams {}
-
-impl Hash for RenderGlyphParams {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.font_id.0.hash(state);
-        self.glyph_id.0.hash(state);
-        self.font_size.0.to_bits().hash(state);
-        self.subpixel_variant.hash(state);
-        self.scale_factor.to_bits().hash(state);
-        self.is_emoji.hash(state);
-        self.subpixel_rendering.hash(state);
-        self.dilation.hash(state);
     }
 }
 

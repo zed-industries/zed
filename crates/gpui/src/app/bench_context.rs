@@ -12,7 +12,7 @@ use hdrhistogram::Histogram;
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, BoundsExt,
     Context, Empty, Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform,
-    PlatformDispatcherExt, PlatformHeadlessRenderer, PlatformTextSystem, Render, Reservation, Task,
+    PlatformDispatcherExt, PlatformTextSystem, Render, Reservation, SceneRenderer, Task,
     TestPlatform, ThreadedDispatcher, VisualContext, Window, WindowBounds, WindowHandle,
     WindowOptions,
     app::GpuiBorrow,
@@ -42,7 +42,7 @@ use crate::{
 /// a headless renderer (Metal), so GPU submission is excluded from benchmark
 /// measurements on other platforms.
 pub fn bench_platform(
-    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn SceneRenderer>>>>,
     text_system: Arc<dyn PlatformTextSystem>,
 ) -> Rc<dyn Platform> {
     thread_local! {

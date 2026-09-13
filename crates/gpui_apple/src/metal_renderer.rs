@@ -1607,7 +1607,11 @@ impl MetalHeadlessRenderer {
 }
 
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-impl gpui_platform::PlatformHeadlessRenderer for MetalHeadlessRenderer {
+impl gpui_platform::SceneRenderer for MetalHeadlessRenderer {
+    fn draw(&mut self, scene: &Scene) {
+        self.renderer.draw(scene)
+    }
+
     fn render_scene_to_image(
         &mut self,
         scene: &Scene,

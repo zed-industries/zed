@@ -7590,7 +7590,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "etagere",
+ "gpui_shared_string",
  "gpui_types",
+ "image",
  "schemars 1.0.4",
  "serde",
 ]

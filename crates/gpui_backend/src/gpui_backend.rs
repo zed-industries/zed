@@ -10,9 +10,11 @@
 
 mod atlas;
 mod bounds_tree;
+mod render;
 mod renderer;
 mod scene;
 
 pub use atlas::*;
+pub use render::*;
 pub use renderer::*;
 pub use scene::*;

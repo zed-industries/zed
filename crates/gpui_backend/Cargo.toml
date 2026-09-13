@@ -20,6 +20,8 @@ bench-support = ["test-support"]
 [dependencies]
 anyhow.workspace = true
 etagere.workspace = true
+gpui_shared_string.workspace = true
 gpui_types.workspace = true
+image.workspace = true
 schemars.workspace = true
 serde.workspace = true

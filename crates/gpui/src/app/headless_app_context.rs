@@ -10,9 +10,9 @@
 
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor, Bounds,
-    Context, Entity, EntityId, ForegroundExecutor, Global, Pixels, PlatformHeadlessRenderer,
-    PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions,
+    Context, Entity, EntityId, ForegroundExecutor, Global, Pixels, PlatformTextSystem, Render,
+    Reservation, SceneRenderer, Size, Task, TestDispatcher, TestPlatform, TextSystem, Window,
+    WindowBounds, WindowHandle, WindowOptions,
     app::{GpuiBorrow, GpuiMode},
 };
 use anyhow::Result;
@@ -65,7 +65,7 @@ impl HeadlessAppContext {
     pub fn with_platform(
         platform_text_system: Arc<dyn PlatformTextSystem>,
         asset_source: Arc<dyn AssetSource>,
-        renderer_factory: impl Fn() -> Option<Box<dyn PlatformHeadlessRenderer>> + 'static,
+        renderer_factory: impl Fn() -> Option<Box<dyn SceneRenderer>> + 'static,
     ) -> Self {
         let seed = std::env::var("SEED")
             .ok()
@@ -77,7 +77,7 @@ impl HeadlessAppContext {
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
 
-        let renderer_factory: Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>> =
+        let renderer_factory: Box<dyn Fn() -> Option<Box<dyn SceneRenderer>>> =
             Box::new(renderer_factory);
         let platform = TestPlatform::with_platform(
             background_executor.clone(),

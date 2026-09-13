@@ -1,15 +1,52 @@
-//! Rendering asset identifiers shared by `gpui` and its platform backends.
+//! Rendering asset identifiers and raster parameters shared by the engine and
+//! its platform backends.
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-use crate::{PlatformAtlas, Scene};
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-use anyhow::Result;
 use gpui_shared_string::SharedString;
-use gpui_types::{DevicePixels, Size};
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-use image::RgbaImage;
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-use std::sync::Arc;
+use gpui_types::{DevicePixels, Pixels, Point, Size};
+use std::hash::{Hash, Hasher};
+
+/// An opaque identifier for a specific font.
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+#[repr(C)]
+pub struct FontId(pub usize);
+
+/// An identifier for a specific glyph, as returned by the platform text system.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(C)]
+pub struct GlyphId(pub u32);
+
+/// Parameters for rendering a glyph, used as cache keys for raster bounds.
+///
+/// This struct identifies a specific glyph rendering configuration including
+/// font, size, subpixel positioning, and scale factor. It's used to look up
+/// cached raster bounds and sprite atlas entries.
+#[derive(Clone, Debug, PartialEq)]
+#[expect(missing_docs)]
+pub struct RenderGlyphParams {
+    pub font_id: FontId,
+    pub glyph_id: GlyphId,
+    pub font_size: Pixels,
+    pub subpixel_variant: Point<u8>,
+    pub scale_factor: f32,
+    pub is_emoji: bool,
+    pub subpixel_rendering: bool,
+    pub dilation: u8,
+}
+
+impl Eq for RenderGlyphParams {}
+
+impl Hash for RenderGlyphParams {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.font_id.0.hash(state);
+        self.glyph_id.0.hash(state);
+        self.font_size.0.to_bits().hash(state);
+        self.subpixel_variant.hash(state);
+        self.scale_factor.to_bits().hash(state);
+        self.is_emoji.hash(state);
+        self.subpixel_rendering.hash(state);
+        self.dilation.hash(state);
+    }
+}
 
 /// A unique identifier for the image cache
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -27,27 +64,6 @@ pub struct RenderImageParams {
 pub struct RenderSvgParams {
     pub path: SharedString,
     pub size: Size<DevicePixels>,
-}
-
-/// A renderer for headless windows that can produce real rendered output.
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-pub trait PlatformHeadlessRenderer {
-    /// Render a scene and return the result as an RGBA image.
-    fn render_scene_to_image(
-        &mut self,
-        scene: &Scene,
-        size: Size<DevicePixels>,
-    ) -> Result<RgbaImage>;
-
-    /// Render a scene to an offscreen target without reading the result back.
-    ///
-    /// This is the headless analogue of presenting a frame: it performs the
-    /// same CPU-side scene encoding and GPU submission as drawing to a real
-    /// window, but doesn't block on GPU completion or copy pixels back.
-    fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()>;
-
-    /// Returns the sprite atlas used by this renderer.
-    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
 
 // Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp
