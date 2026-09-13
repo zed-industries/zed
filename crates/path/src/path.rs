@@ -596,6 +596,82 @@ mod tests {
     }
 
     #[test]
+    fn test_unix_path_style_starts_with() {
+        let unix_paths_and_prefixes = [
+            ("", "", true),
+            ("foo", "", true),
+            ("", "foo", false),
+            ("foo", "foo", true),
+            ("foo/", "foo", true),
+            ("foo//", "foo", true),
+            ("foo///", "foo", true),
+            ("foo/.", "foo", true),
+            ("foo/./bar", "foo/bar", true),
+            ("foo/.//bar", "foo/bar", true),
+            ("foo//./bar", "foo/bar", true),
+            ("foo/bar", "foo", true),
+            ("foo/bar", "foobar", false),
+            ("foo/bar/baz", "foo/bar", true),
+            ("foo/bar", "foo/bar/baz", false),
+            ("./foo/bar/", ".", true),
+            ("/etc/passwd", "/etc", true),
+            ("/etc/passwd", "/etc/", true),
+            ("/etc/passwd", "/etc/passwd", true),
+            ("/etc/passwd", "/etc/passwd/", true),
+            ("/etc/passwd", "/etc/passwd///", true),
+            ("/etc/passwd", "/e", false),
+            ("/etc/passwd", "/etc/passwd.txt", false),
+            ("/etc/foo.rs", "/etc/foo", false),
+        ];
+
+        for (path, prefix, expected) in unix_paths_and_prefixes {
+            assert_eq!(
+                PathStyle::Unix.starts_with(Path::new(path), Path::new(prefix)),
+                expected,
+                "{path:?}.starts_with({prefix:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_windows_path_style_starts_with() {
+        let windows_paths_and_prefixes = [
+            (
+                r"C:\src\rust\cargo-test\test\Cargo.toml",
+                r"c:\src\rust\cargo-test\test",
+                true,
+            ),
+            (r"C:\foo\.\bar.txt", r"C:\foo\bar.txt", true),
+            (r"C:\foo\.", r"C:\foo", true),
+            (r"\\server\share", r"\\server", false),
+            (r"\\server\share\foo.txt", r"\\server", false),
+            (r"\\server\share\foo.txt", r"\\server\share", true),
+            (r"\\server\share\foo.txt", r"\\server\share\", true),
+            (r"\\server\share\foo.txt", r"\\server\share/", true),
+            (r"\\server\share\foo.txt", r"\\server\other", false),
+            (r"\\server\share\foo.txt", r"\\SERVER\share", false),
+            (r"\\?\C:\foo\.\bar.txt", r"\\?\C:\foo\bar.txt", false),
+            (r"\\?\C:\foo.txt", r"\\?\C:\", true),
+            (
+                r"\\?\UNC\server\share\foo.txt",
+                r"\\?\UNC\server\share",
+                true,
+            ),
+            (r"\\?\UNC\server\share\foo.txt", r"\\?\UNC\server\", false),
+            (r"\\?\bar\foo.txt", r"\\?\bar", true),
+            (r"\\?\C:\foo/bar.txt", r"\\?\C:\foo", false),
+        ];
+
+        for (path, prefix, expected) in windows_paths_and_prefixes {
+            assert_eq!(
+                PathStyle::Windows.starts_with(Path::new(path), Path::new(prefix)),
+                expected,
+                "{path:?}.starts_with({prefix:?})"
+            );
+        }
+    }
+
+    #[test]
     fn test_unix_path_style_file_name() {
         let unix_paths_and_filenames = [
             (Path::new(""), None),
