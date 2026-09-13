@@ -294,12 +294,41 @@ impl WgpuRenderer {
         };
 
         let mut ctx_ref = gpu_context.borrow_mut();
-        let context = match ctx_ref.as_mut() {
+        let (context, surface) = match ctx_ref.as_mut() {
             Some(context) => {
                 context.check_compatible_with_surface(&surface)?;
-                context
+                (context, surface)
             }
-            None => ctx_ref.insert(WgpuContext::new(instance, &surface, compositor_gpu)?),
+            None => match WgpuContext::new(instance, &surface, compositor_gpu) {
+                Ok(context) => (ctx_ref.insert(context), surface),
+                Err(lean_error) => {
+                    log::warn!(
+                        "Lean GPU context creation failed ({lean_error}); retrying with a \
+                         full (unfiltered Vulkan + GL) instance"
+                    );
+                    // Drop the lean probe surface so the full instance can open
+                    // the same window handle (one compositor surface per window).
+                    drop(surface);
+                    WgpuContext::restore_full_icd_selection();
+                    let full_instance =
+                        WgpuContext::instance_unrestricted(Box::new(window.clone()));
+                    let full_target = wgpu::SurfaceTargetUnsafe::RawHandle {
+                        // Fall back to the display handle already provided via InstanceDescriptor::display.
+                        raw_display_handle: None,
+                        raw_window_handle: window_handle.as_raw(),
+                    };
+                    // Safety: The caller guarantees that the window handle is valid
+                    // for the lifetime of this renderer (see the first surface).
+                    let full_surface = unsafe {
+                        full_instance
+                            .create_surface_unsafe(full_target)
+                            .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
+                    };
+                    let context = WgpuContext::new(full_instance, &full_surface, compositor_gpu)
+                        .context("No usable GPU adapter on this system")?;
+                    (ctx_ref.insert(context), full_surface)
+                }
+            },
         };
 
         let atlas = Arc::new(WgpuAtlas::from_context(context));
