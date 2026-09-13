@@ -904,7 +904,6 @@ pub(crate) fn render_buffer_header(
                                             None,
                                             editor_handle,
                                             true,
-                                            window,
                                             cx,
                                         ))
                                     })

@@ -145,10 +145,14 @@ impl Editor {
     fn set_breadcrumbs_visibility(
         &mut self,
         breadcrumbs_visibility: BreadcrumbsVisibility,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.breadcrumbs_visibility != breadcrumbs_visibility {
             self.breadcrumbs_visibility = breadcrumbs_visibility;
+            if !self.breadcrumbs_visible() {
+                self.dismiss_breadcrumb_navigation(window, cx);
+            }
             cx.emit(EditorEvent::BreadcrumbsChanged);
             cx.notify();
         }
@@ -157,10 +161,14 @@ impl Editor {
     pub fn toggle_breadcrumb(
         &mut self,
         _: &ToggleBreadcrumb,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_breadcrumbs_visibility(self.breadcrumbs_visibility.toggle_visibility(), cx);
+        self.set_breadcrumbs_visibility(
+            self.breadcrumbs_visibility.toggle_visibility(),
+            window,
+            cx,
+        );
     }
 
     pub fn disable_scrollbars_and_minimap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
