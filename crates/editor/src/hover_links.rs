@@ -1186,21 +1186,22 @@ fn surrounding_filename(
 mod tests {
     use super::*;
     use crate::{
-        DisplayPoint,
+        AcceptInlayHint, DisplayPoint, MoveLeft, MoveRight, Undo,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
         inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
-    use futures::StreamExt;
+    use futures::{StreamExt, channel::oneshot};
     use gpui::{
         Modifiers, MouseButton, MouseDownEvent, MousePressureEvent, MouseUpEvent, PlatformInput,
         PressureStage,
     };
     use indoc::indoc;
-    use language::Point;
+    use language::{FakeLspAdapter, Point, rust_lang};
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
     use multi_buffer::{MultiBufferOffset, PathKey};
+    use parking_lot::Mutex;
     use settings::InlayHintSettingsContent;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -1819,6 +1820,296 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_accept_inlay_hint(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                ..InlayHintSettingsContent::default()
+            });
+        });
+        let position = lsp::Position::new(0, 21);
+        let edits = vec![
+            lsp::TextEdit {
+                range: lsp::Range::new(position, position),
+                new_text: ": u32".to_string(),
+            },
+            lsp::TextEdit {
+                range: lsp::Range::default(),
+                new_text: "use std::primitive::u32;\n".to_string(),
+            },
+        ];
+        let hints = Arc::new(Mutex::new(None::<Vec<lsp::InlayHint>>));
+        let fail_resolve = Arc::new(Mutex::new(false));
+        let resolve_count = Arc::new(Mutex::new(0));
+        let resolve_receiver = Arc::new(Mutex::new(None::<oneshot::Receiver<()>>));
+        let mut cx = EditorLspTestContext::new_with_lsp_adapter(
+            Arc::into_inner(rust_lang()).expect("test language"),
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Right(
+                        lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                            resolve_provider: Some(true),
+                            ..lsp::InlayHintOptions::default()
+                        }),
+                    )),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let hints = hints.clone();
+                    let edits = edits.clone();
+                    let fail_resolve = fail_resolve.clone();
+                    let resolve_count = resolve_count.clone();
+                    let resolve_receiver = resolve_receiver.clone();
+                    move |server| {
+                        let hints = hints.clone();
+                        server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |_, _| {
+                                let hints = hints.lock().take();
+                                async move { Ok(hints) }
+                            },
+                        );
+                        let edits = edits.clone();
+                        let fail_resolve = fail_resolve.clone();
+                        let resolve_count = resolve_count.clone();
+                        let resolve_receiver = resolve_receiver.clone();
+                        server.set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
+                            move |mut hint, _| {
+                                *resolve_count.lock() += 1;
+                                let resolve_receiver = resolve_receiver.lock().take();
+                                let fail_resolve = hint.data.is_none()
+                                    && std::mem::take(&mut *fail_resolve.lock());
+                                if hint.data != Some(serde_json::Value::Bool(false)) {
+                                    hint.text_edits = Some(edits.clone());
+                                }
+                                if hint.data == Some(serde_json::Value::Bool(true))
+                                    && let lsp::InlayHintLabel::LabelParts(parts) = &mut hint.label
+                                {
+                                    for part in parts {
+                                        part.command = Some(lsp::Command {
+                                            title: "Apply".to_string(),
+                                            command: "apply".to_string(),
+                                            arguments: None,
+                                        });
+                                    }
+                                }
+                                async move {
+                                    if let Some(resolve_receiver) = resolve_receiver {
+                                        resolve_receiver.await?;
+                                    }
+                                    anyhow::ensure!(
+                                        !fail_resolve,
+                                        "injected inlay resolve failure"
+                                    );
+                                    Ok(hint)
+                                }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+            cx,
+        )
+        .await;
+        let source = "fn main() { let valueˇ = 1; }\n";
+        for (double_click, has_command) in [(true, false), (false, false), (true, true)] {
+            let hint = lsp::InlayHint {
+                position,
+                label: lsp::InlayHintLabel::LabelParts(vec![lsp::InlayHintLabelPart {
+                    value: ": Number".to_string(),
+                    ..lsp::InlayHintLabelPart::default()
+                }]),
+                text_edits: (double_click && !has_command).then(|| edits.clone()),
+                kind: Some(if double_click {
+                    lsp::InlayHintKind::TYPE
+                } else {
+                    lsp::InlayHintKind::PARAMETER
+                }),
+                tooltip: None,
+                padding_left: None,
+                padding_right: None,
+                data: has_command.then_some(serde_json::Value::Bool(true)),
+            };
+            let mut response = Vec::new();
+            if !double_click {
+                let mut informational = hint.clone();
+                informational.label = lsp::InlayHintLabel::String("informational".to_string());
+                informational.data = Some(serde_json::Value::Bool(false));
+                response.push(informational);
+            }
+            response.push(hint);
+            *hints.lock() = Some(response);
+            *fail_resolve.lock() = !has_command;
+            let previous_resolve_count = *resolve_count.lock();
+            cx.set_state(source);
+            cx.run_until_parked();
+            assert_eq!(*resolve_count.lock(), previous_resolve_count);
+            if !double_click {
+                cx.update(|window, cx| {
+                    assert!(window.is_action_available(&AcceptInlayHint, cx));
+                });
+                let start = cx.display_point(source);
+                let point = cx.pixel_position_for(DisplayPoint::new(
+                    start.row(),
+                    position.character + "informational".len() as u32 + 4,
+                ));
+                cx.simulate_mouse_move(point, None, Modifiers::none());
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    assert!(window.is_action_available(&AcceptInlayHint, cx));
+                });
+            }
+            for (read_only, lsp_enabled) in [(true, true), (false, false), (false, true)] {
+                cx.update_editor(|editor, _, cx| {
+                    editor.set_read_only(read_only);
+                    editor.enable_lsp_data = lsp_enabled;
+                    cx.notify();
+                });
+                if read_only {
+                    cx.dispatch_action(MoveLeft);
+                    cx.dispatch_action(MoveRight);
+                }
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    if read_only || !lsp_enabled {
+                        assert!(!window.is_action_available(&AcceptInlayHint, cx));
+                    } else {
+                        assert!(window.is_action_available(&AcceptInlayHint, cx));
+                    }
+                });
+            }
+            if double_click {
+                let start = cx.display_point(source);
+                let point =
+                    cx.pixel_position_for(DisplayPoint::new(start.row(), start.column() + 4));
+                cx.simulate_click(point, Modifiers::none());
+                assert_eq!(cx.buffer_text(), "fn main() { let value = 1; }\n");
+                cx.simulate_event(MouseDownEvent {
+                    position: point,
+                    modifiers: Modifiers::none(),
+                    button: MouseButton::Left,
+                    click_count: 2,
+                    first_mouse: false,
+                });
+                cx.simulate_event(MouseUpEvent {
+                    position: point,
+                    modifiers: Modifiers::none(),
+                    button: MouseButton::Left,
+                    click_count: 2,
+                });
+            } else {
+                cx.dispatch_action(AcceptInlayHint);
+            }
+            cx.run_until_parked();
+
+            assert_eq!(
+                cx.buffer_text(),
+                "use std::primitive::u32;\nfn main() { let value: u32 = 1; }\n",
+            );
+            cx.update_editor(|editor, window, cx| editor.undo(&Undo, window, cx));
+            assert_eq!(cx.buffer_text(), "fn main() { let value = 1; }\n");
+            cx.run_until_parked();
+        }
+        for (value, read_only, edit_buffer) in
+            [(4, false, false), (5, true, false), (6, false, true)]
+        {
+            *hints.lock() = Some(vec![lsp::InlayHint {
+                position,
+                label: lsp::InlayHintLabel::String(": Number".to_string()),
+                kind: Some(lsp::InlayHintKind::TYPE),
+                text_edits: None,
+                tooltip: None,
+                padding_left: None,
+                padding_right: None,
+                data: None,
+            }]);
+            cx.set_state(&format!("fn main() {{ let valueˇ = {value}; }}\n"));
+            cx.run_until_parked();
+            let (resolve_sender, receiver) = oneshot::channel();
+            *resolve_receiver.lock() = Some(receiver);
+            let previous_resolve_count = *resolve_count.lock();
+            cx.dispatch_action(AcceptInlayHint);
+            cx.run_until_parked();
+            assert_eq!(*resolve_count.lock(), previous_resolve_count + 1);
+            assert_eq!(
+                cx.buffer_text(),
+                format!("fn main() {{ let value = {value}; }}\n")
+            );
+            cx.update_editor(|editor, _, _| editor.set_read_only(read_only));
+            if edit_buffer {
+                cx.update_buffer(|buffer, cx| buffer.edit([(0..0, "pub ")], None, cx));
+            }
+            cx.run_until_parked();
+            resolve_sender.send(()).expect("pending resolve receiver");
+            cx.run_until_parked();
+            let expected_text = if read_only {
+                format!("fn main() {{ let value = {value}; }}\n")
+            } else if edit_buffer {
+                format!("pub fn main() {{ let value = {value}; }}\n")
+            } else {
+                format!("use std::primitive::u32;\nfn main() {{ let value: u32 = {value}; }}\n")
+            };
+            assert_eq!(cx.buffer_text(), expected_text);
+            cx.update_editor(|editor, _, _| editor.set_read_only(false));
+        }
+        for (text_edits, value) in [(None, 2), (Some(Vec::new()), 3)] {
+            *hints.lock() = Some(vec![lsp::InlayHint {
+                position,
+                label: lsp::InlayHintLabel::String(": Number".to_string()),
+                text_edits,
+                kind: None,
+                tooltip: None,
+                padding_left: None,
+                padding_right: None,
+                data: Some(serde_json::Value::Bool(false)),
+            }]);
+            let source = format!("fn main() {{ let valueˇ = {value}; }}\n");
+            let previous_resolve_count = *resolve_count.lock();
+            cx.set_state(&source);
+            cx.run_until_parked();
+            assert_eq!(*resolve_count.lock(), previous_resolve_count);
+            cx.dispatch_action(AcceptInlayHint);
+            cx.run_until_parked();
+            assert_eq!(*resolve_count.lock(), previous_resolve_count + 1);
+            cx.assert_editor_state(&source);
+            cx.update_editor(|editor, window, cx| {
+                let hint = editor
+                    .display_map
+                    .read(cx)
+                    .current_inlays()
+                    .find(|inlay| matches!(inlay.id, InlayId::Hint(_)))
+                    .cloned()
+                    .expect("resolved informational hint");
+                assert!(!editor.accept_inlay_hint_with_id(hint, window, cx));
+            });
+            cx.run_until_parked();
+            cx.assert_editor_state(&source);
+
+            let start = cx.display_point(&source);
+            let point = cx.pixel_position_for(DisplayPoint::new(start.row(), start.column() + 4));
+            cx.simulate_click(point, Modifiers::none());
+            cx.simulate_event(MouseDownEvent {
+                position: point,
+                modifiers: Modifiers::none(),
+                button: MouseButton::Left,
+                click_count: 2,
+                first_mouse: false,
+            });
+            cx.simulate_event(MouseUpEvent {
+                position: point,
+                modifiers: Modifiers::none(),
+                button: MouseButton::Left,
+                click_count: 2,
+            });
+            cx.run_until_parked();
+            cx.assert_editor_state(&format!("fn main() {{ let «valueˇ» = {value}; }}\n"));
+            assert_eq!(*resolve_count.lock(), previous_resolve_count + 1);
+        }
+    }
+
+    #[gpui::test]
     async fn test_inlay_hover_links(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
@@ -1894,7 +2185,10 @@ mod tests {
                             ..lsp::InlayHintLabelPart::default()
                         }]),
                         kind: Some(lsp::InlayHintKind::TYPE),
-                        text_edits: None,
+                        text_edits: Some(vec![lsp::TextEdit {
+                            range: lsp::Range::new(hint_position, hint_position),
+                            new_text: ": TestStruct".to_string(),
+                        }]),
                         tooltip: None,
                         padding_left: Some(false),
                         padding_right: Some(false),
@@ -2029,6 +2323,18 @@ mod tests {
             command_requests.try_recv().is_err(),
             "Second click of a double click should not re-run the inlay hint command"
         );
+        assert_eq!(
+            cx.buffer_text(),
+            indoc! {"
+            struct TestStruct;
+
+            fn main() {
+                let variable: TestStruct = TestStruct;
+            }
+        "}
+        );
+        cx.dispatch_action(Undo);
+        cx.run_until_parked();
 
         cx.simulate_modifiers_change(Modifiers::secondary_key());
         cx.background_executor.run_until_parked();

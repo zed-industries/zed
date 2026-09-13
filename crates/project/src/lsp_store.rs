@@ -6835,11 +6835,18 @@ impl LspStore {
             ResolveState::Resolved => return Some(ResolvedHint::Resolved(hint)),
             ResolveState::Resolving => {
                 return Some(ResolvedHint::Resolving(
+                    hint,
                     buffer_lsp_hints.hint_resolves.get(&id)?.clone(),
                 ));
             }
-            ResolveState::CanResolve(server_id, resolve_data) => (*server_id, resolve_data.clone()),
+            ResolveState::CanResolve(server_id, resolve_data)
+                if lsp_data.buffer_version == buffer.read(cx).version() =>
+            {
+                (*server_id, resolve_data.clone())
+            }
+            ResolveState::CanResolve(_, _) => return None,
         };
+        buffer_lsp_hints.hint_resolves.remove(&id);
 
         let resolve_task = self.resolve_inlay_hint(hint, buffer, server_id, cx);
         let buffer_lsp_hints = &mut self.lsp_data.get_mut(&buffer_id)?.inlay_hints;
@@ -6849,24 +6856,26 @@ impl LspStore {
                 let resolved_hint = resolve_task.await;
                 lsp_store
                     .update(cx, |lsp_store, _| {
-                        if let Some(old_inlay_hint) = lsp_store
+                        let old_inlay_hint = lsp_store
                             .lsp_data
-                            .get_mut(&buffer_id)
-                            .and_then(|buffer_lsp_data| buffer_lsp_data.inlay_hints.hint_for_id(id))
-                        {
-                            match resolved_hint {
-                                Ok(resolved_hint) => {
-                                    *old_inlay_hint = resolved_hint;
-                                }
-                                Err(e) => {
-                                    old_inlay_hint.resolve_state =
-                                        ResolveState::CanResolve(server_id, resolve_data);
-                                    log::error!("Inlay hint resolve failed: {e:#}");
-                                }
+                            .get_mut(&buffer_id)?
+                            .inlay_hints
+                            .hint_for_id(id)?;
+                        match resolved_hint {
+                            Ok(resolved_hint) => {
+                                *old_inlay_hint = resolved_hint.clone();
+                                Some(resolved_hint)
+                            }
+                            Err(error) => {
+                                old_inlay_hint.resolve_state =
+                                    ResolveState::CanResolve(server_id, resolve_data);
+                                log::error!("Inlay hint resolve failed: {error:#}");
+                                None
                             }
                         }
                     })
-                    .ok();
+                    .ok()
+                    .flatten()
             })
             .shared(),
         );
@@ -6874,8 +6883,13 @@ impl LspStore {
             previous_task.is_none(),
             "Did not change hint's resolve state after spawning its resolve"
         );
-        buffer_lsp_hints.hint_for_id(id)?.resolve_state = ResolveState::Resolving;
-        None
+        let hint = buffer_lsp_hints.hint_for_id(id)?;
+        hint.resolve_state = ResolveState::Resolving;
+        let hint = hint.clone();
+        Some(ResolvedHint::Resolving(
+            hint,
+            buffer_lsp_hints.hint_resolves.get(&id)?.clone(),
+        ))
     }
 
     pub(crate) fn linked_edits(
@@ -8670,6 +8684,7 @@ impl LspStore {
         let next_hint_id = self.next_hint_id.clone();
         let capability_probe = InlayHints {
             range: text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
+            buffer_version: buffer.read(cx).version(),
         };
         let current_servers = self.language_server_ids_for_request(&buffer, &capability_probe, cx);
         let lsp_data = self.latest_lsp_data(&buffer, cx);
@@ -8846,6 +8861,7 @@ impl LspStore {
     ) -> Task<Result<HashMap<LanguageServerId, Vec<InlayHint>>>> {
         let request = InlayHints {
             range: range.clone(),
+            buffer_version: buffer.read(cx).version(),
         };
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
@@ -16248,7 +16264,7 @@ impl From<lsp::Documentation> for CompletionDocumentation {
 
 pub enum ResolvedHint {
     Resolved(InlayHint),
-    Resolving(Shared<Task<()>>),
+    Resolving(InlayHint, Shared<Task<Option<InlayHint>>>),
 }
 
 pub fn glob_literal_prefix(glob: &Path) -> PathBuf {

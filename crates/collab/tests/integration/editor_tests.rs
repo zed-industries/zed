@@ -3213,10 +3213,63 @@ async fn test_inlay_hint_refresh_is_forwarded(
         ..lsp::ServerCapabilities::default()
     };
     client_a.language_registry().add(rust_lang());
+    let other_hints = Arc::new(AtomicBool::new(false));
+    let closure_other_hints = Arc::clone(&other_hints);
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: capabilities.clone(),
+            initializer: Some(Box::new(move |fake_language_server| {
+                let closure_other_hints = Arc::clone(&closure_other_hints);
+                fake_language_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |params, _| {
+                        let task_other_hints = Arc::clone(&closure_other_hints);
+                        async move {
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                            );
+                            let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
+                            let character = if other_hints { 0 } else { 2 };
+                            let label = if other_hints {
+                                "other hint"
+                            } else {
+                                "initial hint"
+                            };
+                            Ok(Some(vec![
+                                lsp::InlayHint {
+                                    position: lsp::Position::new(0, character),
+                                    label: lsp::InlayHintLabel::String(label.to_string()),
+                                    kind: None,
+                                    text_edits: Some(vec![lsp::TextEdit {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(0, 0),
+                                        ),
+                                        new_text: "pub ".to_string(),
+                                    }]),
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: None,
+                                    data: None,
+                                },
+                                lsp::InlayHint {
+                                    position: lsp::Position::new(1090, 1090),
+                                    label: lsp::InlayHintLabel::String(
+                                        "out-of-bounds hint".to_string(),
+                                    ),
+                                    kind: None,
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: None,
+                                    data: None,
+                                },
+                            ]))
+                        }
+                    },
+                );
+            })),
             ..FakeLspAdapter::default()
         },
     );
@@ -3276,51 +3329,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .downcast::<Editor>()
         .unwrap();
 
-    let other_hints = Arc::new(AtomicBool::new(false));
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    let closure_other_hints = Arc::clone(&other_hints);
-    fake_language_server
-        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_other_hints = Arc::clone(&closure_other_hints);
-            async move {
-                assert_eq!(
-                    params.text_document.uri,
-                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
-                );
-                let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
-                let character = if other_hints { 0 } else { 2 };
-                let label = if other_hints {
-                    "other hint"
-                } else {
-                    "initial hint"
-                };
-                Ok(Some(vec![
-                    lsp::InlayHint {
-                        position: lsp::Position::new(0, character),
-                        label: lsp::InlayHintLabel::String(label.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    },
-                    lsp::InlayHint {
-                        position: lsp::Position::new(1090, 1090),
-                        label: lsp::InlayHintLabel::String("out-of-bounds hint".to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    },
-                ]))
-            }
-        })
-        .next()
-        .await
-        .unwrap();
 
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
@@ -3361,6 +3370,31 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Guest should get a /refresh LSP request propagated by host despite host hints are off"
         );
     });
+
+    cx_b.focus(&editor_b);
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        let hint = editor
+            .all_inlays(cx)
+            .into_iter()
+            .find(|inlay| inlay.text().to_string() == "other hint")
+            .expect("guest should display the refreshed hint");
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([hint.position..hint.position]);
+        });
+    });
+    cx_b.dispatch_action(editor::actions::AcceptInlayHint);
+    executor.run_until_parked();
+
+    let expected_text =
+        "pub fn main() { a } // and some long comment to ensure inlay hints are not trimmed out";
+    assert_eq!(
+        editor_b.read_with(cx_b, |editor, cx| editor.text(cx)),
+        expected_text,
+    );
+    assert_eq!(
+        editor_a.read_with(cx_a, |editor, cx| editor.text(cx)),
+        expected_text,
+    );
 }
 
 #[gpui::test(iterations = 10)]

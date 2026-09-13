@@ -488,6 +488,14 @@ Inlay hints provide additional information inline in your code, such as paramete
 }
 ```
 
+Double-click an inlay hint to apply the edits supplied by its language server.
+You can also place the cursor at the hint and run {#action editor::AcceptInlayHint} from the command palette, or assign it a keybinding.
+The action is available when the cursor is at a hint and the editor is writable.
+Zed resolves hints on hover or when you accept them, so edits do not need to be loaded first.
+Hints with commands keep their single-click behavior and also support accepting edits.
+Hints without server-provided edits remain informational.
+Use Undo to revert an accepted hint, including any additional edits such as imports.
+
 For language-specific inlay hint settings, refer to the documentation for each language.
 
 ### Code Actions

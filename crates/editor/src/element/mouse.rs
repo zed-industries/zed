@@ -613,6 +613,19 @@ impl EditorElement {
             return;
         }
 
+        if click_count == 2
+            && !modifiers.modified()
+            && point_for_position.as_valid().is_none()
+            && point_for_position.column_overshoot_after_line_end == 0
+            && let Some((hint, _)) = position_map
+                .snapshot
+                .inlay_hint_at(point_for_position.exact_unclipped)
+            && editor.accept_inlay_hint_with_id(hint.clone(), window, cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
+
         if !event.modifiers.modified()
             && text_hitbox.is_hovered(window)
             && editor.hovered_inlay_hint_command().is_some_and(|command| {

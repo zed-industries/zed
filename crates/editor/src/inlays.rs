@@ -157,12 +157,20 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(inlay_hints) = &mut self.inlay_hints {
+            let inserted_hints = to_insert
+                .iter()
+                .filter_map(|inlay| {
+                    let kind = inlay_hints.added_hints.get(&inlay.id)?;
+                    Some((inlay.id, *kind))
+                })
+                .collect::<Vec<_>>();
             for id_to_remove in to_remove {
                 inlay_hints.remove_inlay(id_to_remove);
             }
+            inlay_hints.added_hints.extend(inserted_hints);
         }
         self.display_map.update(cx, |display_map, cx| {
-            display_map.splice_inlays(to_remove, to_insert, cx)
+            display_map.splice_inlays(to_remove, to_insert, cx);
         });
         cx.notify();
     }
