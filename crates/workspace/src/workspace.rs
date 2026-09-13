@@ -1,5 +1,6 @@
 pub mod active_file_name;
 pub mod dock;
+pub mod extension_panel;
 pub mod history_manager;
 pub mod invalid_item_view;
 pub mod item;

@@ -1,8 +1,10 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
 pub mod http_client;
+pub mod panel;
 pub mod process;
 pub mod settings;
+pub mod tcp;
 
 use core::fmt;
 
@@ -71,6 +73,16 @@ pub trait Extension: Send + Sync {
     fn new() -> Self
     where
         Self: Sized;
+
+    /// Receives an action initiated in one of this extension's persistent panels.
+    fn panel_action(
+        &mut self,
+        _panel_id: &str,
+        _action: &str,
+        _payload: serde_json::Value,
+    ) -> Result<()> {
+        Err("`panel_action` not implemented".to_string())
+    }
 
     /// Returns the command used to start the language server for the specified
     /// language.
@@ -364,6 +376,15 @@ wit::export!(Component);
 struct Component;
 
 impl wit::Guest for Component {
+    fn panel_action(panel_id: String, action: String, payload: String) -> Result<(), String> {
+        let payload = serde_json::from_str::<serde_json::Value>(&payload)
+            .map_err(|error| format!("invalid extension panel action payload: {error}"))?;
+        if !payload.is_object() {
+            return Err("extension panel action payload must be a JSON object".to_string());
+        }
+        extension().panel_action(&panel_id, &action, payload)
+    }
+
     fn language_server_command(
         language_server_id: String,
         worktree: &wit::Worktree,

@@ -8,6 +8,8 @@ world extension {
     import platform;
     import process;
     import nodejs;
+    import panel;
+    import tcp;
 
     use common.{env-vars, range};
     use context-server.{context-server-configuration};
@@ -18,6 +20,9 @@ world extension {
 
     /// Initializes the extension.
     export init-extension: func();
+
+    /// Delivers a user action from a persistent extension panel.
+    export panel-action: func(panel-id: string, action: string, payload: string) -> result<_, string>;
 
     /// The type of a downloaded file.
     enum downloaded-file-type {
