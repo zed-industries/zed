@@ -1840,6 +1840,536 @@ fn setup_sidebar_with_agent_panel(
     (sidebar, panel)
 }
 
+fn open_center_stub_thread(
+    workspace: &Entity<Workspace>,
+    cx: &mut gpui::VisualTestContext,
+) -> Entity<agent_ui::ThreadItem> {
+    agent_ui::test_support::set_stub_agent_connection(StubAgentConnection::new());
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.focus_handle(cx).focus(window, cx);
+    });
+    let action: agent_ui::NewCenterThread =
+        serde_json::from_value(serde_json::json!({ "agent": "stub" }))
+            .expect("the stub agent action should deserialize");
+    cx.dispatch_action(action);
+    cx.run_until_parked();
+    workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<agent_ui::ThreadItem>())
+            .expect("the new center thread should be active")
+    })
+}
+
+fn set_center_thread_text(
+    item: &Entity<agent_ui::ThreadItem>,
+    text: &str,
+    cx: &mut gpui::VisualTestContext,
+) {
+    let thread_view = item.read_with(cx, |item, cx| {
+        item.conversation_view()
+            .and_then(|view| view.read(cx).root_thread_view())
+            .expect("the center thread should be connected")
+    });
+    let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+    message_editor.update_in(cx, |editor, window, cx| editor.set_text(text, window, cx));
+}
+
+#[gpui::test]
+async fn test_activating_and_reactivating_a_center_thread_activates_its_tab(
+    cx: &mut TestAppContext,
+) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let first = open_center_stub_thread(&workspace, cx);
+    let thread_id = first.read_with(cx, |item, cx| item.thread_id(cx));
+    let second = open_center_stub_thread(&workspace, cx);
+    let metadata = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(thread_id)
+            .cloned()
+            .expect("the center thread has metadata")
+    });
+
+    for already_active in [false, true] {
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&second, true, true, window, cx);
+        });
+        sidebar.update_in(cx, |sidebar, window, cx| {
+            sidebar.active_entry = already_active.then(|| ActiveEntry::Thread {
+                thread_id,
+                session_id: metadata.session_id.clone(),
+                workspace: workspace.clone(),
+            });
+            sidebar.activate_thread(metadata.clone(), &workspace, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert_eq!(sidebar.pending_thread_activation, None);
+        });
+        panel.read_with(cx, |panel, cx| {
+            assert!(panel.active_conversation_view().is_none());
+            assert_eq!(
+                panel
+                    .conversation_views(cx)
+                    .iter()
+                    .filter(|view| view.read(cx).parent_id() == thread_id)
+                    .count(),
+                1,
+                "a sidebar click must not create another view"
+            );
+        });
+        cx.read(|cx| assert!(!AgentPanel::is_visible(&workspace, cx)));
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).map(|item| item.item_id()),
+                Some(first.entity_id())
+            );
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_pending_center_tab_survives_sidebar_creating_the_panel(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
+    agent_ui::test_support::set_stub_agent_connection(StubAgentConnection::new());
+    let thread_id = ThreadId::new();
+    let worktree_paths = project.read_with(cx, |project, cx| {
+        WorktreePaths::from_folder_paths(&project.default_path_list(cx))
+    });
+    let metadata = ThreadMetadata {
+        thread_id,
+        session_id: None,
+        agent_id: AgentId::new("stub"),
+        title: Some("Restored".into()),
+        title_override: None,
+        updated_at: Utc::now(),
+        created_at: Some(Utc::now()),
+        interacted_at: None,
+        worktree_paths,
+        remote_connection: None,
+        archived: false,
+    };
+    cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata.clone(), cx));
+    });
+    let item = cx.update(|_window, cx| {
+        cx.new(|cx| {
+            agent_ui::ThreadItem::pending(Agent::Stub, thread_id, workspace.downgrade(), None, cx)
+        })
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+    });
+    cx.run_until_parked();
+    workspace.read_with(cx, |workspace, cx| {
+        assert!(workspace.panel::<AgentPanel>(cx).is_none())
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_thread(metadata, &workspace, false, window, cx);
+        assert_eq!(sidebar.pending_thread_activation, Some(thread_id));
+    });
+    cx.run_until_parked();
+
+    let panel = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .panel::<AgentPanel>(cx)
+            .expect("the sidebar should create the panel")
+    });
+    panel.read_with(cx, |panel, cx| {
+        assert!(panel.is_center_thread(thread_id));
+        assert_eq!(
+            panel
+                .conversation_views(cx)
+                .iter()
+                .filter(|view| view.read(cx).parent_id() == thread_id)
+                .count(),
+            1
+        );
+        assert_ne!(panel.active_thread_id(cx), Some(thread_id));
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.pending_thread_activation, None)
+    });
+    workspace.read_with(cx, |workspace, cx| {
+        assert_eq!(
+            workspace.active_item(cx).map(|active| active.item_id()),
+            Some(item.entity_id())
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_apply_thread_load_manages_the_pending_marker(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let thread_id = ThreadId::new();
+
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.pending_thread_activation = Some(thread_id);
+        sidebar.apply_thread_load(thread_id, ThreadLoad::Ready(ThreadOpened::Panel), cx);
+        assert_eq!(sidebar.pending_thread_activation, Some(thread_id));
+        sidebar.apply_thread_load(thread_id, ThreadLoad::Ready(ThreadOpened::CenterPane), cx);
+        assert_eq!(sidebar.pending_thread_activation, None);
+    });
+
+    for opened in [ThreadOpened::Panel, ThreadOpened::CenterPane] {
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.pending_thread_activation = Some(thread_id);
+            sidebar.apply_thread_load(thread_id, ThreadLoad::Pending(Task::ready(Ok(opened))), cx);
+        });
+        cx.run_until_parked();
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert_eq!(
+                sidebar.pending_thread_activation,
+                (opened == ThreadOpened::Panel).then_some(thread_id)
+            );
+        });
+    }
+
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.pending_thread_activation = Some(thread_id);
+        let failed = Task::ready(Err(anyhow::anyhow!("panel failed to load")));
+        sidebar.apply_thread_load(thread_id, ThreadLoad::Pending(failed), cx);
+    });
+    cx.run_until_parked();
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.pending_thread_activation, None)
+    });
+
+    let next_thread_id = ThreadId::new();
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.pending_thread_activation = Some(thread_id);
+        sidebar.apply_thread_load(
+            thread_id,
+            ThreadLoad::Pending(Task::ready(Ok(ThreadOpened::CenterPane))),
+            cx,
+        );
+        sidebar.pending_thread_activation = Some(next_thread_id);
+    });
+    cx.run_until_parked();
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(
+            sidebar.pending_thread_activation,
+            Some(next_thread_id),
+            "an older load must not clear a newer activation"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_pending_thread_load_clears_its_marker_when_workspace_closes(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+    let closing_project = project::Project::test(fs, [Path::new("/my-project")], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace =
+        cx.update(|window, cx| cx.new(|cx| Workspace::test_new(closing_project, window, cx)));
+    let weak_workspace = workspace.downgrade();
+    let thread_id = ThreadId::new();
+    let metadata = ThreadMetadata {
+        thread_id,
+        session_id: None,
+        agent_id: AgentId::new("stub"),
+        title: Some("Unloaded thread".into()),
+        title_override: None,
+        updated_at: Utc::now(),
+        created_at: Some(Utc::now()),
+        interacted_at: None,
+        worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+            "/my-project",
+        )])),
+        remote_connection: None,
+        archived: false,
+    };
+    let load = cx.update(|window, cx| {
+        Sidebar::load_agent_thread_in_workspace(&workspace, &metadata, true, window, cx)
+    });
+    let ThreadLoad::Pending(task) = load else {
+        panic!("a missing panel should load asynchronously");
+    };
+    drop(workspace);
+
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.pending_thread_activation = Some(thread_id);
+        let task = cx.spawn(async move |_sidebar, _cx| {
+            let result = task.await;
+            assert!(
+                result.is_err(),
+                "a released workspace cannot load its panel"
+            );
+            result
+        });
+        sidebar.apply_thread_load(thread_id, ThreadLoad::Pending(task), cx);
+    });
+    cx.run_until_parked();
+
+    weak_workspace.assert_released();
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.pending_thread_activation, None)
+    });
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(
+            multi_workspace
+                .workspace()
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .is_none()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_center_drafts_stay_listed_while_open(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let item = open_center_stub_thread(&workspace, cx);
+    let thread_id = item.read_with(cx, |item, cx| item.thread_id(cx));
+    let settle = |cx: &mut gpui::VisualTestContext| {
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+    };
+    let listed = |cx: &gpui::VisualTestContext| {
+        sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar.contents.entries.iter().any(|entry| {
+                matches!(entry, ListEntry::Thread(thread) if thread.metadata.thread_id == thread_id)
+            })
+        })
+    };
+
+    settle(cx);
+    assert!(listed(cx), "an empty center draft is listed");
+    set_center_thread_text(&item, "typed", cx);
+    settle(cx);
+    assert!(listed(cx));
+    set_center_thread_text(&item, "", cx);
+    settle(cx);
+    assert!(
+        listed(cx),
+        "clearing the editor keeps the open draft listed"
+    );
+
+    let pane = workspace.read_with(cx, |workspace, _cx| workspace.active_pane().clone());
+    pane.update_in(cx, |pane, window, cx| {
+        pane.close_active_item(&workspace::CloseActiveItem::default(), window, cx)
+    })
+    .await
+    .expect("the center tab should close");
+    settle(cx);
+    assert!(!listed(cx), "a closed empty draft disappears");
+}
+
+#[gpui::test]
+async fn test_renaming_a_center_thread_updates_its_live_title(cx: &mut TestAppContext) {
+    use workspace::Item;
+
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let item = open_center_stub_thread(&workspace, cx);
+    let thread_id = item.read_with(cx, |item, cx| item.thread_id(cx));
+    set_center_thread_text(&item, "Hello", cx);
+    let thread_view = item.read_with(cx, |item, cx| {
+        item.conversation_view()
+            .and_then(|view| view.read(cx).root_thread_view())
+            .expect("the center thread should connect")
+    });
+    thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+    cx.run_until_parked();
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    let entry_index = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar.contents.entries.iter().position(|entry| {
+            matches!(entry, ListEntry::Thread(thread) if thread.metadata.thread_id == thread_id)
+        }).expect("the center thread should be listed")
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.start_renaming_entry(
+            entry_index,
+            RenameTarget::Thread(thread_id),
+            "Old title".into(),
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.rename_editor.update(cx, |editor, cx| {
+            editor.set_text("Renamed center thread", window, cx)
+        });
+    });
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.finish_entry_rename(window, cx);
+    });
+    cx.run_until_parked();
+    item.read_with(cx, |item, cx| {
+        let view = item
+            .conversation_view()
+            .expect("the center thread should stay loaded");
+        assert_eq!(view.read(cx).title(cx).as_ref(), "Renamed center thread");
+        assert_eq!(
+            item.tab_content_text(0, cx).as_ref(),
+            "Renamed center thread"
+        );
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.open_thread_as_markdown(thread_id, workspace.clone(), window, cx));
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_center_thread_sends_update_only_their_own_interaction_recency(
+    cx: &mut TestAppContext,
+) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (_sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let panel_connection = StubAgentConnection::new();
+    panel_connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Panel response".into()),
+    )]);
+    open_thread_with_connection(&panel, panel_connection.clone(), cx);
+    send_message(&panel, cx);
+    let panel_thread_id = active_thread_id(&panel, cx);
+    let item = open_center_stub_thread(&workspace, cx);
+    let center_thread_id = item.read_with(cx, |item, cx| item.thread_id(cx));
+    let center_connection = agent_ui::test_support::stub_agent_connection();
+    let thread_view = item.read_with(cx, |item, cx| {
+        item.conversation_view()
+            .and_then(|view| view.read(cx).root_thread_view())
+            .expect("the center thread should connect")
+    });
+    let old_recency = Utc::now() - chrono::Duration::days(2);
+    cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.update_interacted_at(&panel_thread_id, old_recency, cx);
+        });
+    });
+    let interactions = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = cx.update(|_window, cx| {
+        let interactions = interactions.clone();
+        cx.subscribe(&panel, move |_panel, event: &AgentPanelEvent, _cx| {
+            if let AgentPanelEvent::ThreadInteracted { thread_id } = event {
+                interactions.borrow_mut().push(*thread_id);
+            }
+        })
+    });
+
+    for send_count in 1..=2 {
+        cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.update_interacted_at(&center_thread_id, old_recency, cx);
+            });
+        });
+        center_connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Center response".into()),
+        )]);
+        set_center_thread_text(&item, "Center prompt", cx);
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        assert_eq!(*interactions.borrow(), vec![center_thread_id; send_count]);
+        assert_eq!(active_thread_id(&panel, cx), panel_thread_id);
+        cx.update(|_window, cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            assert!(
+                store
+                    .entry(center_thread_id)
+                    .expect("the center thread has metadata")
+                    .interacted_at
+                    > Some(old_recency)
+            );
+            assert_eq!(
+                store
+                    .entry(panel_thread_id)
+                    .expect("the panel thread has metadata")
+                    .interacted_at,
+                Some(old_recency)
+            );
+        });
+    }
+
+    panel_connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Another panel response".into()),
+    )]);
+    send_message(&panel, cx);
+    assert_eq!(
+        *interactions.borrow(),
+        vec![center_thread_id, center_thread_id, panel_thread_id],
+        "panel sends should still forward exactly one interaction"
+    );
+}
+
+#[gpui::test]
+async fn test_title_regeneration_finds_a_native_center_thread(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (_sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.focus_handle(cx).focus(window, cx);
+    });
+    let action: agent_ui::NewCenterThread =
+        serde_json::from_value(serde_json::json!({ "agent": ZED_AGENT_ID.0.to_string() }))
+            .expect("the native agent action should deserialize");
+    cx.dispatch_action(action);
+    cx.run_until_parked();
+
+    let thread_id = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<agent_ui::ThreadItem>())
+            .expect("the native center thread should be active")
+            .read(cx)
+            .thread_id(cx)
+    });
+    panel.update(cx, |panel, cx| {
+        assert_eq!(
+            panel.regenerate_thread_title(thread_id, cx),
+            ThreadTitleRegenerationResult::Started
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;

@@ -18,7 +18,7 @@ use agent_ui::threads_archive_view::{
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentThreadSource,
     ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewTerminalThread,
-    NewThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal,
+    NewThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal, ThreadOpened,
     ThreadTitleRegenerationResult, channels_with_threads, import_threads_from_other_channels,
 };
 use agent_ui::{MessageEditorEvent, StateChange, thread_worktree_archive};
@@ -303,6 +303,21 @@ fn pick_icon_glyph(prefix: &str) -> Option<SharedString> {
     }
 
     Some(first_grapheme.to_string().into())
+}
+
+enum ThreadLoad {
+    Ready(ThreadOpened),
+    Pending(Task<anyhow::Result<ThreadOpened>>),
+}
+
+fn is_center_thread_entry(thread: &ThreadEntry, cx: &App) -> bool {
+    match &thread.workspace {
+        ThreadEntryWorkspace::Open(workspace) => workspace
+            .read(cx)
+            .panel::<AgentPanel>(cx)
+            .is_some_and(|panel| panel.read(cx).is_center_thread(thread.metadata.thread_id)),
+        ThreadEntryWorkspace::Closed { .. } => false,
+    }
 }
 
 fn draft_display_label_for_thread_metadata(
@@ -1713,8 +1728,6 @@ impl Sidebar {
                 }
                 threads.retain(|thread| thread.draft.is_none() || thread.metadata.title.is_some());
 
-                // Keep empty drafts only while their thread is active; preserve
-                // drafts with content because they hold user-typed state.
                 let pending_activation = self.pending_thread_activation;
                 let active_panel_thread_id = active_workspace
                     .as_ref()
@@ -1722,6 +1735,9 @@ impl Sidebar {
                     .and_then(|panel| panel.read(cx).active_thread_id(cx));
                 threads.retain(|thread| {
                     if thread.draft != Some(DraftKind::Empty) {
+                        return true;
+                    }
+                    if is_center_thread_entry(thread, cx) {
                         return true;
                     }
                     if pending_activation.is_some() {
@@ -2149,7 +2165,7 @@ impl Sidebar {
             .read(cx)
             .workspaces()
             .filter_map(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-            .flat_map(|panel| panel.read(cx).conversation_views())
+            .flat_map(|panel| panel.read(cx).conversation_views(cx))
             .collect();
 
         for cv in draft_conversation_views {
@@ -3668,7 +3684,7 @@ impl Sidebar {
         focus: bool,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> ThreadLoad {
         let load_thread = |agent_panel: Entity<AgentPanel>,
                            metadata: &ThreadMetadata,
                            focus: bool,
@@ -3684,51 +3700,81 @@ impl Sidebar {
                     AgentThreadSource::Sidebar,
                     window,
                     cx,
-                );
-            });
+                )
+            })
         };
-
-        let mut existing_panel = None;
-        workspace.update(cx, |workspace, cx| {
-            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                existing_panel = Some(panel);
-            }
-        });
-
-        if let Some(agent_panel) = existing_panel {
-            load_thread(agent_panel, metadata, focus, window, cx);
-            workspace.update(cx, |workspace, cx| {
+        let reveal = |workspace: &mut Workspace,
+                      opened: ThreadOpened,
+                      focus: bool,
+                      window: &mut Window,
+                      cx: &mut Context<Workspace>| {
+            if opened == ThreadOpened::Panel {
                 if focus {
                     workspace.focus_panel::<AgentPanel>(window, cx);
                 } else {
                     workspace.reveal_panel::<AgentPanel>(window, cx);
                 }
+            }
+        };
+
+        if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+            let opened = load_thread(agent_panel, metadata, focus, window, cx);
+            workspace.update(cx, |workspace, cx| {
+                reveal(workspace, opened, focus, window, cx)
             });
-            return;
+            return ThreadLoad::Ready(opened);
         }
 
         let workspace = workspace.downgrade();
         let metadata = metadata.clone();
         let mut async_window_cx = window.to_async(cx);
-        cx.spawn(async move |_cx| {
+        ThreadLoad::Pending(cx.spawn(async move |_cx| {
             let panel = AgentPanel::load(workspace.clone(), async_window_cx.clone()).await?;
-
             workspace.update_in(&mut async_window_cx, |workspace, window, cx| {
                 let panel = workspace.panel::<AgentPanel>(cx).unwrap_or_else(|| {
                     workspace.add_panel(panel.clone(), window, cx);
                     panel.clone()
                 });
-                load_thread(panel, &metadata, focus, window, cx);
-                if focus {
-                    workspace.focus_panel::<AgentPanel>(window, cx);
-                } else {
-                    workspace.reveal_panel::<AgentPanel>(window, cx);
-                }
-            })?;
+                let opened = load_thread(panel, &metadata, focus, window, cx);
+                reveal(workspace, opened, focus, window, cx);
+                opened
+            })
+        }))
+    }
 
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+    fn apply_thread_load(&mut self, thread_id: ThreadId, load: ThreadLoad, cx: &mut Context<Self>) {
+        match load {
+            ThreadLoad::Ready(ThreadOpened::Panel) => {}
+            ThreadLoad::Ready(ThreadOpened::CenterPane) => {
+                self.clear_pending_thread_activation(thread_id, cx);
+            }
+            ThreadLoad::Pending(task) => {
+                cx.spawn(async move |this, cx| {
+                    let result = task.await;
+                    this.update(cx, |this, cx| match result {
+                        Ok(ThreadOpened::Panel) => {}
+                        Ok(ThreadOpened::CenterPane) => {
+                            this.clear_pending_thread_activation(thread_id, cx);
+                        }
+                        Err(error) => {
+                            log::error!("failed to load thread {thread_id:?}: {error:#}");
+                            this.clear_pending_thread_activation(thread_id, cx);
+                        }
+                    })
+                    .log_err();
+                })
+                .detach();
+            }
+        }
+    }
+
+    fn clear_pending_thread_activation(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        // Only panel events resolve successful panel loads. Center tabs and
+        // failed loads must release the marker here so later syncs can run.
+        if self.pending_thread_activation == Some(thread_id) {
+            self.pending_thread_activation = None;
+            self.update_entries(cx);
+        }
     }
 
     fn open_closed_native_thread_as_markdown(
@@ -3925,9 +3971,19 @@ impl Sidebar {
         };
 
         if self.is_thread_active_in_workspace(&metadata.thread_id, workspace, cx) {
-            workspace.update(cx, |workspace, cx| {
-                workspace.focus_panel::<AgentPanel>(window, cx);
-            });
+            let is_center_thread = workspace
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .is_some_and(|panel| panel.read(cx).is_center_thread(metadata.thread_id));
+            if is_center_thread {
+                let load =
+                    Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
+                self.apply_thread_load(metadata.thread_id, load, cx);
+            } else {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+                });
+            }
             return;
         }
 
@@ -3949,7 +4005,8 @@ impl Sidebar {
             }
         });
 
-        Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
+        let load = Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
+        self.apply_thread_load(metadata.thread_id, load, cx);
 
         self.update_entries(cx);
     }
@@ -3961,39 +4018,42 @@ impl Sidebar {
         target_window: WindowHandle<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) {
-        let target_session_id = metadata.session_id.clone();
-        let metadata_thread_id = metadata.thread_id;
-        let workspace_for_entry = workspace.clone();
+        let thread_id = metadata.thread_id;
+        let target_sidebar = target_window
+            .read(cx)
+            .ok()
+            .and_then(|multi_workspace| multi_workspace.sidebar().map(|sidebar| sidebar.to_any()))
+            .and_then(|sidebar| sidebar.downcast::<Self>().ok());
+        if let Some(target_sidebar) = &target_sidebar {
+            target_sidebar.update(cx, |sidebar, cx| {
+                sidebar.pending_thread_activation = Some(thread_id);
+                sidebar.active_entry = Some(ActiveEntry::Thread {
+                    thread_id,
+                    session_id: metadata.session_id.clone(),
+                    workspace: workspace.clone(),
+                });
+                sidebar.record_thread_access(&thread_id);
+                sidebar.update_entries(cx);
+            });
+        }
 
-        let activated = target_window
+        let load = target_window
             .update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
                 multi_workspace.activate(workspace.clone(), None, window, cx);
-                Self::load_agent_thread_in_workspace(&workspace, &metadata, true, window, cx);
+                Self::load_agent_thread_in_workspace(&workspace, &metadata, true, window, cx)
             })
-            .log_err()
-            .is_some();
-
-        if activated {
-            if let Some(target_sidebar) = target_window
-                .read(cx)
-                .ok()
-                .and_then(|multi_workspace| {
-                    multi_workspace.sidebar().map(|sidebar| sidebar.to_any())
-                })
-                .and_then(|sidebar| sidebar.downcast::<Self>().ok())
-            {
-                target_sidebar.update(cx, |sidebar, cx| {
-                    sidebar.pending_thread_activation = Some(metadata_thread_id);
-                    sidebar.active_entry = Some(ActiveEntry::Thread {
-                        thread_id: metadata_thread_id,
-                        session_id: target_session_id.clone(),
-                        workspace: workspace_for_entry.clone(),
-                    });
-                    sidebar.record_thread_access(&metadata_thread_id);
-                    sidebar.update_entries(cx);
-                });
-            }
+            .log_err();
+        if let Some(target_sidebar) = target_sidebar {
+            target_sidebar.update(cx, |sidebar, cx| {
+                if let Some(load) = load {
+                    sidebar.apply_thread_load(thread_id, load, cx);
+                } else {
+                    sidebar.clear_pending_thread_activation(thread_id, cx);
+                }
+            });
+        } else if let Some(ThreadLoad::Pending(task)) = load {
+            task.detach_and_log_err(cx);
         }
     }
 
@@ -4516,7 +4576,9 @@ impl Sidebar {
                     workspace: workspace.clone(),
                 });
                 self.activate_workspace(&workspace, window, cx);
-                Self::load_agent_thread_in_workspace(&workspace, metadata, true, window, cx);
+                let load =
+                    Self::load_agent_thread_in_workspace(&workspace, metadata, true, window, cx);
+                self.apply_thread_load(metadata.thread_id, load, cx);
                 true
             }
             ActivatableEntry::Terminal {
@@ -5968,7 +6030,9 @@ impl Sidebar {
                     workspace: workspace.clone(),
                 });
                 self.update_entries(cx);
-                Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
+                let load =
+                    Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
+                self.apply_thread_load(metadata.thread_id, load, cx);
             }
             ThreadSwitcherSelection::Terminal {
                 metadata,
@@ -6016,7 +6080,9 @@ impl Sidebar {
                 });
                 self.update_entries(cx);
                 self.dismiss_thread_switcher(cx);
-                Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
+                let load =
+                    Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
+                self.apply_thread_load(metadata.thread_id, load, cx);
             }
             ThreadSwitcherSelection::Terminal {
                 metadata,
@@ -6107,13 +6173,14 @@ impl Sidebar {
                                     workspace: original_ws.clone(),
                                 });
                                 this.update_entries(cx);
-                                Self::load_agent_thread_in_workspace(
+                                let load = Self::load_agent_thread_in_workspace(
                                     original_ws,
                                     metadata,
                                     false,
                                     window,
                                     cx,
                                 );
+                                this.apply_thread_load(metadata.thread_id, load, cx);
                             }
                         }
                         Some(ActiveEntry::Terminal {
@@ -8024,7 +8091,7 @@ fn all_thread_infos_for_workspace(
     };
     let agent_panel = agent_panel.read(cx);
     let threads = agent_panel
-        .conversation_views()
+        .conversation_views(cx)
         .into_iter()
         .filter_map(|conversation_view| {
             let has_pending_tool_call = conversation_view

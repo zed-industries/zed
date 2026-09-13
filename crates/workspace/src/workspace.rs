@@ -8602,6 +8602,7 @@ impl Workspace {
 
         if let Some(maximized) = self.maximized_pane.take() {
             if maximized.upgrade().as_ref() == Some(&self.active_pane) {
+                cx.emit(Event::ZoomChanged);
                 cx.notify();
                 return;
             }
@@ -8609,11 +8610,16 @@ impl Workspace {
 
         self.maximized_pane = Some(self.active_pane.downgrade());
         window.focus(&self.active_pane.focus_handle(cx), cx);
+        cx.emit(Event::ZoomChanged);
         cx.notify();
     }
 
     pub fn is_pane_maximized(&self) -> bool {
         self.maximized_pane.is_some()
+    }
+
+    pub fn maximized_pane(&self) -> Option<Entity<Pane>> {
+        self.maximized_pane.as_ref()?.upgrade()
     }
 
     fn adjust_padding(padding: Option<f32>) -> f32 {

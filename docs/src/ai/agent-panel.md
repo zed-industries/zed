@@ -45,6 +45,13 @@ From the "New Thread…" menu you can:
 
 You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#threads-sidebar), scoped to a specific project — see [Running Multiple Threads](./parallel-agents.md#running-multiple-threads).
 
+To open a thread as a tab next to your files and terminals, click the `+` button
+in a tab bar and pick an agent under **New Center Thread**, or run
+{#action agent::NewCenterThread} from the command palette. Center threads appear
+in the Threads Sidebar and are restored when you reopen the project. If you
+close a tab while its agent is working, the thread keeps running in the
+background.
+
 ### Managing Multiple Threads {#multiple-threads}
 
 You can run multiple agent threads at once, each working independently with its own agent, context window, and conversation history. Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar} to see all your threads grouped by project. Click any thread to switch to it, or use the thread switcher ({#kb agents_sidebar::ToggleThreadSwitcher}) to cycle between recent threads without opening the sidebar.
