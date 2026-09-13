@@ -761,8 +761,14 @@ mod tests {
         let os_str = OsString::from_wide(&wide);
         let path = Path::new(&os_str);
 
-        assert_eq!(PathStyle::Windows.file_name(path), Some("file.txt"));
+        assert_eq!(
+            PathStyle::Windows.file_name(path),
+            Some(OsStr::new("file.txt"))
+        );
         let parent = PathStyle::Windows.parent(path).unwrap();
-        assert_eq!(PathStyle::Windows.file_name(parent), Some("repo"));
+        assert_eq!(
+            PathStyle::Windows.file_name(parent),
+            Some(OsStr::new("repo"))
+        );
     }
 }
