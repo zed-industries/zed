@@ -1,4 +1,4 @@
-use std::{collections::hash_map, ops::Range, sync::Arc};
+use std::{collections::hash_map, ops::Range, slice, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
@@ -6,6 +6,7 @@ use futures::future::Shared;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task};
 use language::{
     Buffer,
+    proto::serialize_version,
     row_chunk::{RowChunk, RowChunks},
 };
 use lsp::LanguageServerId;
@@ -85,7 +86,7 @@ pub struct BufferInlayHints {
     pending_refreshes: HashSet<LanguageServerId>,
     work_end_refreshes: HashSet<LanguageServerId>,
     pub(super) fetched_servers: HashSet<LanguageServerId>,
-    pub(super) hint_resolves: HashMap<InlayId, Shared<Task<()>>>,
+    pub(super) hint_resolves: HashMap<InlayId, Shared<Task<Option<InlayHint>>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -156,16 +157,24 @@ impl BufferInlayHints {
     }
 
     pub fn remove_server_data(&mut self, for_server: LanguageServerId) {
-        for (chunk_index, hints) in self.hints_by_chunks.iter_mut().enumerate() {
-            if let Some(hints) = hints {
-                if hints.remove(&for_server).is_some() {
-                    self.fetches_by_chunks[chunk_index] = None;
-                }
-            }
-        }
+        self.remove_hints_for_server(for_server);
         self.pending_refreshes.remove(&for_server);
         self.work_end_refreshes.remove(&for_server);
-        self.fetched_servers.remove(&for_server);
+    }
+
+    pub fn cached_hint(&self, id: InlayId) -> Option<&InlayHint> {
+        let hint_for_id = self.hints_by_id.get(&id)?;
+        if self.pending_refreshes.contains(&hint_for_id.server_id) {
+            return None;
+        }
+        let (hint_id, hint) = self
+            .hints_by_chunks
+            .get(hint_for_id.chunk_id)?
+            .as_ref()?
+            .get(&hint_for_id.server_id)?
+            .get(hint_for_id.position)?;
+        debug_assert_eq!(*hint_id, id, "Invalid pointer {hint_for_id:?}");
+        Some(hint)
     }
 
     fn mark_refresh_pending(&mut self, server_id: LanguageServerId) {
@@ -248,6 +257,21 @@ impl BufferInlayHints {
             return false;
         }
 
+        self.remove_hints_for_server(for_server);
+        true
+    }
+
+    pub(crate) fn invalidate_for_chunk(&mut self, chunk: RowChunk) {
+        self.fetches_by_chunks[chunk.id] = None;
+        if let Some(hints_by_server) = self.hints_by_chunks[chunk.id].take() {
+            for (hint_id, _) in hints_by_server.into_values().flatten() {
+                self.hints_by_id.remove(&hint_id);
+                self.hint_resolves.remove(&hint_id);
+            }
+        }
+    }
+
+    fn remove_hints_for_server(&mut self, for_server: LanguageServerId) {
         for (chunk_id, chunk_data) in self.hints_by_chunks.iter_mut().enumerate() {
             if let Some(removed_hints) = chunk_data
                 .as_mut()
@@ -261,18 +285,6 @@ impl BufferInlayHints {
             }
         }
         self.fetched_servers.remove(&for_server);
-
-        true
-    }
-
-    pub(crate) fn invalidate_for_chunk(&mut self, chunk: RowChunk) {
-        self.fetches_by_chunks[chunk.id] = None;
-        if let Some(hints_by_server) = self.hints_by_chunks[chunk.id].take() {
-            for (hint_id, _) in hints_by_server.into_values().flatten() {
-                self.hints_by_id.remove(&hint_id);
-                self.hint_resolves.remove(&hint_id);
-            }
-        }
     }
 }
 
@@ -301,17 +313,25 @@ impl LspStore {
                 buffer_id: buffer.read(cx).remote_id().into(),
                 language_server_id: server_id.0 as u64,
                 hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
+                version: serialize_version(&buffer.read(cx).version()),
             };
-            cx.background_spawn(async move {
+            cx.spawn(async move |_, cx| {
                 let response = upstream_client
                     .request(request)
                     .await
                     .context("inlay hints proto request")?;
-                match response.hint {
-                    Some(resolved_hint) => InlayHints::proto_to_project_hint(resolved_hint)
-                        .context("inlay hints proto resolve response conversion"),
-                    None => Ok(hint),
-                }
+                let Some(resolved_hint) = response.hint else {
+                    return Ok(hint);
+                };
+                InlayHints::wait_for_hints_version(
+                    slice::from_ref(&resolved_hint),
+                    &response.version,
+                    &buffer,
+                    cx,
+                )
+                .await?;
+                InlayHints::proto_to_project_hint(resolved_hint)
+                    .context("inlay hints proto resolve response conversion")
             })
         } else {
             let Some(lang_server) = buffer.update(cx, |buffer, cx| {
@@ -326,20 +346,20 @@ impl LspStore {
                 .get_request_timeout();
             cx.background_spawn(async move {
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
-                    InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
+                    InlayHints::project_to_lsp_hint(hint, &buffer_snapshot)?,
                     request_timeout,
                 );
                 let resolved_hint = resolve_task
                     .await
                     .into_response()
                     .context("inlay hint resolve LSP request")?;
-                Ok(InlayHints::lsp_to_project_hint(
+                InlayHints::lsp_to_project_hint(
                     resolved_hint,
                     &buffer_snapshot,
                     server_id,
                     ResolveState::Resolved,
                     false,
-                ))
+                )
             })
         }
     }
@@ -414,17 +434,24 @@ impl LspStore {
             .payload
             .hint
             .expect("incorrect protobuf resolve inlay hint message: missing the inlay hint");
-        let hint = InlayHints::proto_to_project_hint(proto_hint)
-            .context("resolved proto inlay hint conversion")?;
         let buffer = lsp_store.update(&mut cx, |lsp_store, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             lsp_store.buffer_store.read(cx).get_existing(buffer_id)
         })?;
+        InlayHints::wait_for_hints_version(
+            slice::from_ref(&proto_hint),
+            &envelope.payload.version,
+            &buffer,
+            &mut cx,
+        )
+        .await?;
+        let hint = InlayHints::proto_to_project_hint(proto_hint)
+            .context("resolved proto inlay hint conversion")?;
         let response_hint = lsp_store
             .update(&mut cx, |lsp_store, cx| {
                 lsp_store.resolve_inlay_hint(
                     hint,
-                    buffer,
+                    buffer.clone(),
                     LanguageServerId(envelope.payload.language_server_id as usize),
                     cx,
                 )
@@ -433,6 +460,7 @@ impl LspStore {
             .context("inlay hints fetch")?;
         Ok(proto::ResolveInlayHintResponse {
             hint: Some(InlayHints::project_to_proto_hint(response_hint)),
+            version: buffer.read_with(&cx, |buffer, _| serialize_version(&buffer.version())),
         })
     }
 }

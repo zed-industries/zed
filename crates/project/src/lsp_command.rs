@@ -3,9 +3,9 @@ pub mod signature_help;
 use crate::{
     CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentColor,
     DocumentHighlight, DocumentSymbol, Hover, HoverBlock, HoverBlockKind, InlayHint,
-    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse, ProjectPath,
-    ProjectTransaction, PulledDiagnostics, ResolveState,
+    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTextEdits,
+    InlayHintTooltip, Location, LocationLink, LspAction, LspPullDiagnostics, MarkupContent,
+    PrepareRenameResponse, ProjectPath, ProjectTransaction, PulledDiagnostics, ResolveState,
     lsp_store::{LanguageServerToQuery, LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
@@ -3892,7 +3892,7 @@ impl InlayHints {
         server_id: LanguageServerId,
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
-    ) -> InlayHint {
+    ) -> anyhow::Result<InlayHint> {
         let kind = lsp_hint.kind.and_then(|kind| match kind {
             lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
             lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
@@ -3905,7 +3905,57 @@ impl InlayHints {
         } else {
             snapshot.anchor_after(position)
         };
-
+        let text_edits = lsp_hint
+            .text_edits
+            .map(|edits| {
+                let mut edits = edits
+                    .into_iter()
+                    .map(|edit| {
+                        let range = range_from_lsp(edit.range);
+                        let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                        let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                        anyhow::ensure!(
+                            start <= end,
+                            "invalid inlay hint text edit range: {:?}",
+                            edit.range
+                        );
+                        Ok((start..end, edit.new_text))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                edits.sort_by_key(|(range, _)| (range.start, range.end));
+                anyhow::ensure!(
+                    edits
+                        .windows(2)
+                        .all(|edits| edits[0].0.end <= edits[1].0.start),
+                    "overlapping inlay hint text edits"
+                );
+                edits.dedup_by(|(range, new_text), (previous_range, previous_text)| {
+                    let adjacent = previous_range.end == range.start;
+                    if adjacent {
+                        previous_range.end = range.end;
+                        previous_text.push_str(new_text);
+                    }
+                    adjacent
+                });
+                let edits = edits
+                    .into_iter()
+                    .map(|(range, mut new_text)| {
+                        LineEnding::normalize(&mut new_text);
+                        let start = snapshot.anchor_after(range.start);
+                        let end = if range.is_empty() {
+                            start
+                        } else {
+                            snapshot.anchor_before(range.end)
+                        };
+                        (start..end, new_text)
+                    })
+                    .collect();
+                anyhow::Ok(InlayHintTextEdits {
+                    edits,
+                    buffer_version: snapshot.version().clone(),
+                })
+            })
+            .transpose()?;
         let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id);
         let padding_left = if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
             false
@@ -3913,8 +3963,9 @@ impl InlayHints {
             lsp_hint.padding_left.unwrap_or(false)
         };
 
-        InlayHint {
+        Ok(InlayHint {
             position,
+            text_edits,
             padding_left,
             padding_right: lsp_hint.padding_right.unwrap_or(false),
             label,
@@ -3932,7 +3983,25 @@ impl InlayHints {
                 }
             }),
             resolve_state,
+        })
+    }
+
+    pub async fn wait_for_hints_version(
+        message_hints: &[proto::InlayHint],
+        buffer_version: &[proto::VectorClockEntry],
+        buffer: &Entity<Buffer>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        let mut buffer_version = deserialize_version(buffer_version);
+        for text_edits in message_hints
+            .iter()
+            .filter_map(|hint| hint.text_edits.as_ref())
+        {
+            buffer_version.join(&deserialize_version(&text_edits.buffer_version));
         }
+        buffer
+            .update(cx, |buffer, _| buffer.wait_for_version(buffer_version))
+            .await
     }
 
     fn lsp_inlay_label_to_project(
@@ -3992,6 +4061,13 @@ impl InlayHints {
             lsp_resolve_state,
         });
         proto::InlayHint {
+            text_edits: response_hint.text_edits.map(|text_edits| proto::InlayHintTextEdits {
+                edits: text_edits.edits.into_iter().map(|(range, new_text)| proto::InlayHintTextEdit {
+                    range: Some(serialize_anchor_range(range)),
+                    new_text,
+                }).collect(),
+                buffer_version: serialize_version(&text_edits.buffer_version),
+            }),
             position: Some(language::proto::serialize_anchor(&response_hint.position)),
             padding_left: response_hint.padding_left,
             padding_right: response_hint.padding_right,
@@ -4079,7 +4155,27 @@ impl InlayHints {
                 anyhow::bail!("Unexpected resolve state {invalid} for hint {message_hint:?}")
             }
         };
+        let text_edits = message_hint
+            .text_edits
+            .map(|text_edits| {
+                let edits = text_edits
+                    .edits
+                    .into_iter()
+                    .map(|edit| {
+                        let range = deserialize_anchor_range(
+                            edit.range.context("missing inlay hint text edit range")?,
+                        )?;
+                        Ok((range, edit.new_text))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                anyhow::Ok(InlayHintTextEdits {
+                    edits,
+                    buffer_version: deserialize_version(&text_edits.buffer_version),
+                })
+            })
+            .transpose()?;
         Ok(InlayHint {
+            text_edits,
             position: message_hint
                 .position
                 .and_then(language::proto::deserialize_anchor)
@@ -4192,14 +4288,46 @@ impl InlayHints {
         })
     }
 
-    pub fn project_to_lsp_hint(hint: InlayHint, snapshot: &BufferSnapshot) -> lsp::InlayHint {
-        lsp::InlayHint {
+    pub fn project_to_lsp_hint(
+        hint: InlayHint,
+        snapshot: &BufferSnapshot,
+    ) -> Result<lsp::InlayHint> {
+        anyhow::ensure!(
+            snapshot.can_resolve(&hint.position),
+            "invalid inlay hint position anchor"
+        );
+        Ok(lsp::InlayHint {
             position: point_to_lsp(hint.position.to_point_utf16(snapshot)),
             kind: hint.kind.map(|kind| match kind {
                 InlayHintKind::Type => lsp::InlayHintKind::TYPE,
                 InlayHintKind::Parameter => lsp::InlayHintKind::PARAMETER,
             }),
-            text_edits: None,
+            text_edits: hint
+                .text_edits
+                .map(|text_edits| {
+                    text_edits
+                        .edits
+                        .into_iter()
+                        .map(|(range, new_text)| {
+                            anyhow::ensure!(
+                                snapshot.can_resolve(&range.start),
+                                "invalid inlay hint text edit start anchor"
+                            );
+                            anyhow::ensure!(
+                                snapshot.can_resolve(&range.end),
+                                "invalid inlay hint text edit end anchor"
+                            );
+                            let start = range.start.to_point_utf16(snapshot);
+                            let end = range.end.to_point_utf16(snapshot);
+                            anyhow::ensure!(start <= end, "reversed inlay hint text edit range");
+                            Ok(lsp::TextEdit {
+                                range: lsp::Range::new(point_to_lsp(start), point_to_lsp(end)),
+                                new_text,
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?,
             tooltip: hint.tooltip.and_then(|tooltip| {
                 Some(match tooltip {
                     InlayHintTooltip::String(s) => lsp::InlayHintTooltip::String(s),
@@ -4257,7 +4385,7 @@ impl InlayHints {
                 ResolveState::CanResolve(_, data) => data,
                 ResolveState::Resolving | ResolveState::Resolved => None,
             },
-        }
+        })
     }
 
     pub fn can_resolve_inlays(capabilities: &ServerCapabilities) -> bool {
@@ -4352,7 +4480,7 @@ impl LspCommand for InlayHints {
             .unwrap_or_default()
             .into_iter()
             .filter(|lsp_hint| lsp_hint.position.line <= last_row)
-            .map(|lsp_hint| {
+            .filter_map(|lsp_hint| {
                 let resolve_state = if can_resolve {
                     ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
                 } else {
@@ -4366,6 +4494,8 @@ impl LspCommand for InlayHints {
                     resolve_state,
                     force_no_type_left_padding,
                 )
+                .context("lsp to project inlay hint conversion")
+                .log_err()
             })
             .collect();
 
@@ -4428,18 +4558,13 @@ impl LspCommand for InlayHints {
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })
+        InlayHints::wait_for_hints_version(&message.hints, &message.version, &buffer, &mut cx)
             .await?;
-
-        let mut hints = Vec::new();
-        for message_hint in message.hints {
-            hints.push(InlayHints::proto_to_project_hint(message_hint)?);
-        }
-
-        Ok(hints)
+        message
+            .hints
+            .into_iter()
+            .map(InlayHints::proto_to_project_hint)
+            .collect()
     }
 
     fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {
