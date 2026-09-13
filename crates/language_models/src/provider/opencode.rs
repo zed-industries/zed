@@ -579,23 +579,23 @@ impl LanguageModel for OpenCodeLanguageModel {
         self.model
             .supported_reasoning_effort_levels(self.subscription)
             .map(|levels| {
-                let levels = levels
+                let mut levels = levels
                     .into_iter()
                     .filter(|effort| *effort != ReasoningEffort::None)
                     .collect::<Vec<_>>();
                 if levels.is_empty() {
                     return Vec::new();
                 }
-                let default_index = levels.len() - 1;
+                let default_effort = levels.last().copied();
+                levels.sort_by_key(|effort| (*effort) as usize);
                 levels
                     .into_iter()
-                    .enumerate()
-                    .map(|(i, effort)| {
+                    .map(|effort| {
                         let (name, value) = reasoning_effort_display(effort);
                         LanguageModelEffortLevel {
                             name: name.into(),
                             value: value.into(),
-                            is_default: i == default_index,
+                            is_default: Some(effort) == default_effort,
                         }
                     })
                     .collect()
