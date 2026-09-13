@@ -10,6 +10,7 @@
 
 mod atlas;
 mod bounds_tree;
+mod engine;
 mod font_fallbacks;
 mod font_features;
 mod layout;
@@ -32,3 +33,9 @@ pub use renderer::*;
 pub use scene::*;
 pub use text::*;
 pub use text_system::*;
+
+/// Engine internals consumed by the `gpui` facade. Not a stable API.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::engine::FrameSession;
+}

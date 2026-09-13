@@ -18,9 +18,9 @@ use crate::{
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
     Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
     ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode,
-    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowDecorations, WindowId, WindowOptions, WindowParams, WindowTextSystem,
     new_platform_input_handler, point, prelude::*, px, rems, size, transparent_black,
@@ -34,6 +34,7 @@ use collections::{FxHashMap, FxHashSet};
 use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
+use gpui_backend::__private::FrameSession;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
 use itertools::FoldWhile::{Continue, Done};
@@ -1158,7 +1159,7 @@ pub struct Window {
     /// a given rem size.
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
-    layout_engine: Option<TaffyLayoutEngine>,
+    layout_session: Rc<FrameSession>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -2007,7 +2008,7 @@ impl Window {
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
-            layout_engine: Some(TaffyLayoutEngine::new()),
+            layout_session: Rc::new(FrameSession::new()),
             root: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
@@ -3146,7 +3147,7 @@ impl Window {
                 });
         }
 
-        self.layout_engine.as_mut().unwrap().clear();
+        self.layout_session.clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
 
@@ -3345,9 +3346,7 @@ impl Window {
         let scale_factor = self.scale_factor();
         let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
         let root_layout_id = root_element.request_layout(self, cx);
-        self.layout_engine
-            .as_mut()
-            .unwrap()
+        self.layout_session
             .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
 
@@ -3362,10 +3361,11 @@ impl Window {
         if let Some(prompt) = self.prompt.take() {
             let mut element = prompt.view.any_view().into_any_element();
             let prompt_layout_id = element.request_layout(self, cx);
-            self.layout_engine
-                .as_mut()
-                .unwrap()
-                .stretch_auto_size_to_fill(prompt_layout_id, root_size, scale_factor);
+            self.layout_session.stretch_auto_size_to_fill(
+                prompt_layout_id,
+                root_size,
+                scale_factor,
+            );
             element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
@@ -4867,9 +4867,7 @@ impl Window {
         let scale_factor = self.scale_factor();
         let taffy_style = to_taffy_style(&style, rem_size, scale_factor);
 
-        self.layout_engine
-            .as_mut()
-            .unwrap()
+        self.layout_session
             .request_layout(taffy_style, &cx.layout_id_buffer)
     }
 
@@ -4901,9 +4899,7 @@ impl Window {
                 .expect("measure context app should be an App");
             measure(known_dimensions, available_space, window, cx)
         };
-        self.layout_engine
-            .as_mut()
-            .unwrap()
+        self.layout_session
             .request_measured_layout(taffy_style, measure)
     }
 
@@ -4921,14 +4917,13 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let scale_factor = self.scale_factor();
-        let mut layout_engine = self.layout_engine.take().unwrap();
-        layout_engine.compute_layout(
+        let layout_session = self.layout_session.clone();
+        layout_session.compute_layout(
             layout_id,
             available_space,
             scale_factor,
             &mut WindowMeasureContext { window: self, cx },
         );
-        self.layout_engine = Some(layout_engine);
     }
 
     /// Obtain the bounds computed for the given LayoutId relative to the window. This method will usually be invoked by
@@ -4940,9 +4935,7 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let mut bounds = self
-            .layout_engine
-            .as_mut()
-            .unwrap()
+            .layout_session
             .layout_bounds(layout_id, scale_factor)
             .map(Into::into);
         let snapped_offset = self.pixel_snap_point(self.element_offset());
