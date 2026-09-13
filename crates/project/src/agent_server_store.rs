@@ -1390,12 +1390,33 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .join(sanitize_path_component(&registry_id));
             fs.create_dir(&install_dir).await?;
 
-            let (package_name, package_spec) = bounded_npm_package_spec(&package);
+            let (package_name, package_spec, maximum_version) = bounded_npm_package_spec(&package);
+            let should_install = async {
+                let Some(maximum_version) = maximum_version.as_ref() else {
+                    return true;
+                };
+                let Ok(executable) = node_runtime::read_package_executable(
+                    install_dir.join("node_modules"),
+                    package_name,
+                )
+                .await
+                else {
+                    return true;
+                };
+                node_runtime
+                    .should_install_npm_package(
+                        package_name,
+                        &executable,
+                        &install_dir,
+                        node_runtime::VersionStrategy::Maximum(maximum_version),
+                    )
+                    .await
+            };
             node_runtime
-                .run_npm_subcommand(
-                    Some(&install_dir),
-                    "install",
+                .run_npm_install_with_lock(
+                    &install_dir,
                     &[package_spec.as_str(), "--save-exact"],
+                    should_install,
                 )
                 .await?;
             let executable = node_runtime::read_package_executable(
@@ -1453,18 +1474,22 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 /// strips during parsing. PS only re-adds CRT-style transport quotes around native command args
 /// containing whitespace, so `package@<=0.25.3` reaches cmd.exe bare and the unquoted `<` is
 /// interpreted as input redirection. See zed-industries/zed#55921.
-fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
+fn bounded_npm_package_spec(package_spec: &str) -> (&str, String, Option<Version>) {
     let Some((package_name, version)) = package_spec.rsplit_once('@') else {
-        return (package_spec, package_spec.to_string());
+        return (package_spec, package_spec.to_string(), None);
     };
     if package_name.is_empty() {
-        return (package_spec, package_spec.to_string());
+        return (package_spec, package_spec.to_string(), None);
     }
-    if Version::parse(version).is_err() {
-        return (package_name, package_spec.to_string());
-    }
+    let Ok(version) = Version::parse(version) else {
+        return (package_name, package_spec.to_string(), None);
+    };
 
-    (package_name, format!("{package_name}@0.0.0 - {version}"))
+    (
+        package_name,
+        format!("{package_name}@0.0.0 - {version}"),
+        Some(version),
+    )
 }
 
 struct LocalCustomAgent {
@@ -1838,22 +1863,31 @@ mod tests {
     fn builds_bounded_npm_package_specs() {
         assert_eq!(
             bounded_npm_package_spec("agent-package@1.2.3"),
-            ("agent-package", "agent-package@0.0.0 - 1.2.3".to_string())
+            (
+                "agent-package",
+                "agent-package@0.0.0 - 1.2.3".to_string(),
+                Some(Version::parse("1.2.3").unwrap())
+            )
         );
         assert_eq!(
             bounded_npm_package_spec("@scope/agent-package@1.2.3-beta.1"),
             (
                 "@scope/agent-package",
-                "@scope/agent-package@0.0.0 - 1.2.3-beta.1".to_string()
+                "@scope/agent-package@0.0.0 - 1.2.3-beta.1".to_string(),
+                Some(Version::parse("1.2.3-beta.1").unwrap())
             )
         );
         assert_eq!(
             bounded_npm_package_spec("@scope/agent-package"),
-            ("@scope/agent-package", "@scope/agent-package".to_string())
+            (
+                "@scope/agent-package",
+                "@scope/agent-package".to_string(),
+                None
+            )
         );
         assert_eq!(
             bounded_npm_package_spec("agent-package@latest"),
-            ("agent-package", "agent-package@latest".to_string())
+            ("agent-package", "agent-package@latest".to_string(), None)
         );
     }
 
