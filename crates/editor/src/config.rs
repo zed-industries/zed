@@ -201,9 +201,9 @@ impl Editor {
     pub fn set_allow_git_diff_scrollbar_markers(&mut self, allow: bool, cx: &mut Context<Self>) {
         if self.allow_git_diff_scrollbar_markers != allow {
             self.allow_git_diff_scrollbar_markers = allow;
-            self.scrollbar_marker_state.dirty = true;
-            self.scrollbar_marker_state.markers = Default::default();
-            self.scrollbar_marker_state.pending_refresh = None;
+            self.scrollbar_marker_state.mark_buffer_changed();
+            self.scrollbar_marker_state.buffer_markers = Default::default();
+            self.scrollbar_marker_state.pending_buffer_refresh = None;
             cx.notify();
         }
     }
