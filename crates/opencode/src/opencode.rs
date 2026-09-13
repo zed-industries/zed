@@ -28,6 +28,16 @@ pub enum OpenCodeSubscription {
     Go,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCapability {
+    InputAudio,
+    InputImage,
+    InputVideo,
+    InputPdf,
+}
+
 impl OpenCodeSubscription {
     pub fn display_name(&self) -> &'static str {
         match self {
@@ -870,100 +880,29 @@ impl Model {
     }
 
     pub fn supports_images(&self) -> bool {
-        match self {
-            // Models with image support
-            Self::ClaudeOpus5
-            | Self::ClaudeOpus4_8
-            | Self::ClaudeOpus4_7
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeSonnet5
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5
-            | Self::ClaudeFable5_1
-            | Self::ClaudeFable5
-            | Self::Gpt6Astra
-            | Self::Gpt5_6Sol
-            | Self::Gpt5_6Terra
-            | Self::Gpt5_6Luna
-            | Self::Gpt5_5
-            | Self::Gpt5_5Pro
-            | Self::Gpt5_4
-            | Self::Gpt5_4Pro
-            | Self::Gpt5_4Mini
-            | Self::Gpt5_4Nano
-            | Self::Gpt5_3Codex
-            | Self::Gpt5_2
-            | Self::Gpt5_2Codex
-            | Self::Gpt5_1
-            | Self::Gpt5_1Codex
-            | Self::Gpt5_1CodexMax
-            | Self::Gpt5_1CodexMini
-            | Self::Gpt5
-            | Self::Gpt5Codex
-            | Self::Gpt5Nano
-            | Self::Gemini3_1Pro
-            | Self::Gemini3_8Flash
-            | Self::Gemini3_7Flash
-            | Self::Gemini3_6Flash
-            | Self::Gemini3_5Flash
-            | Self::Gemini3Flash
-            | Self::Gemini3_5FlashLite
-            | Self::MuseSpark1_3
-            | Self::MuseSpark1_2
-            | Self::MuseSpark1_3Contributor
-            | Self::MuseSpark1_2Contributor
-            | Self::Qwen3_8Max
-            | Self::Qwen3_8Flash
-            | Self::Qwen3_7Plus
-            | Self::Qwen3_6Plus
-            | Self::Qwen3_5Plus
-            | Self::Grok4_6
-            | Self::Grok4_5
-            | Self::GrokBuild0_1
-            | Self::Glm5_3Flash
-            | Self::KimiK3
-            | Self::KimiK2_7Code
-            | Self::KimiK2_6
-            | Self::KimiK2_5
-            | Self::DeepSeekV4FlashVisionExp
-            | Self::DeepSeekV4_1Flash
-            | Self::MiniMaxM3
-            | Self::MimoV2_5 => true,
+        self.supported_capabilities()
+            .is_some_and(|capabilities| capabilities.contains(&ModelCapability::InputImage))
+    }
 
-            // Models without image support
-            Self::Gpt5_3Spark
-            | Self::Qwen3_7Max
-            | Self::Glm5_3
-            | Self::Glm5_2
-            | Self::Glm5_1
-            | Self::Glm5
-            | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4Flash
-            | Self::MiniMaxM2_7
-            | Self::MiniMaxM2_5
-            | Self::MimoV2_5Pro
-            | Self::Hy4Preview
-            | Self::Hy3
-            | Self::LongCat2_0 => false,
+    pub fn supports_audios(&self) -> bool {
+        self.supported_capabilities()
+            .is_some_and(|capabilities| capabilities.contains(&ModelCapability::InputAudio))
+    }
 
-            // Custom model
-            Self::Custom { protocol, .. } => matches!(
-                protocol,
-                ApiProtocol::Anthropic
-                    | ApiProtocol::Google
-                    | ApiProtocol::OpenAiResponses
-                    | ApiProtocol::OpenAiChat
-            ),
-        }
+    pub fn supports_pdfs(&self) -> bool {
+        self.supported_capabilities()
+            .is_some_and(|capabilities| capabilities.contains(&ModelCapability::InputPdf))
+    }
+
+    pub fn supports_videos(&self) -> bool {
+        self.supported_capabilities()
+            .is_some_and(|capabilities| capabilities.contains(&ModelCapability::InputVideo))
     }
 
     pub fn supports_thinking(&self, subscription: OpenCodeSubscription) -> bool {
         match self {
             // These models support reasoning, but does not offer
-           // any selectable reasoning efforts
+            // any selectable reasoning efforts
             Self::Glm5
             | Self::Glm5_1
             | Self::GrokBuild0_1
@@ -1154,8 +1093,6 @@ impl Model {
             ]),
 
             // Z.ai models
-            Self::Glm5_2 => Some(vec![ReasoningEffort::Max, ReasoningEffort::High]),
-
             Self::Glm5_3 => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Max,
@@ -1167,6 +1104,8 @@ impl Model {
                 ReasoningEffort::Max,
                 ReasoningEffort::High,
             ]),
+
+            Self::Glm5_2 => Some(vec![ReasoningEffort::Max, ReasoningEffort::High]),
 
             // Moonshot AI models
             Self::KimiK3 => Some(vec![ReasoningEffort::Max]),
@@ -1212,6 +1151,130 @@ impl Model {
                 reasoning_effort_levels,
                 ..
             } => reasoning_effort_levels.clone(),
+
+            _ => None,
+        }
+    }
+
+    pub fn supported_capabilities(&self) -> Option<Vec<ModelCapability>> {
+        match self {
+            // Anthropic models
+            Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeSonnet5
+            | Self::ClaudeSonnet4_6
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeFable5_1
+            | Self::ClaudeFable5 => {
+                Some(vec![ModelCapability::InputImage, ModelCapability::InputPdf])
+            }
+
+            // OpenAI models
+            Self::Gpt6Astra
+            | Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_5Pro
+            | Self::Gpt5_4
+            | Self::Gpt5_4Pro
+            | Self::Gpt5_4Mini
+            | Self::Gpt5_4Nano
+            | Self::Gpt5_3Codex
+            | Self::Gpt5_2Codex => {
+                Some(vec![ModelCapability::InputImage, ModelCapability::InputPdf])
+            }
+
+            Self::Gpt5_2
+            | Self::Gpt5_1
+            | Self::Gpt5_1Codex
+            | Self::Gpt5_1CodexMax
+            | Self::Gpt5_1CodexMini
+            | Self::Gpt5
+            | Self::Gpt5Codex
+            | Self::Gpt5Nano => Some(vec![ModelCapability::InputImage]),
+
+            // Google models
+            Self::Gemini3_1Pro
+            | Self::Gemini3_8Flash
+            | Self::Gemini3_7Flash
+            | Self::Gemini3_6Flash
+            | Self::Gemini3_5Flash
+            | Self::Gemini3Flash
+            | Self::Gemini3_5FlashLite => Some(vec![
+                ModelCapability::InputAudio,
+                ModelCapability::InputImage,
+                ModelCapability::InputVideo,
+                ModelCapability::InputPdf,
+            ]),
+
+            // Meta models
+            Self::MuseSpark1_3
+            | Self::MuseSpark1_2
+            | Self::MuseSpark1_3Contributor
+            | Self::MuseSpark1_2Contributor => Some(vec![
+                ModelCapability::InputAudio,
+                ModelCapability::InputImage,
+                ModelCapability::InputVideo,
+                ModelCapability::InputPdf,
+            ]),
+
+            // Alibaba models
+            Self::Qwen3_8Max
+            | Self::Qwen3_8Flash
+            | Self::Qwen3_7Plus
+            | Self::Qwen3_6Plus
+            | Self::Qwen3_5Plus => Some(vec![
+                ModelCapability::InputImage,
+                ModelCapability::InputVideo,
+            ]),
+
+            // xAI models
+            Self::Grok4_6 | Self::Grok4_5 => Some(vec![ModelCapability::InputImage]),
+
+            Self::GrokBuild0_1 => {
+                Some(vec![ModelCapability::InputImage, ModelCapability::InputPdf])
+            }
+
+            // Z.ai models
+            Self::Glm5_3Flash => Some(vec![
+                ModelCapability::InputImage,
+                ModelCapability::InputVideo,
+                ModelCapability::InputPdf,
+            ]),
+
+            // Moonshot AI models
+            Self::KimiK3 | Self::KimiK2_7Code | Self::KimiK2_6 | Self::KimiK2_5 => Some(vec![
+                ModelCapability::InputImage,
+                ModelCapability::InputVideo,
+            ]),
+
+            // DeepSeek models
+            Self::DeepSeekV4_1Flash | Self::DeepSeekV4FlashVisionExp => {
+                Some(vec![ModelCapability::InputImage])
+            }
+
+            // Minimax Group models
+            Self::MiniMaxM3 => Some(vec![
+                ModelCapability::InputImage,
+                ModelCapability::InputVideo,
+            ]),
+
+            // Others models
+            Self::MimoV2_5 => Some(vec![
+                ModelCapability::InputAudio,
+                ModelCapability::InputImage,
+                ModelCapability::InputVideo,
+            ]),
+
+            // Custom models have no configuration support for this, so let's
+            // assume that text and images are supported (like it did before)
+            Self::Custom { .. } => Some(vec![ModelCapability::InputImage]),
 
             _ => None,
         }
