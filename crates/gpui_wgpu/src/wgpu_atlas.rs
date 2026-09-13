@@ -1,10 +1,10 @@
 use anyhow::{Context as _, Result};
 use collections::FxHashMap;
 use etagere::{BucketedAtlasAllocator, size2};
-use gpui_platform::{
-    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
-    PlatformAtlas, Point, Size,
+use gpui_backend::{
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, PlatformAtlas,
 };
+use gpui_platform::{Bounds, DevicePixels, Point, Size};
 use parking_lot::Mutex;
 use std::{borrow::Cow, ops, sync::Arc};
 
@@ -401,7 +401,7 @@ fn swizzle_upload_data(bytes: &[u8], format: wgpu::TextureFormat) -> Vec<u8> {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
-    use gpui_platform::{ImageId, RenderImageParams};
+    use gpui_backend::{ImageId, RenderImageParams};
     use pollster::block_on;
     use std::sync::Arc;
 

@@ -7,10 +7,11 @@ use crate::platform::WebWindowLifecycle;
 use crate::viewport::WebViewport;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
+use gpui_backend::SceneRenderer;
 use gpui_platform::{
     Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs, Modifiers,
     MouseButton, Pixels, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, SceneRenderer, Size,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Size,
     TextInputConfiguration, TextInputStateChange, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowId, WindowInsets,
     WindowParams, px,

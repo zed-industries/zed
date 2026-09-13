@@ -23,12 +23,13 @@ use cocoa::{
     },
 };
 use dispatch2::DispatchQueue;
+use gpui_backend::SceneRenderer;
 use gpui_platform::{
     BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload, ExternalPaths,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformDisplay,
     PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
-    RequestFrameOptions, SceneRenderer, SharedString, Size, SystemWindowTab, WindowAppearance,
+    RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowId, WindowKind,
     WindowParams, point, px, size,
 };

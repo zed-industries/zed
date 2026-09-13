@@ -21,6 +21,10 @@ use windows::{
 
 use crate::directx_renderer::shader_resources::{RawShaderBytes, ShaderModule, ShaderTarget};
 use crate::*;
+use gpui_backend::{
+    AtlasTextureId, PaintSurface, PlatformAtlas, PrimitiveBatch, Scene, SceneRenderer,
+    get_gamma_correction_ratios,
+};
 use gpui_platform::*;
 
 pub(crate) const DISABLE_DIRECT_COMPOSITION: &str = "GPUI_DISABLE_DIRECT_COMPOSITION";
@@ -860,7 +864,7 @@ impl DirectXRenderer {
             let render_params: IDWriteRenderingParams1 =
                 factory.CreateRenderingParams().unwrap().cast().unwrap();
             FontInfo {
-                gamma_ratios: gpui_platform::get_gamma_correction_ratios(render_params.GetGamma()),
+                gamma_ratios: get_gamma_correction_ratios(render_params.GetGamma()),
                 grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
                 subpixel_enhanced_contrast: render_params.GetEnhancedContrast(),
                 is_bgr: render_params.GetPixelGeometry() == DWRITE_PIXEL_GEOMETRY_BGR,

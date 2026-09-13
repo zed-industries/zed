@@ -5,11 +5,12 @@ use crate::layer_shell;
 use crate::{
     Decorations, DispatchEventResult, ExternalDragPayload, GpuSpecs, PlatformDisplay,
     PlatformInput, PlatformInputHandler, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, SceneRenderer, SystemWindowTab, TextInputConfiguration, TextInputStateChange,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowInsets,
+    ResizeEdge, SystemWindowTab, TextInputConfiguration, TextInputStateChange, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowInsets,
 };
 use futures::channel::oneshot;
+use gpui_backend::SceneRenderer;
 use gpui_types::{Bounds, Capslock, Modifiers, Pixels, Point, Size};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]

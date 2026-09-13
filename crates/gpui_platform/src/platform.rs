@@ -8,12 +8,13 @@ use crate::{
     ActivityGuard, AppLifecyclePhase, BackgroundExecutor, ClipboardItem, ClipboardReadError,
     CursorStyle, ForegroundExecutor, MenuCommandId, PathPromptOptions, PlatformDisplay,
     PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformMenu,
-    PlatformMenuItem, PlatformTextSystem, PlatformWindow, ScreenCaptureSource, SystemNotification,
+    PlatformMenuItem, PlatformWindow, ScreenCaptureSource, SystemNotification,
     SystemNotificationResponse, Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowId,
     WindowParams,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
+use gpui_backend::PlatformTextSystem;
 use smallvec::SmallVec;
 use std::{
     ffi::OsString,

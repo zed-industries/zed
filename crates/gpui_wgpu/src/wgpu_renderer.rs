@@ -1,11 +1,11 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
-use gpui_backend::{AtlasTextureId, Path, PrimitiveBatch, Scene, SceneRenderer};
-use gpui_platform::{
-    Background, Bounds, DevicePixels, GpuSpecs, PlatformAtlas, Point, ScaledPixels, Size,
+use gpui_backend::{
+    AtlasTextureId, Path, PlatformAtlas, PrimitiveBatch, Scene, SceneRenderer,
     get_gamma_correction_ratios,
 };
+use gpui_platform::{Background, Bounds, DevicePixels, GpuSpecs, Point, ScaledPixels, Size};
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -2202,9 +2202,8 @@ impl RenderingParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_platform::{
-        MonochromeSprite, PolychromeSprite, Quad, Shadow, SubpixelSprite, Underline,
-    };
+    use gpui_backend::{MonochromeSprite, PolychromeSprite, Quad, SubpixelSprite, Underline};
+    use gpui_platform::Shadow;
 
     #[test]
     fn webgl_shader_is_valid_wgsl_without_storage_buffers() {

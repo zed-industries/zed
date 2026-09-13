@@ -31,12 +31,12 @@ use gpui_util::{ResultExt as _, new_std_command};
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
+use gpui_backend::PlatformTextSystem;
 use gpui_platform::{
     ActivityGuard, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
     MenuCommandId, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem, PlatformTextSystem, PlatformWindow,
-    RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowId,
-    WindowParams,
+    PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem, PlatformWindow, RunnableVariant, Task,
+    ThermalState, WindowAppearance, WindowButtonLayout, WindowId, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui_types::{Pixels, Point, px};
@@ -156,7 +156,7 @@ impl LinuxCommon {
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        let text_system = Arc::new(gpui_platform::NoopTextSystem::new());
+        let text_system = Arc::new(gpui_backend::NoopTextSystem::new());
 
         let callbacks = PlatformHandlers::default();
 

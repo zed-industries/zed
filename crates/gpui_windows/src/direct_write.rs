@@ -24,6 +24,11 @@ use windows::{
 use windows_numerics::Vector2;
 
 use crate::*;
+use gpui_backend::{
+    Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
+    GlyphId, LineLayout, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, TextRenderingMode,
+};
 use gpui_platform::*;
 
 #[derive(Debug)]
@@ -692,9 +697,8 @@ impl DirectWriteState {
         };
         let baseline_origin_x =
             params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor;
-        let baseline_origin_y = params.subpixel_variant.y as f32
-            / gpui_platform::SUBPIXEL_VARIANTS_Y as f32
-            / params.scale_factor;
+        let baseline_origin_y =
+            params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor;
 
         let mut rendering_mode = DWRITE_RENDERING_MODE1::default();
         let mut grid_fit_mode = DWRITE_GRID_FIT_MODE::default();
@@ -1957,9 +1961,8 @@ mod tests {
     use crate::direct_write::ClusterAnalyzer;
     use crate::directx_devices::DirectXDevices;
     use anyhow::Result;
-    use gpui_platform::{
-        DevicePixels, Font, PlatformTextSystem, RenderGlyphParams, Rgba, bounds, point, px, size,
-    };
+    use gpui_backend::{Font, PlatformTextSystem, RenderGlyphParams};
+    use gpui_platform::{DevicePixels, Rgba, bounds, point, px, size};
     use std::ffi::c_void;
     use windows::Win32::Graphics::Direct3D11::{
         D3D11_BIND_RENDER_TARGET, D3D11_RENDER_TARGET_VIEW_DESC, D3D11_RENDER_TARGET_VIEW_DESC_0,

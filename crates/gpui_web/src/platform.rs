@@ -6,13 +6,14 @@ use crate::keyboard::WebKeyboardLayout;
 use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
+use gpui_backend::PlatformTextSystem;
 use gpui_platform::{
     ActivityGuard, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardReadError,
     ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor, GestureTuning, Image,
     ImageFormat, MenuCommandId, PathPromptOptions, Platform, PlatformDisplay, PlatformGestures,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem,
-    PlatformTextSystem, PlatformWindow, ScrollPhysics, Task, ThermalState, WindowAppearance,
-    WindowId, WindowKind, WindowParams, popup::PopupNotSupportedError,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformMenu, PlatformMenuItem, PlatformWindow,
+    ScrollPhysics, Task, ThermalState, WindowAppearance, WindowId, WindowKind, WindowParams,
+    popup::PopupNotSupportedError,
 };
 use gpui_wgpu::{PreparedWebGraphics, WebBackendPreference, WgpuContext, wgpu};
 use std::{

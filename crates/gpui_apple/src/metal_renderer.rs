@@ -6,10 +6,11 @@ use cocoa::{
     foundation::{NSSize, NSUInteger},
     quartzcore::AutoresizingMask,
 };
-use gpui_backend::{AtlasTextureId, PaintSurface, Path, PrimitiveBatch, Scene, SceneRenderer};
+use gpui_backend::{
+    AtlasTextureId, PaintSurface, Path, PlatformAtlas, PrimitiveBatch, Scene, SceneRenderer,
+};
 use gpui_platform::{
-    Background, Bounds, ContentMask, DevicePixels, PlatformAtlas, Point, ScaledPixels, Size, point,
-    size,
+    Background, Bounds, ContentMask, DevicePixels, Point, ScaledPixels, Size, point, size,
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;
@@ -1637,7 +1638,7 @@ impl MetalHeadlessRenderer {
 }
 
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-impl gpui_platform::SceneRenderer for MetalHeadlessRenderer {
+impl SceneRenderer for MetalHeadlessRenderer {
     fn draw(&mut self, scene: &Scene) -> bool {
         if let Err(error) = self.renderer.render_scene(scene, self.viewport_size) {
             log::warn!("headless render_scene failed: {error}");
@@ -1661,7 +1662,7 @@ impl gpui_platform::SceneRenderer for MetalHeadlessRenderer {
         self.renderer.render_scene(scene, size)
     }
 
-    fn sprite_atlas(&self) -> Arc<dyn gpui_platform::PlatformAtlas> {
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.renderer.sprite_atlas().clone()
     }
 }

@@ -64,7 +64,6 @@ pub use executor::*;
 pub use executor_runtime::*;
 pub use gestures::*;
 pub use gpu::*;
-pub use gpui_backend::*;
 pub use gpui_shared_string::*;
 pub use gpui_types::*;
 pub use input::*;

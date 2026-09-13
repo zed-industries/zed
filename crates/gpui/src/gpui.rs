@@ -117,6 +117,7 @@ macro_rules! bench_main {
         criterion::criterion_main!($($tokens)*);
     };
 }
+pub use gpui_backend::*;
 pub use gpui_backend::{LayoutId, TaffyLayoutEngine};
 pub use gpui_platform::*;
 pub use gpui_util::arc_cow::ArcCow;
