@@ -6,9 +6,9 @@ use cocoa::{
     foundation::{NSSize, NSUInteger},
     quartzcore::AutoresizingMask,
 };
+use gpui_backend::{AtlasTextureId, PaintSurface, Path, PrimitiveBatch, Scene};
 use gpui_platform::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, PaintSurface, Path, Point,
-    PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
+    Background, Bounds, ContentMask, DevicePixels, Point, ScaledPixels, Size, point, size,
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;

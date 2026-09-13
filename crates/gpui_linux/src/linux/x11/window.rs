@@ -2,10 +2,11 @@ use anyhow::{Context as _, anyhow};
 use x11rb::connection::RequestConnection;
 
 use crate::linux::X11ClientStatePtr;
+use gpui_backend::Scene;
 use gpui_platform::{
     Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Size, Tiling,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowDecorations, WindowId, WindowKind, WindowParams, popup::PopupNotSupportedError, px,
 };

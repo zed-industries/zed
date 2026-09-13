@@ -32,6 +32,7 @@ etagere.workspace = true
 bitflags.workspace = true
 futures.workspace = true
 gpui_shared_string.workspace = true
+gpui_backend.workspace = true
 gpui_types.workspace = true
 gpui_util.workspace = true
 image.workspace = true

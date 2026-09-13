@@ -13,7 +13,6 @@
 
 mod app;
 mod atlas;
-mod bounds_tree;
 mod clipboard;
 mod cursor;
 mod dispatcher;
@@ -53,7 +52,6 @@ mod render;
     any(target_os = "windows", target_os = "linux", target_os = "freebsd",)
 ))]
 pub mod scap_screen_capture;
-mod scene;
 mod screen_capture;
 #[cfg(any(test, feature = "test-support"))]
 mod test_dispatcher;
@@ -74,6 +72,7 @@ pub use font_fallbacks::*;
 pub use font_features::*;
 pub use gestures::*;
 pub use gpu::*;
+pub use gpui_backend::*;
 pub use gpui_shared_string::*;
 pub use gpui_types::*;
 pub use input::*;
@@ -98,7 +97,6 @@ pub use prompt::*;
 ))]
 pub use queue::*;
 pub use render::*;
-pub use scene::*;
 pub use screen_capture::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_dispatcher::*;

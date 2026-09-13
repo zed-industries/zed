@@ -17,6 +17,7 @@ multithreaded = ["dep:wasm_thread", "scheduler/wasm-threads"]
 path = "src/gpui_web.rs"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
+gpui_backend.workspace = true
 gpui_platform.workspace = true
 scheduler.workspace = true
 parking_lot = { workspace = true, features = ["nightly"] }

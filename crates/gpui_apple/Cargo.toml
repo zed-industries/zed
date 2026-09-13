@@ -19,6 +19,7 @@ runtime_shaders = []
 
 [dependencies]
 gpui_platform.workspace = true
+gpui_backend.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow.workspace = true

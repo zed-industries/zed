@@ -1,9 +1,10 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
+use gpui_backend::{AtlasTextureId, Path, PrimitiveBatch, Scene};
 use gpui_platform::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch,
-    ScaledPixels, Scene, Size, get_gamma_correction_ratios,
+    Background, Bounds, DevicePixels, GpuSpecs, Point, ScaledPixels, Size,
+    get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]

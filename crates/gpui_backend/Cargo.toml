@@ -1,0 +1,25 @@
+[package]
+name = "gpui_backend"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_backend.rs"
+doctest = false
+
+[features]
+default = []
+test-support = ["gpui_types/test-support"]
+bench-support = ["test-support"]
+
+[dependencies]
+anyhow.workspace = true
+etagere.workspace = true
+gpui_types.workspace = true
+schemars.workspace = true
+serde.workspace = true

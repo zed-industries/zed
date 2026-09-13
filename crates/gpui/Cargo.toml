@@ -93,6 +93,7 @@ etagere.workspace = true
 futures.workspace = true
 futures-concurrency.workspace = true
 gpui_macros.workspace = true
+gpui_backend.workspace = true
 gpui_platform.workspace = true
 gpui_shared_string.workspace = true
 gpui_types = { workspace = true, features = ["lyon"] }
