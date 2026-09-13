@@ -24,6 +24,17 @@ pub fn into_google(
 ) -> Result<crate::GenerateContentRequest> {
     fn map_content(content: Vec<MessageContent>) -> Result<Vec<Part>> {
         let mut mapped_parts = Vec::new();
+        let turn_signature = content.iter().find_map(|c| match c {
+            MessageContent::Thinking {
+                signature: Some(sig),
+                ..
+            } if !sig.is_empty() => Some(sig.clone()),
+            MessageContent::ToolUse(tu) => {
+                tu.thought_signature.as_ref().filter(|s| !s.is_empty()).cloned()
+            }
+            _ => None,
+        });
+
         for content in content {
             match content {
                 MessageContent::Text(text) => {
@@ -58,7 +69,10 @@ pub fn into_google(
                     }));
                 }
                 MessageContent::ToolUse(tool_use) => {
-                    let thought_signature = tool_use.thought_signature.filter(|s| !s.is_empty());
+                    let thought_signature = tool_use
+                        .thought_signature
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| turn_signature.clone());
                     let LanguageModelToolUseInput::Json(input) = tool_use.input else {
                         anyhow::bail!("Google AI does not support custom tool calls");
                     };
@@ -279,6 +293,7 @@ fn supports_thinking_budget_disable(model_id: &str) -> bool {
 pub struct GoogleEventMapper {
     usage: UsageMetadata,
     stop_reason: StopReason,
+    last_thought_signature: Option<String>,
 }
 
 impl GoogleEventMapper {
@@ -286,6 +301,7 @@ impl GoogleEventMapper {
         Self {
             usage: UsageMetadata::default(),
             stop_reason: StopReason::EndTurn,
+            last_thought_signature: None,
         }
     }
 
@@ -377,6 +393,9 @@ impl GoogleEventMapper {
                         Part::TextPart(text_part) => {
                             let thought_signature =
                                 text_part.thought_signature.filter(|s| !s.is_empty());
+                            if let Some(ref sig) = thought_signature {
+                                self.last_thought_signature = Some(sig.clone());
+                            }
                             if text_part.thought {
                                 if !text_part.text.is_empty() || thought_signature.is_some() {
                                     events.push(Ok(LanguageModelCompletionEvent::Thinking {
@@ -411,10 +430,13 @@ impl GoogleEventMapper {
                                     format!("{}-{}", name, next_tool_id).into()
                                 };
 
-                            // Normalize empty string signatures to None
-                            let thought_signature = function_call_part
+                            if let Some(sig) = function_call_part
                                 .thought_signature
-                                .filter(|s| !s.is_empty());
+                                .filter(|s| !s.is_empty())
+                            {
+                                self.last_thought_signature = Some(sig);
+                            }
+                            let thought_signature = self.last_thought_signature.clone();
 
                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
@@ -880,5 +902,98 @@ mod tests {
         } else {
             panic!("Expected ToolUse event");
         }
+    }
+
+    #[test]
+    fn test_parallel_function_calls_inherit_thought_signature() {
+        let mut mapper = GoogleEventMapper::new();
+
+        let response = GenerateContentResponse {
+            candidates: Some(vec![GenerateContentCandidate {
+                index: Some(0),
+                content: Content {
+                    parts: vec![
+                        Part::FunctionCallPart(FunctionCallPart {
+                            function_call: FunctionCall {
+                                name: "first_tool".to_string(),
+                                args: json!({}),
+                                id: None,
+                            },
+                            thought_signature: Some("batch_signature_123".to_string()),
+                        }),
+                        Part::FunctionCallPart(FunctionCallPart {
+                            function_call: FunctionCall {
+                                name: "second_tool".to_string(),
+                                args: json!({}),
+                                id: None,
+                            },
+                            thought_signature: None,
+                        }),
+                    ],
+                    role: GoogleRole::Model,
+                },
+                finish_reason: None,
+                finish_message: None,
+                safety_ratings: None,
+                citation_metadata: None,
+            }]),
+            prompt_feedback: None,
+            usage_metadata: None,
+        };
+
+        let events = mapper.map_event(response);
+        assert_eq!(events.len(), 3);
+
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tu1)) = &events[0] {
+            assert_eq!(tu1.name.as_ref(), "first_tool");
+            assert_eq!(tu1.thought_signature.as_deref(), Some("batch_signature_123"));
+        } else {
+            panic!("Expected ToolUse 1");
+        }
+
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tu2)) = &events[1] {
+            assert_eq!(tu2.name.as_ref(), "second_tool");
+            assert_eq!(tu2.thought_signature.as_deref(), Some("batch_signature_123"));
+        } else {
+            panic!("Expected ToolUse 2 to inherit batch signature");
+        }
+    }
+
+    #[test]
+    fn test_into_google_tool_use_without_signature_inherits_turn_thinking_signature() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::Thinking {
+                        text: "planning".to_string(),
+                        signature: Some("thinking_sig_456".to_string()),
+                    },
+                    MessageContent::ToolUse(LanguageModelToolUse {
+                        id: "call_1".into(),
+                        name: "test_tool".into(),
+                        input: LanguageModelToolUseInput::Json(json!({})),
+                        raw_input: "{}".to_string(),
+                        is_input_complete: true,
+                        thought_signature: None,
+                    }),
+                ],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let google_req = into_google(
+            request,
+            "gemini-3.8-flash".to_string(),
+            GoogleModelMode::Thinking { budget_tokens: None },
+        )
+        .unwrap();
+
+        let Part::FunctionCallPart(fc) = &google_req.contents[0].parts[1] else {
+            panic!("expected FunctionCallPart");
+        };
+        assert_eq!(fc.thought_signature.as_deref(), Some("thinking_sig_456"));
     }
 }
