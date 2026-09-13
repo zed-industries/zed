@@ -755,11 +755,26 @@ impl ElicitationStore {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextCompactionId(pub Arc<str>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextCompactionStatus {
     InProgress,
     Completed,
+    Failed,
     Canceled,
+    Other(Arc<str>),
+}
+
+impl From<acp::CompactionStatus> for ContextCompactionStatus {
+    fn from(status: acp::CompactionStatus) -> Self {
+        match status {
+            acp::CompactionStatus::InProgress => Self::InProgress,
+            acp::CompactionStatus::Completed => Self::Completed,
+            acp::CompactionStatus::Failed => Self::Failed,
+            acp::CompactionStatus::Cancelled => Self::Canceled,
+            acp::CompactionStatus::Other(status) => Self::Other(status.into()),
+            _ => Self::Other("unknown".into()),
+        }
+    }
 }
 
 /// A point in the thread where the conversation history was compacted to free
@@ -769,14 +784,65 @@ pub enum ContextCompactionStatus {
 pub struct ContextCompaction {
     pub id: ContextCompactionId,
     pub status: ContextCompactionStatus,
-    /// The compaction summary, streamed in as the model produces it. This is
-    /// `None` for provider-native compaction, which produces no summary to show.
-    pub summary: Option<Entity<Markdown>>,
+    pub error: Option<Entity<Markdown>>,
+    pub summary: Vec<ContentBlock>,
 }
 
 impl ContextCompaction {
     pub fn is_in_progress(&self) -> bool {
         self.status == ContextCompactionStatus::InProgress
+    }
+
+    fn apply_update(
+        &mut self,
+        update: acp::CompactionUpdate,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        self.status = update.status.into();
+        match update.summary {
+            MaybeUndefined::Undefined => {}
+            MaybeUndefined::Null => self.summary.clear(),
+            MaybeUndefined::Value(blocks) => {
+                self.summary.clear();
+                for block in blocks {
+                    self.append_summary(block, language_registry, path_style, cx);
+                }
+            }
+        }
+        match update.error {
+            MaybeUndefined::Undefined => {}
+            MaybeUndefined::Null => self.error = None,
+            MaybeUndefined::Value(error) => {
+                if let Some(markdown) = &self.error {
+                    markdown.update(cx, |markdown, cx| markdown.reset(error.into(), cx));
+                } else {
+                    self.error = Some(cx.new(|cx| Markdown::new_text(error.into(), cx)));
+                }
+            }
+        }
+    }
+
+    fn append_summary(
+        &mut self,
+        content: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        if let acp::ContentBlock::Text(text) = &content
+            && let Some(ContentBlock::Markdown { markdown }) = self.summary.last()
+        {
+            markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
+        } else {
+            self.summary.push(ContentBlock::new_output(
+                content,
+                language_registry,
+                path_style,
+                cx,
+            ));
+        }
     }
 }
 
@@ -813,7 +879,27 @@ impl AgentThreadEntry {
                 }
                 md
             }
-            Self::ContextCompaction(_) => "--- Context Compacted ---\n\n".to_string(),
+            Self::ContextCompaction(compaction) => {
+                let status = match &compaction.status {
+                    ContextCompactionStatus::InProgress => "In Progress",
+                    ContextCompactionStatus::Completed => "Completed",
+                    ContextCompactionStatus::Failed => "Failed",
+                    ContextCompactionStatus::Canceled => "Canceled",
+                    ContextCompactionStatus::Other(status) => status,
+                };
+                let mut markdown =
+                    format!("## Context Compaction ({})\n\n", MarkdownEscaped(status));
+                for block in &compaction.summary {
+                    markdown.push_str(block.to_markdown(cx));
+                    markdown.push_str("\n\n");
+                }
+                if let Some(error) = &compaction.error {
+                    markdown.push_str("**Error:** ");
+                    markdown.push_str(&MarkdownEscaped(error.read(cx).source()).to_string());
+                    markdown.push_str("\n\n");
+                }
+                markdown
+            }
         }
     }
 
@@ -1362,6 +1448,10 @@ pub enum ContentBlock {
         image: Arc<gpui::Image>,
         dimensions: Option<gpui::Size<u32>>,
     },
+    Unsupported {
+        content: acp::ContentBlock,
+        markdown: Entity<Markdown>,
+    },
 }
 
 impl ContentBlock {
@@ -1389,14 +1479,20 @@ impl ContentBlock {
         this
     }
 
-    pub fn new_tool_call_content(
+    pub fn new_output(
         block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         path_style: PathStyle,
         cx: &mut App,
     ) -> Self {
         match block {
-            acp::ContentBlock::Resource(resource) => {
+            acp::ContentBlock::Resource(resource)
+                if matches!(
+                    &resource.resource,
+                    acp::EmbeddedResourceResource::TextResourceContents(_)
+                        | acp::EmbeddedResourceResource::BlobResourceContents(_)
+                ) =>
+            {
                 if let Some((image, dimensions)) = Self::decode_embedded_resource_image(&resource) {
                     Self::Image { image, dimensions }
                 } else {
@@ -1405,7 +1501,34 @@ impl ContentBlock {
                     Self::EmbeddedResource { resource, markdown }
                 }
             }
-            block => Self::new(block, language_registry, path_style, cx),
+            acp::ContentBlock::Image(image) => {
+                if let Some((image, dimensions)) = Self::decode_image(&image) {
+                    Self::Image { image, dimensions }
+                } else {
+                    Self::Unsupported {
+                        content: acp::ContentBlock::Image(image),
+                        markdown: Self::create_markdown(
+                            "Image content could not be displayed.".into(),
+                            language_registry,
+                            cx,
+                        ),
+                    }
+                }
+            }
+            block @ (acp::ContentBlock::Text(_) | acp::ContentBlock::ResourceLink(_)) => {
+                Self::new(block, language_registry, path_style, cx)
+            }
+            content => {
+                let description = if matches!(&content, acp::ContentBlock::Audio(_)) {
+                    "Audio content is not supported."
+                } else {
+                    "This content is not supported."
+                };
+                Self::Unsupported {
+                    content,
+                    markdown: Self::create_markdown(description.into(), language_registry, cx),
+                }
+            }
         }
     }
 
@@ -1454,6 +1577,11 @@ impl ContentBlock {
             (ContentBlock::Image { .. }, _) => {
                 let new_content = Self::block_string_contents(&block, path_style);
                 let combined = format!("`Image`\n{}", new_content);
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
+            (ContentBlock::Unsupported { markdown, .. }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
+                let combined = format!("{}\n{}", markdown.read(cx).source(), new_content);
                 *self = Self::create_markdown_block(combined, language_registry, cx);
             }
         }
@@ -1590,7 +1718,9 @@ impl ContentBlock {
 
     pub fn text_content<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
         match self {
-            ContentBlock::Markdown { markdown } => Some(markdown.read(cx).source()),
+            ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
+                Some(markdown.read(cx).source())
+            }
             ContentBlock::EmbeddedResource { resource, .. } => match &resource.resource {
                 acp::EmbeddedResourceResource::TextResourceContents(text) => Some(&text.text),
                 acp::EmbeddedResourceResource::BlobResourceContents(_) => None,
@@ -1670,7 +1800,9 @@ impl ContentBlock {
     pub fn visible_content(&self, cx: &App) -> bool {
         match self {
             ContentBlock::Empty => false,
-            ContentBlock::Markdown { markdown } => !markdown.read(cx).source().trim().is_empty(),
+            ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
+                !markdown.read(cx).source().trim().is_empty()
+            }
             ContentBlock::EmbeddedResource { resource, markdown } => match markdown {
                 Some(markdown) => !markdown.read(cx).source().trim().is_empty(),
                 None => !Self::embedded_resource_text(resource).trim().is_empty(),
@@ -1713,7 +1845,9 @@ impl ContentBlock {
     pub fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
         match self {
             ContentBlock::Empty => "",
-            ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
+            ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
+                markdown.read(cx).source()
+            }
             ContentBlock::EmbeddedResource { resource, markdown } => {
                 if let Some(markdown) = markdown {
                     markdown.read(cx).source()
@@ -1729,7 +1863,9 @@ impl ContentBlock {
     pub fn markdown(&self) -> Option<&Entity<Markdown>> {
         match self {
             ContentBlock::Empty => None,
-            ContentBlock::Markdown { markdown } => Some(markdown),
+            ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
+                Some(markdown)
+            }
             ContentBlock::EmbeddedResource { markdown, .. } => markdown.as_ref(),
             ContentBlock::ResourceLink { .. } => None,
             ContentBlock::Image { .. } => None,
@@ -1822,14 +1958,14 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Result<Option<Self>> {
         match content {
-            acp::ToolCallContent::Content(acp::Content { content, .. }) => Ok(Some(
-                Self::ContentBlock(ContentBlock::new_tool_call_content(
+            acp::ToolCallContent::Content(acp::Content { content, .. }) => {
+                Ok(Some(Self::ContentBlock(ContentBlock::new_output(
                     content,
                     &language_registry,
                     path_style,
                     cx,
-                )),
-            )),
+                ))))
+            }
             acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
                     diff.path.to_string_lossy().into_owned(),
@@ -2439,7 +2575,7 @@ impl AcpThread {
     }
 
     pub fn is_compacting(&self) -> bool {
-        self.entries.last().is_some_and(|entry| {
+        self.entries.iter().rev().any(|entry| {
             matches!(
                 entry,
                 AgentThreadEntry::ContextCompaction(compaction) if compaction.is_in_progress()
@@ -2650,6 +2786,12 @@ impl AcpThread {
             }
             acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
                 self.update_tool_call(tool_call_update, cx)?;
+            }
+            acp::SessionUpdate::CompactionUpdate(compaction_update) => {
+                self.upsert_context_compaction_update(compaction_update, cx);
+            }
+            acp::SessionUpdate::CompactionSummaryChunk(summary_chunk) => {
+                self.append_context_compaction_summary(summary_chunk, cx);
             }
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
@@ -3069,12 +3211,76 @@ impl AcpThread {
         }
     }
 
+    fn upsert_context_compaction_update(
+        &mut self,
+        update: acp::CompactionUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let id = ContextCompactionId(update.compaction_id.0.clone());
+        let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+
+        if let Some((entry_index, compaction)) =
+            self.entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(entry_index, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(compaction) if compaction.id == id => {
+                        Some((entry_index, compaction))
+                    }
+                    _ => None,
+                })
+        {
+            compaction.apply_update(update, &language_registry, path_style, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
+            return;
+        }
+
+        let mut compaction = ContextCompaction {
+            id,
+            status: update.status.clone().into(),
+            error: None,
+            summary: Vec::new(),
+        };
+        compaction.apply_update(update, &language_registry, path_style, cx);
+        self.push_entry(AgentThreadEntry::ContextCompaction(compaction), cx);
+    }
+
+    fn append_context_compaction_summary(
+        &mut self,
+        chunk: acp::CompactionSummaryChunk,
+        cx: &mut Context<Self>,
+    ) {
+        let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        if let Some((entry_index, compaction)) =
+            self.entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(entry_index, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(compaction)
+                        if compaction.id.0 == chunk.compaction_id.0
+                            && compaction.is_in_progress() =>
+                    {
+                        Some((entry_index, compaction))
+                    }
+                    _ => None,
+                })
+        {
+            compaction.append_summary(chunk.content, &language_registry, path_style, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
+        }
+    }
+
     pub fn update_context_compaction(
         &mut self,
         update: ContextCompactionUpdate,
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
         let Some((ix, compaction)) =
             self.entries
                 .iter_mut()
@@ -3089,20 +3295,12 @@ impl AcpThread {
         };
 
         if !update.summary_delta.is_empty() {
-            if compaction.summary.is_none() {
-                compaction.summary = Some(cx.new(|cx| {
-                    Markdown::new(
-                        update.summary_delta.into(),
-                        Some(language_registry),
-                        None,
-                        cx,
-                    )
-                }));
-            } else if let Some(summary) = compaction.summary.clone() {
-                summary.update(cx, |markdown, cx| {
-                    markdown.append(&update.summary_delta, cx)
-                });
-            }
+            compaction.append_summary(
+                acp::ContentBlock::Text(acp::TextContent::new(update.summary_delta)),
+                &language_registry,
+                path_style,
+                cx,
+            );
         }
 
         if let Some(status) = update.status {
@@ -5003,12 +5201,8 @@ mod tests {
                 ),
             ));
 
-            let block = ContentBlock::new_tool_call_content(
-                content,
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
+            let block =
+                ContentBlock::new_output(content, &language_registry, PathStyle::local(), cx);
 
             let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
                 panic!("expected embedded resource block, got {block:?}");
@@ -5035,7 +5229,7 @@ mod tests {
             );
             assert_eq!(block.text_content(cx), Some("echo 'hello from exec test'"));
 
-            let untyped = ContentBlock::new_tool_call_content(
+            let untyped = ContentBlock::new_output(
                 acp::ContentBlock::Resource(acp::EmbeddedResource::new(
                     acp::EmbeddedResourceResource::TextResourceContents(
                         acp::TextResourceContents::new("# plain preview", "tool://preview"),
@@ -5069,7 +5263,7 @@ mod tests {
                 ),
             ));
 
-            let block = ContentBlock::new_tool_call_content(
+            let block = ContentBlock::new_output(
                 image_blob,
                 &language_registry,
                 PathStyle::local(),
@@ -5105,12 +5299,8 @@ mod tests {
                 ),
             ));
 
-            let block = ContentBlock::new_tool_call_content(
-                archive_blob,
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
+            let block =
+                ContentBlock::new_output(archive_blob, &language_registry, PathStyle::local(), cx);
 
             let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
                 panic!("expected embedded resource block, got {block:?}");
@@ -5132,7 +5322,7 @@ mod tests {
                         .mime_type("image/png".to_string()),
                 ),
             ));
-            let invalid = ContentBlock::new_tool_call_content(
+            let invalid = ContentBlock::new_output(
                 invalid_image_blob,
                 &language_registry,
                 PathStyle::local(),
@@ -5983,7 +6173,8 @@ mod tests {
                             ContextCompaction {
                                 id: ContextCompactionId("c1".into()),
                                 status: ContextCompactionStatus::Completed,
-                                summary: None,
+                                error: None,
+                                summary: Vec::new(),
                             },
                             cx,
                         );
@@ -6444,6 +6635,410 @@ mod tests {
                 })
             ));
         });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_session_updates(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+
+        thread.update(cx, |thread, cx| {
+            for summary in ["retained context", "replacement summary"] {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new(
+                                "compaction",
+                                acp::CompactionStatus::Completed,
+                            )
+                            .summary(vec![acp::ContentBlock::Text(
+                                acp::TextContent::new(summary),
+                            )]),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to set context compaction summary");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must exist");
+                };
+                assert_eq!(compaction.status, ContextCompactionStatus::Completed);
+                assert!(compaction.error.is_none());
+                assert_eq!(
+                    compaction
+                        .summary
+                        .first()
+                        .map(|block| block.to_markdown(cx)),
+                    Some(summary)
+                );
+                assert_eq!(
+                    thread.to_markdown(cx),
+                    format!("## Context Compaction (Completed)\n\n{summary}\n\n")
+                );
+            }
+
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(
+                        acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
+                            .summary(None::<Vec<acp::ContentBlock>>)
+                            .error("model unavailable"),
+                    ),
+                    cx,
+                )
+                .expect("failed to record context compaction failure");
+            let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+            else {
+                panic!("compaction entry must still exist");
+            };
+            assert_eq!(compaction.status, ContextCompactionStatus::Failed);
+            assert!(compaction.summary.is_empty());
+            assert_eq!(
+                compaction
+                    .error
+                    .as_ref()
+                    .map(|error| error.read(cx).source().as_ref()),
+                Some("model unavailable")
+            );
+            assert_eq!(
+                thread.to_markdown(cx),
+                "## Context Compaction (Failed)\n\n**Error:** model unavailable\n\n"
+            );
+
+            for error in [
+                MaybeUndefined::Undefined,
+                MaybeUndefined::Value("model *still* unavailable".to_string()),
+                MaybeUndefined::Null,
+            ] {
+                let expected_error = match &error {
+                    MaybeUndefined::Undefined => Some("model unavailable".to_string()),
+                    MaybeUndefined::Value(error) => Some(error.clone()),
+                    MaybeUndefined::Null => None,
+                };
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
+                                .error(error),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to patch compaction error");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must still exist");
+                };
+                assert_eq!(
+                    compaction
+                        .error
+                        .as_ref()
+                        .map(|error| error.read(cx).source().to_string()),
+                    expected_error
+                );
+                if let Some(error) = expected_error {
+                    assert!(
+                        thread
+                            .to_markdown(cx)
+                            .contains(&format!("**Error:** {}", MarkdownEscaped(&error)))
+                    );
+                }
+            }
+
+            for summary in [
+                vec![acp::ContentBlock::Text(acp::TextContent::new(""))],
+                Vec::new(),
+            ] {
+                let expected_length = summary.len();
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new(
+                                "compaction",
+                                acp::CompactionStatus::Completed,
+                            )
+                            .summary(summary),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to patch compaction summary");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must still exist");
+                };
+                assert_eq!(compaction.summary.len(), expected_length);
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_preserves_summary_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+        let image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        let text_resource =
+            acp::EmbeddedResource::new(acp::EmbeddedResourceResource::TextResourceContents(
+                acp::TextResourceContents::new("Retained resource text", "summary://context")
+                    .mime_type("text/markdown".to_string()),
+            ));
+        let blob_resource =
+            acp::EmbeddedResource::new(acp::EmbeddedResourceResource::BlobResourceContents(
+                acp::BlobResourceContents::new("c3VtbWFyeQ==", "summary://attachment")
+                    .mime_type("application/octet-stream".to_string()),
+            ));
+        let audio = acp::ContentBlock::Audio(acp::AudioContent::new("YXVkaW8=", "audio/wav"));
+        let blocks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new("retained ")),
+            acp::ContentBlock::Text(acp::TextContent::new("context")),
+            acp::ContentBlock::Resource(text_resource.clone()),
+            acp::ContentBlock::Image(acp::ImageContent::new(image_data, "image/png")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "Reference",
+                "https://example.com/context",
+            )),
+            audio.clone(),
+            acp::ContentBlock::Resource(blob_resource.clone()),
+        ];
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                        "compaction",
+                        acp::CompactionStatus::InProgress,
+                    )),
+                    cx,
+                )
+                .expect("failed to start compaction");
+            for block in &blocks {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionSummaryChunk(
+                            acp::CompactionSummaryChunk::new("compaction", block.clone()),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to append summary block");
+            }
+        });
+
+        for replace_summary in [false, true] {
+            thread.update(cx, |thread, cx| {
+                let mut update =
+                    acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Completed);
+                if replace_summary {
+                    update = update.summary(blocks.clone());
+                }
+                thread
+                    .handle_session_update(acp::SessionUpdate::CompactionUpdate(update), cx)
+                    .expect("failed to complete compaction");
+            });
+            thread.read_with(cx, |thread, cx| {
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.first()
+                else {
+                    panic!("expected compaction entry");
+                };
+                let [text, resource, image, link, unsupported, blob] =
+                    compaction.summary.as_slice()
+                else {
+                    panic!("expected six retained content blocks");
+                };
+                assert_eq!(text.to_markdown(cx), "retained context");
+                assert_eq!(
+                    resource.embedded_resource().map(|(resource, _)| resource),
+                    Some(&text_resource)
+                );
+                assert_eq!(resource.to_markdown(cx), "Retained resource text");
+                assert_eq!(
+                    image
+                        .image()
+                        .and_then(|(_, dimensions)| dimensions)
+                        .map(|size| (size.width, size.height)),
+                    Some((1, 1))
+                );
+                assert_eq!(
+                    link.resource_link().map(|link| link.uri.as_str()),
+                    Some("https://example.com/context")
+                );
+                let ContentBlock::Unsupported { content, .. } = unsupported else {
+                    panic!("expected preserved audio with a visible fallback");
+                };
+                assert_eq!(content, &audio);
+                assert!(unsupported.visible_content(cx));
+                assert_eq!(
+                    blob.embedded_resource().map(|(resource, _)| resource),
+                    Some(&blob_resource)
+                );
+                assert!(blob.visible_content(cx));
+                assert_eq!(
+                    thread.to_markdown(cx),
+                    concat!(
+                        "## Context Compaction (Completed)\n\n",
+                        "retained context\n\n",
+                        "Retained resource text\n\n",
+                        "`Image`\n\n",
+                        "https://example.com/context\n\n",
+                        "Audio content is not supported.\n\n",
+                        "summary://attachment\n\n",
+                    )
+                );
+            });
+        }
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(
+                        acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Completed)
+                            .summary(vec![audio.clone()]),
+                    ),
+                    cx,
+                )
+                .expect("failed to replace summary with audio");
+        });
+        thread.read_with(cx, |thread, cx| {
+            let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.first()
+            else {
+                panic!("expected compaction entry");
+            };
+            assert!(matches!(
+                compaction.summary.as_slice(),
+                [ContentBlock::Unsupported { content, .. }] if content == &audio
+            ));
+            assert!(
+                thread
+                    .to_markdown(cx)
+                    .contains("Audio content is not supported.")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_updates_preserve_timeline_and_emit_events(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let events = events.clone();
+            cx.subscribe(&thread, move |_, event, _| match event {
+                AcpThreadEvent::NewEntry => events.borrow_mut().push(None),
+                AcpThreadEvent::EntryUpdated(index) => events.borrow_mut().push(Some(*index)),
+                _ => {}
+            })
+        });
+
+        thread.update(cx, |thread, cx| {
+            for update in [
+                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    "first",
+                    acp::CompactionStatus::InProgress,
+                )),
+                acp::SessionUpdate::ToolCall(acp::ToolCall::new("tool", "Unrelated tool")),
+                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    "second",
+                    acp::CompactionStatus::InProgress,
+                )),
+                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    "second",
+                    acp::CompactionStatus::Completed,
+                )),
+                acp::SessionUpdate::CompactionSummaryChunk(acp::CompactionSummaryChunk::new(
+                    "first",
+                    acp::ContentBlock::Text(acp::TextContent::new("partial summary")),
+                )),
+            ] {
+                thread
+                    .handle_session_update(update, cx)
+                    .expect("failed to apply interleaved session update");
+            }
+            assert!(thread.is_compacting());
+        });
+        assert_eq!(*events.borrow(), [None, None, None, Some(2), Some(0)]);
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                        "first",
+                        acp::CompactionStatus::Cancelled,
+                    )),
+                    cx,
+                )
+                .expect("failed to cancel compaction");
+            assert!(!thread.is_compacting());
+        });
+        assert_eq!(
+            *events.borrow(),
+            [None, None, None, Some(2), Some(0), Some(0)]
+        );
+        thread.read_with(cx, |thread, cx| {
+            let [
+                AgentThreadEntry::ContextCompaction(first),
+                AgentThreadEntry::ToolCall(_),
+                AgentThreadEntry::ContextCompaction(second),
+            ] = thread.entries.as_slice()
+            else {
+                panic!("updates must preserve the original timeline positions");
+            };
+            assert_eq!(first.id.0.as_ref(), "first");
+            assert_eq!(first.status, ContextCompactionStatus::Canceled);
+            assert_eq!(second.id.0.as_ref(), "second");
+            assert_eq!(second.status, ContextCompactionStatus::Completed);
+            assert!(
+                thread
+                    .to_markdown(cx)
+                    .starts_with("## Context Compaction (Canceled)\n\npartial summary\n\n")
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_context_compaction_exports_status(cx: &mut App) {
+        for (status, expected_label) in [
+            (acp::CompactionStatus::InProgress, "In Progress"),
+            (acp::CompactionStatus::Completed, "Completed"),
+            (acp::CompactionStatus::Failed, "Failed"),
+            (acp::CompactionStatus::Cancelled, "Canceled"),
+            (
+                acp::CompactionStatus::Other("interrupted".into()),
+                "interrupted",
+            ),
+        ] {
+            let entry = AgentThreadEntry::ContextCompaction(ContextCompaction {
+                id: ContextCompactionId("compaction".into()),
+                status: status.into(),
+                error: None,
+                summary: Vec::new(),
+            });
+            assert_eq!(
+                entry.to_markdown(cx),
+                format!("## Context Compaction ({expected_label})\n\n")
+            );
+        }
     }
 
     #[gpui::test]
@@ -9110,6 +9705,9 @@ mod tests {
                         ContentBlock::Image { .. } => {
                             panic!("Expected markdown content, got image")
                         }
+                        ContentBlock::Unsupported { .. } => {
+                            panic!("Expected markdown content, got unsupported content")
+                        }
                     }
                 } else {
                     panic!("Expected ContentBlock, got: {:?}", tool_call.content[0]);
@@ -9752,7 +10350,8 @@ mod tests {
                                 ContextCompaction {
                                     id: compaction_id,
                                     status: ContextCompactionStatus::InProgress,
-                                    summary: None,
+                                    error: None,
+                                    summary: Vec::new(),
                                 },
                                 cx,
                             );
@@ -10120,7 +10719,8 @@ mod tests {
                 ContextCompaction {
                     id: ContextCompactionId("compaction-1".into()),
                     status: ContextCompactionStatus::InProgress,
-                    summary: None,
+                    error: None,
+                    summary: Vec::new(),
                 },
                 cx,
             );
