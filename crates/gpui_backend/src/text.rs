@@ -3,7 +3,10 @@
 use anyhow::Result;
 use derive_more::{Add, FromStr, Sub};
 use gpui_shared_string::SharedString;
-use gpui_types::{Bounds, DevicePixels, Hsla, Pixels, Point, Size, point, px, size};
+use gpui_types::{
+    Bounds, DevicePixels, Hsla, Pixels, Point, Size, StrikethroughStyle, UnderlineStyle, point, px,
+    size,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -644,4 +647,21 @@ pub fn font_name_with_fallbacks_shared<'a>(
         ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
     }
+}
+
+/// A styled run of text.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct TextRun {
+    /// A number of utf8 bytes
+    pub len: usize,
+    /// The font to use for this run.
+    pub font: Font,
+    /// The color
+    pub color: Hsla,
+    /// The background color (if any)
+    pub background_color: Option<Hsla>,
+    /// The underline style (if any)
+    pub underline: Option<UnderlineStyle>,
+    /// The strikethrough style (if any)
+    pub strikethrough: Option<StrikethroughStyle>,
 }

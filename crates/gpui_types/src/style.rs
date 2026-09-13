@@ -19,3 +19,15 @@ pub struct UnderlineStyle {
     /// Whether the underline should be wavy, like in a spell checker.
     pub wavy: bool,
 }
+
+/// The properties that can be applied to a strikethrough.
+#[derive(
+    Refineable, Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
+pub struct StrikethroughStyle {
+    /// The thickness of the strikethrough.
+    pub thickness: Pixels,
+
+    /// The color of the strikethrough.
+    pub color: Option<Hsla>,
+}
