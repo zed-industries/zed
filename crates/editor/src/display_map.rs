@@ -128,6 +128,7 @@ use std::{
     iter,
     num::NonZeroU32,
     ops::{self, Add, Range, Sub},
+    slice,
     sync::Arc,
 };
 
@@ -1279,7 +1280,7 @@ impl DisplayMap {
         widths_changed
     }
 
-    pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> + Default {
+    pub(crate) fn current_inlays(&self) -> slice::Iter<'_, Inlay> {
         self.inlay_map.current_inlays()
     }
 

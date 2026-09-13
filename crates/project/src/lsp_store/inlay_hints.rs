@@ -6,6 +6,7 @@ use futures::future::Shared;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task};
 use language::{
     Buffer,
+    proto::{deserialize_version, serialize_version},
     row_chunk::{RowChunk, RowChunks},
 };
 use lsp::LanguageServerId;
@@ -202,6 +203,17 @@ impl BufferInlayHints {
         *self.fetched_hints(&chunk) = None;
     }
 
+    pub fn cached_hint(&self, id: InlayId) -> Option<&InlayHint> {
+        let hint_for_id = self.hints_by_id.get(&id)?;
+        let (_, hint) = self
+            .hints_by_chunks
+            .get(hint_for_id.chunk_id)?
+            .as_ref()?
+            .get(&hint_for_id.server_id)?
+            .get(hint_for_id.position)?;
+        Some(hint)
+    }
+
     pub fn hint_for_id(&mut self, id: InlayId) -> Option<&mut InlayHint> {
         let hint_for_id = self.hints_by_id.get(&id)?;
         let (hint_id, hint) = self
@@ -275,12 +287,18 @@ impl LspStore {
                 buffer_id: buffer.read(cx).remote_id().into(),
                 language_server_id: server_id.0 as u64,
                 hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
+                version: serialize_version(&buffer.read(cx).version()),
             };
-            cx.background_spawn(async move {
+            cx.spawn(async move |_, cx| {
                 let response = upstream_client
                     .request(request)
                     .await
                     .context("inlay hints proto request")?;
+                buffer
+                    .update(cx, |buffer, _| {
+                        buffer.wait_for_version(deserialize_version(&response.version))
+                    })
+                    .await?;
                 match response.hint {
                     Some(resolved_hint) => InlayHints::proto_to_project_hint(resolved_hint)
                         .context("inlay hints proto resolve response conversion"),
@@ -298,7 +316,14 @@ impl LspStore {
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();
-            cx.spawn(async move |_, cx| {
+            cx.background_spawn(async move {
+                if let Some(text_edits) = &hint.text_edits {
+                    anyhow::ensure!(
+                        &text_edits.buffer_version == buffer_snapshot.version(),
+                        "buffer changed before resolving inlay hint text edits"
+                    );
+                }
+                let text_edits = hint.text_edits.clone();
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
                     InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
                     request_timeout,
@@ -307,15 +332,16 @@ impl LspStore {
                     .await
                     .into_response()
                     .context("inlay hint resolve LSP request")?;
-                let resolved_hint = InlayHints::lsp_to_project_hint(
+                let mut resolved_hint = InlayHints::lsp_to_project_hint(
                     resolved_hint,
-                    &buffer,
+                    &buffer_snapshot,
                     server_id,
                     ResolveState::Resolved,
                     false,
-                    cx,
-                )
-                .await?;
+                )?;
+                if resolved_hint.text_edits.is_none() {
+                    resolved_hint.text_edits = text_edits;
+                }
                 Ok(resolved_hint)
             })
         }
@@ -397,19 +423,33 @@ impl LspStore {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             lsp_store.buffer_store.read(cx).get_existing(buffer_id)
         })?;
-        let response_hint = lsp_store
+        let request_version = deserialize_version(&envelope.payload.version);
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(request_version.clone())
+            })
+            .await?;
+        let mut response_hint = lsp_store
             .update(&mut cx, |lsp_store, cx| {
                 lsp_store.resolve_inlay_hint(
                     hint,
-                    buffer,
+                    buffer.clone(),
                     LanguageServerId(envelope.payload.language_server_id as usize),
                     cx,
                 )
             })
             .await
             .context("inlay hints fetch")?;
+        if response_hint
+            .text_edits
+            .as_ref()
+            .is_some_and(|text_edits| text_edits.buffer_version != request_version)
+        {
+            response_hint.text_edits = None;
+        }
         Ok(proto::ResolveInlayHintResponse {
             hint: Some(InlayHints::project_to_proto_hint(response_hint)),
+            version: buffer.read_with(&cx, |buffer, _| serialize_version(&buffer.version())),
         })
     }
 }

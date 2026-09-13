@@ -530,7 +530,14 @@ pub struct InlayHint {
     pub padding_left: bool,
     pub padding_right: bool,
     pub tooltip: Option<InlayHintTooltip>,
+    pub text_edits: Option<InlayHintTextEdits>,
     pub resolve_state: ResolveState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InlayHintTextEdits {
+    pub edits: Vec<(Range<Anchor>, String)>,
+    pub buffer_version: clock::Global,
 }
 
 /// The user's intent behind a given completion confirmation.

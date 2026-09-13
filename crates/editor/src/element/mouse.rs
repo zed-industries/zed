@@ -10,7 +10,7 @@ use gpui::{
     deferred, point, px,
 };
 use multi_buffer::MultiBufferRow;
-use project::DisableAiSettings;
+use project::{DisableAiSettings, InlayId};
 use settings::Settings;
 use sum_tree::Bias;
 use text::SelectionGoal;
@@ -610,6 +610,22 @@ impl EditorElement {
         } else if gutter_hitbox.is_hovered(window) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_hitbox.is_hovered(window) {
+            return;
+        }
+
+        if click_count == 2
+            && !modifiers.modified()
+            && point_for_position.as_valid().is_none()
+            && point_for_position.column_overshoot_after_line_end == 0
+            && let Some((hint, _)) = position_map.snapshot.inlay_snapshot().inlay_at_offset(
+                position_map
+                    .snapshot
+                    .display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left),
+            )
+            && matches!(hint.id, InlayId::Hint(_))
+            && editor.accept_inlay_hint_with_id(hint.clone(), false, window, cx)
+        {
+            cx.stop_propagation();
             return;
         }
 

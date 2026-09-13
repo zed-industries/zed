@@ -488,6 +488,13 @@ Inlay hints provide additional information inline in your code, such as paramete
 }
 ```
 
+Double-click an inlay hint to apply the edits supplied by its language server.
+You can also place the cursor at the hint and run {#action editor::AcceptInlayHint} from the command palette, or assign it a keybinding.
+The action is available only when the hint has edits to apply and the editor is writable.
+Hints with commands keep their single-click behavior; use the keyboard action to accept their edits.
+Hints without server-provided edits remain informational.
+Use Undo to revert an accepted hint, including any additional edits such as imports.
+
 For language-specific inlay hint settings, refer to the documentation for each language.
 
 ### Code Actions

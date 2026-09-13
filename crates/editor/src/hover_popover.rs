@@ -1486,7 +1486,9 @@ mod tests {
     use futures::stream::StreamExt;
     use gpui::App;
     use indoc::indoc;
+    use language::{FakeLspAdapter, rust_lang};
     use markdown::parser::MarkdownEvent;
+    use parking_lot::Mutex;
     use project::InlayId;
     use settings::InlayHintSettingsContent;
     use settings::{DelayMs, SettingsStore};
@@ -2504,15 +2506,39 @@ mod tests {
             })
         });
 
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                inlay_hint_provider: Some(lsp::OneOf::Right(
-                    lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
-                        resolve_provider: Some(true),
-                        ..Default::default()
-                    }),
-                )),
-                ..Default::default()
+        let resolved_hint_label = Arc::new(Mutex::new(None::<lsp::InlayHintLabel>));
+        let mut cx = EditorLspTestContext::new_with_lsp_adapter(
+            Arc::into_inner(rust_lang()).expect("test language"),
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Right(
+                        lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                            resolve_provider: Some(true),
+                            ..lsp::InlayHintOptions::default()
+                        }),
+                    )),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let resolved_hint_label = resolved_hint_label.clone();
+                    move |server| {
+                        let resolved_hint_label = resolved_hint_label.clone();
+                        let mut resolved_hint_positions = BTreeSet::new();
+                        server.set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
+                            move |mut hint_to_resolve, _| {
+                                let inserted =
+                                    resolved_hint_positions.insert(hint_to_resolve.position);
+                                assert!(inserted, "Hint {hint_to_resolve:?} was resolved twice");
+                                hint_to_resolve.label = resolved_hint_label
+                                    .lock()
+                                    .clone()
+                                    .expect("resolved hint label");
+                                async move { Ok(hint_to_resolve) }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
             },
             cx,
         )
@@ -2570,6 +2596,46 @@ mod tests {
         let new_type_label = "TestNewType";
         let struct_label = "TestStruct";
         let entire_hint_label = ": TestNewType<TestStruct>";
+        // `: TestNewType<TestStruct>`
+        *resolved_hint_label.lock() = Some(lsp::InlayHintLabel::LabelParts(vec![
+            lsp::InlayHintLabelPart {
+                value: ": ".to_string(),
+                ..Default::default()
+            },
+            lsp::InlayHintLabelPart {
+                value: new_type_label.to_string(),
+                location: Some(lsp::Location {
+                    uri: uri.clone(),
+                    range: new_type_target_range,
+                }),
+                tooltip: Some(lsp::InlayHintLabelPartTooltip::String(format!(
+                    "A tooltip for `{new_type_label}`"
+                ))),
+                ..Default::default()
+            },
+            lsp::InlayHintLabelPart {
+                value: "<".to_string(),
+                ..Default::default()
+            },
+            lsp::InlayHintLabelPart {
+                value: struct_label.to_string(),
+                location: Some(lsp::Location {
+                    uri: uri.clone(),
+                    range: struct_target_range,
+                }),
+                tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
+                    lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: format!("A tooltip for `{struct_label}`"),
+                    },
+                )),
+                ..Default::default()
+            },
+            lsp::InlayHintLabelPart {
+                value: ">".to_string(),
+                ..Default::default()
+            },
+        ]));
         let closure_uri = uri.clone();
         cx.lsp
             .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
@@ -2647,63 +2713,6 @@ mod tests {
             );
         });
 
-        let resolve_closure_uri = uri.clone();
-        cx.lsp
-            .set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
-                move |mut hint_to_resolve, _| {
-                    let mut resolved_hint_positions = BTreeSet::new();
-                    let task_uri = resolve_closure_uri.clone();
-                    async move {
-                        let inserted = resolved_hint_positions.insert(hint_to_resolve.position);
-                        assert!(inserted, "Hint {hint_to_resolve:?} was resolved twice");
-
-                        // `: TestNewType<TestStruct>`
-                        hint_to_resolve.label = lsp::InlayHintLabel::LabelParts(vec![
-                            lsp::InlayHintLabelPart {
-                                value: ": ".to_string(),
-                                ..Default::default()
-                            },
-                            lsp::InlayHintLabelPart {
-                                value: new_type_label.to_string(),
-                                location: Some(lsp::Location {
-                                    uri: task_uri.clone(),
-                                    range: new_type_target_range,
-                                }),
-                                tooltip: Some(lsp::InlayHintLabelPartTooltip::String(format!(
-                                    "A tooltip for `{new_type_label}`"
-                                ))),
-                                ..Default::default()
-                            },
-                            lsp::InlayHintLabelPart {
-                                value: "<".to_string(),
-                                ..Default::default()
-                            },
-                            lsp::InlayHintLabelPart {
-                                value: struct_label.to_string(),
-                                location: Some(lsp::Location {
-                                    uri: task_uri,
-                                    range: struct_target_range,
-                                }),
-                                tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
-                                    lsp::MarkupContent {
-                                        kind: lsp::MarkupKind::Markdown,
-                                        value: format!("A tooltip for `{struct_label}`"),
-                                    },
-                                )),
-                                ..Default::default()
-                            },
-                            lsp::InlayHintLabelPart {
-                                value: ">".to_string(),
-                                ..Default::default()
-                            },
-                        ]);
-
-                        Ok(hint_to_resolve)
-                    }
-                },
-            )
-            .next()
-            .await;
         cx.background_executor.run_until_parked();
 
         cx.update_editor(|editor, window, cx| {
