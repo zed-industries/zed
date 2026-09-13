@@ -12,6 +12,126 @@ use std::ffi::OsStr;
 use std::path::Path;
 pub use std::path::Prefix;
 
+pub(crate) trait PrefixExt {
+    fn len(&self) -> usize;
+    fn is_drive(&self) -> bool;
+
+    #[inline]
+    fn has_implicit_root(&self) -> bool {
+        !self.is_drive()
+    }
+}
+
+impl PrefixExt for Prefix<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        use self::Prefix::*;
+        fn os_str_len(s: &OsStr) -> usize {
+            s.as_encoded_bytes().len()
+        }
+        match *self {
+            Verbatim(x) => 4 + os_str_len(x),
+            VerbatimUNC(x, y) => {
+                8 + os_str_len(x)
+                    + if os_str_len(y) > 0 {
+                        1 + os_str_len(y)
+                    } else {
+                        0
+                    }
+            }
+            VerbatimDisk(_) => 6,
+            UNC(x, y) => {
+                2 + os_str_len(x)
+                    + if os_str_len(y) > 0 {
+                        1 + os_str_len(y)
+                    } else {
+                        0
+                    }
+            }
+            DeviceNS(x) => 4 + os_str_len(x),
+            Disk(_) => 2,
+        }
+    }
+
+    #[inline]
+    fn is_drive(&self) -> bool {
+        matches!(*self, Prefix::Disk(_))
+    }
+}
+
+// Iterate through `iter` while it matches `prefix`; return `None` if `prefix`
+// is not a prefix of `iter`, otherwise return `Some(iter_after_prefix)` giving
+// `iter` after having exhausted `prefix`.
+pub(crate) fn iter_after<'a, 'b, I, J>(mut iter: I, mut prefix: J) -> Option<I>
+where
+    I: Iterator<Item = Component<'a>> + Clone,
+    J: Iterator<Item = Component<'b>>,
+{
+    loop {
+        let mut iter_next = iter.clone();
+        match (iter_next.next(), prefix.next()) {
+            (Some(ref x), Some(ref y)) if x == y => (),
+            (Some(_), Some(_)) => return None,
+            (Some(_), None) => return Some(iter),
+            (None, None) => return Some(iter),
+            (None, Some(_)) => return None,
+        }
+        iter = iter_next;
+    }
+}
+
+#[derive(PartialEq, PartialOrd, Clone)]
+enum State {
+    Prefix = 0,   // c:
+    StartDir = 1, // / or . or nothing
+    Body = 2,     // foo/bar/baz
+    Done = 3,
+}
+
+#[allow(dead_code)]
+pub(crate) struct PrefixComponent<'a> {
+    /// The prefix as an unparsed `OsStr` slice.
+    raw: &'a OsStr,
+
+    /// The parsed prefix data.
+    parsed: Prefix<'a>,
+}
+
+impl<'a> PartialEq for PrefixComponent<'a> {
+    #[inline]
+    fn eq(&self, other: &PrefixComponent<'a>) -> bool {
+        self.parsed == other.parsed
+    }
+}
+
+#[derive(PartialEq)]
+pub(crate) enum Component<'a> {
+    /// A Windows path prefix, e.g., `C:` or `\\server\share`.
+    ///
+    /// There is a large variety of prefix types, see [`Prefix`]'s documentation
+    /// for more.
+    ///
+    /// Does not occur on Unix.
+    Prefix(PrefixComponent<'a>),
+
+    /// The root directory component, appears after any prefix and before anything else.
+    ///
+    /// It represents a separator that designates that a path starts from root.
+    RootDir,
+
+    /// A reference to the current directory, i.e., `.`.
+    CurDir,
+
+    /// A reference to the parent directory, i.e., `..`.
+    ParentDir,
+
+    /// A normal component, e.g., `a` and `b` in `a/b`.
+    ///
+    /// This variant is the most common one, it represents references to files
+    /// or directories.
+    Normal(&'a OsStr),
+}
+
 #[derive(Clone)]
 pub(crate) struct Components<'a> {
     path_style: PathStyle,
@@ -57,36 +177,34 @@ impl<'a> Components<'a> {
         self.path_style.has_prefixes()
     }
 
-    pub fn as_path(&self) -> &'a Path {
-        let mut comps = self.clone();
-        if comps.front == State::Body {
-            comps.trim_left();
+    #[inline]
+    fn prefix_len(&self) -> usize {
+        if !self.has_prefixes() {
+            return 0;
         }
-        if comps.back == State::Body {
-            comps.trim_right();
-        }
-        unsafe { Path::new(OsStr::from_encoded_bytes_unchecked(comps.path)) }
+        self.prefix.as_ref().map(Prefix::len).unwrap_or(0)
     }
 
-    fn trim_left(&mut self) {
-        while !self.path.is_empty() {
-            let (size, comp) = self.parse_next_component();
-            if comp.is_some() {
-                return;
-            } else {
-                self.path = &self.path[size..];
-            }
+    #[inline]
+    fn prefix_verbatim(&self) -> bool {
+        if !self.has_prefixes() {
+            return false;
         }
+        self.prefix
+            .as_ref()
+            .map(Prefix::is_verbatim)
+            .unwrap_or(false)
     }
 
-    fn trim_right(&mut self) {
-        while self.path.len() > self.len_before_body() {
-            let (size, comp) = self.parse_next_component_back();
-            if comp.is_some() {
-                return;
-            } else {
-                self.path = &self.path[..self.path.len() - size];
-            }
+    #[inline]
+    fn prefix_remaining(&self) -> usize {
+        if !self.has_prefixes() {
+            return 0;
+        }
+        if self.front == State::Prefix {
+            self.prefix_len()
+        } else {
+            0
         }
     }
 
@@ -105,36 +223,29 @@ impl<'a> Components<'a> {
         self.prefix_remaining() + root + cur_dir
     }
 
-    fn include_cur_dir(&self) -> bool {
-        if self.has_root() {
-            return false;
-        }
-        let slice = &self.path[self.prefix_remaining()..];
-        match slice {
-            [b'.'] => true,
-            [b'.', b, ..] => self.is_sep_byte(*b),
-            _ => false,
-        }
+    #[inline]
+    fn finished(&self) -> bool {
+        self.front == State::Done || self.back == State::Done || self.front > self.back
     }
 
     #[inline]
-    fn prefix_remaining(&self) -> usize {
-        if !self.has_prefixes() {
-            return 0;
-        }
-        if self.front == State::Prefix {
-            self.prefix_len()
+    fn is_sep_byte(&self, b: u8) -> bool {
+        if self.prefix_verbatim() {
+            self.path_style.is_verbatim_sep(b)
         } else {
-            0
+            self.path_style.is_sep_byte(b)
         }
     }
 
-    #[inline]
-    fn prefix_len(&self) -> usize {
-        if !self.has_prefixes() {
-            return 0;
+    pub fn as_path(&self) -> &'a Path {
+        let mut comps = self.clone();
+        if comps.front == State::Body {
+            comps.trim_left();
         }
-        self.prefix.as_ref().map(Prefix::len).unwrap_or(0)
+        if comps.back == State::Body {
+            comps.trim_right();
+        }
+        unsafe { Path::new(OsStr::from_encoded_bytes_unchecked(comps.path)) }
     }
 
     fn has_root(&self) -> bool {
@@ -151,28 +262,30 @@ impl<'a> Components<'a> {
         false
     }
 
-    #[inline]
-    fn is_sep_byte(&self, b: u8) -> bool {
-        if self.prefix_verbatim() {
-            self.path_style.is_verbatim_sep(b)
-        } else {
-            self.path_style.is_sep_byte(b)
-        }
-    }
-
-    fn prefix_verbatim(&self) -> bool {
-        if !self.has_prefixes() {
+    fn include_cur_dir(&self) -> bool {
+        if self.has_root() {
             return false;
         }
-        self.prefix
-            .as_ref()
-            .map(Prefix::is_verbatim)
-            .unwrap_or(false)
+        let slice = &self.path[self.prefix_remaining()..];
+        match slice {
+            [b'.'] => true,
+            [b'.', b, ..] => self.is_sep_byte(*b),
+            _ => false,
+        }
     }
 
-    #[inline]
-    fn finished(&self) -> bool {
-        self.front == State::Done || self.back == State::Done || self.front > self.back
+    unsafe fn parse_single_component<'b>(&self, comp: &'b [u8]) -> Option<Component<'b>> {
+        match comp {
+            b"." if self.has_prefixes() && self.prefix_verbatim() => Some(Component::CurDir),
+            b"." => None, // . components are normalized away, except at
+            // the beginning of a path, which is treated
+            // separately via `include_cur_dir`
+            b".." => Some(Component::ParentDir),
+            b"" => None,
+            _ => Some(Component::Normal(unsafe {
+                OsStr::from_encoded_bytes_unchecked(comp)
+            })),
+        }
     }
 
     fn parse_next_component(&self) -> (usize, Option<Component<'a>>) {
@@ -203,17 +316,25 @@ impl<'a> Components<'a> {
         })
     }
 
-    unsafe fn parse_single_component<'b>(&self, comp: &'b [u8]) -> Option<Component<'b>> {
-        match comp {
-            b"." if self.has_prefixes() && self.prefix_verbatim() => Some(Component::CurDir),
-            b"." => None, // . components are normalized away, except at
-            // the beginning of a path, which is treated
-            // separately via `include_cur_dir`
-            b".." => Some(Component::ParentDir),
-            b"" => None,
-            _ => Some(Component::Normal(unsafe {
-                OsStr::from_encoded_bytes_unchecked(comp)
-            })),
+    fn trim_left(&mut self) {
+        while !self.path.is_empty() {
+            let (size, comp) = self.parse_next_component();
+            if comp.is_some() {
+                return;
+            } else {
+                self.path = &self.path[size..];
+            }
+        }
+    }
+
+    fn trim_right(&mut self) {
+        while self.path.len() > self.len_before_body() {
+            let (size, comp) = self.parse_next_component_back();
+            if comp.is_some() {
+                return;
+            } else {
+                self.path = &self.path[..self.path.len() - size];
+            }
         }
     }
 }
@@ -324,125 +445,5 @@ impl<'a> DoubleEndedIterator for Components<'a> {
             }
         }
         None
-    }
-}
-
-// Iterate through `iter` while it matches `prefix`; return `None` if `prefix`
-// is not a prefix of `iter`, otherwise return `Some(iter_after_prefix)` giving
-// `iter` after having exhausted `prefix`.
-pub(crate) fn iter_after<'a, 'b, I, J>(mut iter: I, mut prefix: J) -> Option<I>
-where
-    I: Iterator<Item = Component<'a>> + Clone,
-    J: Iterator<Item = Component<'b>>,
-{
-    loop {
-        let mut iter_next = iter.clone();
-        match (iter_next.next(), prefix.next()) {
-            (Some(ref x), Some(ref y)) if x == y => (),
-            (Some(_), Some(_)) => return None,
-            (Some(_), None) => return Some(iter),
-            (None, None) => return Some(iter),
-            (None, Some(_)) => return None,
-        }
-        iter = iter_next;
-    }
-}
-
-#[derive(PartialEq, PartialOrd, Clone)]
-enum State {
-    Prefix = 0,   // c:
-    StartDir = 1, // / or . or nothing
-    Body = 2,     // foo/bar/baz
-    Done = 3,
-}
-
-#[allow(dead_code)]
-pub(crate) struct PrefixComponent<'a> {
-    /// The prefix as an unparsed `OsStr` slice.
-    raw: &'a OsStr,
-
-    /// The parsed prefix data.
-    parsed: Prefix<'a>,
-}
-
-impl<'a> PartialEq for PrefixComponent<'a> {
-    #[inline]
-    fn eq(&self, other: &PrefixComponent<'a>) -> bool {
-        self.parsed == other.parsed
-    }
-}
-
-#[derive(PartialEq)]
-pub(crate) enum Component<'a> {
-    /// A Windows path prefix, e.g., `C:` or `\\server\share`.
-    ///
-    /// There is a large variety of prefix types, see [`Prefix`]'s documentation
-    /// for more.
-    ///
-    /// Does not occur on Unix.
-    Prefix(PrefixComponent<'a>),
-
-    /// The root directory component, appears after any prefix and before anything else.
-    ///
-    /// It represents a separator that designates that a path starts from root.
-    RootDir,
-
-    /// A reference to the current directory, i.e., `.`.
-    CurDir,
-
-    /// A reference to the parent directory, i.e., `..`.
-    ParentDir,
-
-    /// A normal component, e.g., `a` and `b` in `a/b`.
-    ///
-    /// This variant is the most common one, it represents references to files
-    /// or directories.
-    Normal(&'a OsStr),
-}
-
-pub(crate) trait PrefixExt {
-    fn len(&self) -> usize;
-    fn is_drive(&self) -> bool;
-
-    #[inline]
-    fn has_implicit_root(&self) -> bool {
-        !self.is_drive()
-    }
-}
-
-impl PrefixExt for Prefix<'_> {
-    #[inline]
-    fn len(&self) -> usize {
-        use self::Prefix::*;
-        fn os_str_len(s: &OsStr) -> usize {
-            s.as_encoded_bytes().len()
-        }
-        match *self {
-            Verbatim(x) => 4 + os_str_len(x),
-            VerbatimUNC(x, y) => {
-                8 + os_str_len(x)
-                    + if os_str_len(y) > 0 {
-                        1 + os_str_len(y)
-                    } else {
-                        0
-                    }
-            }
-            VerbatimDisk(_) => 6,
-            UNC(x, y) => {
-                2 + os_str_len(x)
-                    + if os_str_len(y) > 0 {
-                        1 + os_str_len(y)
-                    } else {
-                        0
-                    }
-            }
-            DeviceNS(x) => 4 + os_str_len(x),
-            Disk(_) => 2,
-        }
-    }
-
-    #[inline]
-    fn is_drive(&self) -> bool {
-        matches!(*self, Prefix::Disk(_))
     }
 }
