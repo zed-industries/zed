@@ -7,7 +7,6 @@ use crate::{
     WindowParams,
 };
 use collections::HashMap;
-use gpui_util::ResultExt as _;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use parking_lot::Mutex;
@@ -16,7 +15,7 @@ use std::{
     cell::Cell,
     path::PathBuf,
     rc::{Rc, Weak},
-    sync::{self, Arc},
+    sync::Arc,
 };
 
 pub(crate) struct TestWindowState {
@@ -27,9 +26,7 @@ pub(crate) struct TestWindowState {
     pub(crate) edited: bool,
     pub(crate) document_path: Option<std::path::PathBuf>,
     platform: Weak<TestPlatform>,
-    // TODO: Replace with `Rc`
-    sprite_atlas: Arc<dyn PlatformAtlas>,
-    renderer: Option<Box<dyn SceneRenderer>>,
+    renderer: Box<dyn SceneRenderer>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
@@ -88,17 +85,12 @@ impl TestWindow {
         display: Rc<dyn PlatformDisplay>,
         renderer: Option<Box<dyn SceneRenderer>>,
     ) -> Self {
-        let sprite_atlas: Arc<dyn PlatformAtlas> = match &renderer {
-            Some(r) => r.sprite_atlas(),
-            None => Arc::new(TestAtlas::new()),
-        };
         Self(Rc::new(Mutex::new(TestWindowState {
             bounds: params.bounds,
             display,
             platform,
             handle,
-            sprite_atlas,
-            renderer,
+            renderer: renderer.unwrap_or_else(|| Box::new(TestRenderer::new())),
             title: Default::default(),
             edited: false,
             document_path: None,
@@ -499,32 +491,19 @@ impl PlatformWindow for TestWindow {
         self.0.lock().appearance_change_callback = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn with_renderer(&mut self, f: &mut dyn FnMut(&mut dyn SceneRenderer)) {
+        let mut state = self.0.lock();
+        f(state.renderer.as_mut());
+    }
+
+    fn present(&mut self, f: &mut dyn FnMut(&mut dyn SceneRenderer) -> bool) {
         let scale_factor = self.scale_factor();
         let mut state = self.0.lock();
         state.frame_callback_pending = true;
         state.frame_scheduled = true;
         let device_size: Size<DevicePixels> = state.bounds.size.to_device_pixels(scale_factor);
-        if let Some(renderer) = &mut state.renderer {
-            renderer.render_scene(scene, device_size).warn_on_err();
-        }
-    }
-
-    fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
-        self.0.lock().sprite_atlas.clone()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn render_to_image(&self, scene: &Scene) -> anyhow::Result<RgbaImage> {
-        let scale_factor = self.scale_factor();
-        let mut state = self.0.lock();
-        let size = state.bounds.size;
-        if let Some(renderer) = &mut state.renderer {
-            let device_size: Size<DevicePixels> = size.to_device_pixels(scale_factor);
-            renderer.render_scene_to_image(scene, device_size)
-        } else {
-            anyhow::bail!("render_to_image not available: no HeadlessRenderer configured")
-        }
+        state.renderer.set_viewport_size(device_size);
+        f(state.renderer.as_mut());
     }
 
     fn as_test(&mut self) -> Option<&mut dyn std::any::Any> {
@@ -562,6 +541,39 @@ impl PlatformWindow for TestWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
+    }
+}
+
+/// The renderer used when no headless renderer is configured. It discards
+/// frames and hands out atlas tiles backed by [`TestAtlas`].
+struct TestRenderer {
+    atlas: Arc<TestAtlas>,
+}
+
+impl TestRenderer {
+    fn new() -> Self {
+        Self {
+            atlas: Arc::new(TestAtlas::new()),
+        }
+    }
+}
+
+impl SceneRenderer for TestRenderer {
+    fn draw(&mut self, _scene: &Scene) -> bool {
+        true
+    }
+
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        self.atlas.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_scene_to_image(
+        &mut self,
+        _scene: &Scene,
+        _size: Size<DevicePixels>,
+    ) -> anyhow::Result<RgbaImage> {
+        anyhow::bail!("render_to_image not available: no HeadlessRenderer configured")
     }
 }
 

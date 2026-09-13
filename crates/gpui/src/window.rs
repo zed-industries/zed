@@ -1543,7 +1543,12 @@ impl Window {
         }
 
         let display_id = platform_window.display().map(|display| display.id());
-        let sprite_atlas = platform_window.sprite_atlas();
+        let mut sprite_atlas = None;
+        platform_window.with_renderer(&mut |renderer| {
+            sprite_atlas = Some(renderer.sprite_atlas());
+        });
+        let sprite_atlas = sprite_atlas
+            .ok_or_else(|| anyhow!("platform window did not provide a scene renderer"))?;
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
         let capslock = platform_window.capslock();
@@ -2585,9 +2590,14 @@ impl Window {
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn render_to_image(&self) -> anyhow::Result<image::RgbaImage> {
-        self.platform_window
-            .render_to_image(&self.rendered_frame.scene)
+    pub fn render_to_image(&mut self) -> anyhow::Result<image::RgbaImage> {
+        let size = self.bounds().size.to_device_pixels(self.scale_factor());
+        let scene = &self.rendered_frame.scene;
+        let mut result = None;
+        self.platform_window.with_renderer(&mut |renderer| {
+            result = Some(renderer.render_scene_to_image(scene, size));
+        });
+        result.unwrap_or_else(|| anyhow::bail!("platform window does not support image capture"))
     }
 
     /// Returns the quads in the most recently rendered frame's scene, so tests can assert on
@@ -3223,7 +3233,8 @@ impl Window {
         let _foreground_turn = profiler::journal::foreground_turn();
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
-        self.platform_window.draw(&self.rendered_frame.scene);
+        self.platform_window
+            .present(&mut |renderer| renderer.draw(&self.rendered_frame.scene));
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(
             present_start,

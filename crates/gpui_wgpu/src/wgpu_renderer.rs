@@ -1,9 +1,9 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
-use gpui_backend::{AtlasTextureId, Path, PrimitiveBatch, Scene};
+use gpui_backend::{AtlasTextureId, Path, PrimitiveBatch, Scene, SceneRenderer};
 use gpui_platform::{
-    Background, Bounds, DevicePixels, GpuSpecs, Point, ScaledPixels, Size,
+    Background, Bounds, DevicePixels, GpuSpecs, PlatformAtlas, Point, ScaledPixels, Size,
     get_gamma_correction_ratios,
 };
 use log::warn;
@@ -2242,5 +2242,15 @@ mod tests {
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
+    }
+}
+
+impl SceneRenderer for WgpuRenderer {
+    fn draw(&mut self, scene: &Scene) -> bool {
+        WgpuRenderer::draw(self, scene)
+    }
+
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        self.sprite_atlas().clone()
     }
 }

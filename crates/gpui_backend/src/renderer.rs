@@ -14,11 +14,22 @@ use std::sync::Arc;
 /// rather than of the OS window, so onscreen GPU renderers only need to
 /// implement [`SceneRenderer::draw`] and [`SceneRenderer::sprite_atlas`].
 pub trait SceneRenderer: 'static {
-    /// Encodes and submits `scene`.
-    fn draw(&mut self, scene: &Scene);
+    /// Encodes and submits `scene`, returning whether it was presented.
+    ///
+    /// Renderers that cannot observe presentation (or that render offscreen)
+    /// return `true`; window backends that pace themselves on compositor
+    /// callbacks use `false` to retry the frame later.
+    fn draw(&mut self, scene: &Scene) -> bool;
 
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    /// Sets the size of the target that [`draw`](Self::draw) renders into.
+    ///
+    /// Onscreen renderers derive their target from the window and can ignore
+    /// this; headless renderers use it to size an offscreen texture.
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    fn set_viewport_size(&mut self, _size: Size<DevicePixels>) {}
 
     /// Render a scene and return the result as an RGBA image.
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]

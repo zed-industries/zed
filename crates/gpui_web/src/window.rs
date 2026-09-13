@@ -5,14 +5,12 @@ use crate::events::{
 use crate::ime_mirror::ImeMirror;
 use crate::platform::WebWindowLifecycle;
 use crate::viewport::WebViewport;
-use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
-use gpui_backend::Scene;
 use gpui_platform::{
     Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs, Modifiers,
-    MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Size,
+    MouseButton, Pixels, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, SceneRenderer, Size,
     TextInputConfiguration, TextInputStateChange, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowId, WindowInsets,
     WindowParams, px,
@@ -949,7 +947,12 @@ impl PlatformWindow for WebWindow {
         self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn with_renderer(&mut self, f: &mut dyn FnMut(&mut dyn SceneRenderer)) {
+        let mut state = self.inner.state.borrow_mut();
+        f(&mut state.renderer);
+    }
+
+    fn present(&mut self, f: &mut dyn FnMut(&mut dyn SceneRenderer) -> bool) {
         if let Some((width, height)) = self.inner.pending_physical_size.take() {
             if self.inner.canvas.width() != width || self.inner.canvas.height() != height {
                 self.inner.canvas.set_width(width);
@@ -961,14 +964,10 @@ impl PlatformWindow for WebWindow {
                 width: DevicePixels(width as i32),
                 height: DevicePixels(height as i32),
             });
-            drop(state);
         }
 
-        self.inner.state.borrow_mut().renderer.draw(scene);
-    }
-
-    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.inner.state.borrow().renderer.sprite_atlas().clone()
+        let mut state = self.inner.state.borrow_mut();
+        f(&mut state.renderer);
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
