@@ -1679,6 +1679,109 @@ async fn test_subtree_rescan_reports_unchanged_descendants_as_updated(cx: &mut T
     });
 }
 
+// Reproduces an external script removing a directory and recreating it with
+// files: the watcher batch collapses to `[dir Removed]` after `process_events`
+// dedups, so the dir is re-inserted and scanned while still empty. A rescan
+// request for such a path (e.g. the user expanding the folder) must rescan it.
+#[gpui::test]
+async fn test_recreated_directory_is_rescanned_on_refresh(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir": {
+                "a.txt": "a",
+                "b.txt": "b",
+            }
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("dir")).is_some());
+        assert!(tree.entry_for_path(rel_path("dir/a.txt")).is_some());
+        assert!(tree.entry_for_path(rel_path("dir/b.txt")).is_some());
+    });
+
+    // The script removes the dir and recreates it (empty at first — its files
+    // are written slightly later). inotify delivers both events for the path in
+    // one batch; FakeFs mirrors that with a paused buffer of exactly those two
+    // events. The empty dir is created *before* flushing so the worktree's scan
+    // finds it on disk (scanning it while empty) — but its own `Created` event
+    // is suppressed, because inotify already reported the recreation and
+    // FakeFs would otherwise deliver a second one.
+    fs.pause_events();
+    fs.remove_dir(
+        "/root/dir".as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    fs.emit_fs_event("/root/dir", Some(PathEventKind::Removed));
+    fs.emit_fs_event("/root/dir", Some(PathEventKind::Created));
+    fs.clear_buffered_events();
+    fs.create_dir(Path::new("/root/dir")).await.unwrap();
+    fs.unpause_events_and_flush();
+    tree.flush_fs_events(cx).await;
+
+    // After the batch: the dir is back in the snapshot (re-inserted by the
+    // reload), but its children are not — the scan ran while the dir was empty.
+    tree.read_with(cx, |tree, _| {
+        let entry = tree
+            .entry_for_path(rel_path("dir"))
+            .expect("dir should be re-inserted");
+        assert_eq!(entry.kind, EntryKind::Dir);
+        assert!(
+            tree.child_entries(rel_path("dir")).count() == 0,
+            "dir must be empty at this point (scanned before the script wrote files)"
+        );
+    });
+
+    // The script's file writes land on disk *after* the worktree scanned.
+    // Their events are not emitted: by the time the user expands the folder,
+    // the writes have already happened, so only a rescan can surface them.
+    fs.insert_file("/root/dir/a.txt", b"a".to_vec()).await;
+    fs.insert_file("/root/dir/b.txt", b"b".to_vec()).await;
+
+    // The user expands the folder in the sidebar: Path R fires for the dir.
+    let mut refresh = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("dir").into()])
+    });
+    refresh.recv().await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("dir/a.txt")).is_some(),
+            "a.txt never appeared after the dir was removed and recreated"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("dir/b.txt")).is_some(),
+            "b.txt never appeared after the dir was removed and recreated"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     init_test(cx);
