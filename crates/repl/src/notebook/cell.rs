@@ -7,6 +7,7 @@ use gpui::{
     App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
     StatefulInteractiveElement, Task, prelude::*,
 };
+use jupyter_protocol::Stdio;
 use language::{Buffer, Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
@@ -116,14 +117,24 @@ pub(crate) enum MovementDirection {
     End,
 }
 
-fn convert_outputs(
-    outputs: &Vec<nbformat::v4::Output>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Vec<Output> {
-    outputs
-        .iter()
-        .map(|output| match output {
+const KERNEL_ERROR_NAME: &str = "Kernel Error";
+const KERNEL_ERROR_VALUE: &str = "cell could not be executed";
+
+/// A rendered output paired with the notebook representation it was built from.
+///
+/// [`Output`] renders only the richest mime type in a bundle and drops the rest,
+/// and images, tables and HTML have no path back to nbformat at all, so saving
+/// has to write this retained copy rather than re-derive one from what is on
+/// screen. Keeping the two together means an output cannot be rendered without
+/// also being saveable.
+pub(super) struct CellOutput {
+    view: Output,
+    serialized: nbformat::v4::Output,
+}
+
+impl CellOutput {
+    fn from_nbformat(output: &nbformat::v4::Output, window: &mut Window, cx: &mut App) -> Self {
+        let view = match output {
             nbformat::v4::Output::Stream { text, .. } => Output::Stream {
                 content: cx.new(|cx| TerminalOutput::from(&text.0, window, cx)),
             },
@@ -139,7 +150,34 @@ fn convert_outputs(
                 traceback: cx
                     .new(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
             }),
-        })
+        };
+
+        Self {
+            view,
+            serialized: output.clone(),
+        }
+    }
+}
+
+/// Splits cell source the way the notebook format stores it: one entry per line,
+/// each keeping its trailing newline, with no newline added to the last line.
+/// Appending one unconditionally rewrites every cell the first time a notebook is
+/// saved.
+fn split_source_lines(source: &str) -> Vec<String> {
+    source
+        .split_inclusive('\n')
+        .map(|line| line.to_string())
+        .collect()
+}
+
+fn convert_outputs(
+    outputs: &Vec<nbformat::v4::Output>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Vec<CellOutput> {
+    outputs
+        .iter()
+        .map(|output| CellOutput::from_nbformat(output, window, cx))
         .collect()
 }
 
@@ -487,7 +525,7 @@ impl MarkdownCell {
 
     pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
         let source = self.current_source(cx);
-        let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
+        let source_lines: Vec<String> = split_source_lines(&source);
 
         nbformat::v4::Cell::Markdown {
             id: self.id.clone(),
@@ -651,7 +689,7 @@ pub struct CodeCell {
     execution_count: Option<i32>,
     source: String,
     editor: Entity<editor::Editor>,
-    outputs: Vec<Output>,
+    outputs: Vec<CellOutput>,
     selected: bool,
     cell_position: Option<CellPosition>,
     _language_task: Task<()>,
@@ -668,12 +706,12 @@ pub(super) enum CellSource {
     /// Backed by an existing notebook cell
     Existing {
         execution_count: Option<i32>,
-        outputs: Vec<Output>,
+        outputs: Vec<CellOutput>,
     },
 }
 
 impl CellSource {
-    fn into_outputs(self) -> (Option<i32>, Vec<Output>) {
+    fn into_outputs(self) -> (Option<i32>, Vec<CellOutput>) {
         match self {
             CellSource::Existing {
                 execution_count,
@@ -774,9 +812,9 @@ impl CodeCell {
 
     pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
         let source = self.current_source(cx);
-        let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
+        let source_lines: Vec<String> = split_source_lines(&source);
 
-        let outputs = self.outputs_to_nbformat(cx);
+        let outputs = self.outputs_to_nbformat();
 
         nbformat::v4::Cell::Code {
             id: self.id.clone(),
@@ -787,10 +825,10 @@ impl CodeCell {
         }
     }
 
-    fn outputs_to_nbformat(&self, cx: &App) -> Vec<nbformat::v4::Output> {
+    fn outputs_to_nbformat(&self) -> Vec<nbformat::v4::Output> {
         self.outputs
             .iter()
-            .filter_map(|output| output.to_nbformat(cx))
+            .map(|output| output.serialized.clone())
             .collect()
     }
 
@@ -829,11 +867,18 @@ impl CodeCell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.outputs.push(Output::ErrorOutput(ErrorView {
-            ename: "Kernel Error".to_string(),
-            evalue: "cell could not be executed".to_string(),
-            traceback: cx.new(|cx| TerminalOutput::from(error_message, window, cx)),
-        }));
+        self.outputs.push(CellOutput {
+            view: Output::ErrorOutput(ErrorView {
+                ename: KERNEL_ERROR_NAME.to_string(),
+                evalue: KERNEL_ERROR_VALUE.to_string(),
+                traceback: cx.new(|cx| TerminalOutput::from(error_message, window, cx)),
+            }),
+            serialized: nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
+                ename: KERNEL_ERROR_NAME.to_string(),
+                evalue: KERNEL_ERROR_VALUE.to_string(),
+                traceback: error_message.lines().map(|line| line.to_string()).collect(),
+            }),
+        });
         self.execution_start_time = None;
         self.is_executing = false;
         cx.notify();
@@ -864,17 +909,37 @@ impl CodeCell {
     ) {
         match &message.content {
             JupyterMessageContent::StreamContent(stream) => {
-                self.outputs.push(Output::Stream {
-                    content: cx.new(|cx| TerminalOutput::from(&stream.text, window, cx)),
+                self.outputs.push(CellOutput {
+                    view: Output::Stream {
+                        content: cx.new(|cx| TerminalOutput::from(&stream.text, window, cx)),
+                    },
+                    serialized: nbformat::v4::Output::Stream {
+                        name: match stream.name {
+                            Stdio::Stdout => "stdout".to_string(),
+                            Stdio::Stderr => "stderr".to_string(),
+                        },
+                        text: nbformat::v4::MultilineString(stream.text.clone()),
+                    },
                 });
             }
             JupyterMessageContent::DisplayData(display_data) => {
-                self.outputs
-                    .push(Output::new(&display_data.data, None, window, cx));
+                self.outputs.push(CellOutput {
+                    view: Output::new(&display_data.data, None, window, cx),
+                    serialized: nbformat::v4::Output::DisplayData(nbformat::v4::DisplayData {
+                        data: display_data.data.clone(),
+                        metadata: display_data.metadata.clone(),
+                    }),
+                });
             }
             JupyterMessageContent::ExecuteResult(execute_result) => {
-                self.outputs
-                    .push(Output::new(&execute_result.data, None, window, cx));
+                self.outputs.push(CellOutput {
+                    view: Output::new(&execute_result.data, None, window, cx),
+                    serialized: nbformat::v4::Output::ExecuteResult(nbformat::v4::ExecuteResult {
+                        execution_count: execute_result.execution_count,
+                        data: execute_result.data.clone(),
+                        metadata: execute_result.metadata.clone(),
+                    }),
+                });
             }
             JupyterMessageContent::ExecuteInput(input) => {
                 self.execution_count = serde_json::to_value(&input.execution_count)
@@ -886,12 +951,20 @@ impl CodeCell {
                 self.finish_execution();
             }
             JupyterMessageContent::ErrorOutput(error) => {
-                self.outputs.push(Output::ErrorOutput(ErrorView {
-                    ename: error.ename.clone(),
-                    evalue: error.evalue.clone(),
-                    traceback: cx
-                        .new(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
-                }));
+                self.outputs.push(CellOutput {
+                    view: Output::ErrorOutput(ErrorView {
+                        ename: error.ename.clone(),
+                        evalue: error.evalue.clone(),
+                        traceback: cx.new(|cx| {
+                            TerminalOutput::from(&error.traceback.join("\n"), window, cx)
+                        }),
+                    }),
+                    serialized: nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
+                        ename: error.ename.clone(),
+                        evalue: error.evalue.clone(),
+                        traceback: error.traceback.clone(),
+                    }),
+                });
             }
             _ => {}
         }
@@ -1220,7 +1293,7 @@ impl Render for CodeCell {
                                                     div.max_h(max_height).overflow_y_scroll()
                                                 })
                                                 .children(self.outputs.iter().map(|output| {
-                                                    div().children(output.content(window, cx))
+                                                    div().children(output.view.content(window, cx))
                                                 })),
                                         ),
                                 ),
@@ -1243,7 +1316,7 @@ pub struct RawCell {
 
 impl RawCell {
     pub fn to_nbformat_cell(&self) -> nbformat::v4::Cell {
-        let source_lines: Vec<String> = self.source.lines().map(|l| format!("{}\n", l)).collect();
+        let source_lines: Vec<String> = split_source_lines(&self.source);
 
         nbformat::v4::Cell::Raw {
             id: self.id.clone(),
@@ -1319,5 +1392,176 @@ impl Render for RawCell {
             )
             // TODO: Move base cell render into trait impl so we don't have to repeat this
             .children(self.cell_position_spacer(false, window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::FutureExt as _;
+    use gpui::TestAppContext;
+    use jupyter_protocol::{ExecutionCount, Media, MediaType};
+
+    /// A 1x1 transparent PNG, the smallest thing `ImageView` will accept.
+    const PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            settings::init(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+    }
+
+    fn empty_metadata() -> CellMetadata {
+        serde_json::from_value(serde_json::json!({})).unwrap()
+    }
+
+    fn code_cell(outputs: Vec<nbformat::v4::Output>) -> nbformat::v4::Cell {
+        nbformat::v4::Cell::Code {
+            id: "cell-1".to_string().try_into().unwrap(),
+            metadata: empty_metadata(),
+            execution_count: Some(1),
+            source: vec!["print('hi')".to_string()],
+            outputs,
+        }
+    }
+
+    fn round_trip(
+        cell: &nbformat::v4::Cell,
+        cx: &mut TestAppContext,
+    ) -> (Vec<nbformat::v4::Output>, Vec<String>) {
+        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+        let cx = cx.add_empty_window();
+        let loaded = cx.update(|window, cx| {
+            let language = Task::ready(None).shared();
+            Cell::load(cell, &languages, language, window, cx)
+        });
+
+        cx.update(|_, cx| match loaded.to_nbformat_cell(cx) {
+            nbformat::v4::Cell::Code {
+                outputs, source, ..
+            } => (outputs, source),
+            _ => panic!("expected a code cell"),
+        })
+    }
+
+    /// Rich outputs used to be dropped on save: `Output` renders only the richest
+    /// mime type in a bundle, and images, tables and HTML had no path back to
+    /// nbformat at all, so `filter_map` silently discarded them.
+    #[gpui::test]
+    async fn test_rich_outputs_survive_a_round_trip(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut image_data = Media::default();
+        image_data
+            .content
+            .push(MediaType::Png(PNG_BASE64.to_string()));
+        let mut html_data = Media::default();
+        html_data.content.push(MediaType::Html(
+            "<table><tr><td>1</td></tr></table>".to_string(),
+        ));
+        html_data.content.push(MediaType::Plain("   1".to_string()));
+
+        let original = vec![
+            nbformat::v4::Output::DisplayData(nbformat::v4::DisplayData {
+                data: image_data,
+                metadata: serde_json::Map::new(),
+            }),
+            nbformat::v4::Output::ExecuteResult(nbformat::v4::ExecuteResult {
+                execution_count: ExecutionCount::new(1),
+                data: html_data,
+                metadata: serde_json::Map::new(),
+            }),
+        ];
+
+        let (saved, _) = round_trip(&code_cell(original.clone()), cx);
+
+        assert_eq!(
+            saved.len(),
+            original.len(),
+            "no output may be dropped on save"
+        );
+        assert_eq!(
+            serde_json::to_value(&saved).unwrap(),
+            serde_json::to_value(&original).unwrap(),
+            "outputs must be written back unchanged"
+        );
+    }
+
+    /// An `execute_result` used to be rewritten as `display_data`, losing its
+    /// `execution_count`, because the saved form was re-derived from the view.
+    #[gpui::test]
+    async fn test_execute_result_keeps_its_output_type(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut data = Media::default();
+        data.content.push(MediaType::Plain("42".to_string()));
+        let original = vec![nbformat::v4::Output::ExecuteResult(
+            nbformat::v4::ExecuteResult {
+                execution_count: ExecutionCount::new(7),
+                data,
+                metadata: serde_json::Map::new(),
+            },
+        )];
+
+        let (saved, _) = round_trip(&code_cell(original), cx);
+
+        match saved.as_slice() {
+            [nbformat::v4::Output::ExecuteResult(result)] => {
+                assert_eq!(result.execution_count, ExecutionCount::new(7));
+            }
+            other => panic!("expected one execute_result, got {other:?}"),
+        }
+    }
+
+    /// A `stderr` stream used to be relabelled `stdout` on save.
+    #[gpui::test]
+    async fn test_stream_keeps_its_name(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let original = vec![nbformat::v4::Output::Stream {
+            name: "stderr".to_string(),
+            text: nbformat::v4::MultilineString("a warning\n".to_string()),
+        }];
+
+        let (saved, _) = round_trip(&code_cell(original), cx);
+
+        match saved.as_slice() {
+            [nbformat::v4::Output::Stream { name, .. }] => assert_eq!(name, "stderr"),
+            other => panic!("expected one stream output, got {other:?}"),
+        }
+    }
+
+    /// Saving used to append a newline to every line of every cell, rewriting the
+    /// whole file the first time a notebook was saved.
+    #[gpui::test]
+    async fn test_source_lines_do_not_gain_a_trailing_newline(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let cell = nbformat::v4::Cell::Code {
+            id: "cell-1".to_string().try_into().unwrap(),
+            metadata: empty_metadata(),
+            execution_count: Some(1),
+            source: vec!["import os\n".to_string(), "print(os.name)".to_string()],
+            outputs: Vec::new(),
+        };
+
+        let (_, source) = round_trip(&cell, cx);
+
+        assert_eq!(source, vec!["import os\n", "print(os.name)"]);
+    }
+
+    #[test]
+    fn test_split_source_lines() {
+        assert_eq!(split_source_lines(""), Vec::<String>::new());
+        assert_eq!(split_source_lines("one"), vec!["one"]);
+        assert_eq!(split_source_lines("one\n"), vec!["one\n"]);
+        assert_eq!(split_source_lines("one\ntwo"), vec!["one\n", "two"]);
+        assert_eq!(
+            split_source_lines("one\ntwo\n"),
+            vec!["one\n", "two\n"],
+            "a trailing newline belongs to the last line, not a new empty one"
+        );
     }
 }
