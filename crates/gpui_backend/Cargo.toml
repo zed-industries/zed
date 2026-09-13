@@ -36,5 +36,8 @@ smallvec.workspace = true
 stacksafe = { workspace = true, optional = true }
 taffy = "=0.13.0"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-video.workspace = true
+
 [dev-dependencies]
 rand.workspace = true

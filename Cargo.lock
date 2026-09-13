@@ -7590,6 +7590,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "core-video",
  "derive_more",
  "etagere",
  "gpui_shared_string",
