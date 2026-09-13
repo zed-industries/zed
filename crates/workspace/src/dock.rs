@@ -1631,6 +1631,7 @@ pub mod test {
         pub default_size: Pixels,
         pub flexible: bool,
         pub activation_priority: u32,
+        pub icon: Option<ui::IconName>,
     }
     actions!(test_only, [ToggleTestPanel]);
 
@@ -1647,6 +1648,19 @@ pub mod test {
                 default_size: px(300.),
                 flexible: false,
                 activation_priority,
+                icon: None,
+            }
+        }
+
+        pub fn new_with_icon(
+            position: DockPosition,
+            activation_priority: u32,
+            icon: ui::IconName,
+            cx: &mut App,
+        ) -> Self {
+            Self {
+                icon: Some(icon),
+                ..Self::new(position, activation_priority, cx)
             }
         }
 
@@ -1741,11 +1755,11 @@ pub mod test {
         }
 
         fn icon(&self, _window: &Window, _: &App) -> Option<ui::IconName> {
-            None
+            self.icon
         }
 
         fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-            None
+            self.icon.map(|_| "Test Panel")
         }
 
         fn toggle_action(&self) -> Box<dyn Action> {
