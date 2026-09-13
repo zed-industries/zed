@@ -93,6 +93,7 @@ struct PlatformCallbacks {
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
     validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
+    system_sleep: Cell<Option<Box<dyn FnMut()>>>,
     system_wake: Cell<Option<Box<dyn FnMut()>>>,
 }
 
@@ -116,6 +117,9 @@ impl WindowsPlatformState {
 
 struct PowerRequest {
     handle: HANDLE,
+    // `PowerCreateRequest` retains a pointer into the reason string for the
+    // lifetime of the handle, so the UTF-16 buffer must outlive the request.
+    _reason: Vec<u16>,
 }
 
 unsafe impl Send for PowerRequest {}
@@ -138,7 +142,10 @@ impl PowerRequest {
                 .log_err();
             return Err(error).context("Failed to set the Windows power request");
         }
-        Ok(Self { handle })
+        Ok(Self {
+            handle,
+            _reason: reason,
+        })
     }
 }
 
@@ -737,6 +744,10 @@ impl Platform for WindowsPlatform {
         self.inner.state.callbacks.reopen.set(Some(callback));
     }
 
+    fn on_system_sleep(&self, callback: Box<dyn FnMut()>) {
+        self.inner.state.callbacks.system_sleep.set(Some(callback));
+    }
+
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
         self.inner.state.callbacks.system_wake.set(Some(callback));
         let mut notification = self.suspend_resume_notification.borrow_mut();
@@ -1218,8 +1229,14 @@ impl WindowsPlatformInner {
     }
 
     fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
-        if wparam.0 as u32 == PBT_APMRESUMEAUTOMATIC {
-            self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+        match wparam.0 as u32 {
+            PBT_APMSUSPEND => {
+                self.with_callback(|callbacks| &callbacks.system_sleep, |callback| callback());
+            }
+            PBT_APMRESUMEAUTOMATIC => {
+                self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+            }
+            _ => {}
         }
         Some(1)
     }

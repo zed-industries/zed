@@ -33144,6 +33144,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         primary: GutterButtonIntent::SetBreakpoint,
         secondary: GutterButtonIntent::SetBookmark,
         focus_handle,
+        on_render: None,
     };
 
     let primary_intent = tooltip.active_intent(Modifiers::none());
@@ -33156,11 +33157,10 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
 
     // When both features are enabled, the meta text advertises the
     // modifier-click alternative.
-    let meta = tooltip.meta_text(primary_intent);
+    let meta = tooltip.meta_text();
     assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+    assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
     assert!(meta.contains("right-click for more options"));
-    let meta = tooltip.meta_text(secondary_intent);
-    assert!(meta.contains("-click to add a breakpoint"), "got: {meta}");
 
     // When only one feature is enabled (primary == secondary), a
     // modifier-click repeats the primary action, so the tooltip must not
@@ -33169,9 +33169,46 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         primary: GutterButtonIntent::SetBreakpoint,
         secondary: GutterButtonIntent::SetBreakpoint,
         focus_handle: tooltip.focus_handle,
+        on_render: None,
     };
-    let meta = single_feature_tooltip.meta_text(GutterButtonIntent::SetBreakpoint);
+    let meta = single_feature_tooltip.meta_text();
     assert_eq!(meta, "right-click for more options");
+}
+
+#[gpui::test]
+fn test_gutter_button_tooltip_renders_modifier_transitions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let renders = Rc::new(RefCell::new(Vec::new()));
+    let (tooltip, cx) = cx.add_window_view({
+        let renders = renders.clone();
+        move |_window, cx| GutterButtonTooltip {
+            primary: GutterButtonIntent::SetBreakpoint,
+            secondary: GutterButtonIntent::SetBookmark,
+            focus_handle: cx.focus_handle(),
+            on_render: Some(renders),
+        }
+    });
+    cx.run_until_parked();
+
+    let assert_render = |expected_title: &str| {
+        let (title, meta) = renders.borrow().last().cloned().expect("tooltip rendered");
+        assert_eq!(title, expected_title);
+        assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+        assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
+    };
+
+    assert_render("Set Breakpoint");
+
+    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    tooltip.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+    assert_render("Set Bookmark");
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    tooltip.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+    assert_render("Set Breakpoint");
 }
 
 #[gpui::test]

@@ -10,8 +10,30 @@ publish = false
 name = "hello_web"
 path = "main.rs"
 
+[[bin]]
+name = "hello_world"
+path = "../../../gpui/examples/hello_world.rs"
+
+[[bin]]
+name = "text"
+path = "../../../gpui/examples/text.rs"
+
+[[bin]]
+name = "text_layout"
+path = "../../../gpui/examples/text_layout.rs"
+
+[[bin]]
+name = "text_wrapper"
+path = "../../../gpui/examples/text_wrapper.rs"
+
+[[bin]]
+name = "input"
+path = "../../../gpui/examples/input.rs"
+
 [dependencies]
 gpui = { path = "../../../gpui" }
 gpui_platform = { path = "../../../gpui_platform" }
+unicode-segmentation = "1"
+wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["console", "Location", "Window"] }
 web-time = "1"
