@@ -59,6 +59,87 @@ To pass arguments to your shell:
 }
 ```
 
+## Profiles {#profiles}
+
+Profiles let you define named shell configurations and pick one when opening a terminal. A profile specifies the program to launch, optional arguments, and an optional title override:
+
+```json [settings]
+{
+  "terminal": {
+    "profiles": {
+      "Zsh": {
+        "program": "/bin/zsh",
+        "args": ["-l"]
+      },
+      "Fish": {
+        "program": "/usr/bin/fish"
+      },
+      "PowerShell": {
+        "program": "pwsh",
+        "title_override": "PS"
+      }
+    }
+  }
+}
+```
+
+Each profile entry has the following fields:
+
+| Field            | Type              | Description                                                                    |
+| ---------------- | ----------------- | ------------------------------------------------------------------------------ |
+| `program`        | string            | Program to launch (e.g. `/bin/zsh`, `pwsh`, `wsl.exe`).                        |
+| `args`           | array of strings  | Arguments passed to `program`. Omit to launch with no arguments.               |
+| `title_override` | string (optional) | Tab title for this profile. If unset, the profile's name is used (e.g. `Zsh`). |
+
+When you spawn a terminal from a profile, Zed promotes the profile name to the tab title unless the profile sets `title_override`. Environment variables are always inherited from your login shell (`$SHELL`), regardless of profile — Zed does not route environment through the profile, so venv detection and other `$SHELL`-dependent behavior continue to work.
+
+### Setting a Default Profile
+
+`terminal.default_profile` selects which profile is used when you open a terminal without specifying one (for example, via the default open-terminal keybinding):
+
+```json [settings]
+{
+  "terminal": {
+    "default_profile": "Zsh"
+  }
+}
+```
+
+If `default_profile` names a profile that does not exist in `profiles`, Zed emits a warning and falls back to `terminal.shell` (not the system shell). When `default_profile` is unset, `terminal.shell` is used.
+
+### Spawning a Profile via Keymap
+
+Use the {#action workspace::NewTerminal} action with a `profile` argument to spawn a specific profile from the keyboard:
+
+```json [keymap]
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "ctrl-alt-z": ["workspace::NewTerminal", { "profile": "Zsh" }]
+    }
+  }
+]
+```
+
+If the named profile does not exist, Zed emits a warning and opens a terminal with the default shell instead.
+
+### Picking a Shell from the Menu {#picking-from-menu}
+
+Click the terminal panel's **"+"** button to see all available shells:
+
+- **New Terminal** and **Spawn Task** entries (always present).
+- One entry per configured profile (in `terminal.profiles` order).
+- One entry per detected shell not already covered by a configured profile. Detected shells come from `/etc/shells` (Unix) or a small set of well-known Windows locations (PowerShell, Command Prompt, Git Bash).
+
+Selecting a configured profile dispatches {#action workspace::NewTerminal} with that profile. Selecting a detected shell spawns a terminal running its program directly; the tab title is set to the detected shell's label (for example, `bash`, `zsh`, or `pwsh`).
+
+If your `terminal.profiles` map plus the detected list exceeds eight entries, the menu collapses into a single **"Select Shell…"** submenu to keep the dropdown manageable.
+
+Profiles whose `program` cannot be resolved (neither an existing absolute path nor found on `PATH`) are **hidden from the menu** but still spawnable via keymap; Zed emits a warning and routes actual spawn failures through the normal terminal-error notification path.
+
+> **Note:** In remote (SSH) projects, profile and detected-shell entries spawn **LOCAL** terminals alongside your remote project — profiles reference executables on your local machine. The default **New Terminal** entry still opens a shell on the remote host. Keymap-dispatched {#action workspace::NewTerminal} without `"local": true` follows the pre-existing remote-shell behavior; set `"local": true` to spawn a local terminal that honors the profile.
+
 ## Working Directory
 
 Control where new terminals start:
