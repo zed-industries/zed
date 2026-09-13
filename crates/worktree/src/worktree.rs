@@ -5296,7 +5296,7 @@ impl BackgroundScanner {
                     && metadata.is_dir
                     && state.snapshot.entry_for_path(path).is_some_and(|entry| {
                         entry.kind == EntryKind::Dir
-                            && state.snapshot.child_entries(path).count() == 0
+                            && state.snapshot.child_entries(path).next().is_none()
                     })
                 {
                     directories_to_rescan.push((path.clone(), root_path.join(path.as_std_path())));

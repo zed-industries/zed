@@ -1719,13 +1719,9 @@ async fn test_recreated_directory_is_rescanned_on_refresh(cx: &mut TestAppContex
         assert!(tree.entry_for_path(rel_path("dir/b.txt")).is_some());
     });
 
-    // The script removes the dir and recreates it (empty at first — its files
-    // are written slightly later). inotify delivers both events for the path in
-    // one batch; FakeFs mirrors that with a paused buffer of exactly those two
-    // events. The empty dir is created *before* flushing so the worktree's scan
-    // finds it on disk (scanning it while empty) — but its own `Created` event
-    // is suppressed, because inotify already reported the recreation and
-    // FakeFs would otherwise deliver a second one.
+    // Reproduce an external delete/recreate: ops run paused so the scan finds the
+    // dir empty, their own events are dropped, and we emit the [Removed, Created]
+    // pair that `process_events` dedups to a single event.
     fs.pause_events();
     fs.remove_dir(
         "/root/dir".as_ref(),
@@ -1736,10 +1732,10 @@ async fn test_recreated_directory_is_rescanned_on_refresh(cx: &mut TestAppContex
     )
     .await
     .unwrap();
-    fs.emit_fs_event("/root/dir", Some(PathEventKind::Removed));
-    fs.emit_fs_event("/root/dir", Some(PathEventKind::Created));
     fs.clear_buffered_events();
     fs.create_dir(Path::new("/root/dir")).await.unwrap();
+    fs.emit_fs_event("/root/dir", Some(PathEventKind::Removed));
+    fs.emit_fs_event("/root/dir", Some(PathEventKind::Created));
     fs.unpause_events_and_flush();
     tree.flush_fs_events(cx).await;
 
@@ -1756,11 +1752,13 @@ async fn test_recreated_directory_is_rescanned_on_refresh(cx: &mut TestAppContex
         );
     });
 
-    // The script's file writes land on disk *after* the worktree scanned.
-    // Their events are not emitted: by the time the user expands the folder,
-    // the writes have already happened, so only a rescan can surface them.
+    // Suppress these writes' events so the explicit refresh below is the only
+    // recovery path (otherwise watcher delivery would race it).
+    fs.pause_events();
     fs.insert_file("/root/dir/a.txt", b"a".to_vec()).await;
     fs.insert_file("/root/dir/b.txt", b"b".to_vec()).await;
+    fs.clear_buffered_events();
+    fs.unpause_events_and_flush();
 
     // The user expands the folder in the sidebar: Path R fires for the dir.
     let mut refresh = tree.update(cx, |tree, _| {
@@ -1778,6 +1776,17 @@ async fn test_recreated_directory_is_rescanned_on_refresh(cx: &mut TestAppContex
         assert!(
             tree.entry_for_path(rel_path("dir/b.txt")).is_some(),
             "b.txt never appeared after the dir was removed and recreated"
+        );
+    });
+
+    // A further write must arrive via the watcher alone (no manual refresh),
+    // proving the recreated dir's watch is live.
+    fs.insert_file("/root/dir/c.txt", b"c".to_vec()).await;
+    tree.flush_fs_events(cx).await;
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("dir/c.txt")).is_some(),
+            "c.txt did not appear via the watcher after the dir was recreated"
         );
     });
 }
