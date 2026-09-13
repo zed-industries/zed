@@ -23,7 +23,7 @@ assets.workspace = true
 criterion.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
-gpui = { workspace = true, features = ["bench-support", "default-platform"] }
+gpui = { workspace = true, features = ["bench-support", "platform"] }
 indoc.workspace = true
 itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }

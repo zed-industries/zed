@@ -28,7 +28,7 @@ mod key_dispatch;
 mod keymap;
 mod path_builder;
 mod platform;
-#[cfg(feature = "default-platform")]
+#[cfg(feature = "platform")]
 mod platform_entry;
 pub mod prelude;
 /// Profiling utilities for task, frame, and thread performance tracking.
@@ -127,7 +127,7 @@ use key_dispatch::*;
 pub use keymap::*;
 pub use path_builder::*;
 pub use platform::*;
-#[cfg(feature = "default-platform")]
+#[cfg(feature = "platform")]
 pub use platform_entry::*;
 pub use profiler::*;
 pub use refineable::*;

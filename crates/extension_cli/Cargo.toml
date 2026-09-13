@@ -20,7 +20,7 @@ env_logger.workspace = true
 extension.workspace = true
 futures.workspace = true
 fs.workspace = true
-gpui = { workspace = true, features = ["default-platform"] }
+gpui = { workspace = true, features = ["platform"] }
 http_client.workspace = true
 language.workspace = true
 log.workspace = true

@@ -25,27 +25,21 @@ fn main() {
 
 ### Platform features
 
-The default features pull in the backend for the host OS and are a safe cross-platform default. If you build for a single platform, you can start from `default-features = false` and add what you need:
+The `platform` feature is on by default. It pulls in the backend for the host OS, enables the windowing and text features a desktop build needs, and provides the `application()`, `headless()`, and `current_platform()` entrypoints.
 
-- **macOS** — Rendering uses Metal and is always available, but glyph rasterization needs `font-kit`. Without it, GPUI falls back to a placeholder text system that lays text out but renders no glyphs.
+For a headless build, or to wire up a custom backend yourself, disable it:
 
-    ```toml
-    gpui = { version = "*", default-features = false, features = ["default-platform", "font-kit"] }
-    ```
+```toml
+gpui = { version = "*", default-features = false }
+```
 
-- **Linux / FreeBSD** — enable at least one windowing backend for desktop windows: `wayland`, `x11`, or both. These features also compile the renderer and text system, so no separate text feature is needed.
+Without `platform` you can still enable individual pieces:
 
-    ```toml
-    gpui = { version = "*", default-features = false, features = ["default-platform", "wayland", "x11"] }
-    ```
+- **macOS** — `font-kit` for glyph rasterization. Without it, GPUI falls back to a placeholder text system that lays text out but renders no glyphs.
 
-- **Windows** — needs `windows-manifest` to embed the application manifest; windowing uses Win32 and text uses DirectWrite. `font-kit` has no effect here.
+- **Linux / FreeBSD** — `wayland`, `x11`, or both, for desktop windows. These features also compile the renderer and text system, so no separate text feature is needed.
 
-    ```toml
-    gpui = { version = "*", default-features = false, features = ["default-platform", "windows-manifest"] }
-    ```
-
-`default-platform` is required for the `application()`, `headless()`, and `current_platform()` entrypoints.
+- **Windows** — `windows-manifest` to embed the application manifest; windowing uses Win32 and text uses DirectWrite. `font-kit` has no effect here.
 
 ### Additional Topics
 

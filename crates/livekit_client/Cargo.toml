@@ -61,7 +61,7 @@ coreaudio-rs = "0.12.1"
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support", "default-platform"] }
+gpui = { workspace = true, features = ["test-support", "platform"] }
 livekit_api = { workspace = true, features = ["test-support"] }
 simplelog.workspace = true
 

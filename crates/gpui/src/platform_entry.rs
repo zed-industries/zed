@@ -1,7 +1,7 @@
 //! Platform entrypoints: construct the default [`crate::Platform`] for the
 //! current operating system and turn it into an [`crate::Application`].
 //!
-//! These live behind the `default-platform` feature, which pulls in the
+//! These live behind the `platform` feature, which pulls in the
 //! backend for the target OS.
 
 use crate::{Application, BackgroundExecutor, Platform};

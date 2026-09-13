@@ -128,7 +128,7 @@ gpui = { workspace = true, features = [
     "profiler",
     "stacker",
     "screen-capture",
-    "default-platform",
+    "platform",
     "font-kit",
     "wayland",
     "x11",

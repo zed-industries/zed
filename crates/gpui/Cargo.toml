@@ -17,14 +17,22 @@ categories = ["gui"]
 workspace = true
 
 [features]
-default = ["font-kit", "wayland", "x11", "windows-manifest", "default-platform"]
-# Pulls in the platform backend for the target OS and the `application()`,
-# `headless()`, and `current_platform()` entrypoints.
-default-platform = [
+# The platform bundle: pulls in the backend for the target OS, hosts the
+# `application()`, `headless()`, and `current_platform()` entrypoints, and turns
+# on the windowing and text features a desktop build needs.
+#
+# `default-features = false` drops it, leaving a headless gpui with no platform
+# dependencies compiled.
+default = ["platform"]
+platform = [
     "dep:gpui_linux",
     "dep:gpui_macos",
     "dep:gpui_windows",
     "dep:gpui_web",
+    "font-kit",
+    "wayland",
+    "x11",
+    "windows-manifest",
 ]
 test-support = [
     "leak-detection",

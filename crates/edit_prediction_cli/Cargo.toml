@@ -30,7 +30,7 @@ dirs.workspace = true
 extension.workspace = true
 fs.workspace = true
 futures.workspace = true
-gpui = { workspace = true, features = ["default-platform"] }
+gpui = { workspace = true, features = ["platform"] }
 gpui_tokio.workspace = true
 indoc.workspace = true
 language.workspace = true

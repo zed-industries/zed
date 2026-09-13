@@ -35,7 +35,7 @@ assets.workspace = true
 editor.workspace = true
 env_logger.workspace = true
 fs.workspace = true
-gpui = { workspace = true, features = ["screen-capture", "default-platform"] }
+gpui = { workspace = true, features = ["screen-capture", "platform"] }
 node_runtime.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
