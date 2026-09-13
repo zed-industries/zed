@@ -11,7 +11,7 @@ use crate::{
     text_finder::TextFinder,
 };
 use anyhow::Context as _;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SearchResultsStatus, SelectionEffects,
@@ -380,6 +380,7 @@ pub struct ProjectSearchView {
     regex_language: Option<Arc<Language>>,
     debounced_search: Option<Task<()>>,
     last_search_signature: Option<SearchSignature>,
+    default_folded_buffers: HashSet<language::BufferId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1482,6 +1483,29 @@ impl ProjectSearchView {
         subscriptions.push(cx.observe_in(&entity, window, |this, _, window, cx| {
             this.entity_changed(window, cx)
         }));
+        subscriptions.push(
+            cx.subscribe(
+                &excerpts,
+                |this, _, event: &multi_buffer::Event, cx| match event {
+                    multi_buffer::Event::BufferRangesUpdated { buffer, .. } => {
+                        let buffer_id = buffer.read(cx).remote_id();
+                        if this.default_folded_buffers.insert(buffer_id)
+                            && EditorSettings::get_global(cx).multibuffer_default_folded
+                        {
+                            this.results_editor.update(cx, |editor, cx| {
+                                editor.fold_buffer(buffer_id, cx);
+                            });
+                        }
+                    }
+                    multi_buffer::Event::BuffersRemoved { removed_buffer_ids } => {
+                        for buffer_id in removed_buffer_ids {
+                            this.default_folded_buffers.remove(buffer_id);
+                        }
+                    }
+                    _ => {}
+                },
+            ),
+        );
 
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
@@ -1660,6 +1684,7 @@ impl ProjectSearchView {
             regex_language: None,
             debounced_search: None,
             last_search_signature: None,
+            default_folded_buffers: HashSet::default(),
             _subscriptions: subscriptions,
         };
 
@@ -6949,6 +6974,101 @@ pub mod tests {
         perform_incremental_search(search_view, "ONE", cx);
         assert_eq!(match_texts(&search, cx), expected_one_matches);
         assert_all_highlights_match_query(&search, "ONE", cx);
+    }
+
+    #[gpui::test]
+    async fn test_multibuffer_default_folded(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.multibuffer_default_folded = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const NEEDLE: usize = 1;\nconst NEEDLE_EXTRA: usize = 2;",
+                "two.rs": "const NEEDLE: usize = 3;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), workspace.downgrade(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        let buffer_id_for_file = |file_name: &str, cx: &mut TestAppContext| {
+            search.read_with(cx, |search, cx| {
+                search
+                    .excerpts
+                    .read(cx)
+                    .all_buffers_iter()
+                    .find_map(|buffer| {
+                        let buffer = buffer.read(cx);
+                        (buffer.file()?.path().file_name()? == file_name)
+                            .then(|| buffer.remote_id())
+                    })
+                    .unwrap_or_else(|| panic!("no buffer found for {file_name}"))
+            })
+        };
+        let is_folded = |buffer_id: language::BufferId, cx: &mut TestAppContext| {
+            search_view
+                .read_with(cx, |view, cx| {
+                    view.results_editor.read(cx).is_buffer_folded(buffer_id, cx)
+                })
+                .unwrap()
+        };
+
+        perform_search(search_view, "NEEDLE", cx);
+        assert_eq!(matched_file_names(&search, cx), vec!["one.rs", "two.rs"]);
+
+        let one_id = buffer_id_for_file("one.rs", cx);
+        let two_id = buffer_id_for_file("two.rs", cx);
+        assert!(is_folded(one_id, cx), "one.rs should start folded");
+        assert!(is_folded(two_id, cx), "two.rs should start folded");
+
+        // The user expands one.rs manually.
+        search_view
+            .update(cx, |view, _, cx| {
+                view.results_editor.update(cx, |editor, cx| {
+                    editor.unfold_buffer(one_id, cx);
+                });
+            })
+            .unwrap();
+        assert!(!is_folded(one_id, cx));
+
+        // Narrow the search so only one.rs still matches. two.rs is pruned from the
+        // multibuffer, while one.rs stays present but has its excerpt ranges updated.
+        perform_incremental_search(search_view, "NEEDLE_EXTRA", cx);
+        assert_eq!(matched_file_names(&search, cx), vec!["one.rs"]);
+        assert!(
+            !is_folded(one_id, cx),
+            "updating an already-present buffer's ranges must not re-fold it"
+        );
+
+        // Widen back — two.rs reappears as a brand new insertion and should fold again,
+        // while one.rs (never removed from the results) must stay as the user left it.
+        perform_incremental_search(search_view, "NEEDLE", cx);
+        assert_eq!(matched_file_names(&search, cx), vec!["one.rs", "two.rs"]);
+        let two_id_again = buffer_id_for_file("two.rs", cx);
+        assert!(
+            is_folded(two_id_again, cx),
+            "two.rs re-appeared after being removed, so it should fold again"
+        );
+        assert!(
+            !is_folded(one_id, cx),
+            "one.rs was never removed from the results, so it must stay unfolded"
+        );
     }
 
     #[gpui::test]

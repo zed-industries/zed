@@ -389,6 +389,18 @@ impl ProjectDiff {
     pub fn excerpt_file_paths(&self, cx: &App) -> Vec<String> {
         self.diff.read(cx).excerpt_file_paths(cx)
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_buffer_folded_for_path(&self, path: &str, cx: &App) -> bool {
+        self.diff.read(cx).is_buffer_folded_for_path(path, cx)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unfold_buffer_for_path(&self, path: &str, cx: &mut App) {
+        self.diff.clone().update(cx, |diff, cx| {
+            diff.unfold_buffer_for_path(path, cx);
+        });
+    }
 }
 
 struct ButtonStates {
@@ -1997,6 +2009,91 @@ mod tests {
             "
             .unindent(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_multibuffer_default_folded(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.multibuffer_default_folded = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "one.rs": "one\n",
+                "two.rs": "two\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("one.rs", "modified one\n".into()),
+                ("two.rs", "modified two\n".into()),
+            ],
+        );
+        cx.run_until_parked();
+
+        let paths = diff.read_with(cx, |diff, cx| diff.excerpt_file_paths(cx));
+        assert_eq!(paths, vec!["one.rs", "two.rs"]);
+
+        diff.read_with(cx, |diff, cx| {
+            assert!(
+                diff.is_buffer_folded_for_path("one.rs", cx),
+                "one.rs should start folded"
+            );
+            assert!(
+                diff.is_buffer_folded_for_path("two.rs", cx),
+                "two.rs should start folded"
+            );
+        });
+
+        // The user expands one.rs manually.
+        diff.update(cx, |diff, cx| {
+            diff.unfold_buffer_for_path("one.rs", cx);
+        });
+        diff.read_with(cx, |diff, cx| {
+            assert!(!diff.is_buffer_folded_for_path("one.rs", cx));
+        });
+
+        // one.rs changes again on disk. Since it's already present in the multibuffer,
+        // this is an update, not a new insertion, and must not re-fold it.
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("one.rs", "modified one again\n".into()),
+                ("two.rs", "modified two\n".into()),
+            ],
+        );
+        cx.run_until_parked();
+
+        diff.read_with(cx, |diff, cx| {
+            assert!(
+                !diff.is_buffer_folded_for_path("one.rs", cx),
+                "updating an already-present file's diff must not re-fold it"
+            );
+            assert!(
+                diff.is_buffer_folded_for_path("two.rs", cx),
+                "two.rs was untouched and should remain folded"
+            );
+        });
     }
 
     #[gpui::test]

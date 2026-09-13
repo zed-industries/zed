@@ -1,7 +1,8 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, HiddenUnstagedDiffHunkRenderer, MultiBuffer, multibuffer_context_lines,
+    Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer, MultiBuffer,
+    multibuffer_context_lines,
 };
 use git_ui_core::file_diff_view::build_buffer_diff;
 use gpui::{
@@ -11,6 +12,7 @@ use gpui::{
 use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     path::{Path, PathBuf},
@@ -201,6 +203,15 @@ impl MultiDiffView {
             editor.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
+            if EditorSettings::get_global(cx).multibuffer_default_folded {
+                let buffer_ids: Vec<_> = editor
+                    .buffer()
+                    .read(cx)
+                    .all_buffers_iter()
+                    .map(|buffer| buffer.read(cx).remote_id())
+                    .collect();
+                editor.fold_buffers(buffer_ids, cx);
+            }
             editor
         });
 
@@ -335,5 +346,103 @@ impl Item for MultiDiffView {
 impl Render for MultiDiffView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.editor.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{BorrowAppContext, TestAppContext};
+    use project::FakeFs;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+    }
+
+    fn is_buffer_folded_for_path(view: &Entity<MultiDiffView>, path: &str, cx: &App) -> bool {
+        let view = view.read(cx);
+        let multibuffer = view.editor.read(cx).buffer().read(cx);
+        let buffer_id = multibuffer
+            .all_buffers_iter()
+            .find_map(|buffer| {
+                let buffer = buffer.read(cx);
+                (buffer.file()?.path().as_unix_str() == path).then(|| buffer.remote_id())
+            })
+            .unwrap_or_else(|| panic!("no buffer found for {path}"));
+        view.editor.read(cx).is_buffer_folded(buffer_id, cx)
+    }
+
+    #[gpui::test]
+    async fn test_multibuffer_default_folded(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.multibuffer_default_folded = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "old": {
+                    "one.txt": "one\n",
+                    "two.txt": "two\n",
+                },
+                "new": {
+                    "one.txt": "one changed\n",
+                    "two.txt": "two changed\n",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                MultiDiffView::open(
+                    vec![
+                        [
+                            path!("/project/old/one.txt").to_string(),
+                            path!("/project/new/one.txt").to_string(),
+                        ],
+                        [
+                            path!("/project/old/two.txt").to_string(),
+                            path!("/project/new/two.txt").to_string(),
+                        ],
+                    ],
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        cx.update(|_, cx| {
+            assert!(
+                is_buffer_folded_for_path(&diff_view, "new/one.txt", cx),
+                "one.txt should start folded"
+            );
+            assert!(
+                is_buffer_folded_for_path(&diff_view, "new/two.txt", cx),
+                "two.txt should start folded"
+            );
+        });
     }
 }

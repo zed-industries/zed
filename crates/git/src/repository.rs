@@ -527,7 +527,7 @@ pub struct CommitDetails {
     pub author_name: SharedString,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
     pub is_shallow_boundary: bool,
@@ -545,7 +545,7 @@ pub enum CommitFileStatus {
     Deleted,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CommitFile {
     pub path: RepoPath,
     pub old_content: Option<Vec<u8>>,
