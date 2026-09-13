@@ -1,3 +1,19 @@
+[build]
+# The gallery imports only the selected example instead of starting or preloading the main binary.
+pattern_script = ""
+pattern_preload = ""
+filehash = false
+
+[watch]
+watch = [
+    ".",
+    "../../../gpui/examples",
+    "../../../gpui/src",
+    "../../../gpui_platform/src",
+    "../../../gpui_web/src",
+    "../../../gpui_wgpu/src",
+]
+
 [serve]
 addresses = ["127.0.0.1"]
 port = 8080

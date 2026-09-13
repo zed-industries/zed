@@ -12,7 +12,7 @@ use http_client::Url;
 use log::Level;
 use smallvec::SmallVec;
 use std::{
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     collections::{BTreeMap, HashSet},
     ops::Deref,
     path::PathBuf,
@@ -63,7 +63,7 @@ use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowButtonLayout, WindowParams, point, px,
+    TouchPhase, WindowButtonLayout, WindowParams, WindowVisibility, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -89,6 +89,17 @@ pub(crate) struct WindowRef {
 impl WindowRef {
     pub fn handle(&self) -> AnyWindowHandle {
         self.window.state.borrow().handle
+    }
+
+    /// Whether the X server is presenting this window. Compositing window
+    /// managers rarely report `FULLY_OBSCURED`, so under them this is the
+    /// mapped state alone.
+    fn visibility(&self) -> WindowVisibility {
+        if self.is_mapped && !matches!(self.last_visibility, Visibility::FULLY_OBSCURED) {
+            WindowVisibility::Visible
+        } else {
+            WindowVisibility::Hidden
+        }
     }
 }
 
@@ -309,7 +320,7 @@ impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
         let event_loop = EventLoop::try_new()?;
 
-        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -339,13 +350,17 @@ impl X11Client {
             })?;
 
         handle
-            .insert_source(wake_receiver, |event, _, client: &mut X11Client| {
-                if let calloop::channel::Event::Msg(()) = event {
-                    client.0.borrow_mut().common.handle_system_wake();
+            .insert_source(power_receiver, |event, _, client: &mut X11Client| {
+                if let calloop::channel::Event::Msg(event) = event {
+                    client
+                        .0
+                        .borrow_mut()
+                        .common
+                        .handle_system_power_event(event);
                 }
             })
             .map_err(|err| {
-                anyhow!("Failed to initialize event loop handling of wake events: {err:?}")
+                anyhow!("Failed to initialize event loop handling of sleep/wake events: {err:?}")
             })?;
 
         let (xcb_connection, x_root_index) = XCBConnection::connect(None)?;
@@ -801,21 +816,21 @@ impl X11Client {
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.is_mapped = false;
                 }
-                state.update_refresh_loop(event.window);
+                handle_visibility_changed(state, event.window);
             }
             Event::MapNotify(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.is_mapped = true;
                 }
-                state.update_refresh_loop(event.window);
+                handle_visibility_changed(state, event.window);
             }
             Event::VisibilityNotify(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.last_visibility = event.state;
                 }
-                state.update_refresh_loop(event.window);
+                handle_visibility_changed(state, event.window);
             }
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
@@ -1903,8 +1918,7 @@ impl X11ClientState {
         let Some(window_ref) = self.windows.get_mut(&x_window) else {
             return;
         };
-        let is_visible = window_ref.is_mapped
-            && !matches!(window_ref.last_visibility, Visibility::FULLY_OBSCURED);
+        let is_visible = window_ref.visibility().is_visible();
         match (is_visible, window_ref.refresh_state.take()) {
             (false, refresh_state @ Some(RefreshState::Hidden { .. }))
             | (false, refresh_state @ None)
@@ -2161,6 +2175,20 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     let micros = 1_000_000_000 / millihertz;
     log::info!("Refreshing every {}ms", micros / 1_000);
     Duration::from_micros(micros)
+}
+
+/// Applies a mapped/obscured change to the refresh loop and reports the
+/// resulting visibility to the window. Consumes the client borrow because the
+/// visibility callback re-enters GPUI.
+fn handle_visibility_changed(mut state: RefMut<'_, X11ClientState>, x_window: xproto::Window) {
+    state.update_refresh_loop(x_window);
+    let Some(window_ref) = state.windows.get(&x_window) else {
+        return;
+    };
+    let visibility = window_ref.visibility();
+    let window = window_ref.window.clone();
+    drop(state);
+    window.set_visibility(visibility);
 }
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
@@ -2819,7 +2847,9 @@ mod tests {
     }
 
     fn test_keymap_with_variant(layouts: &str, variant: &str) -> xkbc::Keymap {
-        let context = new_xkb_context().expect("test XKB context should initialize");
+        // These fixtures compile layout names from local files, unlike server keymaps.
+        let context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        assert!(!context.get_raw_ptr().is_null());
         xkbc::Keymap::new_from_names(
             &context,
             "",
