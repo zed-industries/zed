@@ -37,7 +37,6 @@ use gpui_platform::{
     popup::PopupNotSupportedError,
 };
 use gpui_util::{ResultExt, new_std_command};
-use itertools::Itertools;
 use objc::{
     class,
     declare::ClassDecl,
@@ -314,19 +313,19 @@ impl MacPlatform {
                             let mut mask = NSEventModifierFlags::empty();
                             for (modifier, flag) in &[
                                 (
-                                    keystroke.modifiers().platform,
+                                    keystroke.modifiers.platform,
                                     NSEventModifierFlags::NSCommandKeyMask,
                                 ),
                                 (
-                                    keystroke.modifiers().control,
+                                    keystroke.modifiers.control,
                                     NSEventModifierFlags::NSControlKeyMask,
                                 ),
                                 (
-                                    keystroke.modifiers().alt,
+                                    keystroke.modifiers.alt,
                                     NSEventModifierFlags::NSAlternateKeyMask,
                                 ),
                                 (
-                                    keystroke.modifiers().shift,
+                                    keystroke.modifiers.shift,
                                     NSEventModifierFlags::NSShiftKeyMask,
                                 ),
                             ] {
@@ -335,7 +334,7 @@ impl MacPlatform {
                                 }
                             }
 
-                            (key_to_native(keystroke.key()).into_owned(), mask)
+                            (key_to_native(&keystroke.key).into_owned(), mask)
                         }
                         None => (String::new(), NSEventModifierFlags::empty()),
                     };

@@ -7682,7 +7682,6 @@ dependencies = [
  "gpui_platform",
  "gpui_util",
  "image",
- "itertools 0.14.0",
  "libc",
  "log",
  "mach2 0.5.0",
