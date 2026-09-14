@@ -6,7 +6,7 @@ use cosmic_text::{
 };
 use gpui::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, GlyphId,
-    LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
+    IsZero as _, LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
     SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point,
     size,
 };
@@ -44,6 +44,7 @@ struct CosmicTextSystemState {
     font_system: FontSystem,
     scratch: ShapeBuffer,
     swash_scale_context: ScaleContext,
+    pending_glyph_images: HashMap<RenderGlyphParams, swash::scale::image::Image>,
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts: Vec<LoadedFont>,
     /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
@@ -83,6 +84,29 @@ impl FontMatchProperties {
 }
 
 impl CosmicTextSystem {
+    /// Returns the selected face's weight and style, which may differ from the request.
+    pub fn font_weight_and_style(
+        &self,
+        font_id: FontId,
+    ) -> Result<(gpui::FontWeight, gpui::FontStyle)> {
+        let state = self.0.read();
+        let font = state
+            .loaded_fonts
+            .get(font_id.0)
+            .context("invalid font ID")?;
+        let face = state
+            .font_system
+            .db()
+            .face(font.font.id())
+            .context("font face not found")?;
+        let style = match face.style {
+            cosmic_text::Style::Normal => gpui::FontStyle::Normal,
+            cosmic_text::Style::Italic => gpui::FontStyle::Italic,
+            cosmic_text::Style::Oblique => gpui::FontStyle::Oblique,
+        };
+        Ok((gpui::FontWeight(face.weight.0 as f32), style))
+    }
+
     pub fn new(system_font_fallback: &str) -> Self {
         let font_system = FontSystem::new();
 
@@ -90,6 +114,7 @@ impl CosmicTextSystem {
             font_system,
             scratch: ShapeBuffer::default(),
             swash_scale_context: ScaleContext::new(),
+            pending_glyph_images: HashMap::default(),
             loaded_fonts: Vec::new(),
             font_ids_by_family_cache: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
@@ -106,6 +131,7 @@ impl CosmicTextSystem {
             font_system,
             scratch: ShapeBuffer::default(),
             swash_scale_context: ScaleContext::new(),
+            pending_glyph_images: HashMap::default(),
             loaded_fonts: Vec::new(),
             font_ids_by_family_cache: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
@@ -385,10 +411,14 @@ impl CosmicTextSystemState {
 
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let image = self.render_glyph_image(params)?;
-        Ok(Bounds {
+        let bounds = Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
             size: size(image.placement.width.into(), image.placement.height.into()),
-        })
+        };
+        if !bounds.is_zero() {
+            self.pending_glyph_images.insert(params.clone(), image);
+        }
+        Ok(bounds)
     }
 
     #[profiling::function]
@@ -401,7 +431,10 @@ impl CosmicTextSystemState {
             anyhow::bail!("glyph bounds are empty");
         }
 
-        let mut image = self.render_glyph_image(params)?;
+        let mut image = match self.pending_glyph_images.remove(params) {
+            Some(image) => image,
+            None => self.render_glyph_image(params)?,
+        };
         let bitmap_size = glyph_bounds.size;
         match image.content {
             swash::scale::image::Content::Color | swash::scale::image::Content::SubpixelMask => {
@@ -1031,6 +1064,26 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn all_font_names_tracks_available_families() -> Result<()> {
+        let text_system = gpui::TextSystem::new(Arc::new(
+            CosmicTextSystem::new_without_system_fonts("IBM Plex Sans"),
+        ));
+        assert!(text_system.all_font_names().is_empty());
+
+        text_system.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+        ))])?;
+        assert_eq!(text_system.all_font_names(), ["Lilex"]);
+
+        text_system.add_fonts(vec![
+            Cow::Borrowed(IBM_PLEX),
+            Cow::Borrowed(include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf")),
+        ])?;
+        assert_eq!(text_system.all_font_names(), ["IBM Plex Sans", "Lilex"]);
+        Ok(())
+    }
+
     fn fid(i: usize) -> FontId {
         FontId(i)
     }
@@ -1063,6 +1116,31 @@ mod tests {
         let text_system = CosmicTextSystem::new_without_system_fonts("IBM Plex Sans");
         text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
         Ok(text_system)
+    }
+
+    #[test]
+    fn font_properties_describe_the_selected_face() -> Result<()> {
+        let text_system = text_system()?;
+        let regular = gpui::font("IBM Plex Sans");
+        let regular_id = text_system.font_id(&regular)?;
+        for (weight, style) in [
+            (gpui::FontWeight::MEDIUM, gpui::FontStyle::Normal),
+            (gpui::FontWeight::BOLD, gpui::FontStyle::Italic),
+            (gpui::FontWeight::NORMAL, gpui::FontStyle::Oblique),
+        ] {
+            let requested = Font {
+                weight,
+                style,
+                ..regular.clone()
+            };
+            let font_id = text_system.font_id(&requested)?;
+            assert_eq!(font_id, regular_id);
+            assert_eq!(
+                text_system.font_weight_and_style(font_id)?,
+                (gpui::FontWeight::NORMAL, gpui::FontStyle::Normal)
+            );
+        }
+        Ok(())
     }
 
     fn layout_text(text_system: &CosmicTextSystem, text: &str) -> Result<LineLayout> {
