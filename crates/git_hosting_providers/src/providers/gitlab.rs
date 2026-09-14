@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
@@ -13,7 +14,7 @@ use urlencoding::encode;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
-    PullRequest, RemoteUrl,
+    PullRequest, RemoteUrl, RepositorySearchResult,
 };
 
 fn merge_request_number_regex() -> &'static Regex {
@@ -28,6 +29,9 @@ fn merge_request_number_regex() -> &'static Regex {
 
 use crate::get_host_from_git_remote_url;
 
+const REPOSITORY_SEARCH_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_REPOSITORY_SEARCH_RESULTS: usize = 8;
+
 #[derive(Debug, Deserialize)]
 struct CommitDetails {
     author_email: String,
@@ -36,6 +40,28 @@ struct CommitDetails {
 #[derive(Debug, Deserialize)]
 struct AvatarInfo {
     avatar_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitlabRepository {
+    path_with_namespace: String,
+    http_url_to_repo: String,
+    visibility: String,
+    description: Option<String>,
+}
+
+impl From<GitlabRepository> for RepositorySearchResult {
+    fn from(repository: GitlabRepository) -> Self {
+        let detail = match repository.description {
+            Some(description) => format!("{} - {description}", repository.visibility).into(),
+            None => repository.visibility.into(),
+        };
+        Self {
+            name: repository.path_with_namespace.into(),
+            detail,
+            clone_url: repository.http_url_to_repo.into(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -144,6 +170,48 @@ impl Gitlab {
         serde_json::from_str::<Option<AvatarInfo>>(body_str)
             .context("failed to deserialize GitLab avatar info")
     }
+
+    async fn search_public_repositories(
+        &self,
+        query: &str,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Vec<RepositorySearchResult>> {
+        let mut url = self.base_url.join("api/v4/projects")?;
+        url.query_pairs_mut()
+            .append_pair("search", query)
+            .append_pair("simple", "true")
+            .append_pair("order_by", "last_activity_at")
+            .append_pair("sort", "desc")
+            .append_pair("per_page", &MAX_REPOSITORY_SEARCH_RESULTS.to_string());
+
+        let request = Request::get(url.as_str())
+            .follow_redirects(http_client::RedirectPolicy::NoFollow)
+            .timeout(REPOSITORY_SEARCH_TIMEOUT);
+        let mut response = http_client
+            .send(request.body(AsyncBody::default())?)
+            .await
+            .context("requesting GitLab repository suggestions")?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "GitLab repository search returned HTTP {}",
+            response.status(),
+        );
+
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .context("reading GitLab repository suggestions")?;
+        let repositories: Vec<GitlabRepository> =
+            serde_json::from_slice(&body).context("parsing GitLab repository suggestions")?;
+
+        Ok(repositories
+            .into_iter()
+            .take(MAX_REPOSITORY_SEARCH_RESULTS)
+            .map(RepositorySearchResult::from)
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -158,6 +226,22 @@ impl GitHostingProvider for Gitlab {
 
     fn supports_avatars(&self) -> bool {
         true
+    }
+
+    fn supports_repository_search(&self) -> bool {
+        self.base_url.host_str() == Some("gitlab.com")
+    }
+
+    async fn search_repositories(
+        &self,
+        query: &str,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Vec<RepositorySearchResult>> {
+        if !self.supports_repository_search() {
+            return Ok(Vec::new());
+        }
+
+        self.search_public_repositories(query, http_client).await
     }
 
     fn format_line_number(&self, line: u32) -> String {
@@ -300,6 +384,7 @@ impl GitHostingProvider for Gitlab {
 #[cfg(test)]
 mod tests {
     use git::repository::repo_path;
+    use http_client::{AsyncBody, FakeHttpClient, Response};
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -309,6 +394,52 @@ mod tests {
         let remote_url = "https://gitlab.com/zed-industries/zed.git";
         let gitlab = Gitlab::from_remote_url(remote_url);
         assert!(gitlab.is_err());
+    }
+
+    #[test]
+    fn test_repository_search_supports_only_public_gitlab() {
+        assert!(Gitlab::public_instance().supports_repository_search());
+        assert!(
+            !Gitlab::new(
+                "GitLab Self-Hosted",
+                Url::parse("https://gitlab.example.com").expect("valid GitLab URL")
+            )
+            .supports_repository_search()
+        );
+    }
+
+    #[test]
+    fn test_search_repositories() {
+        let http_client = FakeHttpClient::create(|request| async move {
+            assert_eq!(
+                request.uri().to_string(),
+                "https://gitlab.com/api/v4/projects?search=zed+editor&simple=true&order_by=last_activity_at&sort=desc&per_page=8"
+            );
+            assert_eq!(
+                request.extensions().get::<http_client::RedirectPolicy>(),
+                Some(&http_client::RedirectPolicy::NoFollow)
+            );
+            Ok(Response::builder()
+                .status(200)
+                .body(AsyncBody::from(
+                    r#"[{"path_with_namespace":"zed-industries/zed","http_url_to_repo":"https://gitlab.com/zed-industries/zed.git","visibility":"public","description":"Code at the speed of thought"}]"#,
+                ))
+                .expect("valid response"))
+        });
+
+        let results = futures::executor::block_on(
+            Gitlab::public_instance().search_repositories("zed editor", http_client),
+        )
+        .expect("repository search should succeed");
+
+        assert_eq!(
+            results,
+            vec![RepositorySearchResult {
+                name: "zed-industries/zed".into(),
+                detail: "public - Code at the speed of thought".into(),
+                clone_url: "https://gitlab.com/zed-industries/zed.git".into(),
+            }]
+        );
     }
 
     #[test]

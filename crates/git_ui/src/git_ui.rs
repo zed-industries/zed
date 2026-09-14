@@ -1321,6 +1321,7 @@ impl GitCloneModal {
             search_errors: Vec::new(),
             is_searching: false,
             has_searched_providers: false,
+            search_generation: 0,
             selected_index: 0,
         };
         let picker = cx.new(|cx| {
@@ -1368,6 +1369,7 @@ struct GitCloneDelegate {
     search_errors: Vec<SharedString>,
     is_searching: bool,
     has_searched_providers: bool,
+    search_generation: usize,
     selected_index: usize,
 }
 
@@ -1512,6 +1514,8 @@ impl PickerDelegate for GitCloneDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
+        self.search_generation = self.search_generation.wrapping_add(1);
+        let search_generation = self.search_generation;
         let query = query.trim().to_owned();
         self.suggestions = clone_suggestions::for_input(&query);
         self.selected_index = 0;
@@ -1584,12 +1588,20 @@ impl PickerDelegate for GitCloneDelegate {
 
             picker
                 .update(cx, |picker, cx| {
+                    if picker.delegate.search_generation != search_generation {
+                        return;
+                    }
                     for (provider_name, provider_url, search_result) in search_results {
                         match search_result {
                             Ok(results) => {
                                 let search_suggestions = results
                                     .into_iter()
-                                    .map(clone_suggestions::CloneSuggestion::from)
+                                    .map(|result| {
+                                        clone_suggestions::CloneSuggestion::from_search_result(
+                                            result,
+                                            &provider_name,
+                                        )
+                                    })
                                     .collect::<Vec<_>>();
                                 picker.delegate.cached_searches.insert(
                                     (provider_url, query.clone()),
@@ -1723,12 +1735,30 @@ impl PickerDelegate for GitCloneDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
+                        .min_w_0()
+                        .flex_1()
                         .gap_0p5()
-                        .child(Label::new(suggestion.title.clone()))
+                        .child(Label::new(suggestion.title.clone()).truncate())
                         .child(
-                            Label::new(suggestion.detail.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                            h_flex()
+                                .min_w_0()
+                                .gap_1p5()
+                                .when_some(suggestion.provider.clone(), |this, provider| {
+                                    this.child(
+                                        Label::new(provider)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("·").size(LabelSize::Small).color(Color::Muted),
+                                    )
+                                })
+                                .child(
+                                    Label::new(suggestion.detail.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate(),
+                                ),
                         ),
                 ),
         )

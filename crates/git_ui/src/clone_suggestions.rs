@@ -5,6 +5,7 @@ pub(crate) struct CloneSuggestion {
     pub(crate) title: SharedString,
     pub(crate) detail: SharedString,
     pub(crate) repo_url: SharedString,
+    pub(crate) provider: Option<SharedString>,
 }
 
 pub(crate) fn for_input(input: &str) -> Vec<CloneSuggestion> {
@@ -40,6 +41,21 @@ impl From<git::RepositorySearchResult> for CloneSuggestion {
             title: result.name,
             detail: result.detail,
             repo_url: result.clone_url,
+            provider: None,
+        }
+    }
+}
+
+impl CloneSuggestion {
+    pub(crate) fn from_search_result(
+        result: git::RepositorySearchResult,
+        provider_name: &str,
+    ) -> Self {
+        Self {
+            title: result.name,
+            detail: result.detail,
+            repo_url: result.clone_url,
+            provider: Some(provider_name.into()),
         }
     }
 }
@@ -50,6 +66,7 @@ fn entered_repository(input: &str) -> CloneSuggestion {
         title: SharedString::new_static("Clone entered repository"),
         detail: repo_url.clone(),
         repo_url,
+        provider: None,
     }
 }
 
