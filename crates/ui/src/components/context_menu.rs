@@ -513,10 +513,6 @@ impl ContextMenu {
         self
     }
 
-    pub fn get_items(&self) -> &Vec<ContextMenuItem> {
-        &self.items
-    }
-
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
         self.items.push(ContextMenuItem::Header(title.into()));
         self

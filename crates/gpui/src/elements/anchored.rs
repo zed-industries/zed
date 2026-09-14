@@ -20,7 +20,6 @@ pub struct Anchored {
     anchor_position: Option<Point<Pixels>>,
     position_mode: AnchoredPositionMode,
     offset: Option<Point<Pixels>>,
-    force_snap: Option<AnchoredForceSnap>,
 }
 
 /// anchored gives you an element that will avoid overflowing the window bounds.
@@ -33,7 +32,6 @@ pub fn anchored() -> Anchored {
         anchor_position: None,
         position_mode: AnchoredPositionMode::Window,
         offset: None,
-        force_snap: None,
     }
 }
 
@@ -75,12 +73,6 @@ impl Anchored {
     /// Snap to window edge and leave some margins.
     pub fn snap_to_window_with_margin(mut self, edges: impl Into<Edges<Pixels>>) -> Self {
         self.fit_mode = AnchoredFitMode::SnapToWindowWithMargin(edges.into());
-        self
-    }
-
-    /// Force snap the anchored element to preferred side.
-    pub fn force_snap(mut self, snap: Option<AnchoredForceSnap>) -> Self {
-        self.force_snap = snap;
         self
     }
 }
@@ -163,44 +155,26 @@ impl Element for Anchored {
         if self.fit_mode == AnchoredFitMode::SwitchAnchor {
             let mut anchor = self.anchor;
 
-            match self.force_snap {
-                Some(AnchoredForceSnap::Horizontal) => {
-                    desired = Bounds::from_anchor_and_size(
-                        anchor.other_side_along(Axis::Horizontal),
-                        origin,
-                        children_bounds.size,
-                    );
+            if desired.left() < limits.left() || desired.right() > limits.right() {
+                let switched = Bounds::from_anchor_and_size(
+                    anchor.other_side_along(Axis::Horizontal),
+                    origin,
+                    children_bounds.size,
+                );
+                if !(switched.left() < limits.left() || switched.right() > limits.right()) {
+                    anchor = anchor.other_side_along(Axis::Horizontal);
+                    desired = switched
                 }
-                Some(AnchoredForceSnap::Vertical) => {
-                    desired = Bounds::from_anchor_and_size(
-                        anchor.other_side_along(Axis::Vertical),
-                        origin,
-                        children_bounds.size,
-                    );
-                }
-                None => {
-                    if desired.left() < limits.left() || desired.right() > limits.right() {
-                        let switched = Bounds::from_anchor_and_size(
-                            anchor.other_side_along(Axis::Horizontal),
-                            origin,
-                            children_bounds.size,
-                        );
-                        if !(switched.left() < limits.left() || switched.right() > limits.right()) {
-                            anchor = anchor.other_side_along(Axis::Horizontal);
-                            desired = switched
-                        }
-                    }
+            }
 
-                    if desired.top() < limits.top() || desired.bottom() > limits.bottom() {
-                        let switched = Bounds::from_anchor_and_size(
-                            anchor.other_side_along(Axis::Vertical),
-                            origin,
-                            children_bounds.size,
-                        );
-                        if !(switched.top() < limits.top() || switched.bottom() > limits.bottom()) {
-                            desired = switched;
-                        }
-                    }
+            if desired.top() < limits.top() || desired.bottom() > limits.bottom() {
+                let switched = Bounds::from_anchor_and_size(
+                    anchor.other_side_along(Axis::Vertical),
+                    origin,
+                    children_bounds.size,
+                );
+                if !(switched.top() < limits.top() || switched.bottom() > limits.bottom()) {
+                    desired = switched;
                 }
             }
         }
@@ -262,15 +236,6 @@ impl IntoElement for Anchored {
     fn into_element(self) -> Self::Element {
         self
     }
-}
-
-/// Enum for force snapping the anchored element.
-#[derive(Copy, Clone, PartialEq)]
-pub enum AnchoredForceSnap {
-    /// Force snap the anchored element horizontally.
-    Horizontal,
-    /// Force snap the anchored element vertically.
-    Vertical,
 }
 
 /// Which algorithm to use when fitting the anchored element to be inside the window.
