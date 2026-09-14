@@ -15,7 +15,7 @@ use cocoa::{
 };
 use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
 use core_graphics::event::CGKeyCode;
-use objc::{msg_send, sel, sel_impl};
+use objc::{class, msg_send, sel, sel_impl};
 use std::{borrow::Cow, ffi::c_void};
 
 const BACKSPACE_KEY: u16 = 0x7f;
@@ -83,21 +83,21 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
 }
 
 unsafe fn read_modifiers(native_event: id) -> Modifiers {
-    unsafe {
-        let modifiers = native_event.modifierFlags();
-        let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-        let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-        let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-        let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-        let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
+    modifiers_from_flags(unsafe { native_event.modifierFlags() })
+}
 
-        Modifiers {
-            control,
-            alt,
-            shift,
-            platform: command,
-            function,
-        }
+pub(crate) fn current_modifiers() -> Modifiers {
+    let flags: NSEventModifierFlags = unsafe { msg_send![class!(NSEvent), modifierFlags] };
+    modifiers_from_flags(flags)
+}
+
+fn modifiers_from_flags(flags: NSEventModifierFlags) -> Modifiers {
+    Modifiers {
+        control: flags.contains(NSEventModifierFlags::NSControlKeyMask),
+        alt: flags.contains(NSEventModifierFlags::NSAlternateKeyMask),
+        shift: flags.contains(NSEventModifierFlags::NSShiftKeyMask),
+        platform: flags.contains(NSEventModifierFlags::NSCommandKeyMask),
+        function: flags.contains(NSEventModifierFlags::NSFunctionKeyMask),
     }
 }
 
