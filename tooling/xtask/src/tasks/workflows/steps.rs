@@ -201,6 +201,14 @@ pub fn install_cargo_edit() -> Step<Use> {
     taiki_install_action("cargo-edit")
 }
 
+pub fn install_cargo_shear() -> Step<Use> {
+    taiki_install_action("cargo-shear@1.13.4")
+}
+
+pub fn install_cargo_sort() -> Step<Use> {
+    taiki_install_action("cargo-sort@2.1.4")
+}
+
 pub fn taiki_install_action(tool: &str) -> Step<Use> {
     Step::new(named::function_name(1))
         .uses(
