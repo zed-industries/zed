@@ -1225,6 +1225,7 @@ pub struct Window {
     /// The hitbox that has captured the pointer, if any.
     /// While captured, mouse events route to this hitbox regardless of hit testing.
     captured_hitbox: Option<HitboxId>,
+    scroll_wheel_taken: bool,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
     #[cfg(feature = "profiler")]
@@ -2084,6 +2085,7 @@ impl Window {
             client_inset: None,
             image_cache_stack: Vec::new(),
             captured_hitbox: None,
+            scroll_wheel_taken: false,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
             #[cfg(feature = "profiler")]
@@ -3966,6 +3968,20 @@ impl Window {
         self.requested_autoscroll.take()
     }
 
+    /// Marks the scroll wheel event now in dispatch as scrolled. A scroll
+    /// container calls this once it moved with the event. The containers
+    /// around it then leave the event alone, the way CSS chains a scroll
+    /// only past the end of the inner box. Listeners still see the event.
+    pub fn take_scroll_wheel(&mut self) {
+        self.scroll_wheel_taken = true;
+    }
+
+    /// Whether a scroll container inside already took the scroll wheel
+    /// event now in dispatch. See [`Self::take_scroll_wheel`].
+    pub fn scroll_wheel_taken(&self) -> bool {
+        self.scroll_wheel_taken
+    }
+
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
     /// Your view will be re-drawn once the asset has finished loading.
     ///
@@ -5647,6 +5663,7 @@ impl Window {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        self.scroll_wheel_taken = false;
         let hit_test = self.rendered_frame.hit_test(self.mouse_position());
         if hit_test != self.mouse_hit_test {
             self.mouse_hit_test = hit_test;
