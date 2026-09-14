@@ -30,7 +30,7 @@ The server supports direct links and reloads at each path. Only the selected
 example's WASM module is loaded. Follow **All examples** to return to the gallery;
 navigation reloads the page so the previous app and its workers are released.
 
-Install [Trunk](https://trunkrs.dev/) if needed. The gallery's toolchain file selects
+Install [Trunk](https://trunk-rs.github.io/trunk/) if needed. The gallery's toolchain file selects
 nightly Rust, the WASM target, and `rust-src`. Its Trunk configuration supplies the
 cross-origin-isolation headers needed for shared memory and watches the GPUI
 example and renderer sources for automatic rebuilds and browser reloads. Use a
