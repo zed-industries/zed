@@ -34,7 +34,7 @@ use collections::{FxHashMap, FxHashSet};
 use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use gpui_engine_default::__private::FrameSession;
+use gpui_engine::FrameSession;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
 use itertools::FoldWhile::{Continue, Done};
@@ -2008,7 +2008,7 @@ impl Window {
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
-            layout_session: Rc::new(FrameSession::new(Box::new(crate::TaffyLayoutEngine::new()))),
+            layout_session: Rc::new(FrameSession::new(cx.new_layout_engine())),
             root: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),

@@ -7,7 +7,6 @@
 
 #![warn(missing_docs)]
 
-mod engine;
 mod layout;
 mod layout_style;
 mod line_layout;
@@ -18,9 +17,3 @@ pub use layout::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
 pub use text_system::*;
-
-/// Engine internals consumed by the `gpui` facade. Not a stable API.
-#[doc(hidden)]
-pub mod __private {
-    pub use crate::engine::FrameSession;
-}

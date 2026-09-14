@@ -37,6 +37,11 @@ pub struct TaffyLayoutEngine {
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
 
+/// Creates the layout engine the default engine hands to each new window.
+pub fn default_layout_engine() -> Box<dyn LayoutEngine> {
+    Box::new(TaffyLayoutEngine::new())
+}
+
 fn taffy_id(id: LayoutId) -> NodeId {
     NodeId::new(id.0)
 }

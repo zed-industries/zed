@@ -1,15 +1,16 @@
 //! The engine execution seam for a window frame.
 //!
-//! A `FrameSession` owns the frame's layout engine behind interior mutability,
-//! so the facade can drive it with `&self` without taking the engine out of the
-//! window to satisfy the borrow checker. The engine itself is a trait object, so
-//! the layout implementation can be swapped without the facade naming it.
+//! A `FrameSession` owns a frame's layout engine behind interior mutability, so
+//! the facade can drive it with `&self` without moving the engine out of the
+//! window to satisfy the borrow checker. The engine is a trait object, so the
+//! layout implementation is chosen by whoever builds the session rather than
+//! named here.
 //!
 //! The scene graph stays in the facade's double-buffered frame, and frame
 //! presentation stays in the facade because `PlatformWindow` lives above this
 //! crate.
 
-use gpui_engine::{BoxedMeasureFn, EngineLayoutStyle, LayoutEngine, LayoutId, MeasureContext};
+use crate::{BoxedMeasureFn, EngineLayoutStyle, LayoutEngine, LayoutId, MeasureContext};
 use gpui_types::{AvailableSpace, Bounds, Pixels, Size};
 use std::cell::RefCell;
 

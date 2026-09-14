@@ -45,13 +45,13 @@ use crate::{
     AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
     ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload,
     FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke,
-    LayoutId, Menu, MenuCommandId, MenuItem, OwnedMenu, OwnedMenuItem, PathPromptOptions, Pixels,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, SystemWindowTab,
-    Task, TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance,
-    WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
+    LayoutEngine, LayoutId, Menu, MenuCommandId, MenuItem, OwnedMenu, OwnedMenuItem,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
+    SystemNotificationResponse, SystemWindowTab, Task, TextRenderingMode, TextSystem, ThermalState,
+    Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, resolve_dock_menu, resolve_menus,
 };
@@ -223,6 +223,18 @@ impl Application {
     /// By default, [`QuitMode::Default`] is used.
     pub fn with_quit_mode(self, mode: QuitMode) -> Self {
         self.0.borrow_mut().quit_mode = mode;
+        self
+    }
+
+    /// Sets the factory that creates each window's layout engine.
+    ///
+    /// Defaults to the engine bundled with GPUI. Supply a different
+    /// implementation to swap the layout engine without touching windows.
+    pub fn with_layout_engine(
+        self,
+        layout_engine: impl Fn() -> Box<dyn LayoutEngine> + 'static,
+    ) -> Self {
+        self.0.borrow_mut().layout_engine_factory = Rc::new(layout_engine);
         self
     }
 
@@ -672,6 +684,10 @@ pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
     text_system: Arc<TextSystem>,
+    /// Creates a fresh layout engine for each window. Injected at application
+    /// construction so windows drive layout through the [`LayoutEngine`] trait
+    /// without naming an implementation.
+    layout_engine_factory: Rc<dyn Fn() -> Box<dyn LayoutEngine>>,
 
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
@@ -766,6 +782,11 @@ pub struct App {
 }
 
 impl App {
+    /// Creates the layout engine for a newly opened window.
+    pub(crate) fn new_layout_engine(&self) -> Box<dyn LayoutEngine> {
+        (self.layout_engine_factory)()
+    }
+
     #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
@@ -796,6 +817,7 @@ impl App {
                 this: this.clone(),
                 platform: platform.clone(),
                 text_system,
+                layout_engine_factory: Rc::new(gpui_engine_default::default_layout_engine),
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
