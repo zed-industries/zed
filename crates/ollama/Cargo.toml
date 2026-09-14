@@ -23,3 +23,6 @@ schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+
+[dev-dependencies]
+http_client = { workspace = true, features = ["test-support"] }
