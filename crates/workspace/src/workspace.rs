@@ -1633,6 +1633,7 @@ pub struct Workspace {
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
+    pub(crate) serialized_window_id: Option<gpui::WindowId>,
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
@@ -1987,6 +1988,14 @@ impl Workspace {
         });
 
         let session_id = app_state.session.read(cx).id().to_owned();
+        let serialized_window_id = workspace_id
+            .and_then(|workspace_id| {
+                WorkspaceDb::global(cx)
+                    .serialized_window_id(workspace_id)
+                    .log_err()
+                    .flatten()
+            })
+            .map(gpui::WindowId::from);
 
         let mut active_call = None;
         if let Some(call) = GlobalAnyActiveCall::try_global(cx).cloned() {
@@ -2141,6 +2150,7 @@ impl Workspace {
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
+            serialized_window_id,
 
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
@@ -7750,7 +7760,7 @@ impl Workspace {
                     session_id: self.session_id.clone(),
                     bookmarks,
                     breakpoints,
-                    window_id: Some(window.window_handle().window_id().as_u64()),
+                    window_id: self.serialized_window_id.map(|id| id.as_u64()),
                     user_toolchains,
                     recent_navigation_history,
                 };

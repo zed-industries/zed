@@ -306,6 +306,7 @@ pub struct MultiWorkspace {
     window_id: WindowId,
     held: Vec<HeldWorkspace>,
     project_groups: Vec<ProjectGroupState>,
+    preloaded_project_groups: Vec<ProjectGroupKey>,
     /// Source of truth for which workspace is presented in this window, shared
     /// with each member `Workspace` so they can tell whether they own the
     /// platform window's title and edited indicator. This only exists to prevent
@@ -314,6 +315,7 @@ pub struct MultiWorkspace {
     /// `active_workspace`.
     active_workspace_id: Rc<Cell<EntityId>>,
     sidebar: Option<Box<dyn SidebarHandle>>,
+    pending_sidebar_state: Option<String>,
     sidebar_open: bool,
     sidebar_overlay: Option<AnyView>,
     pending_removal_tasks: Vec<Task<()>>,
@@ -339,6 +341,43 @@ impl MultiWorkspace {
     }
 
     pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let preferred_window_id = workspace.read(cx).serialized_window_id;
+        Self::new_with_window_id(workspace, preferred_window_id, window, cx)
+    }
+
+    pub fn new_with_window_id(
+        workspace: Entity<Workspace>,
+        preferred_window_id: Option<WindowId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let session = workspace.read(cx).app_state().session.clone();
+        let (window_id, reuse_previous) = session.update(cx, |session, _| {
+            (
+                session.register_window(window.window_handle().window_id(), preferred_window_id),
+                session.last_session_id() == Some(session.id()),
+            )
+        });
+        let state = if reuse_previous && preferred_window_id == Some(window_id) {
+            crate::persistence::read_multi_workspace_state(window_id, cx)
+        } else {
+            MultiWorkspaceState::default()
+        };
+        let project_groups = state
+            .project_groups
+            .into_iter()
+            .map(|group| {
+                let group = group.into_restored_state();
+                ProjectGroupState {
+                    key: group.key,
+                    expanded: group.expanded,
+                }
+            })
+            .collect::<Vec<_>>();
+        let preloaded_project_groups = project_groups
+            .iter()
+            .map(|group| group.key.clone())
+            .collect();
         let release_subscription = cx.on_release(|this: &mut MultiWorkspace, _cx| {
             if let Some(task) = this._serialize_task.take() {
                 task.detach();
@@ -363,19 +402,22 @@ impl MultiWorkspace {
         let weak_self = cx.weak_entity();
         let active_workspace_id = Rc::new(Cell::new(workspace.entity_id()));
         workspace.update(cx, |workspace, cx| {
+            workspace.serialized_window_id = Some(window_id);
             workspace.set_multi_workspace(weak_self, active_workspace_id.clone(), cx);
         });
         Self {
-            window_id: window.window_handle().window_id(),
+            window_id,
             held: vec![HeldWorkspace {
                 workspace,
                 pinned: false,
                 activated_at: Some(0),
             }],
-            project_groups: Vec::new(),
+            project_groups,
+            preloaded_project_groups,
             active_workspace_id,
             sidebar: None,
-            sidebar_open: false,
+            pending_sidebar_state: state.sidebar_state,
+            sidebar_open: state.sidebar_open,
             sidebar_overlay: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
@@ -392,10 +434,14 @@ impl MultiWorkspace {
         self._subscriptions
             .push(cx.subscribe(&sidebar, |this, _, event, cx| match event {
                 SidebarEvent::SerializeNeeded => {
+                    this.pending_sidebar_state.take();
                     this.serialize(cx);
                 }
             }));
         self.sidebar = Some(Box::new(sidebar));
+        if self.sidebar_open {
+            self.apply_open_sidebar(cx);
+        }
     }
 
     pub fn sidebar(&self) -> Option<&dyn SidebarHandle> {
@@ -794,6 +840,7 @@ impl MultiWorkspace {
         let weak_self = cx.weak_entity();
         let active_workspace_id = self.active_workspace_id.clone();
         workspace.update(cx, |workspace, cx| {
+            workspace.serialized_window_id = Some(self.window_id);
             workspace.set_multi_workspace(weak_self, active_workspace_id, cx);
         });
 
@@ -831,8 +878,11 @@ impl MultiWorkspace {
             }
             restored.push(ProjectGroupState { key, expanded });
         }
+        let preloaded = std::mem::take(&mut self.preloaded_project_groups);
         for existing in std::mem::take(&mut self.project_groups) {
-            if !restored.iter().any(|group| group.key == existing.key) {
+            if !preloaded.contains(&existing.key)
+                && !restored.iter().any(|group| group.key == existing.key)
+            {
                 restored.push(existing);
             }
         }
@@ -1415,6 +1465,7 @@ impl MultiWorkspace {
         cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
         workspace.update(cx, |workspace, _cx| {
             workspace.session_id.take();
+            workspace.serialized_window_id.take();
             workspace._schedule_serialize_workspace.take();
             workspace._serialize_workspace_task.take();
         });
@@ -1463,7 +1514,11 @@ impl MultiWorkspace {
                 })
                 .collect::<Vec<_>>(),
             sidebar_open: self.sidebar_open,
-            sidebar_state: self.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
+            sidebar_state: self.pending_sidebar_state.clone().or_else(|| {
+                self.sidebar
+                    .as_ref()
+                    .and_then(|sidebar| sidebar.serialized_state(cx))
+            }),
         };
         let window_id = self.window_id;
         let kvp = db::kvp::KeyValueStore::global(cx);
@@ -1669,9 +1724,9 @@ impl MultiWorkspace {
             let workspace_id = db.next_id().await.unwrap();
             let workspace = weak_workspace.upgrade().unwrap();
             let task: Task<()> = this
-                .update_in(cx, |this, window, cx| {
+                .update_in(cx, |this, _window, cx| {
                     let session_id = workspace.read(cx).session_id();
-                    let window_id = window.window_handle().window_id().as_u64();
+                    let window_id = this.window_id.as_u64();
                     workspace.update(cx, |workspace, _cx| {
                         workspace.set_database_id(workspace_id);
                     });
@@ -1708,7 +1763,7 @@ impl MultiWorkspace {
         }
 
         let session_id = self.workspace().read(cx).session_id();
-        let window_id_u64 = window.window_handle().window_id().as_u64();
+        let window_id_u64 = self.window_id.as_u64();
 
         let mut tasks: Vec<Task<()>> = Vec::new();
         for workspace in self.workspaces() {
@@ -2030,6 +2085,7 @@ impl Render for MultiWorkspace {
                                 weak.update(cx, |this, cx| {
                                     if let Some(sidebar) = this.sidebar.as_mut() {
                                         sidebar.set_width(None, cx);
+                                        this.pending_sidebar_state.take();
                                     }
                                     this.serialize(cx);
                                 })
@@ -2164,6 +2220,7 @@ impl Render for MultiWorkspace {
                                         e.event.position.x
                                     };
                                     sidebar.set_width(Some(new_width), cx);
+                                    this.pending_sidebar_state.take();
                                 }
                             },
                         ))
@@ -2202,11 +2259,154 @@ impl Render for MultiWorkspace {
 #[cfg(test)]
 mod tests {
     use super::MultiWorkspace;
+    use crate::{
+        Workspace, WorkspaceDb,
+        persistence::model::{MultiWorkspaceState, SerializedProjectGroup},
+    };
     use db::kvp::KeyValueStore;
     use fs::FakeFs;
-    use gpui::TestAppContext;
-    use project::Project;
+    use gpui::{AppContext as _, TestAppContext, WindowId};
+    use project::{Project, ProjectGroupKey};
     use serde_json::{Value, json};
+    use session::Session;
+    use std::path::PathBuf;
+    use util::path_list::PathList;
+
+    #[gpui::test]
+    async fn test_attached_workspaces_use_restored_window_id(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let saved_window_id = WindowId::from(4_294_967_500);
+        let kvp = cx.read(KeyValueStore::global);
+        kvp.scoped("multi_workspace_state")
+            .write(
+                saved_window_id.as_u64().to_string(),
+                json!({
+                    "active_workspace_id": null,
+                    "sidebar_open": true,
+                    "project_groups": [],
+                    "sidebar_state": "old session sidebar",
+                })
+                .to_string(),
+            )
+            .await
+            .expect("failed to seed old session state");
+        let (multi_workspace, visual_cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project.clone(), window, cx));
+            workspace.update(cx, |workspace, _| {
+                workspace.serialized_window_id = Some(saved_window_id);
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        multi_workspace.update_in(visual_cx, |multi_workspace, window, cx| {
+            assert_eq!(multi_workspace.window_id, saved_window_id);
+            assert!(!multi_workspace.sidebar_open());
+            assert_eq!(multi_workspace.pending_sidebar_state, None);
+            assert_eq!(
+                multi_workspace.workspace().read(cx).serialized_window_id,
+                Some(saved_window_id),
+            );
+            let app_state = multi_workspace.workspace().read(cx).app_state().clone();
+            let added =
+                cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx));
+            multi_workspace.add(added.clone(), window, cx);
+            assert_eq!(added.read(cx).serialized_window_id, Some(saved_window_id));
+            let activated = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+            multi_workspace.activate(activated.clone(), None, window, cx);
+            assert_eq!(
+                activated.read(cx).serialized_window_id,
+                Some(saved_window_id)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_preloaded_window_state_and_normalized_groups(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let database = cx.read(WorkspaceDb::global);
+        let workspace_id = database
+            .next_id()
+            .await
+            .expect("failed to allocate workspace ID");
+        let kvp = cx.read(KeyValueStore::global);
+        let saved_window_id = WindowId::from(4_294_967_500);
+        Session::new(String::from("saved"), kvp.clone(), false, None)
+            .await
+            .expect("failed to create saved session");
+        let session = Session::new(
+            String::from("launch"),
+            kvp.clone(),
+            true,
+            Some(saved_window_id.as_u64()),
+        )
+        .await
+        .expect("failed to resume saved session");
+        let mut state = MultiWorkspaceState {
+            active_workspace_id: Some(workspace_id),
+            sidebar_open: true,
+            project_groups: vec![SerializedProjectGroup::from_group(
+                &ProjectGroupKey::new(None, PathList::new(&[PathBuf::from("/linked")])),
+                false,
+            )],
+            sidebar_state: Some(String::from("saved sidebar")),
+        };
+        kvp.scoped("multi_workspace_state")
+            .write(
+                saved_window_id.as_u64().to_string(),
+                serde_json::to_string(&state).expect("failed to encode saved state"),
+            )
+            .await
+            .expect("failed to seed window state");
+        let window = cx.add_window(|window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            let app_session = workspace.read(cx).app_state().session.clone();
+            app_session.update(cx, |app_session, _| {
+                app_session.replace_session_for_test(session)
+            });
+            workspace.update(cx, |workspace, _| {
+                workspace.set_database_id(workspace_id);
+                workspace.serialized_window_id = Some(saved_window_id);
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.flush_serialization(cx)
+            })
+            .expect("failed to capture early window state")
+            .await;
+        assert_eq!(
+            read_window_state(&kvp, saved_window_id),
+            serde_json::to_value(&state).expect("failed to encode expected state")
+        );
+
+        state.project_groups = vec![SerializedProjectGroup::from_group(
+            &ProjectGroupKey::new(None, PathList::new(&[PathBuf::from("/main")])),
+            false,
+        )];
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.restore_project_groups(
+                    state
+                        .project_groups
+                        .iter()
+                        .cloned()
+                        .map(SerializedProjectGroup::into_restored_state)
+                        .collect(),
+                    cx,
+                );
+                multi_workspace.flush_serialization(cx)
+            })
+            .expect("failed to capture normalized window state")
+            .await;
+        assert_eq!(
+            read_window_state(&kvp, saved_window_id),
+            serde_json::to_value(&state).expect("failed to encode expected state")
+        );
+    }
 
     #[gpui::test]
     async fn test_pending_multi_workspace_state_flushed_on_shutdown(cx: &mut TestAppContext) {
@@ -2266,5 +2466,14 @@ mod tests {
                 .expect("flushed multi-workspace state is invalid"),
             expected_state
         );
+    }
+
+    fn read_window_state(kvp: &KeyValueStore, window_id: WindowId) -> Value {
+        let state = kvp
+            .scoped("multi_workspace_state")
+            .read(&window_id.as_u64().to_string())
+            .expect("failed to read window state")
+            .expect("window state is missing");
+        serde_json::from_str(&state).expect("failed to decode window state")
     }
 }

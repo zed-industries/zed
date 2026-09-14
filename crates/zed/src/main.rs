@@ -379,10 +379,6 @@ fn main() {
     }
 
     let session_id = Uuid::new_v4().to_string();
-    let session = app.background_executor().spawn(Session::new(
-        session_id.clone(),
-        KeyValueStore::from_app_db(&app_db),
-    ));
 
     let should_install_crash_handler =
         client::telemetry::should_install_crash_handler(*release_channel::RELEASE_CHANNEL);
@@ -391,7 +387,7 @@ fn main() {
         Some(
             app.background_executor().spawn(crashes::init(
                 InitCrashHandler {
-                    session_id,
+                    session_id: session_id.clone(),
                     // strip the build and channel information from the version string, we send them separately
                     zed_version: semver::Version::new(
                         app_version.major,
@@ -596,13 +592,31 @@ fn main() {
 
         let system_id = cx.foreground_executor().block_on(system_id).ok();
         let installation_id = cx.foreground_executor().block_on(installation_id).ok();
-        let session = cx.foreground_executor().block_on(session);
+        let session = cx.foreground_executor().block_on(async {
+            let max_window_id = workspace::WorkspaceDb::global(cx)
+                .max_window_id()
+                .context("reading maximum recovery window ID")?;
+            Session::new(
+                session_id.clone(),
+                KeyValueStore::global(cx),
+                false,
+                max_window_id,
+            )
+            .await
+        });
+        let session = match session {
+            Ok(session) => session,
+            Err(error) => {
+                fail_to_open_window(error, cx);
+                return;
+            }
+        };
 
         let telemetry = client.telemetry();
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),
             installation_id.as_ref().map(|id| id.to_string()),
-            session.id().to_owned(),
+            session_id,
             cx,
         );
         cx.subscribe(&user_store, {

@@ -60,7 +60,15 @@ fn main() {
         let kvp = db::kvp::KeyValueStore::global(cx);
         let session = cx
             .foreground_executor()
-            .block_on(Session::new(session_id, kvp));
+            .block_on(Session::new(session_id, kvp, false, None));
+        let session = match session {
+            Ok(session) => session,
+            Err(error) => {
+                log::error!("Failed to initialize session: {error:#}");
+                cx.quit();
+                return;
+            }
+        };
         let session = cx.new(|cx| AppSession::new(session, cx));
         let node_runtime = NodeRuntime::unavailable();
 

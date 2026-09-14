@@ -302,7 +302,10 @@ impl From<WindowBoundsJson> for WindowBounds {
     }
 }
 
-fn read_multi_workspace_state(window_id: WindowId, cx: &App) -> model::MultiWorkspaceState {
+pub(crate) fn read_multi_workspace_state(
+    window_id: WindowId,
+    cx: &App,
+) -> model::MultiWorkspaceState {
     let kvp = KeyValueStore::global(cx);
     kvp.scoped("multi_workspace_state")
         .read(&window_id.as_u64().to_string())
@@ -1913,6 +1916,19 @@ impl WorkspaceDb {
             FROM workspaces
             WHERE session_id = ?1
             ORDER BY timestamp DESC
+        }
+    }
+
+    pub fn max_window_id(&self) -> Result<Option<u64>> {
+        Ok(
+            self.select_row::<Option<u64>>(sql!(SELECT MAX(window_id) FROM workspaces))?()?
+                .flatten(),
+        )
+    }
+
+    query! {
+        pub(crate) fn serialized_window_id(workspace_id: WorkspaceId) -> Result<Option<u64>> {
+            SELECT window_id FROM workspaces WHERE workspace_id = ? AND window_id IS NOT NULL
         }
     }
 
