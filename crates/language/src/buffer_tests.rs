@@ -5387,6 +5387,269 @@ fn test_settings_changed_event(cx: &mut TestAppContext) {
     drop(subscription);
 }
 
+#[gpui::test]
+fn test_chunk_highlights_follow_edits_and_theme_changes(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let language = keyword_and_function_lang();
+    let theme_with_keyword = keyword_and_function_theme();
+    let theme_without_keyword =
+        SyntaxTheme::new([("function".to_string(), gpui::rgba(0x0000ffff).into())]);
+    language.set_theme(&theme_with_keyword);
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local("fn main() {}", cx);
+        buffer.set_language(Some(language.clone()), cx);
+        buffer
+    });
+    cx.run_until_parked();
+
+    let highlighted_chunks = |snapshot: &BufferSnapshot| {
+        snapshot
+            .chunks(
+                0..snapshot.len(),
+                LanguageAwareStyling {
+                    tree_sitter: true,
+                    diagnostics: false,
+                },
+            )
+            .filter_map(|chunk| Some((chunk.text.to_string(), chunk.syntax_highlight_id?)))
+            .collect::<Vec<_>>()
+    };
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let expected_with_keyword = vec![
+        (
+            "fn".to_string(),
+            theme_highlight_id(&theme_with_keyword, "keyword"),
+        ),
+        (
+            "main".to_string(),
+            theme_highlight_id(&theme_with_keyword, "function"),
+        ),
+    ];
+    assert_eq!(highlighted_chunks(&snapshot), expected_with_keyword);
+    assert_eq!(
+        highlighted_chunks(&snapshot),
+        expected_with_keyword,
+        "repeated chunking of the same snapshot must return the same highlights"
+    );
+
+    language.set_theme(&theme_without_keyword);
+    assert_eq!(
+        highlighted_chunks(&snapshot),
+        vec![(
+            "main".to_string(),
+            theme_highlight_id(&theme_without_keyword, "function")
+        )],
+        "a theme change must invalidate highlights of an existing snapshot"
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(3..7, "launch")], None, cx);
+    });
+    cx.run_until_parked();
+    let edited_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(
+        highlighted_chunks(&edited_snapshot),
+        vec![(
+            "launch".to_string(),
+            theme_highlight_id(&theme_without_keyword, "function")
+        )],
+        "an edit must invalidate the cached highlights"
+    );
+}
+
+#[gpui::test]
+fn test_chunk_highlights_across_row_chunk_seeks(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let language = keyword_and_function_lang();
+    let theme = keyword_and_function_theme();
+    language.set_theme(&theme);
+
+    let short_row = "fn short() {}\n";
+    let last_row = "fn omega() {}";
+    let text = format!(
+        "{}{last_row}",
+        short_row.repeat(MAX_ROWS_IN_A_CHUNK as usize)
+    );
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language(Some(language.clone()), cx);
+        buffer
+    });
+    cx.run_until_parked();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let keyword = theme_highlight_id(&theme, "keyword");
+    let function = theme_highlight_id(&theme, "function");
+
+    assert_eq!(
+        merged_highlight_runs(&snapshot, 0..short_row.len()),
+        vec![("fn".to_string(), keyword), ("short".to_string(), function)],
+    );
+
+    let last_row_start = short_row.len() * MAX_ROWS_IN_A_CHUNK as usize;
+    let expected_last_row_runs = vec![("fn".to_string(), keyword), ("omega".to_string(), function)];
+    assert_eq!(
+        merged_highlight_runs(&snapshot, last_row_start..snapshot.len()),
+        expected_last_row_runs,
+    );
+
+    let mut chunks = snapshot.chunks(
+        0..short_row.len(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    );
+    chunks.seek(last_row_start..snapshot.len());
+    let mut runs_after_seek = Vec::new();
+    for chunk in chunks {
+        merge_highlighted_chunk(&mut runs_after_seek, &chunk);
+    }
+    assert_eq!(
+        runs_after_seek, expected_last_row_runs,
+        "seeking into another row chunk must refetch that chunk's highlights"
+    );
+}
+
+#[gpui::test]
+fn test_oversized_chunks_bypass_the_highlight_cache(cx: &mut TestAppContext) {
+    if std::env::var_os("ZED_DISABLE_HIGHLIGHT_CACHE").is_some() {
+        return;
+    }
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let language = keyword_and_function_lang();
+    let theme = keyword_and_function_theme();
+    language.set_theme(&theme);
+
+    let short_row = "fn short() {}\n";
+    let giant_row = format!(
+        "fn omega() {{}}{}",
+        " ".repeat(MAX_BYTES_TO_HIGHLIGHT_IN_A_CHUNK)
+    );
+    let text = format!(
+        "{}{giant_row}",
+        short_row.repeat(MAX_ROWS_IN_A_CHUNK as usize)
+    );
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language(Some(language.clone()), cx);
+        buffer
+    });
+    cx.run_until_parked();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let keyword = theme_highlight_id(&theme, "keyword");
+    let function = theme_highlight_id(&theme, "function");
+    let expected_giant_row_runs =
+        vec![("fn".to_string(), keyword), ("omega".to_string(), function)];
+
+    let last_row_start = short_row.len() * MAX_ROWS_IN_A_CHUNK as usize;
+    assert_eq!(
+        snapshot.cached_highlight_runs(last_row_start..snapshot.len()),
+        None,
+        "chunks larger than the byte cap must not be cached"
+    );
+    assert!(
+        snapshot.cached_highlight_runs(0..short_row.len()).is_some(),
+        "chunks within the byte cap must still be cached"
+    );
+    assert_eq!(
+        snapshot.cached_highlight_runs(last_row_start + 1..last_row_start + 1),
+        Some(Vec::new()),
+        "an empty range must not compute captures for its oversized chunk"
+    );
+
+    assert_eq!(
+        merged_highlight_runs(&snapshot, last_row_start..snapshot.len()),
+        expected_giant_row_runs,
+        "oversized chunks must fall back to direct highlighting"
+    );
+
+    let mut chunks = snapshot.chunks(
+        0..short_row.len(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    );
+    chunks.seek(last_row_start..snapshot.len());
+    let mut runs_after_seek = Vec::new();
+    for chunk in chunks {
+        merge_highlighted_chunk(&mut runs_after_seek, &chunk);
+    }
+    assert_eq!(
+        runs_after_seek, expected_giant_row_runs,
+        "seeking into an oversized chunk must fall back to direct highlighting"
+    );
+}
+
+#[gpui::test]
+fn test_language_change_invalidates_cached_chunk_highlights(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let rust = keyword_and_function_lang();
+    let identifiers_only = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Identifiers".into(),
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query("(identifier) @variable")
+        .unwrap(),
+    );
+    let theme = SyntaxTheme::new([
+        ("keyword".to_string(), gpui::rgba(0xff0000ff).into()),
+        ("function".to_string(), gpui::rgba(0x00ff00ff).into()),
+        ("variable".to_string(), gpui::rgba(0x0000ffff).into()),
+    ]);
+    rust.set_theme(&theme);
+    identifiers_only.set_theme(&theme);
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local("fn main() {}", cx);
+        buffer.set_language(Some(rust), cx);
+        buffer
+    });
+    cx.run_until_parked();
+
+    let keyword = theme_highlight_id(&theme, "keyword");
+    let function = theme_highlight_id(&theme, "function");
+    let variable = theme_highlight_id(&theme, "variable");
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(
+        merged_highlight_runs(&snapshot, 0..snapshot.len()),
+        vec![("fn".to_string(), keyword), ("main".to_string(), function)],
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_sync_parse_timeout(None);
+        buffer.set_language(Some(identifiers_only), cx);
+    });
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(
+        merged_highlight_runs(&snapshot, 0..snapshot.len()),
+        Vec::new(),
+        "a language change must not serve the old language's cached highlights while the new parse is pending"
+    );
+
+    cx.run_until_parked();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(
+        merged_highlight_runs(&snapshot, 0..snapshot.len()),
+        vec![("main".to_string(), variable)],
+    );
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     use util::RandomCharIter;
@@ -5513,4 +5776,64 @@ fn test_formatted_chunks(cx: &mut gpui::App) {
             );
         }
     }
+}
+
+fn merged_highlight_runs(
+    snapshot: &BufferSnapshot,
+    range: Range<usize>,
+) -> Vec<(String, HighlightId)> {
+    let chunks = snapshot.chunks(
+        range,
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    );
+    let mut runs = Vec::new();
+    for chunk in chunks {
+        merge_highlighted_chunk(&mut runs, &chunk);
+    }
+    runs
+}
+
+fn merge_highlighted_chunk(runs: &mut Vec<(String, HighlightId)>, chunk: &Chunk<'_>) {
+    let Some(highlight_id) = chunk.syntax_highlight_id else {
+        return;
+    };
+    match runs.last_mut() {
+        Some((last_text, last_highlight_id)) if *last_highlight_id == highlight_id => {
+            last_text.push_str(chunk.text);
+        }
+        _ => runs.push((chunk.text.to_string(), highlight_id)),
+    }
+}
+
+fn keyword_and_function_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query(
+            r#"
+            "fn" @keyword
+            (identifier) @function
+            "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn keyword_and_function_theme() -> SyntaxTheme {
+    SyntaxTheme::new([
+        ("keyword".to_string(), gpui::rgba(0xff0000ff).into()),
+        ("function".to_string(), gpui::rgba(0x00ff00ff).into()),
+    ])
+}
+
+fn theme_highlight_id(theme: &SyntaxTheme, capture_name: &str) -> HighlightId {
+    HighlightId::new(theme.highlight_id(capture_name).unwrap())
 }

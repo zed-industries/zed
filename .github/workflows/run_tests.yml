@@ -505,9 +505,11 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: run_tests::miri_scheduler::install_miri
-      run: rustup toolchain install nightly --profile minimal --component miri --component rust-src
+      run: rustup toolchain install nightly-2026-09-09 --profile minimal --component miri --component rust-src
+    - name: run_tests::miri_scheduler::clean_miri
+      run: cargo +nightly-2026-09-09 miri clean
     - name: run_tests::miri_scheduler::run_scheduler_tests_under_miri
-      run: cargo +nightly -q miri test -p scheduler
+      run: cargo +nightly-2026-09-09 -q miri test -p scheduler
     - name: steps::cleanup_cargo_config
       if: always()
       run: |

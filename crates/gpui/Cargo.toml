@@ -89,7 +89,6 @@ serde.workspace = true
 serde_json.workspace = true
 slotmap.workspace = true
 smallvec.workspace = true
-async-channel.workspace = true
 stacksafe = { workspace = true, optional = true }
 strum.workspace = true
 sum_tree.workspace = true
@@ -108,6 +107,13 @@ uuid.workspace = true
 web-time.workspace = true
 heapless.workspace = true
 ztracing.workspace = true
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+# Workspace inheritance would re-enable defaults, including blocking channel synchronization.
+async-channel = { version = "2.5.0", default-features = false }
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+async-channel.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }

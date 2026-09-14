@@ -21,12 +21,13 @@ use gpui::{
     Action, Anchor, AnyElement, App, AsyncWindowContext, Bounds,
     ClipboardEntry as GpuiClipboardEntry, ClipboardItem, Context, CursorStyle, DismissEvent, Div,
     DragMoveEvent, Entity, EventEmitter, ExternalDragPayload, ExternalPaths, FileDragPaths,
-    FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
+    FileDropEvent, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
     ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
     PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
     linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
+
 };
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
@@ -1914,7 +1915,13 @@ impl ProjectPanel {
     fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
         let preview_tabs_enabled =
             PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
-        self.open_internal(true, !preview_tabs_enabled, None, window, cx);
+        self.open_internal(
+            preview_tabs_enabled,
+            !preview_tabs_enabled,
+            None,
+            window,
+            cx,
+        );
     }
 
     fn open_permanent(&mut self, _: &OpenPermanent, window: &mut Window, cx: &mut Context<Self>) {
@@ -7269,6 +7276,10 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
 
 impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !cx.has_active_drag() {
+            self.clear_drag_state(cx);
+        }
+
         let has_worktree = !self.state.visible_entries.is_empty();
         let project = self.project.read(cx);
         let panel_settings = ProjectPanelSettings::get_global(cx);
@@ -7379,6 +7390,9 @@ impl Render for ProjectPanel {
                         .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
                         .on_mouse_exit(cx.listener(|this, _: &MouseExitEvent, window, cx| {
                             cx.stop_active_drag(window);
+                            this.clear_drag_state(cx);
+                        }))
+                        .on_file_drop_exit(cx.listener(|this, _: &FileDropEvent, _window, cx| {
                             this.clear_drag_state(cx);
                         }))
                 })

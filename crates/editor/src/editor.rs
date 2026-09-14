@@ -365,7 +365,7 @@ pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<Editor>(cx);
 
     cx.observe_new(
-        |workspace: &mut Workspace, _: Option<&mut Window>, _cx: &mut Context<Workspace>| {
+        |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_split);
             workspace.register_action(Editor::new_file_vertical);
@@ -373,6 +373,19 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::cancel_language_server_work);
             workspace.register_action(Editor::toggle_focus);
             workspace.register_action(Editor::view_bookmarks);
+            if let Some(window) = window {
+                cx.subscribe_in(
+                    workspace.project(),
+                    window,
+                    |workspace, _, event, window, cx| {
+                        if let project::Event::LanguageServerShowDocument(request) = event {
+                            items::handle_lsp_show_document(workspace, request, window, cx)
+                                .detach();
+                        }
+                    },
+                )
+                .detach();
+            }
         },
     )
     .detach();
@@ -1715,6 +1728,8 @@ struct GutterButtonTooltip {
     primary: GutterButtonIntent,
     secondary: GutterButtonIntent,
     focus_handle: FocusHandle,
+    #[cfg(test)]
+    on_render: Option<Rc<RefCell<Vec<(String, String)>>>>,
 }
 
 impl GutterButtonTooltip {
@@ -1726,7 +1741,7 @@ impl GutterButtonTooltip {
         }
     }
 
-    fn meta_text(&self, intent: GutterButtonIntent) -> String {
+    fn meta_text(&self) -> String {
         const RIGHT_CLICK_HINT: &str = "right-click for more options";
 
         if self.primary == self.secondary {
@@ -1736,11 +1751,11 @@ impl GutterButtonTooltip {
             modifiers: Modifiers::secondary_key(),
             ..Default::default()
         };
-        let other = match intent {
-            GutterButtonIntent::SetBookmark => "breakpoint",
-            GutterButtonIntent::SetBreakpoint => "bookmark",
+        let secondary = match self.secondary {
+            GutterButtonIntent::SetBookmark => "bookmark",
+            GutterButtonIntent::SetBreakpoint => "breakpoint",
         };
-        format!("{modifier_as_text}-click to add a {other}\n{RIGHT_CLICK_HINT}")
+        format!("{modifier_as_text}-click to add a {secondary}\n{RIGHT_CLICK_HINT}")
     }
 }
 
@@ -1748,7 +1763,14 @@ impl Render for GutterButtonTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let intent = self.active_intent(window.modifiers());
         let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
-        let meta_text = self.meta_text(intent);
+        let meta_text = self.meta_text();
+
+        #[cfg(test)]
+        if let Some(on_render) = &self.on_render {
+            on_render
+                .borrow_mut()
+                .push((intent.as_str().to_owned(), meta_text.clone()));
+        }
 
         tooltip_container(cx, move |this, _| {
             this.child(
@@ -2050,6 +2072,14 @@ impl Editor {
                 project,
                 window,
                 |editor, _, event, window, cx| match event {
+                    project::Event::RemoteIdChanged(Some(_))
+                    | project::Event::Reshared
+                    | project::Event::HostReshared => {
+                        // The per-change selection broadcast is skipped while the
+                        // project is unshared, so re-publish current selections
+                        // once it becomes (re)shared.
+                        editor.republish_active_selections(window, cx);
+                    }
                     project::Event::RefreshCodeLens { .. } => {
                         editor.refresh_code_lenses(None, window, cx);
                     }
@@ -2058,6 +2088,9 @@ impl Editor {
                     }
                     project::Event::RefreshDocumentLinks { .. } => {
                         editor.refresh_document_links(None, cx);
+                    }
+                    project::Event::RefreshDocumentHighlights { server_id } => {
+                        editor.refresh_document_highlights_for_server(*server_id, cx);
                     }
                     project::Event::RefreshFoldingRanges { .. } => {
                         editor.refresh_folding_ranges(None, window, cx);
@@ -2083,6 +2116,7 @@ impl Editor {
                         editor.refresh_runnables(None, window, cx);
                         editor.update_lsp_data(None, window, cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
+                        editor.refresh_document_highlights(cx);
                     }
                     project::Event::SnippetEdit(id, snippet_edits) => {
                         // todo(lw): Non singletons
@@ -3784,6 +3818,33 @@ impl Editor {
         None
     }
 
+    fn refresh_document_highlights_for_server(
+        &mut self,
+        server_id: Option<LanguageServerId>,
+        cx: &mut Context<Self>,
+    ) {
+        let server_relevant = server_id.is_none_or(|server_id| {
+            let Some(project) = self.project.as_ref() else {
+                return false;
+            };
+            let cursor_position = self.selections.newest_anchor().head();
+            self.buffer
+                .read(cx)
+                .text_anchor_for_position(cursor_position, cx)
+                .is_some_and(|(cursor_buffer, _)| {
+                    project
+                        .read(cx)
+                        .lsp_store()
+                        .read(cx)
+                        .relevant_server_ids_for_capability_check(&cursor_buffer, cx)
+                        .contains(&server_id)
+                })
+        });
+        if server_relevant {
+            self.refresh_document_highlights(cx);
+        }
+    }
+
     fn prepare_highlight_query_from_selection(
         &mut self,
         snapshot: &DisplaySnapshot,
@@ -4769,6 +4830,8 @@ impl Editor {
                         primary,
                         secondary,
                         focus_handle: focus_handle.clone(),
+                        #[cfg(test)]
+                        on_render: None,
                     })
                     .into()
                 })
@@ -5790,20 +5853,21 @@ impl Editor {
                             .collect::<String>();
 
                         if !line_text_after_indent.is_empty() {
-                            let block_prefix = language_scope
+                            let block_prefixes = language_scope
                                 .block_comment()
-                                .map(|c| c.prefix.as_ref())
-                                .filter(|p| !p.is_empty());
-                            let doc_prefix = language_scope
-                                .documentation_comment()
-                                .map(|c| c.prefix.as_ref())
-                                .filter(|p| !p.is_empty());
+                                .into_iter()
+                                .chain(language_scope.documentation_comment())
+                                .filter(|comment| {
+                                    language_scope.override_name() == Some("comment")
+                                        && !comment.prefix.is_empty()
+                                        && !line_text_after_indent.starts_with(comment.end.as_ref())
+                                })
+                                .map(|comment| comment.prefix.as_ref());
                             let comment_prefixes = language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .map(|p| p.as_ref())
-                                .chain(block_prefix)
-                                .chain(doc_prefix)
+                                .chain(block_prefixes)
                                 .map(|prefix| (prefix, false));
                             let all_prefixes = comment_prefixes.chain(
                                 language_scope
@@ -6825,13 +6889,14 @@ impl Editor {
                     .map(|(i, &row)| (row, i))
                     .collect();
 
-                // Compute new line start offsets after rotation (handles CRLF)
-                let newline_len = line_ranges[1].start.0 - line_ranges[0].end.0;
-                let first_line_start = line_ranges[0].start.0;
-                let mut new_line_starts: Vec<usize> = vec![first_line_start];
-                for text in line_texts.iter().take(num_rows - 1) {
-                    let prev_start = *new_line_starts.last().unwrap();
-                    new_line_starts.push(prev_start + text.len() + newline_len);
+                let mut old_line_end = 0;
+                let mut new_line_end = 0;
+                let mut new_line_starts = Vec::new();
+                for (range, text) in line_ranges.iter().zip(&line_texts) {
+                    let line_start = new_line_end + (range.start.0 - old_line_end);
+                    new_line_starts.push(line_start);
+                    old_line_end = range.end.0;
+                    new_line_end = line_start + text.len();
                 }
 
                 let new_selections = selections
@@ -10063,6 +10128,7 @@ impl Editor {
                     self.invalidate_semantic_tokens(Some(*buffer_id));
                     self.update_lsp_data(Some(*buffer_id), window, cx);
                     self.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
+                    self.refresh_document_highlights(cx);
                 }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
@@ -11646,11 +11712,28 @@ pub trait CollaborationHub {
     fn collaborators<'a>(&self, cx: &'a App) -> &'a HashMap<PeerId, Collaborator>;
     fn user_participant_indices<'a>(&self, cx: &'a App) -> &'a HashMap<u64, ParticipantIndex>;
     fn user_names(&self, cx: &App) -> HashMap<u64, SharedString>;
+
+    /// Whether local selection changes need to be broadcast to other
+    /// participants. Defaults to `true`; hubs that can be certain there is no
+    /// audience (e.g. an unshared local project) override this so the editor can
+    /// skip the per-keystroke `set_active_selections` work, which is
+    /// `O(selections)` and pure overhead when nobody is observing.
+    fn should_broadcast_selections(&self, _: &App) -> bool {
+        true
+    }
 }
 
 impl CollaborationHub for Entity<Project> {
     fn collaborators<'a>(&self, cx: &'a App) -> &'a HashMap<PeerId, Collaborator> {
         self.read(cx).collaborators()
+    }
+
+    fn should_broadcast_selections(&self, cx: &App) -> bool {
+        // `is_shared()` is true for a host that has shared the project and for a
+        // collab guest, and stays correct even before peer-join notifications
+        // have propagated locally (unlike a live collaborator count). A purely
+        // local project has no audience, so selections need not be broadcast.
+        self.read(cx).is_shared()
     }
 
     fn user_participant_indices<'a>(&self, cx: &'a App) -> &'a HashMap<u64, ParticipantIndex> {
