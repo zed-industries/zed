@@ -15,30 +15,43 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, EditMenuActions,
     GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    Scene, ScrollDelta, ScrollWheelEvent, Size, TextInputStateChange, TouchEvent, TouchId,
-    TouchPhase, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowInsets, WindowParams, WindowVisibility, px, size,
+    Scene, Size, TextInputStateChange, TouchEvent, TouchId, TouchPhase, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets, WindowParams,
+    WindowVisibility, px, size,
 };
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
-use objc2::encode::{Encode, Encoding, RefEncode};
-use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
-use objc2::{class, msg_send, sel};
-
-use super::cg_types::{ObjcCGPoint, ObjcCGRect, ObjcCGSize};
+use objc2::rc::Retained;
+use objc2::runtime::{AnyClass, AnyObject, Sel};
+use objc2::{
+    ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
+};
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSObjectNSDelayedPerforming, NSObjectProtocol, NSSet,
+    NSString, NSValue,
+};
+use objc2_quartz_core::CAMetalLayer;
+use objc2_ui_kit::{
+    NSValueUIGeometryExtensions, UIKeyInput, UIKeyboardFrameEndUserInfoKey, UIKeyboardType,
+    UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification,
+    UIResponderStandardEditActions, UIStatusBarStyle, UITextAutocapitalizationType,
+    UITextAutocorrectionType, UITextInputTraits,
+};
+use objc2_ui_kit::{
+    UIEditMenuConfiguration, UIEditMenuInteraction, UIEvent, UIScreen, UITouch, UITraitEnvironment,
+    UIUserInterfaceStyle, UIView, UIViewAutoresizing, UIViewController, UIWindow,
+};
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, UiKitDisplayHandle, UiKitWindowHandle};
 use std::{
     cell::{Cell, RefCell},
     ffi::c_void,
-    ptr::{self, NonNull},
+    ptr::NonNull,
     rc::Rc,
     sync::Arc,
 };
 
-const GPUI_WINDOW_IVAR: &str = "gpui_window_ptr";
 const KEYBOARD_DISMISS_DISTANCE: Pixels = px(24.);
-const SCROLL_PROXY_CONTENT_HEIGHT: f64 = 1_000_000.;
-const SCROLL_PROXY_INITIAL_OFFSET: f64 = SCROLL_PROXY_CONTENT_HEIGHT / 2.;
 
 #[derive(Clone, Copy)]
 struct KeyboardDismissTouch {
@@ -46,74 +59,73 @@ struct KeyboardDismissTouch {
     start_position: Point<Pixels>,
 }
 
-static METAL_VIEW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
-static VC_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
-static TEXT_INPUT_VIEW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
 static KEYBOARD_OBSERVERS_REGISTERED: std::sync::Once = std::sync::Once::new();
-static SCROLL_VIEW_DELEGATE_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
 
 /// Global storage for the current status bar style.
 /// 0 = default (dark content), 1 = light content.
 /// Accessed from the main thread only.
 static STATUS_BAR_STYLE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// Register a custom UIViewController subclass that allows overriding
-/// `preferredStatusBarStyle` at runtime.
-fn register_view_controller_class() -> &'static AnyClass {
-    VC_CLASS_REGISTERED.call_once(|| {
-        let superclass = class!(UIViewController);
-        let Some(mut decl) = ClassBuilder::new(c"GPUIViewController", superclass) else {
-            return;
-        };
+#[derive(Default)]
+struct WindowReference(Cell<Option<NonNull<IosWindow>>>);
 
-        // Override preferredStatusBarStyle
-        extern "C" fn preferred_status_bar_style(_this: *mut AnyObject, _sel: Sel) -> isize {
+impl WindowReference {
+    fn with_window<R>(&self, callback: impl FnOnce(&IosWindow) -> R) -> Option<R> {
+        let window = self.0.get()?;
+        // Installed only after the window is boxed, cleared before it drops,
+        // and accessed only by our main-thread-only UIKit subclasses.
+        Some(callback(unsafe { window.as_ref() }))
+    }
+
+    fn dispatch_edit_menu_shortcut(&self, key: &str) {
+        self.with_window(|window| window.dispatch_edit_menu_shortcut(key));
+    }
+
+    fn can_perform_action(&self, action: Sel) -> bool {
+        self.with_window(|window| {
+            let actions = window.edit_menu_actions.get();
+            (action == sel!(cut:) && actions.cut)
+                || (action == sel!(copy:) && actions.copy)
+                || (action == sel!(paste:) && actions.paste)
+                || (action == sel!(selectAll:) && actions.select_all)
+        })
+        .unwrap_or(false)
+    }
+}
+
+define_class!(
+    #[unsafe(super = UIViewController)]
+    #[thread_kind = MainThreadOnly]
+    #[name = "GPUIViewController"]
+    #[ivars = WindowReference]
+    struct ViewController;
+
+    impl ViewController {
+        #[unsafe(method(preferredStatusBarStyle))]
+        fn preferred_status_bar_style(&self) -> UIStatusBarStyle {
             let style = STATUS_BAR_STYLE.load(std::sync::atomic::Ordering::Relaxed);
             if style == 1 {
-                1 // UIStatusBarStyleLightContent
+                UIStatusBarStyle::LightContent
             } else {
-                3 // UIStatusBarStyleDarkContent (iOS 13+)
+                UIStatusBarStyle::DarkContent
             }
         }
 
-        // Override viewDidLayoutSubviews — called by UIKit on rotation,
-        // split-screen changes, and any other layout pass.
-        extern "C" fn view_did_layout_subviews(this: *mut AnyObject, _sel: Sel) {
-            // Call super
+        #[unsafe(method(viewDidLayoutSubviews))]
+        fn view_did_layout_subviews(&self) {
             unsafe {
-                let superclass = class!(UIViewController);
-                let _: () = msg_send![super(this, superclass), viewDidLayoutSubviews];
+                let _: () = msg_send![super(self), viewDidLayoutSubviews];
             }
-
-            // Notify all registered GPUI windows about the layout change.
-            if let Some(wrapper) = super::ffi::IOS_WINDOW_LIST.get() {
-                unsafe {
-                    let windows = &*wrapper.0.get();
-                    for &window_ptr in windows.iter() {
-                        if !window_ptr.is_null() {
-                            let window = &*window_ptr;
-                            window.handle_layout_change();
-                        }
-                    }
-                }
-            }
+            self.ivars().with_window(IosWindow::handle_layout_change);
         }
+    }
+);
 
-        unsafe {
-            decl.add_method(
-                sel!(preferredStatusBarStyle),
-                preferred_status_bar_style as extern "C" fn(*mut AnyObject, Sel) -> isize,
-            );
-            decl.add_method(
-                sel!(viewDidLayoutSubviews),
-                view_did_layout_subviews as extern "C" fn(*mut AnyObject, Sel),
-            );
-        }
-
-        decl.register();
-    });
-
-    class!(GPUIViewController)
+impl ViewController {
+    fn new(main_thread: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(main_thread).set_ivars(WindowReference::default());
+        unsafe { msg_send![super(this), init] }
+    }
 }
 
 /// Set the iOS status bar content style (light or dark text/icons).
@@ -136,484 +148,215 @@ pub fn set_status_bar_style(style: crate::StatusBarContentStyle) {
             if let Some(&window_ptr) = windows.last() {
                 if !window_ptr.is_null() {
                     let window = &*window_ptr;
-                    let vc = window.view_controller;
-                    if !vc.is_null() {
-                        let _: () = msg_send![vc, setNeedsStatusBarAppearanceUpdate];
-                    }
+                    window.view_controller.setNeedsStatusBarAppearanceUpdate();
                 }
             }
         }
     }
 }
 
-/// Register a custom UIView subclass that uses CAMetalLayer as its backing layer.
-/// This is required for Metal rendering on iOS.
-fn register_metal_view_class() -> &'static AnyClass {
-    METAL_VIEW_CLASS_REGISTERED.call_once(|| {
-        let superclass = class!(UIView);
-        let Some(mut decl) = ClassBuilder::new(c"GPUIMetalView", superclass) else {
-            return;
-        };
+define_class!(
+    #[unsafe(super = UIView)]
+    #[thread_kind = MainThreadOnly]
+    #[name = "GPUIMetalView"]
+    #[ivars = WindowReference]
+    struct MetalView;
 
-        // Add ivar to store window pointer for touch handling
-        decl.add_ivar::<*mut std::ffi::c_void>(c"gpui_window_ptr");
+    unsafe impl NSObjectProtocol for MetalView {}
 
-        // Override layerClass to return CAMetalLayer
-        extern "C" fn layer_class(_self: *const AnyClass, _sel: Sel) -> *const AnyClass {
-            class!(CAMetalLayer) as *const AnyClass
+    impl MetalView {
+        #[unsafe(method(layerClass))]
+        fn layer_class() -> &'static AnyClass {
+            CAMetalLayer::class()
         }
 
-        // Touch handling methods
-        extern "C" fn touches_began(
-            this: *mut AnyObject,
-            _sel: Sel,
-            touches: *mut AnyObject,
-            event: *mut AnyObject,
-        ) {
-            handle_touches(this, touches, event);
+        #[unsafe(method(touchesBegan:withEvent:))]
+        fn touches_began(&self, touches: &NSSet<UITouch>, event: Option<&UIEvent>) {
+            self.handle_touches(touches, event);
         }
 
-        extern "C" fn touches_moved(
-            this: *mut AnyObject,
-            _sel: Sel,
-            touches: *mut AnyObject,
-            event: *mut AnyObject,
-        ) {
-            handle_touches(this, touches, event);
+        #[unsafe(method(touchesMoved:withEvent:))]
+        fn touches_moved(&self, touches: &NSSet<UITouch>, event: Option<&UIEvent>) {
+            self.handle_touches(touches, event);
         }
 
-        extern "C" fn touches_ended(
-            this: *mut AnyObject,
-            _sel: Sel,
-            touches: *mut AnyObject,
-            event: *mut AnyObject,
-        ) {
-            handle_touches(this, touches, event);
+        #[unsafe(method(touchesEnded:withEvent:))]
+        fn touches_ended(&self, touches: &NSSet<UITouch>, event: Option<&UIEvent>) {
+            self.handle_touches(touches, event);
         }
 
-        extern "C" fn touches_cancelled(
-            this: *mut AnyObject,
-            _sel: Sel,
-            touches: *mut AnyObject,
-            event: *mut AnyObject,
-        ) {
-            handle_touches(this, touches, event);
+        #[unsafe(method(touchesCancelled:withEvent:))]
+        fn touches_cancelled(&self, touches: &NSSet<UITouch>, event: Option<&UIEvent>) {
+            self.handle_touches(touches, event);
         }
 
-        unsafe {
-            // Add class method for layerClass
-            decl.add_class_method(
-                sel!(layerClass),
-                layer_class as extern "C" fn(*const AnyClass, Sel) -> *const AnyClass,
-            );
+        #[unsafe(method(canPerformAction:withSender:))]
+        fn can_perform_action(&self, action: Sel, _sender: Option<&AnyObject>) -> bool {
+            self.ivars().can_perform_action(action)
+        }
+    }
 
-            // Add touch handling instance methods
-            decl.add_method(
-                sel!(touchesBegan:withEvent:),
-                touches_began as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(touchesMoved:withEvent:),
-                touches_moved as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(touchesEnded:withEvent:),
-                touches_ended as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(touchesCancelled:withEvent:),
-                touches_cancelled
-                    as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(cut:),
-                edit_menu_cut as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(copy:),
-                edit_menu_copy as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(paste:),
-                edit_menu_paste as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(selectAll:),
-                edit_menu_select_all as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(canPerformAction:withSender:),
-                can_perform_edit_menu_action
-                    as unsafe extern "C" fn(*mut AnyObject, Sel, Sel, *mut AnyObject) -> Bool,
-            );
+    unsafe impl UIResponderStandardEditActions for MetalView {
+        #[unsafe(method(cut:))]
+        unsafe fn cut(&self, _sender: Option<&AnyObject>) {
+            self.ivars().dispatch_edit_menu_shortcut("x");
         }
 
-        decl.register();
-    });
-
-    class!(GPUIMetalView)
-}
-
-fn register_scroll_view_delegate_class() -> &'static AnyClass {
-    SCROLL_VIEW_DELEGATE_CLASS_REGISTERED.call_once(|| {
-        let Some(mut decl) = ClassBuilder::new(c"GPUIScrollViewDelegate", class!(NSObject)) else {
-            return;
-        };
-        decl.add_ivar::<*mut c_void>(c"gpui_window_ptr");
-        if let Some(protocol) = objc2::runtime::AnyProtocol::get(c"UIScrollViewDelegate") {
-            decl.add_protocol(protocol);
+        #[unsafe(method(copy:))]
+        unsafe fn copy(&self, _sender: Option<&AnyObject>) {
+            self.ivars().dispatch_edit_menu_shortcut("c");
         }
 
-        extern "C" fn did_scroll(this: *mut AnyObject, _sel: Sel, scroll_view: *mut AnyObject) {
-            if let Some(window) = window_from_delegate(this) {
-                window.handle_native_scroll(scroll_view);
-            }
+        #[unsafe(method(paste:))]
+        unsafe fn paste(&self, _sender: Option<&AnyObject>) {
+            self.ivars().dispatch_edit_menu_shortcut("v");
         }
 
-        extern "C" fn will_begin_dragging(
-            this: *mut AnyObject,
-            _sel: Sel,
-            scroll_view: *mut AnyObject,
-        ) {
-            if let Some(window) = window_from_delegate(this) {
-                window.handle_native_scroll_start(scroll_view);
-            }
+        #[unsafe(method(selectAll:))]
+        unsafe fn select_all(&self, _sender: Option<&AnyObject>) {
+            self.ivars().dispatch_edit_menu_shortcut("a");
         }
+    }
+);
 
-        extern "C" fn did_end_dragging(
-            this: *mut AnyObject,
-            _sel: Sel,
-            scroll_view: *mut AnyObject,
-            decelerate: Bool,
-        ) {
-            if let Some(window) = window_from_delegate(this)
-                && decelerate == Bool::NO
-            {
-                window.handle_native_scroll_end(scroll_view);
-            }
+impl MetalView {
+    fn new(frame: CGRect, main_thread: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(main_thread).set_ivars(WindowReference::default());
+        unsafe { msg_send![super(this), initWithFrame: frame] }
+    }
+
+    fn handle_touches(&self, touches: &NSSet<UITouch>, event: Option<&UIEvent>) {
+        for touch in touches {
+            self.ivars()
+                .with_window(|window| window.handle_touch(&touch, event));
         }
-
-        extern "C" fn did_end_decelerating(
-            this: *mut AnyObject,
-            _sel: Sel,
-            scroll_view: *mut AnyObject,
-        ) {
-            if let Some(window) = window_from_delegate(this) {
-                window.handle_native_scroll_end(scroll_view);
-            }
-        }
-
-        unsafe {
-            decl.add_method(
-                sel!(scrollViewDidScroll:),
-                did_scroll as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(scrollViewWillBeginDragging:),
-                will_begin_dragging as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(scrollViewDidEndDragging:willDecelerate:),
-                did_end_dragging as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, Bool),
-            );
-            decl.add_method(
-                sel!(scrollViewDidEndDecelerating:),
-                did_end_decelerating as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-        }
-        decl.register();
-    });
-
-    class!(GPUIScrollViewDelegate)
-}
-
-fn window_from_delegate(delegate: *mut AnyObject) -> Option<&'static IosWindow> {
-    let window_ptr = unsafe {
-        #[allow(deprecated)]
-        *(*delegate).get_ivar::<*mut c_void>(GPUI_WINDOW_IVAR)
-    };
-    if window_ptr.is_null() {
-        None
-    } else {
-        Some(unsafe { &*(window_ptr as *const IosWindow) })
     }
 }
 
-fn window_from_platform_view(view: *mut AnyObject) -> Option<&'static IosWindow> {
-    let window_ptr = unsafe {
-        #[allow(deprecated)]
-        *(*view).get_ivar::<*mut c_void>(GPUI_WINDOW_IVAR)
-    };
-    if window_ptr.is_null() {
-        None
-    } else {
-        Some(unsafe { &*(window_ptr as *const IosWindow) })
+struct TextInputIvars {
+    window: WindowReference,
+    keyboard_type: Cell<UIKeyboardType>,
+    autocorrection_type: Cell<UITextAutocorrectionType>,
+    autocapitalization_type: Cell<UITextAutocapitalizationType>,
+}
+
+define_class!(
+    #[unsafe(super = UIView)]
+    #[thread_kind = MainThreadOnly]
+    #[name = "GPUITextInputView"]
+    #[ivars = TextInputIvars]
+    struct TextInputView;
+
+    unsafe impl NSObjectProtocol for TextInputView {}
+
+    impl TextInputView {
+        #[unsafe(method(canBecomeFirstResponder))]
+        fn can_become_first_responder(&self) -> bool {
+            true
+        }
+
+        #[unsafe(method(canPerformAction:withSender:))]
+        fn can_perform_action(&self, action: Sel, _sender: Option<&AnyObject>) -> bool {
+            self.ivars().window.can_perform_action(action)
+        }
     }
-}
 
-unsafe extern "C" fn edit_menu_cut(view: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
-    if let Some(window) = window_from_platform_view(view) {
-        window.dispatch_edit_menu_shortcut("x");
+    unsafe impl UIKeyInput for TextInputView {
+        #[unsafe(method(hasText))]
+        fn has_text(&self) -> bool {
+            // Keep deletion available even though the text lives in GPUI, not this view.
+            true
+        }
+
+        #[unsafe(method(insertText:))]
+        fn insert_text(&self, text: &NSString) {
+            self.ivars().window.with_window(|window| window.handle_text_input(text));
+        }
+
+        #[unsafe(method(deleteBackward))]
+        fn delete_backward(&self) {
+            self.ivars().window.with_window(IosWindow::handle_delete_backward);
+        }
     }
-}
 
-unsafe extern "C" fn edit_menu_copy(view: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
-    if let Some(window) = window_from_platform_view(view) {
-        window.dispatch_edit_menu_shortcut("c");
+    unsafe impl UITextInputTraits for TextInputView {
+        #[unsafe(method(keyboardType))]
+        fn keyboard_type(&self) -> UIKeyboardType {
+            self.ivars().keyboard_type.get()
+        }
+
+        #[unsafe(method(setKeyboardType:))]
+        fn set_keyboard_type(&self, value: UIKeyboardType) {
+            self.ivars().keyboard_type.set(value);
+        }
+
+        #[unsafe(method(autocorrectionType))]
+        fn autocorrection_type(&self) -> UITextAutocorrectionType {
+            self.ivars().autocorrection_type.get()
+        }
+
+        #[unsafe(method(setAutocorrectionType:))]
+        fn set_autocorrection_type(&self, value: UITextAutocorrectionType) {
+            self.ivars().autocorrection_type.set(value);
+        }
+
+        #[unsafe(method(autocapitalizationType))]
+        fn autocapitalization_type(&self) -> UITextAutocapitalizationType {
+            self.ivars().autocapitalization_type.get()
+        }
+
+        #[unsafe(method(setAutocapitalizationType:))]
+        fn set_autocapitalization_type(&self, value: UITextAutocapitalizationType) {
+            self.ivars().autocapitalization_type.set(value);
+        }
     }
-}
 
-unsafe extern "C" fn edit_menu_paste(view: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
-    if let Some(window) = window_from_platform_view(view) {
-        window.dispatch_edit_menu_shortcut("v");
+    unsafe impl UIResponderStandardEditActions for TextInputView {
+        #[unsafe(method(cut:))]
+        unsafe fn cut(&self, _sender: Option<&AnyObject>) {
+            self.ivars().window.dispatch_edit_menu_shortcut("x");
+        }
+
+        #[unsafe(method(copy:))]
+        unsafe fn copy(&self, _sender: Option<&AnyObject>) {
+            self.ivars().window.dispatch_edit_menu_shortcut("c");
+        }
+
+        #[unsafe(method(paste:))]
+        unsafe fn paste(&self, _sender: Option<&AnyObject>) {
+            self.ivars().window.dispatch_edit_menu_shortcut("v");
+        }
+
+        #[unsafe(method(selectAll:))]
+        unsafe fn select_all(&self, _sender: Option<&AnyObject>) {
+            self.ivars().window.dispatch_edit_menu_shortcut("a");
+        }
     }
-}
+);
 
-unsafe extern "C" fn edit_menu_select_all(
-    view: *mut AnyObject,
-    _sel: Sel,
-    _sender: *mut AnyObject,
-) {
-    if let Some(window) = window_from_platform_view(view) {
-        window.dispatch_edit_menu_shortcut("a");
-    }
-}
-
-unsafe extern "C" fn can_perform_edit_menu_action(
-    view: *mut AnyObject,
-    _sel: Sel,
-    action: Sel,
-    _sender: *mut AnyObject,
-) -> Bool {
-    let Some(window) = window_from_platform_view(view) else {
-        return Bool::NO;
-    };
-    let actions = window.edit_menu_actions.get();
-    Bool::from(
-        (action == sel!(cut:) && actions.cut)
-            || (action == sel!(copy:) && actions.copy)
-            || (action == sel!(paste:) && actions.paste)
-            || (action == sel!(selectAll:) && actions.select_all),
-    )
-}
-
-/// Register a custom UIView subclass that implements UIKeyInput protocol.
-///
-/// iOS requires the first-responder view to conform to `UIKeyInput` in order
-/// for the software keyboard to actually route typed characters back to the
-/// app.  Without this, `becomeFirstResponder` silently fails and no keyboard
-/// appears.
-///
-/// The three required methods:
-/// - `hasText` → always returns YES (simplifies things; no harm)
-/// - `insertText:` → forwards the text to `IosWindow::handle_text_input`
-/// - `deleteBackward` → dispatches a backspace via `crate::dispatch_text_input`
-fn register_text_input_view_class() -> &'static AnyClass {
-    TEXT_INPUT_VIEW_CLASS_REGISTERED.call_once(|| {
-        let superclass = class!(UIView);
-        let Some(mut decl) = ClassBuilder::new(c"GPUITextInputView", superclass) else {
-            return;
-        };
-
-        // Declare protocol conformance so iOS knows this view can receive
-        // keyboard text input.
-        if let Some(protocol) = objc2::runtime::AnyProtocol::get(c"UIKeyInput") {
-            decl.add_protocol(protocol);
-        }
-
-        // Store the IosWindow pointer so callbacks can reach the Rust window.
-        decl.add_ivar::<*mut std::ffi::c_void>(c"gpui_window_ptr");
-
-        // UITextInputTraits property storage — UIView doesn't provide these,
-        // but iOS reads them from the first responder to configure the keyboard.
-        decl.add_ivar::<isize>(c"_keyboardType"); // UIKeyboardType
-        decl.add_ivar::<isize>(c"_autocorrectionType"); // UITextAutocorrectionType
-        decl.add_ivar::<isize>(c"_autocapitalizationType"); // UITextAutocapitalizationType
-
-        // --- UIKeyInput protocol methods ---
-
-        // Bool hasText
-        unsafe extern "C" fn has_text(_this: *mut AnyObject, _sel: Sel) -> Bool {
-            Bool::YES
-        }
-
-        // void insertText:(NSString *)text
-        unsafe extern "C" fn insert_text(this: *mut AnyObject, _sel: Sel, text: *mut AnyObject) {
-            let window_ptr: *mut std::ffi::c_void = unsafe {
-                #[allow(deprecated)]
-                *(*this).get_ivar(GPUI_WINDOW_IVAR)
-            };
-            if window_ptr.is_null() || text.is_null() {
-                return;
-            }
-            let window = unsafe { &*(window_ptr as *const IosWindow) };
-            window.handle_text_input(text);
-        }
-
-        // void deleteBackward
-        unsafe extern "C" fn delete_backward(this: *mut AnyObject, _sel: Sel) {
-            let window_ptr: *mut std::ffi::c_void = unsafe {
-                #[allow(deprecated)]
-                *(*this).get_ivar(GPUI_WINDOW_IVAR)
-            };
-            if window_ptr.is_null() {
-                return;
-            }
-            let window = unsafe { &*(window_ptr as *const IosWindow) };
-            window.handle_delete_backward();
-        }
-
-        // canBecomeFirstResponder must return Bool::YES
-        unsafe extern "C" fn can_become_first_responder(_this: *mut AnyObject, _sel: Sel) -> Bool {
-            Bool::YES
-        }
-
-        // --- UITextInputTraits property accessors ---
-        #[allow(deprecated)]
-        unsafe extern "C" fn get_keyboard_type(this: *mut AnyObject, _sel: Sel) -> isize {
-            unsafe { *(*this).get_ivar::<isize>("_keyboardType") }
-        }
-        #[allow(deprecated)]
-        unsafe extern "C" fn set_keyboard_type(this: *mut AnyObject, _sel: Sel, val: isize) {
-            unsafe {
-                *(*this).get_mut_ivar::<isize>("_keyboardType") = val;
-            }
-        }
-        #[allow(deprecated)]
-        unsafe extern "C" fn get_autocorrection_type(this: *mut AnyObject, _sel: Sel) -> isize {
-            unsafe { *(*this).get_ivar::<isize>("_autocorrectionType") }
-        }
-        #[allow(deprecated)]
-        unsafe extern "C" fn set_autocorrection_type(this: *mut AnyObject, _sel: Sel, val: isize) {
-            unsafe {
-                *(*this).get_mut_ivar::<isize>("_autocorrectionType") = val;
-            }
-        }
-        #[allow(deprecated)]
-        unsafe extern "C" fn get_autocapitalization_type(this: *mut AnyObject, _sel: Sel) -> isize {
-            unsafe { *(*this).get_ivar::<isize>("_autocapitalizationType") }
-        }
-        #[allow(deprecated)]
-        unsafe extern "C" fn set_autocapitalization_type(
-            this: *mut AnyObject,
-            _sel: Sel,
-            val: isize,
-        ) {
-            unsafe {
-                *(*this).get_mut_ivar::<isize>("_autocapitalizationType") = val;
-            }
-        }
-
-        unsafe {
-            decl.add_method(
-                sel!(hasText),
-                has_text as unsafe extern "C" fn(*mut AnyObject, Sel) -> Bool,
-            );
-            decl.add_method(
-                sel!(insertText:),
-                insert_text as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(deleteBackward),
-                delete_backward as unsafe extern "C" fn(*mut AnyObject, Sel),
-            );
-            decl.add_method(
-                sel!(canBecomeFirstResponder),
-                can_become_first_responder as unsafe extern "C" fn(*mut AnyObject, Sel) -> Bool,
-            );
-            decl.add_method(
-                sel!(cut:),
-                edit_menu_cut as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(copy:),
-                edit_menu_copy as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(paste:),
-                edit_menu_paste as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(selectAll:),
-                edit_menu_select_all as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(canPerformAction:withSender:),
-                can_perform_edit_menu_action
-                    as unsafe extern "C" fn(*mut AnyObject, Sel, Sel, *mut AnyObject) -> Bool,
-            );
-            // UITextInputTraits property methods
-            decl.add_method(
-                sel!(keyboardType),
-                get_keyboard_type as unsafe extern "C" fn(*mut AnyObject, Sel) -> isize,
-            );
-            decl.add_method(
-                sel!(setKeyboardType:),
-                set_keyboard_type as unsafe extern "C" fn(*mut AnyObject, Sel, isize),
-            );
-            decl.add_method(
-                sel!(autocorrectionType),
-                get_autocorrection_type as unsafe extern "C" fn(*mut AnyObject, Sel) -> isize,
-            );
-            decl.add_method(
-                sel!(setAutocorrectionType:),
-                set_autocorrection_type as unsafe extern "C" fn(*mut AnyObject, Sel, isize),
-            );
-            decl.add_method(
-                sel!(autocapitalizationType),
-                get_autocapitalization_type as unsafe extern "C" fn(*mut AnyObject, Sel) -> isize,
-            );
-            decl.add_method(
-                sel!(setAutocapitalizationType:),
-                set_autocapitalization_type as unsafe extern "C" fn(*mut AnyObject, Sel, isize),
-            );
-        }
-
-        decl.register();
-    });
-
-    class!(GPUITextInputView)
-}
-
-/// Handle touch events from the GPUIMetalView
-fn handle_touches(view: *mut AnyObject, touches: *mut AnyObject, event: *mut AnyObject) {
-    unsafe {
-        // Get the window pointer from the view's ivar
-        #[allow(deprecated)]
-        let window_ptr: *mut std::ffi::c_void = *(*view).get_ivar(GPUI_WINDOW_IVAR);
-        if window_ptr.is_null() {
-            log::warn!("GPUI iOS: Touch event but no window pointer set");
-            return;
-        }
-
-        let window = &*(window_ptr as *const IosWindow);
-
-        // Get all touches from the set
-        let all_touches: *mut AnyObject = msg_send![touches, allObjects];
-        let count: usize = msg_send![all_touches, count];
-
-        for i in 0..count {
-            let touch: *mut AnyObject = msg_send![all_touches, objectAtIndex: i];
-            window.handle_touch(touch, event);
-        }
+impl TextInputView {
+    fn new(frame: CGRect, main_thread: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(main_thread).set_ivars(TextInputIvars {
+            window: WindowReference::default(),
+            keyboard_type: Cell::new(UIKeyboardType::Default),
+            autocorrection_type: Cell::new(UITextAutocorrectionType::Default),
+            autocapitalization_type: Cell::new(UITextAutocapitalizationType::None),
+        });
+        unsafe { msg_send![super(this), initWithFrame: frame] }
     }
 }
 
 #[allow(clippy::type_complexity)]
 pub(crate) struct IosWindow {
     /// The UIWindow object
-    window: *mut AnyObject,
+    window: Retained<UIWindow>,
     /// The UIViewController
-    view_controller: *mut AnyObject,
-    scroll_view: *mut AnyObject,
-    scroll_view_delegate: *mut AnyObject,
-    scroll_view_last_offset: Cell<Point<Pixels>>,
-    scroll_view_event_started: Cell<bool>,
+    view_controller: Retained<ViewController>,
     /// The Metal-backed UIView
-    view: *mut AnyObject,
+    view: Retained<MetalView>,
     /// The hidden text input view for keyboard input
-    text_input_view: *mut AnyObject,
-    edit_menu_interaction: *mut AnyObject,
+    text_input_view: Retained<TextInputView>,
+    edit_menu_interaction: Option<Retained<UIEditMenuInteraction>>,
     edit_menu_actions: Cell<EditMenuActions>,
     /// Current bounds in pixels
     bounds: Cell<Bounds<Pixels>>,
@@ -659,6 +402,7 @@ unsafe impl Send for IosWindow {}
 unsafe impl Sync for IosWindow {}
 
 impl IosWindow {
+    #[allow(deprecated)] // The embedded host may not supply a UIWindowScene.
     pub fn new(_handle: AnyWindowHandle, _params: WindowParams) -> anyhow::Result<Self> {
         // Create the window on the main screen
         let screen = IosDisplay::main();
@@ -666,115 +410,77 @@ impl IosWindow {
         let scale_factor = screen.scale();
 
         unsafe {
+            let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
             // Create UIWindow
             let window_scene = super::ffi::window_scene();
-            let screen_obj: *mut AnyObject = if window_scene.is_null() {
-                msg_send![class!(UIScreen), mainScreen]
+            let window_scene = window_scene.as_deref();
+            let screen_obj = if let Some(scene) = window_scene {
+                scene.screen()
             } else {
-                msg_send![window_scene, screen]
+                UIScreen::mainScreen(main_thread)
             };
-            let screen_bounds_cg: ObjcCGRect = msg_send![screen_obj, bounds];
-            let window: *mut AnyObject = msg_send![class!(UIWindow), alloc];
-            let window: *mut AnyObject = if window_scene.is_null() {
-                msg_send![window, initWithFrame: screen_bounds_cg]
-            } else {
-                let window: *mut AnyObject = msg_send![window, initWithWindowScene: window_scene];
-                let _: () = msg_send![window, setFrame: screen_bounds_cg];
+            let screen_bounds_cg = screen_obj.bounds();
+            let window = if let Some(scene) = window_scene {
+                let window = UIWindow::initWithWindowScene(UIWindow::alloc(main_thread), scene);
+                window.setFrame(screen_bounds_cg);
                 window
+            } else {
+                UIWindow::initWithFrame(UIWindow::alloc(main_thread), screen_bounds_cg)
             };
 
-            // Create our custom UIViewController subclass that supports
-            // dynamic `preferredStatusBarStyle` overrides.
-            let vc_class = register_view_controller_class();
-            let view_controller: *mut AnyObject = msg_send![vc_class, alloc];
-            let view_controller: *mut AnyObject = msg_send![view_controller, init];
+            let view_controller = ViewController::new(main_thread);
+            let metal_frame = CGRect::new(CGPoint::ZERO, screen_bounds_cg.size);
+            let view = MetalView::new(metal_frame, main_thread);
 
-            let scroll_view: *mut AnyObject = msg_send![class!(UIScrollView), alloc];
-            let scroll_view: *mut AnyObject =
-                msg_send![scroll_view, initWithFrame: screen_bounds_cg];
-            let content_size = ObjcCGSize {
-                width: screen_bounds_cg.width,
-                height: SCROLL_PROXY_CONTENT_HEIGHT,
-            };
-            let _: () = msg_send![scroll_view, setContentSize: content_size];
-            let initial_content_offset = ObjcCGPoint {
-                x: 0.,
-                y: SCROLL_PROXY_INITIAL_OFFSET,
-            };
-            let _: () =
-                msg_send![scroll_view, setContentOffset: initial_content_offset, animated: false];
-            let _: () = msg_send![scroll_view, setDirectionalLockEnabled: true];
-            let _: () = msg_send![scroll_view, setAlwaysBounceHorizontal: false];
-            let _: () = msg_send![scroll_view, setShowsHorizontalScrollIndicator: false];
-            let _: () = msg_send![scroll_view, setShowsVerticalScrollIndicator: false];
-            let _: () = msg_send![scroll_view, setDelaysContentTouches: false];
-            let _: () = msg_send![scroll_view, setContentInsetAdjustmentBehavior: 2_isize];
-            let _: () = msg_send![scroll_view, setKeyboardDismissMode: 2_isize];
-            let pan_gesture: *mut AnyObject = msg_send![scroll_view, panGestureRecognizer];
-            let _: () = msg_send![pan_gesture, setCancelsTouchesInView: false];
-
-            let metal_view_class = register_metal_view_class();
-            let view: *mut AnyObject = msg_send![metal_view_class, alloc];
-            let metal_frame = ObjcCGRect::new(
-                0.,
-                SCROLL_PROXY_INITIAL_OFFSET,
-                screen_bounds_cg.width,
-                screen_bounds_cg.height,
-            );
-            let view: *mut AnyObject = msg_send![view, initWithFrame: metal_frame];
-
-            let layer: *mut AnyObject = msg_send![view, layer];
-            let scale: core_graphics::base::CGFloat = msg_send![screen_obj, scale];
-            let _: () = msg_send![layer, setContentsScale: scale];
+            let layer = view.layer();
+            let scale = screen_obj.scale();
+            layer.setContentsScale(scale);
 
             // Auto-resize the Metal view when the parent view changes size
             // (e.g. rotation). UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight
-            let _: () = msg_send![view, setAutoresizingMask: 18_usize]; // 0x02 | 0x10
+            view.setAutoresizingMask(
+                UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
+            );
 
             // Enable user interaction on the Metal view for touch handling
-            let _: () = msg_send![view, setUserInteractionEnabled: true];
-            let _: () = msg_send![view, setMultipleTouchEnabled: true];
+            view.setUserInteractionEnabled(true);
+            view.setMultipleTouchEnabled(true);
 
-            let _: () = msg_send![scroll_view, addSubview: view];
-            let _: () = msg_send![view_controller, setView: scroll_view];
+            view_controller.setView(Some(&view));
 
             // Set the root view controller
-            let _: () = msg_send![window, setRootViewController: view_controller];
+            window.setRootViewController(Some(&view_controller));
 
             // Make the window visible
-            let _: () = msg_send![window, makeKeyAndVisible];
+            window.makeKeyAndVisible();
 
             // Create a hidden text input view for keyboard handling.
             // Uses our custom GPUITextInputView which implements UIKeyInput
             // so iOS actually routes keyboard text to us.
-            let text_input_class = register_text_input_view_class();
-            let text_input_view: *mut AnyObject = msg_send![text_input_class, alloc];
-            let text_input_frame = ObjcCGRect::new(0.0, 0.0, 1.0, 1.0);
-            let text_input_view: *mut AnyObject =
-                msg_send![text_input_view, initWithFrame: text_input_frame];
-            let _: () = msg_send![text_input_view, setAlpha: 0.01_f64];
-            let _: () = msg_send![text_input_view, setUserInteractionEnabled: true];
-            let _: () = msg_send![view, addSubview: text_input_view];
+            let text_input_frame = CGRect::new(CGPoint::ZERO, CGSize::new(1.0, 1.0));
+            let text_input_view = TextInputView::new(text_input_frame, main_thread);
+            text_input_view.setAlpha(0.01);
+            text_input_view.setUserInteractionEnabled(true);
+            view.addSubview(&text_input_view);
 
-            let edit_menu_interaction =
-                if let Some(edit_menu_class) = AnyClass::get(c"UIEditMenuInteraction") {
-                    let interaction: *mut AnyObject = msg_send![edit_menu_class, alloc];
-                    let interaction: *mut AnyObject =
-                        msg_send![interaction, initWithDelegate: ptr::null::<AnyObject>()];
-                    let _: () = msg_send![view, addInteraction: interaction];
-                    interaction
-                } else {
-                    ptr::null_mut()
-                };
+            let edit_menu_interaction = if AnyClass::get(c"UIEditMenuInteraction").is_some() {
+                let interaction = UIEditMenuInteraction::initWithDelegate(
+                    UIEditMenuInteraction::alloc(main_thread),
+                    None,
+                );
+                view.addInteraction(objc2::runtime::ProtocolObject::from_ref(&*interaction));
+                Some(interaction)
+            } else {
+                None
+            };
 
-            let scroll_view_delegate_class = register_scroll_view_delegate_class();
-            let scroll_view_delegate: *mut AnyObject = msg_send![scroll_view_delegate_class, new];
-
-            let pixel_w = (screen_bounds_cg.width * scale) as i32;
-            let pixel_h = (screen_bounds_cg.height * scale) as i32;
+            let pixel_w = (screen_bounds_cg.size.width * scale) as i32;
+            let pixel_h = (screen_bounds_cg.size.height * scale) as i32;
             let mut renderer = MetalRenderer::from_layer(
                 MetalContext::default(),
-                layer.cast::<metal::CAMetalLayer>(),
+                Retained::as_ptr(&layer)
+                    .cast_mut()
+                    .cast::<metal::CAMetalLayer>(),
                 false,
             );
             renderer.update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
@@ -782,13 +488,6 @@ impl IosWindow {
             let ios_window = Self {
                 window,
                 view_controller,
-                scroll_view,
-                scroll_view_delegate,
-                scroll_view_last_offset: Cell::new(Point::new(
-                    px(0.),
-                    px(SCROLL_PROXY_INITIAL_OFFSET as f32),
-                )),
-                scroll_view_event_started: Cell::new(false),
                 view,
                 text_input_view,
                 edit_menu_interaction,
@@ -828,67 +527,41 @@ impl IosWindow {
     pub(crate) fn register_with_ffi(&self) {
         super::ffi::register_window(self as *const Self);
 
-        // Set the window pointer on the view so touch events can find us,
-        // and on the text input view so keyboard input can find us.
-        unsafe {
-            let window_ptr = self as *const Self as *mut std::ffi::c_void;
-            #[allow(deprecated)]
-            {
-                *(*self.view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = window_ptr;
-            }
-            #[allow(deprecated)]
-            {
-                *(*self.text_input_view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = window_ptr;
-            }
-            #[allow(deprecated)]
-            {
-                *(*self.scroll_view_delegate).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) =
-                    window_ptr;
-            }
-            let _: () = msg_send![self.scroll_view, setDelegate: self.scroll_view_delegate];
-            log::info!(
-                "GPUI iOS: Set window pointer {:p} on view {:p} and text input {:p}",
-                window_ptr,
-                self.view,
-                self.text_input_view
-            );
-        }
+        let window = Some(NonNull::from(self));
+        self.view_controller.ivars().0.set(window);
+        self.view.ivars().0.set(window);
+        self.text_input_view.ivars().window.0.set(window);
 
         Self::register_keyboard_observers();
     }
 
     fn register_keyboard_observers() {
         KEYBOARD_OBSERVERS_REGISTERED.call_once(|| unsafe {
-            let notification_center: *mut AnyObject =
-                msg_send![class!(NSNotificationCenter), defaultCenter];
-            let frame_change_name =
-                crate::ios::util::nsstring("UIKeyboardWillChangeFrameNotification");
-            let hide_name = crate::ios::util::nsstring("UIKeyboardWillHideNotification");
+            let notification_center = NSNotificationCenter::defaultCenter();
 
-            let frame_change_block = block2::RcBlock::new(move |notification: *mut AnyObject| {
-                if notification.is_null() {
-                    return;
-                }
-                let user_info: *mut AnyObject = msg_send![notification, userInfo];
-                if user_info.is_null() {
-                    return;
-                }
-                let frame_key = crate::ios::util::nsstring("UIKeyboardFrameEndUserInfoKey");
-                let frame_value: *mut AnyObject = msg_send![user_info, objectForKey: frame_key];
-                if frame_value.is_null() {
-                    return;
-                }
-                let frame: ObjcCGRect = msg_send![frame_value, CGRectValue];
-                if let Some(wrapper) = super::ffi::IOS_WINDOW_LIST.get() {
-                    for &window in &*wrapper.0.get() {
-                        if let Some(window) = window.as_ref() {
-                            window.set_keyboard_height(frame.height as f32);
+            let frame_change_block =
+                block2::RcBlock::new(move |notification: NonNull<NSNotification>| {
+                    let Some(user_info) = notification.as_ref().userInfo() else {
+                        return;
+                    };
+                    let Some(frame_value) = user_info.objectForKey(UIKeyboardFrameEndUserInfoKey)
+                    else {
+                        return;
+                    };
+                    let Some(frame_value) = frame_value.downcast_ref::<NSValue>() else {
+                        return;
+                    };
+                    let frame = frame_value.CGRectValue();
+                    if let Some(wrapper) = super::ffi::IOS_WINDOW_LIST.get() {
+                        for &window in &*wrapper.0.get() {
+                            if let Some(window) = window.as_ref() {
+                                window.set_keyboard_height(frame.size.height as f32);
+                            }
                         }
                     }
-                }
-            });
+                });
 
-            let hide_block = block2::RcBlock::new(move |_notification: *mut AnyObject| {
+            let hide_block = block2::RcBlock::new(move |_notification: NonNull<NSNotification>| {
                 if let Some(wrapper) = super::ffi::IOS_WINDOW_LIST.get() {
                     for &window in &*wrapper.0.get() {
                         if let Some(window) = window.as_ref() {
@@ -898,123 +571,43 @@ impl IosWindow {
                 }
             });
 
-            let _: *mut AnyObject = msg_send![notification_center,
-                addObserverForName: frame_change_name,
-                object: std::ptr::null::<AnyObject>(),
-                queue: std::ptr::null::<AnyObject>(),
-                usingBlock: &*frame_change_block
-            ];
-            let _: *mut AnyObject = msg_send![notification_center,
-                addObserverForName: hide_name,
-                object: std::ptr::null::<AnyObject>(),
-                queue: std::ptr::null::<AnyObject>(),
-                usingBlock: &*hide_block
-            ];
+            notification_center.addObserverForName_object_queue_usingBlock(
+                Some(UIKeyboardWillChangeFrameNotification),
+                None,
+                None,
+                &frame_change_block,
+            );
+            notification_center.addObserverForName_object_queue_usingBlock(
+                Some(UIKeyboardWillHideNotification),
+                None,
+                None,
+                &hide_block,
+            );
         });
     }
 
     /// Delivers a UIKit touch through GPUI's platform-neutral touch API.
-    pub fn handle_touch(&self, touch: *mut AnyObject, event: *mut AnyObject) {
+    pub fn handle_touch(&self, touch: &UITouch, _event: Option<&UIEvent>) {
+        // GPUI timestamps delivery itself. Replaying UIKit's historical coalesced
+        // samples here would make them appear simultaneous and distort fling velocity.
         let id = touch_id(touch);
-        if touch_phase(touch) == UITouchPhase::Moved && !event.is_null() {
-            unsafe {
-                let samples: *mut AnyObject = msg_send![event, coalescedTouchesForTouch: touch];
-                if !samples.is_null() {
-                    let count: usize = msg_send![samples, count];
-                    if count > 0 {
-                        for index in 0..count {
-                            let sample: *mut AnyObject = msg_send![samples, objectAtIndex: index];
-                            self.handle_touch_sample(sample, id);
-                        }
-                        return;
-                    }
-                }
-            }
-        }
-
         self.handle_touch_sample(touch, id);
     }
 
-    fn handle_touch_sample(&self, touch: *mut AnyObject, id: TouchId) {
-        let position = touch_location_in_view(touch, self.view);
+    fn handle_touch_sample(&self, touch: &UITouch, id: TouchId) {
+        let position = touch_location_in_view(touch, &self.view);
         self.mouse_position.set(position);
 
         let event = TouchEvent {
             id,
-            phase: touch_phase(touch).into(),
+            phase: touch_phase(touch),
             position,
             predicted_position: None,
             force: touch_force(touch),
-            timestamp: Some(touch_timestamp(touch)),
         };
         self.handle_keyboard_dismiss_touch(&event);
         if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
             callback(PlatformInput::Touch(event));
-        }
-    }
-
-    fn handle_native_scroll_start(&self, scroll_view: *mut AnyObject) {
-        self.scroll_view_last_offset
-            .set(Self::native_scroll_offset(scroll_view));
-        self.scroll_view_event_started.set(false);
-    }
-
-    fn handle_native_scroll(&self, scroll_view: *mut AnyObject) {
-        let offset = Self::native_scroll_offset(scroll_view);
-        self.position_metal_view(offset);
-        let previous_offset = self.scroll_view_last_offset.replace(offset);
-        let delta = previous_offset - offset;
-        if delta == Point::default() {
-            return;
-        }
-
-        let touch_phase = if self.scroll_view_event_started.replace(true) {
-            TouchPhase::Moved
-        } else {
-            TouchPhase::Started
-        };
-        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-            callback(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                position: self.mouse_position.get(),
-                delta: ScrollDelta::Pixels(delta),
-                modifiers: self.modifiers.get(),
-                touch_phase,
-            }));
-        }
-    }
-
-    fn handle_native_scroll_end(&self, scroll_view: *mut AnyObject) {
-        self.scroll_view_last_offset
-            .set(Self::native_scroll_offset(scroll_view));
-        if !self.scroll_view_event_started.replace(false) {
-            return;
-        }
-
-        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-            callback(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                position: self.mouse_position.get(),
-                delta: ScrollDelta::Pixels(Point::default()),
-                modifiers: self.modifiers.get(),
-                touch_phase: TouchPhase::Ended,
-            }));
-        }
-    }
-
-    fn native_scroll_offset(scroll_view: *mut AnyObject) -> Point<Pixels> {
-        let offset: ObjcCGPoint = unsafe { msg_send![scroll_view, contentOffset] };
-        Point::new(px(offset.x as f32), px(offset.y as f32))
-    }
-
-    fn position_metal_view(&self, offset: Point<Pixels>) {
-        let size = self.bounds.get().size;
-        let frame = ObjcCGRect::new(
-            f64::from(offset.x),
-            f64::from(offset.y),
-            f64::from(size.width),
-            f64::from(size.height),
-        );
-        unsafe {
-            let _: () = msg_send![self.view, setFrame: frame];
         }
     }
 
@@ -1079,44 +672,13 @@ impl IosWindow {
     /// These represent the areas occupied by system UI (status bar,
     /// home indicator, camera notch) that content should avoid.
     fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
-        if self.scroll_view.is_null() {
-            return (0.0, 0.0, 0.0, 0.0);
-        }
-        unsafe {
-            // UIEdgeInsets { top, left, bottom, right } — all CGFloat
-            #[repr(C)]
-            #[derive(Debug, Clone, Copy)]
-            struct UIEdgeInsets {
-                top: f64,
-                left: f64,
-                bottom: f64,
-                right: f64,
-            }
-
-            unsafe impl Encode for UIEdgeInsets {
-                const ENCODING: Encoding = Encoding::Struct(
-                    "UIEdgeInsets",
-                    &[
-                        Encoding::Double,
-                        Encoding::Double,
-                        Encoding::Double,
-                        Encoding::Double,
-                    ],
-                );
-            }
-
-            unsafe impl RefEncode for UIEdgeInsets {
-                const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
-            }
-
-            let insets: UIEdgeInsets = msg_send![self.scroll_view, safeAreaInsets];
-            (
-                insets.top as f32,
-                insets.bottom as f32,
-                insets.left as f32,
-                insets.right as f32,
-            )
-        }
+        let insets = self.view.safeAreaInsets();
+        (
+            insets.top as f32,
+            insets.bottom as f32,
+            insets.left as f32,
+            insets.right as f32,
+        )
     }
 
     fn current_insets(&self) -> WindowInsets {
@@ -1156,29 +718,28 @@ impl IosWindow {
     /// Defers the UIKit responder transition to avoid synchronous layout callbacks
     /// re-entering GPUI while an input event is being dispatched.
     pub fn show_keyboard(&self) {
+        self.text_input_view
+            .setKeyboardType(UIKeyboardType::Default);
+        self.text_input_view
+            .setAutocorrectionType(UITextAutocorrectionType::No);
+        self.text_input_view
+            .setAutocapitalizationType(UITextAutocapitalizationType::None);
         unsafe {
-            if self.text_input_view.is_null() {
-                log::error!("GPUI iOS: Text input view is unavailable");
-                return;
-            }
-            let _: () = msg_send![self.text_input_view, setKeyboardType: 0_isize];
-            let _: () = msg_send![self.text_input_view, setAutocorrectionType: 1_isize];
-            let _: () = msg_send![self.text_input_view, setAutocapitalizationType: 0_isize];
-            let _: () = msg_send![self.text_input_view,
-                performSelector: sel!(becomeFirstResponder),
-                withObject: ptr::null::<AnyObject>(),
-                afterDelay: 0.0_f64
-            ];
+            self.text_input_view.performSelector_withObject_afterDelay(
+                sel!(becomeFirstResponder),
+                None,
+                0.0,
+            );
         }
     }
 
     pub fn hide_keyboard(&self) {
         unsafe {
-            let _: () = msg_send![self.text_input_view,
-                performSelector: sel!(resignFirstResponder),
-                withObject: ptr::null::<AnyObject>(),
-                afterDelay: 0.0_f64
-            ];
+            self.text_input_view.performSelector_withObject_afterDelay(
+                sel!(resignFirstResponder),
+                None,
+                0.0,
+            );
         }
     }
 
@@ -1189,42 +750,29 @@ impl IosWindow {
         }
     }
 
-    pub fn handle_text_input(&self, text: *mut AnyObject) {
-        if text.is_null() {
+    pub fn handle_text_input(&self, text: &NSString) {
+        let text_str = text.to_string();
+
+        if let Some(handler) = self.input_handler.borrow_mut().as_mut() {
+            handler.replace_text_in_range(None, &text_str);
             return;
         }
 
-        unsafe {
-            let utf8: *const i8 = msg_send![text, UTF8String];
-            if utf8.is_null() {
-                return;
-            }
+        for character in text_str.chars() {
+            let keystroke = gpui::Keystroke {
+                modifiers: Modifiers::default(),
+                key: character.to_string(),
+                key_char: Some(character.to_string()),
+            };
 
-            let text_str = std::ffi::CStr::from_ptr(utf8)
-                .to_string_lossy()
-                .into_owned();
+            let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
+                keystroke,
+                is_held: false,
+                prefer_character_input: true,
+            });
 
-            if let Some(handler) = self.input_handler.borrow_mut().as_mut() {
-                handler.replace_text_in_range(None, &text_str);
-                return;
-            }
-
-            for character in text_str.chars() {
-                let keystroke = gpui::Keystroke {
-                    modifiers: Modifiers::default(),
-                    key: character.to_string(),
-                    key_char: Some(character.to_string()),
-                };
-
-                let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
-                    keystroke,
-                    is_held: false,
-                    prefer_character_input: true,
-                });
-
-                if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-                    callback(event);
-                }
+            if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
+                callback(event);
             }
         }
     }
@@ -1298,67 +846,56 @@ impl IosWindow {
     }
 
     pub fn handle_layout_change(&self) {
-        unsafe {
-            let view_bounds: ObjcCGRect = msg_send![self.scroll_view, bounds];
-            let screen: *mut AnyObject = msg_send![class!(UIScreen), mainScreen];
-            let scale: core_graphics::base::CGFloat = msg_send![screen, scale];
+        let view_bounds = self.view.bounds();
+        let scale = self.window.screen().scale();
 
-            let new_w = view_bounds.width as f32;
-            let new_h = view_bounds.height as f32;
-            let new_scale = scale as f32;
+        let new_w = view_bounds.size.width as f32;
+        let new_h = view_bounds.size.height as f32;
+        let new_scale = scale as f32;
 
-            let old_bounds = self.bounds.get();
-            let old_scale = self.scale_factor.get();
+        let old_bounds = self.bounds.get();
+        let old_scale = self.scale_factor.get();
 
-            let new_size = size(px(new_w), px(new_h));
-            self.notify_insets_changed();
+        let new_size = size(px(new_w), px(new_h));
+        self.notify_insets_changed();
 
-            if old_bounds.size == new_size && (old_scale - new_scale).abs() < 0.01 {
-                return;
-            }
+        if old_bounds.size == new_size && (old_scale - new_scale).abs() < 0.01 {
+            return;
+        }
 
-            log::info!(
-                "GPUI iOS: Layout changed — {:?} @{:.1}x → {:?} @{:.1}x",
-                old_bounds.size,
-                old_scale,
-                new_size,
-                new_scale,
-            );
+        log::info!(
+            "GPUI iOS: Layout changed — {:?} @{:.1}x → {:?} @{:.1}x",
+            old_bounds.size,
+            old_scale,
+            new_size,
+            new_scale,
+        );
 
-            // Update stored bounds (in logical pixels, matching GPUI convention).
-            let new_bounds = Bounds {
-                origin: Default::default(),
-                size: new_size,
-            };
-            self.bounds.set(new_bounds);
-            self.scale_factor.set(new_scale);
-            let content_size = ObjcCGSize {
-                width: view_bounds.width,
-                height: SCROLL_PROXY_CONTENT_HEIGHT,
-            };
-            let _: () = msg_send![self.scroll_view, setContentSize: content_size];
-            self.position_metal_view(Self::native_scroll_offset(self.scroll_view));
+        // Update stored bounds (in logical pixels, matching GPUI convention).
+        let new_bounds = Bounds {
+            origin: Default::default(),
+            size: new_size,
+        };
+        self.bounds.set(new_bounds);
+        self.scale_factor.set(new_scale);
+        // Update the Metal layer's contentsScale so the drawable has the
+        // correct pixel dimensions.
+        self.view.layer().setContentsScale(scale);
 
-            // Update the Metal layer's contentsScale so the drawable has the
-            // correct pixel dimensions.
-            let layer: *mut AnyObject = msg_send![self.view, layer];
-            let _: () = msg_send![layer, setContentsScale: scale];
+        let pixel_w = (new_w * new_scale) as i32;
+        let pixel_h = (new_h * new_scale) as i32;
+        self.renderer
+            .lock()
+            .update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
 
-            let pixel_w = (new_w * new_scale) as i32;
-            let pixel_h = (new_h * new_scale) as i32;
-            self.renderer
-                .lock()
-                .update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
-
-            // Fire the resize callback so GPUI re-layouts at the new size.
-            let cb = self.resize_callback.borrow_mut().take();
-            if let Some(mut cb) = cb {
-                cb(new_size, new_scale);
-                // Restore the callback for future resize events.
-                let mut slot = self.resize_callback.borrow_mut();
-                if slot.is_none() {
-                    *slot = Some(cb);
-                }
+        // Fire the resize callback so GPUI re-layouts at the new size.
+        let cb = self.resize_callback.borrow_mut().take();
+        if let Some(mut cb) = cb {
+            cb(new_size, new_scale);
+            // Restore the callback for future resize events.
+            let mut slot = self.resize_callback.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(cb);
             }
         }
     }
@@ -1368,27 +905,13 @@ impl Drop for IosWindow {
     fn drop(&mut self) {
         super::ffi::unregister_window(self);
 
-        unsafe {
-            #[allow(deprecated)]
-            {
-                *(*self.view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = ptr::null_mut();
-                *(*self.text_input_view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) =
-                    ptr::null_mut();
-                *(*self.scroll_view_delegate).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) =
-                    ptr::null_mut();
-            }
-            let _: () = msg_send![self.scroll_view, setDelegate: ptr::null::<AnyObject>()];
-            let _: () = msg_send![self.text_input_view, removeFromSuperview];
-            let _: () = msg_send![self.text_input_view, release];
-            if !self.edit_menu_interaction.is_null() {
-                let _: () = msg_send![self.view, removeInteraction: self.edit_menu_interaction];
-                let _: () = msg_send![self.edit_menu_interaction, release];
-            }
-            let _: () = msg_send![self.scroll_view_delegate, release];
-            let _: () = msg_send![self.view, release];
-            let _: () = msg_send![self.scroll_view, release];
-            let _: () = msg_send![self.view_controller, release];
-            let _: () = msg_send![self.window, release];
+        self.view_controller.ivars().0.set(None);
+        self.view.ivars().0.set(None);
+        self.text_input_view.ivars().window.0.set(None);
+        self.text_input_view.removeFromSuperview();
+        if let Some(interaction) = &self.edit_menu_interaction {
+            self.view
+                .removeInteraction(objc2::runtime::ProtocolObject::from_ref(&**interaction));
         }
     }
 }
@@ -1398,7 +921,7 @@ impl HasWindowHandle for IosWindow {
         &self,
     ) -> std::result::Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError>
     {
-        let view = NonNull::new(self.view as *mut c_void)
+        let view = NonNull::new(Retained::as_ptr(&self.view).cast_mut().cast::<c_void>())
             .ok_or(raw_window_handle::HandleError::Unavailable)?;
         let handle = UiKitWindowHandle::new(view);
         Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(handle.into()) })
@@ -1441,13 +964,9 @@ impl PlatformWindow for IosWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        unsafe {
-            let trait_collection: *mut AnyObject = msg_send![self.view, traitCollection];
-            let style: i64 = msg_send![trait_collection, userInterfaceStyle];
-            match style {
-                2 => WindowAppearance::Dark,
-                _ => WindowAppearance::Light,
-            }
+        match unsafe { self.view.traitCollection().userInterfaceStyle() } {
+            UIUserInterfaceStyle::Dark => WindowAppearance::Dark,
+            _ => WindowAppearance::Light,
         }
     }
 
@@ -1487,17 +1006,11 @@ impl PlatformWindow for IosWindow {
     }
 
     fn activate(&self) {
-        unsafe {
-            let _: () = msg_send![self.window, makeKeyAndVisible];
-        }
+        self.window.makeKeyAndVisible();
     }
 
     fn is_active(&self) -> bool {
-        unsafe {
-            let app: *mut AnyObject = msg_send![class!(UIApplication), sharedApplication];
-            let key_window: *mut AnyObject = msg_send![app, keyWindow];
-            self.window == key_window
-        }
+        self.window.isKeyWindow()
     }
 
     fn is_hovered(&self) -> bool {
@@ -1622,32 +1135,23 @@ impl PlatformWindow for IosWindow {
     }
 
     fn show_edit_menu(&self, position: Point<Pixels>, actions: EditMenuActions) -> bool {
-        if self.edit_menu_interaction.is_null() {
-            return false;
-        }
-        let Some(configuration_class) = AnyClass::get(c"UIEditMenuConfiguration") else {
+        let Some(interaction) = &self.edit_menu_interaction else {
             return false;
         };
 
         self.edit_menu_actions.set(actions);
         unsafe {
-            let source_point = ObjcCGPoint {
+            let source_point = CGPoint {
                 x: f64::from(position.x),
                 y: f64::from(position.y),
             };
-            let configuration: *mut AnyObject = msg_send![
-                configuration_class,
-                configurationWithIdentifier: ptr::null::<AnyObject>(),
-                sourcePoint: source_point
-            ];
-            if configuration.is_null() {
-                return false;
-            }
-            let _: () = msg_send![self.edit_menu_interaction, dismissMenu];
-            let _: () = msg_send![
-                self.edit_menu_interaction,
-                presentEditMenuWithConfiguration: configuration
-            ];
+            let configuration = UIEditMenuConfiguration::configurationWithIdentifier_sourcePoint(
+                None,
+                source_point,
+                self.view.mtm(),
+            );
+            interaction.dismissMenu();
+            interaction.presentEditMenuWithConfiguration(&configuration);
         }
         true
     }
@@ -1656,9 +1160,9 @@ impl PlatformWindow for IosWindow {
         match change {
             TextInputStateChange::FocusGained => self.show_keyboard(),
             TextInputStateChange::FocusLost => self.hide_keyboard(),
-            TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => unsafe {
-                let _: () = msg_send![self.text_input_view, reloadInputViews];
-            },
+            TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {
+                self.text_input_view.reloadInputViews();
+            }
         }
     }
 }

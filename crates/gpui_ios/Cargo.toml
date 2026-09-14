@@ -28,6 +28,13 @@ gpui_apple.workspace = true
 log.workspace = true
 metal.workspace = true
 objc2.workspace = true
+objc2-foundation = { workspace = true, features = ["NSThread", "NSOperation", "block2"] }
+objc2-ui-kit.workspace = true
+objc2-quartz-core.workspace = true
+objc2-core-foundation.workspace = true
+objc2-core-text.workspace = true
+objc2-security.workspace = true
+dispatch2.workspace = true
 parking_lot.workspace = true
 pathfinder_geometry.workspace = true
 raw-window-handle.workspace = true

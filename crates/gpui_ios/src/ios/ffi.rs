@@ -1,6 +1,12 @@
 //! Native entry points used by an iOS application delegate.
+//!
+//! The host must call these on the main thread. Object arguments are borrowed
+//! UIKit/Foundation objects valid for the call; window handles remain valid only
+//! until GPUI closes that window. A supplied scene is retained until replaced.
 
 use gpui::{App, AppLifecyclePhase, Application, ApplicationHandle, WindowVisibility};
+use objc2::rc::Retained;
+use objc2_ui_kit::UIWindowScene;
 use std::{cell::UnsafeCell, ffi::c_void, rc::Rc, sync::OnceLock};
 
 type AppCallback = Box<dyn FnOnce(&mut App)>;
@@ -17,7 +23,7 @@ struct IosCallbacks {
 struct IosAppState {
     callbacks: UnsafeCell<IosCallbacks>,
     application: UnsafeCell<Option<ApplicationHandle>>,
-    window_scene: UnsafeCell<*mut c_void>,
+    window_scene: UnsafeCell<Option<Retained<UIWindowScene>>>,
 }
 
 unsafe impl Send for IosAppState {}
@@ -42,7 +48,7 @@ fn app_state() -> &'static IosAppState {
             memory_warning: None,
         }),
         application: UnsafeCell::new(None),
-        window_scene: UnsafeCell::new(std::ptr::null_mut()),
+        window_scene: UnsafeCell::new(None),
     })
 }
 
@@ -64,12 +70,12 @@ pub extern "C" fn gpui_ios_initialize() -> *mut c_void {
 #[unsafe(no_mangle)]
 pub extern "C" fn gpui_ios_set_window_scene(scene: *mut c_void) {
     unsafe {
-        *app_state().window_scene.get() = scene;
+        *app_state().window_scene.get() = Retained::retain(scene.cast::<UIWindowScene>());
     }
 }
 
-pub(crate) fn window_scene() -> *mut objc2::runtime::AnyObject {
-    unsafe { (*app_state().window_scene.get()).cast() }
+pub(crate) fn window_scene() -> Option<Retained<UIWindowScene>> {
+    unsafe { (*app_state().window_scene.get()).clone() }
 }
 
 pub(crate) fn register_window(window: *const super::window::IosWindow) {
@@ -243,10 +249,12 @@ pub extern "C" fn gpui_ios_handle_touch(
         return;
     }
 
-    window.handle_touch(
-        touch.cast::<objc2::runtime::AnyObject>(),
-        event.cast::<objc2::runtime::AnyObject>(),
-    );
+    unsafe {
+        window.handle_touch(
+            &*touch.cast::<objc2_ui_kit::UITouch>(),
+            event.cast::<objc2_ui_kit::UIEvent>().as_ref(),
+        );
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -277,7 +285,7 @@ pub extern "C" fn gpui_ios_handle_text_input(window: *mut c_void, text: *mut c_v
         return;
     };
     if !text.is_null() {
-        window.handle_text_input(text.cast::<objc2::runtime::AnyObject>());
+        window.handle_text_input(unsafe { &*text.cast::<objc2_foundation::NSString>() });
     }
 }
 
@@ -299,16 +307,7 @@ pub extern "C" fn gpui_ios_handle_open_url(url: *mut c_void) {
         return;
     }
 
-    let url = unsafe {
-        let utf8: *const std::ffi::c_char =
-            objc2::msg_send![url.cast::<objc2::runtime::AnyObject>(), UTF8String];
-        if utf8.is_null() {
-            return;
-        }
-        std::ffi::CStr::from_ptr(utf8)
-            .to_string_lossy()
-            .into_owned()
-    };
+    let url = unsafe { (&*url.cast::<objc2_foundation::NSString>()).to_string() };
 
     let callback = unsafe { (*app_state().callbacks.get()).open_urls.take() };
     if let Some(mut callback) = callback {

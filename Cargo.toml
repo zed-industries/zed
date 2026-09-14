@@ -697,6 +697,35 @@ nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
 objc2 = "0.6"
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-quartz-core",
+    "objc2-core-foundation",
+    "UIApplication",
+    "UIEditMenuInteraction",
+    "UIEvent",
+    "UIGeometry",
+    "UIInteraction",
+    "UIInterface",
+    "UIPasteboard",
+    "UIResponder",
+    "UIScene",
+    "UIScreen",
+    "UITextInput",
+    "UITextInputTraits",
+    "UITouch",
+    "UITraitCollection",
+    "UIView",
+    "UIViewController",
+    "UIWindow",
+    "UIWindowScene",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer"] }
+objc2-core-foundation = "0.3.2"
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor"] }
+objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
+dispatch2 = "0.3"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSAlert",
     "NSApplication",

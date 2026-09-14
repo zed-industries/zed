@@ -10,23 +10,19 @@
 
 use super::{IosDispatcher, IosDisplay, IosWindow};
 use anyhow::{Context as _, anyhow};
-use core_foundation::{
-    base::{CFType, CFTypeRef, OSStatus, TCFType},
-    boolean::CFBoolean,
-    data::CFData,
-    dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
-    string::{CFString, CFStringRef},
-};
 use futures::channel::oneshot;
 use gpui::{
     Action, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DummyKeyboardMapper, ForegroundExecutor, GestureKinds, GestureTuning, Keymap, Menu, MenuItem,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformGestures, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, Task, ThermalState,
-    WindowAppearance, WindowParams,
+    DummyKeyboardMapper, ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Result, Task, ThermalState, WindowAppearance, WindowParams,
 };
-use objc2::runtime::AnyObject;
-use objc2::{class, msg_send};
+use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained};
+use objc2_core_foundation::{CFData, CFDictionary, CFRetained, CFString, CFType, kCFBooleanTrue};
+use objc2_foundation::{NSBundle, NSDictionary, NSString, NSURL};
+use objc2_ui_kit::{
+    UIApplication, UIPasteboard, UITraitEnvironment, UIUserInterfaceStyle, UIViewController,
+};
 use parking_lot::Mutex;
 use std::{
     path::{Path, PathBuf},
@@ -36,24 +32,6 @@ use std::{
 };
 
 pub struct IosPlatform(Mutex<IosPlatformState>);
-
-struct IosGestures;
-
-impl PlatformGestures for IosGestures {
-    fn tuning(&self) -> GestureTuning {
-        GestureTuning {
-            scroll_physics: gpui::ScrollPhysics::Exponential { decay_per_ms: 0.99 },
-            ..GestureTuning::default()
-        }
-    }
-
-    fn native_recognizers(&self) -> GestureKinds {
-        GestureKinds {
-            pan: true,
-            ..GestureKinds::NONE
-        }
-    }
-}
 
 pub(crate) struct IosPlatformState {
     background_executor: BackgroundExecutor,
@@ -82,93 +60,58 @@ impl IosPlatform {
         }))
     }
 
-    fn root_view_controller() -> Option<*mut AnyObject> {
-        unsafe {
-            let scene = super::ffi::window_scene();
-            if scene.is_null() {
-                return None;
-            }
-
-            let windows: *mut AnyObject = msg_send![scene, windows];
-            if windows.is_null() {
-                return None;
-            }
-
-            let count: usize = msg_send![windows, count];
-            let mut fallback_window: *mut AnyObject = ptr::null_mut();
-            for index in 0..count {
-                let window: *mut AnyObject = msg_send![windows, objectAtIndex: index];
-                if fallback_window.is_null() {
-                    fallback_window = window;
-                }
-
-                let is_key_window: bool = msg_send![window, isKeyWindow];
-                if is_key_window {
-                    let view_controller: *mut AnyObject = msg_send![window, rootViewController];
-                    return (!view_controller.is_null()).then_some(view_controller);
-                }
-            }
-
-            if fallback_window.is_null() {
-                return None;
-            }
-
-            let view_controller: *mut AnyObject = msg_send![fallback_window, rootViewController];
-            (!view_controller.is_null()).then_some(view_controller)
-        }
+    fn root_view_controller() -> Option<Retained<UIViewController>> {
+        let window = if let Some(scene) = super::ffi::window_scene() {
+            let windows = scene.windows();
+            windows
+                .iter()
+                .find(|window| window.isKeyWindow())
+                .or_else(|| windows.firstObject())
+        } else {
+            // Legacy hosts can create a GPUI window without supplying a scene.
+            #[allow(deprecated)]
+            UIApplication::sharedApplication(
+                MainThreadMarker::new().expect("UIKit requires the main thread"),
+            )
+            .keyWindow()
+        }?;
+        window.rootViewController()
     }
 
-    fn presented_view_controller() -> Option<*mut AnyObject> {
-        unsafe {
-            let mut view_controller = Self::root_view_controller()?;
-            loop {
-                let presented: *mut AnyObject = msg_send![view_controller, presentedViewController];
-                if presented.is_null() {
-                    return Some(view_controller);
-                }
-                view_controller = presented;
-            }
+    fn presented_view_controller() -> Option<Retained<UIViewController>> {
+        let mut view_controller = Self::root_view_controller()?;
+        while let Some(presented) = view_controller.presentedViewController() {
+            view_controller = presented;
         }
+        Some(view_controller)
     }
 
     fn dismiss_presented_browser() {
-        unsafe {
-            let mut view_controller = match Self::root_view_controller() {
-                Some(view_controller) => view_controller,
-                None => return,
+        let mut view_controller = match Self::root_view_controller() {
+            Some(view_controller) => view_controller,
+            None => return,
+        };
+
+        loop {
+            let Some(presented) = view_controller.presentedViewController() else {
+                return;
             };
 
-            loop {
-                let presented: *mut AnyObject = msg_send![view_controller, presentedViewController];
-                if presented.is_null() {
-                    return;
-                }
-
-                let is_browser: bool =
-                    msg_send![presented, isKindOfClass: class!(SFSafariViewController)];
-                if is_browser {
-                    let _: () = msg_send![
-                        presented,
-                        dismissViewControllerAnimated: true,
-                        completion: ptr::null::<AnyObject>()
-                    ];
-                    return;
-                }
-
-                view_controller = presented;
+            if presented.downcast_ref::<SFSafariViewController>().is_some() {
+                presented.dismissViewControllerAnimated_completion(true, None);
+                return;
             }
+
+            view_controller = presented;
         }
     }
 
-    fn open_url_with_system(url: *mut AnyObject) {
+    fn open_url_with_system(url: &NSURL) {
         unsafe {
-            let app: *mut AnyObject = msg_send![class!(UIApplication), sharedApplication];
-            let _: () = msg_send![
-                app,
-                openURL: url,
-                options: ptr::null::<AnyObject>(),
-                completionHandler: ptr::null::<AnyObject>()
-            ];
+            let app = UIApplication::sharedApplication(
+                MainThreadMarker::new().expect("UIKit requires the main thread"),
+            );
+            app.openURL_options_completionHandler(url, &NSDictionary::new(), None);
         }
     }
 }
@@ -197,10 +140,6 @@ impl Platform for IosPlatform {
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         self.0.lock().text_system.clone()
-    }
-
-    fn gestures(&self) -> Option<Rc<dyn PlatformGestures>> {
-        Some(Rc::new(IosGestures))
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
@@ -263,19 +202,11 @@ impl Platform for IosPlatform {
 
     fn window_appearance(&self) -> WindowAppearance {
         unsafe {
-            let style: i64 = {
-                let app: *mut AnyObject = msg_send![class!(UIApplication), sharedApplication];
-                let key_window: *mut AnyObject = msg_send![app, keyWindow];
-                if key_window.is_null() {
-                    return WindowAppearance::Light;
-                }
-                let trait_collection: *mut AnyObject = msg_send![key_window, traitCollection];
-                msg_send![trait_collection, userInterfaceStyle]
+            let Some(controller) = Self::root_view_controller() else {
+                return WindowAppearance::Light;
             };
-
-            // UIUserInterfaceStyle: 0 = unspecified, 1 = light, 2 = dark
-            match style {
-                2 => WindowAppearance::Dark,
+            match controller.traitCollection().userInterfaceStyle() {
+                UIUserInterfaceStyle::Dark => WindowAppearance::Dark,
                 _ => WindowAppearance::Light,
             }
         }
@@ -283,30 +214,23 @@ impl Platform for IosPlatform {
 
     fn open_url(&self, url: &str) {
         unsafe {
-            let url_string = super::util::nsstring(url);
-            let native_url: *mut AnyObject = msg_send![class!(NSURL), URLWithString: url_string];
-            if native_url.is_null() {
+            let Some(native_url) = NSURL::URLWithString(&NSString::from_str(url)) else {
                 log::error!("GPUI iOS: Could not parse URL: {url}");
                 return;
-            }
+            };
 
             if url.starts_with("https://") || url.starts_with("http://") {
                 if let Some(view_controller) = Self::presented_view_controller() {
-                    let browser: *mut AnyObject = msg_send![class!(SFSafariViewController), alloc];
-                    let browser: *mut AnyObject = msg_send![browser, initWithURL: native_url];
-                    if !browser.is_null() {
-                        let _: () = msg_send![
-                            view_controller,
-                            presentViewController: browser,
-                            animated: true,
-                            completion: ptr::null::<AnyObject>()
-                        ];
-                        return;
-                    }
+                    let browser = SFSafariViewController::init_with_url(
+                        SFSafariViewController::alloc(view_controller.mtm()),
+                        &native_url,
+                    );
+                    view_controller.presentViewController_animated_completion(&browser, true, None);
+                    return;
                 }
             }
 
-            Self::open_url_with_system(native_url);
+            Self::open_url_with_system(&native_url);
         }
     }
 
@@ -411,16 +335,9 @@ impl Platform for IosPlatform {
     }
 
     fn app_path(&self) -> Result<PathBuf> {
-        unsafe {
-            let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
-            let path: *mut AnyObject = msg_send![bundle, bundlePath];
-            let utf8: *const i8 = msg_send![path, UTF8String];
-            if utf8.is_null() {
-                return Err(anyhow!("Failed to get bundle path"));
-            }
-            let path_str = std::ffi::CStr::from_ptr(utf8).to_str()?;
-            Ok(PathBuf::from(path_str))
-        }
+        Ok(PathBuf::from(
+            NSBundle::mainBundle().bundlePath().to_string(),
+        ))
     }
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
@@ -443,29 +360,17 @@ impl Platform for IosPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        unsafe {
-            let pasteboard: *mut AnyObject = msg_send![class!(UIPasteboard), generalPasteboard];
-            if let Some(text) = item.text() {
-                let ns_string = super::util::nsstring(&text);
-                let _: () = msg_send![pasteboard, setString: ns_string];
-            }
+        let pasteboard = UIPasteboard::generalPasteboard();
+        if let Some(text) = item.text() {
+            unsafe { pasteboard.setString(Some(&NSString::from_str(&text))) };
         }
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        unsafe {
-            let pasteboard: *mut AnyObject = msg_send![class!(UIPasteboard), generalPasteboard];
-            let string: *mut AnyObject = msg_send![pasteboard, string];
-            if string.is_null() {
-                return None;
-            }
-            let utf8: *const i8 = msg_send![string, UTF8String];
-            if utf8.is_null() {
-                return None;
-            }
-            let text = std::ffi::CStr::from_ptr(utf8).to_str().ok()?;
-            Some(ClipboardItem::new_string(text.to_string()))
-        }
+        let pasteboard = UIPasteboard::generalPasteboard();
+        Some(ClipboardItem::new_string(
+            unsafe { pasteboard.string() }?.to_string(),
+        ))
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -474,37 +379,34 @@ impl Platform for IosPlatform {
         let password = password.to_vec();
         self.background_executor().spawn(async move {
             unsafe {
-                use security::*;
+                use objc2_security::*;
 
-                let url = CFString::from(url.as_str());
-                let username = CFString::from(username.as_str());
-                let password = CFData::from_buffer(&password);
+                let url = CFString::from_str(&url);
+                let username = CFString::from_str(&username);
+                let password = CFData::from_bytes(&password);
 
-                let mut query_attributes = CFMutableDictionary::with_capacity(2);
-                query_attributes.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                query_attributes.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-
-                let mut updated_attributes = CFMutableDictionary::with_capacity(2);
-                updated_attributes.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
-                updated_attributes.set(kSecValueData as *const _, password.as_CFTypeRef());
+                let query_attributes = CFDictionary::<CFString, CFType>::from_slices(
+                    &[kSecClass, kSecAttrServer],
+                    &[kSecClassInternetPassword, &url],
+                );
+                let updated_attributes = CFDictionary::<CFString, CFType>::from_slices(
+                    &[kSecAttrAccount, kSecValueData],
+                    &[&username, &password],
+                );
 
                 let mut operation = "updating";
-                let mut status = SecItemUpdate(
-                    query_attributes.as_concrete_TypeRef(),
-                    updated_attributes.as_concrete_TypeRef(),
-                );
-                if status == ERR_SEC_ITEM_NOT_FOUND {
+                let mut status =
+                    SecItemUpdate(query_attributes.as_opaque(), updated_attributes.as_opaque());
+                if status == errSecItemNotFound {
                     operation = "creating";
-                    let mut new_item_attributes = CFMutableDictionary::with_capacity(4);
-                    new_item_attributes
-                        .set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                    new_item_attributes.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-                    new_item_attributes.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
-                    new_item_attributes.set(kSecValueData as *const _, password.as_CFTypeRef());
-                    status = SecItemAdd(new_item_attributes.as_concrete_TypeRef(), ptr::null_mut());
+                    let new_item_attributes = CFDictionary::<CFString, CFType>::from_slices(
+                        &[kSecClass, kSecAttrServer, kSecAttrAccount, kSecValueData],
+                        &[kSecClassInternetPassword, &url, &username, &password],
+                    );
+                    status = SecItemAdd(new_item_attributes.as_opaque(), ptr::null_mut());
                 }
                 anyhow::ensure!(
-                    status == ERR_SEC_SUCCESS,
+                    status == errSecSuccess,
                     "{operation} password failed: {status}"
                 );
             }
@@ -515,43 +417,53 @@ impl Platform for IosPlatform {
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
-            let url = CFString::from(url.as_str());
-            let cf_true = CFBoolean::true_value().as_CFTypeRef();
+            let url = CFString::from_str(&url);
 
             unsafe {
-                use security::*;
+                use objc2_security::*;
+                let cf_true = kCFBooleanTrue.context("Core Foundation true value unavailable")?;
+                let attributes = CFDictionary::<CFString, CFType>::from_slices(
+                    &[
+                        kSecClass,
+                        kSecAttrServer,
+                        kSecReturnAttributes,
+                        kSecReturnData,
+                    ],
+                    &[kSecClassInternetPassword, &url, cf_true, cf_true],
+                );
 
-                let mut attributes = CFMutableDictionary::with_capacity(4);
-                attributes.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                attributes.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-                attributes.set(kSecReturnAttributes as *const _, cf_true);
-                attributes.set(kSecReturnData as *const _, cf_true);
-
-                let mut result = CFTypeRef::from(ptr::null());
-                let status = SecItemCopyMatching(attributes.as_concrete_TypeRef(), &mut result);
+                let mut result: *const CFType = ptr::null();
+                let status = SecItemCopyMatching(attributes.as_opaque(), &mut result);
                 match status {
-                    ERR_SEC_SUCCESS => {}
-                    ERR_SEC_ITEM_NOT_FOUND | ERR_SEC_USER_CANCELED => return Ok(None),
+                    status if status == errSecSuccess => {}
+                    status if status == errSecItemNotFound || status == errSecUserCanceled => {
+                        return Ok(None);
+                    }
                     _ => anyhow::bail!("reading password failed: {status}"),
                 }
 
-                let result = CFType::wrap_under_create_rule(result)
+                let result = std::ptr::NonNull::new(result.cast_mut())
+                    .context("keychain returned no item")?;
+                let result = CFRetained::from_raw(result)
                     .downcast::<CFDictionary>()
-                    .context("keychain item was not a dictionary")?;
+                    .map_err(|_| anyhow!("keychain item was not a dictionary"))?;
+                // SecItemCopyMatching returns a CFType-keyed/value dictionary when
+                // kSecReturnAttributes is set. Validate each value's concrete type.
+                let result = result.cast_unchecked::<CFType, CFType>();
                 let username = result
-                    .find(kSecAttrAccount as *const _)
+                    .get(kSecAttrAccount)
                     .context("account was missing from keychain item")?;
-                let username = CFType::wrap_under_get_rule(*username)
+                let username = username
                     .downcast::<CFString>()
-                    .context("account was not a string")?;
+                    .map_err(|_| anyhow!("account was not a string"))?;
                 let password = result
-                    .find(kSecValueData as *const _)
+                    .get(kSecValueData)
                     .context("password was missing from keychain item")?;
-                let password = CFType::wrap_under_get_rule(*password)
+                let password = password
                     .downcast::<CFData>()
-                    .context("password was not data")?;
+                    .map_err(|_| anyhow!("password was not data"))?;
 
-                Ok(Some((username.to_string(), password.bytes().to_vec())))
+                Ok(Some((username.to_string(), password.to_vec())))
             }
         })
     }
@@ -560,16 +472,17 @@ impl Platform for IosPlatform {
         let url = url.to_string();
         self.background_executor().spawn(async move {
             unsafe {
-                use security::*;
+                use objc2_security::*;
 
-                let url = CFString::from(url.as_str());
-                let mut query_attributes = CFMutableDictionary::with_capacity(2);
-                query_attributes.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                query_attributes.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+                let url = CFString::from_str(&url);
+                let query_attributes = CFDictionary::<CFString, CFType>::from_slices(
+                    &[kSecClass, kSecAttrServer],
+                    &[kSecClassInternetPassword, &url],
+                );
 
-                let status = SecItemDelete(query_attributes.as_concrete_TypeRef());
+                let status = SecItemDelete(query_attributes.as_opaque());
                 anyhow::ensure!(
-                    matches!(status, ERR_SEC_SUCCESS | ERR_SEC_ITEM_NOT_FOUND),
+                    status == errSecSuccess || status == errSecItemNotFound,
                     "deleting password failed: {status}"
                 );
             }
@@ -602,28 +515,25 @@ impl Platform for IosPlatform {
     }
 }
 
-mod security {
-    #![allow(non_upper_case_globals)]
+// objc2-safari-services 0.3.2 only includes the macOS SafariServices API.
+// Keep the missing iOS initializer typed here until the generated crate includes it.
+#[link(name = "SafariServices", kind = "framework")]
+unsafe extern "C" {}
 
-    use super::*;
+objc2::extern_class!(
+    #[unsafe(super(
+        UIViewController,
+        objc2_ui_kit::UIResponder,
+        objc2_foundation::NSObject
+    ))]
+    #[thread_kind = MainThreadOnly]
+    struct SFSafariViewController;
+);
 
-    #[link(name = "Security", kind = "framework")]
-    unsafe extern "C" {
-        pub static kSecClass: CFStringRef;
-        pub static kSecClassInternetPassword: CFStringRef;
-        pub static kSecAttrServer: CFStringRef;
-        pub static kSecAttrAccount: CFStringRef;
-        pub static kSecValueData: CFStringRef;
-        pub static kSecReturnAttributes: CFStringRef;
-        pub static kSecReturnData: CFStringRef;
-
-        pub fn SecItemAdd(attributes: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
-        pub fn SecItemUpdate(query: CFDictionaryRef, attributes: CFDictionaryRef) -> OSStatus;
-        pub fn SecItemDelete(query: CFDictionaryRef) -> OSStatus;
-        pub fn SecItemCopyMatching(query: CFDictionaryRef, result: *mut CFTypeRef) -> OSStatus;
-    }
-
-    pub const ERR_SEC_SUCCESS: OSStatus = 0;
-    pub const ERR_SEC_USER_CANCELED: OSStatus = -128;
-    pub const ERR_SEC_ITEM_NOT_FOUND: OSStatus = -25300;
+impl SFSafariViewController {
+    objc2::extern_methods!(
+        #[unsafe(method(initWithURL:))]
+        #[unsafe(method_family = init)]
+        unsafe fn init_with_url(this: objc2::rc::Allocated<Self>, url: &NSURL) -> Retained<Self>;
+    );
 }

@@ -20,10 +20,9 @@ use crate::{
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
     TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TouchGestureArena, TouchGestureOutput, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
-    prelude::*, px, rems, size, transparent_black,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
+    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -723,8 +722,6 @@ type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
-pub(crate) type AnyTouchListener =
-    Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
@@ -984,7 +981,6 @@ pub(crate) struct Frame {
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
-    pub(crate) touch_listeners: Vec<Option<AnyTouchListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
@@ -1016,7 +1012,6 @@ pub(crate) struct PrepaintStateIndex {
 pub(crate) struct PaintIndex {
     scene_index: usize,
     mouse_listeners_index: usize,
-    touch_listeners_index: usize,
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
@@ -1032,7 +1027,6 @@ impl Frame {
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
             mouse_listeners: Vec::new(),
-            touch_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
@@ -1058,7 +1052,6 @@ impl Frame {
         self.element_states.clear();
         self.accessed_element_states.clear();
         self.mouse_listeners.clear();
-        self.touch_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
         self.input_handlers.clear();
@@ -1214,7 +1207,6 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
-    pub(crate) touch_gesture_arena: Option<TouchGestureArena>,
     touch_gestures: TouchGestureRecognizer,
     touch_prediction_enabled: bool,
     long_press_timer: Option<Task<()>>,
@@ -1542,14 +1534,6 @@ impl Window {
             .and_then(|titlebar| titlebar.title.clone());
 
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
-        let platform_gestures = cx.platform.gestures();
-        let gesture_tuning = platform_gestures
-            .as_ref()
-            .map(|gestures| gestures.tuning())
-            .unwrap_or_default();
-        let native_gestures = platform_gestures
-            .map(|gestures| gestures.native_recognizers())
-            .unwrap_or_default();
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
@@ -2099,11 +2083,6 @@ impl Window {
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
             last_input_modality: InputModality::Mouse,
-            // UIKit owns vertical panning; running the portable recognizer as
-            // well would synthesize a second scroll stream for the same touch.
-            touch_gesture_arena: native_gestures
-                .pan
-                .then(|| TouchGestureArena::new(gesture_tuning, native_gestures)),
             touch_gestures: TouchGestureRecognizer::new(
                 cx.platform
                     .gestures()
@@ -3812,7 +3791,6 @@ impl Window {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
-            touch_listeners_index: self.next_frame.touch_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
@@ -3837,12 +3815,6 @@ impl Window {
         self.next_frame.mouse_listeners.extend(
             self.rendered_frame.mouse_listeners
                 [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
-                .iter_mut()
-                .map(|listener| listener.take()),
-        );
-        self.next_frame.touch_listeners.extend(
-            self.rendered_frame.touch_listeners
-                [range.start.touch_listeners_index..range.end.touch_listeners_index]
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
@@ -5230,29 +5202,6 @@ impl Window {
         )));
     }
 
-    /// Register a touch event listener on the window for the next frame. The type of event
-    /// is determined by the first parameter of the given listener. When the next frame is rendered
-    /// the listener will be cleared.
-    ///
-    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
-    /// a specific need to register a listener yourself.
-    ///
-    /// This method should only be called as part of the paint phase of element drawing.
-    pub fn on_touch_event<Event: 'static>(
-        &mut self,
-        mut listener: impl FnMut(&Event, DispatchPhase, &mut Window, &mut App) + 'static,
-    ) {
-        self.invalidator.debug_assert_paint();
-
-        self.next_frame.touch_listeners.push(Some(Box::new(
-            move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
-                if let Some(event) = event.downcast_ref() {
-                    listener(event, phase, window, cx)
-                }
-            },
-        )));
-    }
-
     /// Register a key event listener on this node for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -5400,59 +5349,6 @@ impl Window {
     /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
-        if let PlatformInput::Touch(touch) = &event
-            && let Some(arena) = self.touch_gesture_arena.as_mut()
-        {
-            let semantic_events = arena.handle_at(touch, cx.background_executor().now());
-            let mut result =
-                self.dispatch_event_with_modality(event, Some(InputModality::Touch), cx);
-            for semantic_event in semantic_events {
-                result = match semantic_event {
-                    TouchGestureOutput::PlatformInput(event) => {
-                        self.dispatch_event_with_modality(event, Some(InputModality::Touch), cx)
-                    }
-                    TouchGestureOutput::Click(event) => self.dispatch_touch_listeners(&event, cx),
-                };
-            }
-            if self
-                .touch_gesture_arena
-                .as_ref()
-                .is_some_and(|arena| arena.has_momentum())
-            {
-                self.schedule_touch_momentum_frame();
-            }
-            return result;
-        }
-
-        self.dispatch_event_with_modality(event, None, cx)
-    }
-
-    fn schedule_touch_momentum_frame(&self) {
-        self.on_next_frame(|window, cx| {
-            let now = cx.background_executor().now();
-            if let Some(event) = window
-                .touch_gesture_arena
-                .as_mut()
-                .and_then(|arena| arena.advance_momentum_at(now))
-            {
-                window.dispatch_event_with_modality(event, Some(InputModality::Touch), cx);
-            }
-            if window
-                .touch_gesture_arena
-                .as_ref()
-                .is_some_and(|arena| arena.has_momentum())
-            {
-                window.schedule_touch_momentum_frame();
-            }
-        });
-    }
-
-    fn dispatch_event_with_modality(
-        &mut self,
-        event: PlatformInput,
-        input_modality: Option<InputModality>,
-        cx: &mut App,
-    ) -> DispatchEventResult {
         #[cfg(feature = "profiler")]
         self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
@@ -5460,12 +5356,12 @@ impl Window {
         // Hover is suppressed during keyboard modality so that keyboard navigation
         // doesn't show hover highlights on the item under the mouse cursor.
         let old_modality = self.last_input_modality;
-        self.last_input_modality = input_modality.unwrap_or_else(|| match &event {
+        self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) => InputModality::Keyboard,
             PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
             PlatformInput::Touch(_) => InputModality::Touch,
             _ => self.last_input_modality,
-        });
+        };
         if self.last_input_modality != old_modality {
             self.refresh();
         }
@@ -5567,13 +5463,7 @@ impl Window {
                     PlatformInput::FileDrop(FileDropEvent::Ended)
                 }
             },
-            PlatformInput::Touch(touch) => {
-                if self.touch_gesture_arena.is_some() && touch.phase == crate::TouchPhase::Started {
-                    self.mouse_position = touch.position;
-                    self.mouse_hit_test = self.rendered_frame.hit_test(touch.position);
-                }
-                PlatformInput::Touch(touch)
-            }
+            PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
             PlatformInput::LongPress(long_press) => {
                 self.mouse_position = if long_press.phase == crate::TouchPhase::Started {
                     long_press.start_position
@@ -5621,40 +5511,6 @@ impl Window {
         }
         #[cfg(feature = "profiler")]
         self.window_profiler.end_input(caused_invalidation);
-
-        DispatchEventResult {
-            propagate: cx.propagate_event,
-            default_prevented: self.default_prevented,
-        }
-    }
-
-    fn dispatch_touch_listeners(&mut self, event: &dyn Any, cx: &mut App) -> DispatchEventResult {
-        cx.propagate_event = true;
-        self.default_prevented = false;
-
-        let mut touch_listeners = mem::take(&mut self.rendered_frame.touch_listeners);
-        for listener in &mut touch_listeners {
-            let Some(listener) = listener.as_mut() else {
-                continue;
-            };
-            listener(event, DispatchPhase::Capture, self, cx);
-            if !cx.propagate_event {
-                break;
-            }
-        }
-
-        if cx.propagate_event {
-            for listener in touch_listeners.iter_mut().rev() {
-                let Some(listener) = listener.as_mut() else {
-                    continue;
-                };
-                listener(event, DispatchPhase::Bubble, self, cx);
-                if !cx.propagate_event {
-                    break;
-                }
-            }
-        }
-        self.rendered_frame.touch_listeners = touch_listeners;
 
         DispatchEventResult {
             propagate: cx.propagate_event,
@@ -5710,10 +5566,6 @@ impl Window {
     /// dispatches whatever it resolves (scroll steps, synthesized taps)
     /// through the ordinary mouse-event path.
     fn dispatch_touch_event(&mut self, event: &TouchEvent, cx: &mut App) {
-        if self.touch_gesture_arena.is_some() {
-            self.dispatch_touch_listeners(event, cx);
-            return;
-        }
         let mut event = event.clone();
         if !self.touch_prediction_enabled {
             event.predicted_position = None;
@@ -8821,7 +8673,6 @@ mod tests {
                         position: point(px(x), px(0.)),
                         predicted_position: None,
                         force: None,
-                        timestamp: None,
                     }
                     .to_platform_input(),
                     cx,

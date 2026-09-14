@@ -622,45 +622,31 @@ fn apply_features_and_fallbacks(
     fallbacks: Option<&FontFallbacks>,
 ) -> anyhow::Result<()> {
     use core_foundation::{
-        array::{CFArrayAppendValue, CFArrayCreateMutable, CFArrayRef, kCFTypeArrayCallBacks},
+        array::{CFArrayAppendValue, CFArrayCreateMutable, kCFTypeArrayCallBacks},
         base::{CFRelease, kCFAllocatorDefault},
         dictionary::{
             CFDictionaryCreate, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks,
         },
-        string::CFStringRef,
     };
     use core_text::font_descriptor::{
         CTFontDescriptor, CTFontDescriptorCreateWithAttributes,
-        CTFontDescriptorCreateWithNameAndSize, CTFontDescriptorRef, kCTFontCascadeListAttribute,
+        CTFontDescriptorCreateWithNameAndSize, kCTFontCascadeListAttribute,
         kCTFontFeatureSettingsAttribute,
     };
 
-    #[link(name = "CoreText", kind = "framework")]
-    unsafe extern "C" {
-        static kCTFontOpenTypeFeatureTag: CFStringRef;
-        static kCTFontOpenTypeFeatureValue: CFStringRef;
-
-        fn CTFontCreateCopyWithAttributes(
-            font: core_text::font::CTFontRef,
-            size: CGFloat,
-            matrix: *const core_graphics::geometry::CGAffineTransform,
-            attributes: CTFontDescriptorRef,
-        ) -> core_text::font::CTFontRef;
-        fn CTFontCopyDefaultCascadeListForLanguages(
-            font: core_text::font::CTFontRef,
-            languagePrefList: CFArrayRef,
-        ) -> CFArrayRef;
-    }
+    use objc2_core_text::{kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue};
 
     unsafe {
         // Generate feature array
         let feature_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
         for (tag, value) in features.tag_value_list() {
-            let keys = [kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue];
-            let values = [
-                CFString::new(tag).as_CFTypeRef(),
-                CFNumber::from(*value as i32).as_CFTypeRef(),
+            let keys = [
+                kCTFontOpenTypeFeatureTag as *const _ as core_foundation::string::CFStringRef,
+                kCTFontOpenTypeFeatureValue as *const _ as core_foundation::string::CFStringRef,
             ];
+            let tag = CFString::new(tag);
+            let value = CFNumber::from(*value as i32);
+            let values = [tag.as_CFTypeRef(), value.as_CFTypeRef()];
             let dict = CFDictionaryCreate(
                 kCFAllocatorDefault,
                 &keys as *const _ as _,
@@ -669,7 +655,6 @@ fn apply_features_and_fallbacks(
                 &kCFTypeDictionaryKeyCallBacks,
                 &kCFTypeDictionaryValueCallBacks,
             );
-            values.into_iter().for_each(|value| CFRelease(value));
             CFArrayAppendValue(feature_array, dict as _);
             CFRelease(dict as _);
         }
@@ -694,12 +679,10 @@ fn apply_features_and_fallbacks(
                     core_foundation::array::CFArray::wrap_under_create_rule(
                         core_foundation_sys::locale::CFLocaleCopyPreferredLanguages(),
                     );
-                let default_fallbacks = CTFontCopyDefaultCascadeListForLanguages(
-                    font.native_font().as_concrete_TypeRef(),
-                    preferred_languages.as_concrete_TypeRef(),
+                let default_fallbacks = core_text::font::cascade_list_for_languages(
+                    &font.native_font(),
+                    &preferred_languages,
                 );
-                let default_fallbacks: core_foundation::array::CFArray<CTFontDescriptor> =
-                    core_foundation::array::CFArray::wrap_under_create_rule(default_fallbacks);
                 for desc in default_fallbacks.iter() {
                     if desc.font_path().is_some() {
                         CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
@@ -721,14 +704,23 @@ fn apply_features_and_fallbacks(
         );
         let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
         CFRelease(attrs as _);
+        values.into_iter().for_each(|value| CFRelease(value));
         let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
-        let new_font = CTFontCreateCopyWithAttributes(
-            font.native_font().as_concrete_TypeRef(),
-            0.0,
-            std::ptr::null(),
-            new_descriptor.as_concrete_TypeRef(),
+        // font-kit uses the older core-text wrappers. Borrow the same CF objects
+        // for the generated API, then transfer its create-rule ownership back.
+        let native_font = font.native_font();
+        let generated_font = &*native_font
+            .as_concrete_TypeRef()
+            .cast::<objc2_core_text::CTFont>();
+        let descriptor = &*new_descriptor
+            .as_concrete_TypeRef()
+            .cast::<objc2_core_text::CTFontDescriptor>();
+        let new_font = generated_font.copy_with_attributes(0.0, std::ptr::null(), Some(descriptor));
+        let new_font = CTFont::wrap_under_create_rule(
+            objc2_core_foundation::CFRetained::into_raw(new_font)
+                .as_ptr()
+                .cast(),
         );
-        let new_font = CTFont::wrap_under_create_rule(new_font);
         *font = font_kit::font::Font::from_native_font(&new_font);
 
         Ok(())

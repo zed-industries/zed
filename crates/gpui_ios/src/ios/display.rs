@@ -5,16 +5,16 @@
 
 use anyhow::Result;
 use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, px, size};
-use objc2::{class, msg_send};
-
-use super::cg_types::ObjcCGRect;
+use objc2::{MainThreadMarker, rc::Retained};
+use objc2_core_foundation::CGRect;
+use objc2_ui_kit::UIScreen;
 use uuid::Uuid;
 
 /// Represents an iOS display (UIScreen).
 #[derive(Debug)]
 pub(crate) struct IosDisplay {
     /// The UIScreen object
-    screen: *mut objc2::runtime::AnyObject,
+    screen: Retained<UIScreen>,
 }
 
 unsafe impl Send for IosDisplay {}
@@ -22,52 +22,41 @@ unsafe impl Sync for IosDisplay {}
 
 impl IosDisplay {
     /// Get the main screen.
+    #[allow(deprecated)] // Platform display queries can precede scene creation.
     pub fn main() -> Self {
-        unsafe {
-            let screen: *mut objc2::runtime::AnyObject = msg_send![class!(UIScreen), mainScreen];
-            Self { screen }
-        }
+        let screen =
+            UIScreen::mainScreen(MainThreadMarker::new().expect("UIKit requires the main thread"));
+        Self { screen }
     }
 
     /// Get all connected screens.
+    #[allow(deprecated)] // Preserve external screens even before they have a GPUI scene.
     pub fn all() -> impl Iterator<Item = Self> {
-        unsafe {
-            let screens: *mut objc2::runtime::AnyObject = msg_send![class!(UIScreen), screens];
-            let count: usize = msg_send![screens, count];
-
-            (0..count).map(move |i| {
-                let screen: *mut objc2::runtime::AnyObject = msg_send![screens, objectAtIndex: i];
-                Self { screen }
-            })
-        }
+        let screens =
+            UIScreen::screens(MainThreadMarker::new().expect("UIKit requires the main thread"));
+        screens.to_vec().into_iter().map(|screen| Self { screen })
     }
 
     /// Get the screen bounds in points.
-    fn bounds_in_points(&self) -> ObjcCGRect {
-        unsafe { msg_send![self.screen, bounds] }
+    fn bounds_in_points(&self) -> CGRect {
+        self.screen.bounds()
     }
 
     /// Get the native scale factor of this screen.
     pub fn native_scale(&self) -> f32 {
-        unsafe {
-            let scale: f64 = msg_send![self.screen, nativeScale];
-            scale as f32
-        }
+        self.screen.nativeScale() as f32
     }
 
     /// Get the current scale factor (may differ from native if zoomed).
     pub fn scale(&self) -> f32 {
-        unsafe {
-            let scale: f64 = msg_send![self.screen, scale];
-            scale as f32
-        }
+        self.screen.scale() as f32
     }
 }
 
 impl PlatformDisplay for IosDisplay {
     fn id(&self) -> DisplayId {
         // iOS doesn't have display IDs like macOS, so we use the screen pointer as an ID
-        DisplayId::new(self.screen as u64)
+        DisplayId::new(Retained::as_ptr(&self.screen) as u64)
     }
 
     fn uuid(&self) -> Result<Uuid> {
@@ -79,8 +68,8 @@ impl PlatformDisplay for IosDisplay {
         // Create a deterministic UUID from screen properties
         let bytes = format!(
             "ios-screen-{}-{}-{}",
-            bounds.width as u32,
-            bounds.height as u32,
+            bounds.size.width as u32,
+            bounds.size.height as u32,
             (scale * 100.0) as u32
         );
 
@@ -92,7 +81,7 @@ impl PlatformDisplay for IosDisplay {
 
         Bounds {
             origin: Default::default(),
-            size: size(px(bounds.width as f32), px(bounds.height as f32)),
+            size: size(px(bounds.size.width as f32), px(bounds.size.height as f32)),
         }
     }
 }
