@@ -1,0 +1,156 @@
+[package]
+name = "gpui_api"
+version = "0.2.2"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+authors = ["Nathan Sobo <nathan@zed.dev>"]
+description = "Zed's declarative UI authoring layer"
+repository = "https://github.com/zed-industries/zed"
+homepage = "https://gpui.rs"
+keywords = ["desktop", "gui", "immediate"]
+categories = ["gui"]
+
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Test-only APIs: deterministic dispatchers, `TestAppContext`, and the
+# renderer readback paths the engine gates behind the same feature.
+test-support = [
+    "leak-detection",
+    "collections/test-support",
+    "gpui_types/test-support",
+    "gpui_engine/test-support",
+    "gpui_engine_default/test-support",
+    "gpui_platform/test-support",
+    "http_client/test-support",
+    "proptest",
+]
+bench-support = [
+    "profiler",
+    "dep:criterion",
+    "gpui_engine/bench-support",
+    "gpui_engine_default/bench-support",
+    "gpui_platform/bench-support",
+]
+# Preserve the published feature name while consumers migrate to `bench-support`.
+bench = ["bench-support"]
+inspector = ["gpui_macros/inspector"]
+leak-detection = ["backtrace"]
+profiler = ["dep:hdrhistogram", "gpui_platform/profiler"]
+stacker = ["dep:stacksafe", "gpui_engine_default/stacker"]
+
+[lib]
+path = "src/gpui_api.rs"
+doctest = false
+
+[dependencies]
+accesskit.workspace = true
+anyhow.workspace = true
+async-task.workspace = true
+backtrace = { workspace = true, optional = true }
+bitflags.workspace = true
+collections.workspace = true
+criterion = { workspace = true, optional = true }
+ctor.workspace = true
+derive_more.workspace = true
+etagere.workspace = true
+futures.workspace = true
+futures-concurrency.workspace = true
+gpui_engine.workspace = true
+gpui_engine_default.workspace = true
+gpui_macros.workspace = true
+gpui_platform.workspace = true
+gpui_shared_string.workspace = true
+gpui_types = { workspace = true, features = ["lyon"] }
+gpui_util.workspace = true
+hdrhistogram = { workspace = true, optional = true }
+heapless.workspace = true
+http_client.workspace = true
+image.workspace = true
+inventory.workspace = true
+itertools.workspace = true
+log.workspace = true
+lyon = "1.0"
+num_cpus = "1.13"
+parking = "2.0.0"
+parking_lot.workspace = true
+pin-project = "1.1.10"
+pollster.workspace = true
+postage.workspace = true
+proptest = { workspace = true, optional = true }
+profiling.workspace = true
+rand.workspace = true
+raw-window-handle.workspace = true
+refineable.workspace = true
+regex.workspace = true
+resvg.workspace = true
+scheduler.workspace = true
+schemars.workspace = true
+seahash = "4.1"
+serde.workspace = true
+serde_json.workspace = true
+slotmap.workspace = true
+smallvec.workspace = true
+spin = "0.10.0"
+stacksafe = { workspace = true, optional = true }
+strum.workspace = true
+sum_tree.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+ttf-parser = "0.25"
+url.workspace = true
+usvg.workspace = true
+uuid.workspace = true
+util_macros.workspace = true
+waker-fn = "1.2.0"
+web-time.workspace = true
+ztracing.workspace = true
+chrono.workspace = true
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+# Workspace inheritance would re-enable defaults, including blocking channel synchronization.
+async-channel = { version = "2.5.0", default-features = false }
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+async-channel.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+console_error_panic_hook.workspace = true
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+uuid = { workspace = true, features = ["js"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-video.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Power"] }
+
+[dev-dependencies]
+backtrace.workspace = true
+collections = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+gpui_platform = { workspace = true, features = ["test-support"] }
+gpui_util = { workspace = true }
+lyon = { version = "1.0", features = ["extra"] }
+rand.workspace = true
+scheduler = { workspace = true, features = ["test-support"] }
+unicode-segmentation.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+http_client = { workspace = true, features = ["test-support"] }
+proptest = { workspace = true }
+reqwest_client = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen = { workspace = true }
+web-sys = { version = "0.3", features = ["console"] }
+
+[package.metadata.cargo-shear]
+ignored = [
+    "getrandom",
+    "tracing",
+]

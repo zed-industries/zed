@@ -7476,12 +7476,46 @@ dependencies = [
 name = "gpui"
 version = "0.2.2"
 dependencies = [
+ "anyhow",
+ "backtrace",
+ "bindgen",
+ "collections",
+ "embed-resource",
+ "env_logger 0.11.8",
+ "gpui_api",
+ "gpui_linux",
+ "gpui_macos",
+ "gpui_macros",
+ "gpui_platform",
+ "gpui_util",
+ "gpui_web",
+ "gpui_windows",
+ "http_client",
+ "log",
+ "lyon",
+ "proptest",
+ "rand 0.9.4",
+ "reqwest_client",
+ "scheduler",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "unicode-segmentation",
+ "wasm-bindgen",
+ "web-sys",
+ "zed-font-kit",
+ "zed-scap",
+]
+
+[[package]]
+name = "gpui_api"
+version = "0.2.2"
+dependencies = [
  "accesskit",
  "anyhow",
  "async-channel 2.5.0",
  "async-task",
  "backtrace",
- "bindgen",
  "bitflags 2.13.1",
  "chrono",
  "collections",
@@ -7490,7 +7524,6 @@ dependencies = [
  "criterion",
  "ctor",
  "derive_more",
- "embed-resource",
  "env_logger 0.11.8",
  "etagere",
  "futures 0.3.34",
@@ -7498,15 +7531,11 @@ dependencies = [
  "getrandom 0.3.4",
  "gpui_engine",
  "gpui_engine_default",
- "gpui_linux",
- "gpui_macos",
  "gpui_macros",
  "gpui_platform",
  "gpui_shared_string",
  "gpui_types",
  "gpui_util",
- "gpui_web",
- "gpui_windows",
  "hdrhistogram",
  "heapless",
  "http_client",
@@ -7516,8 +7545,6 @@ dependencies = [
  "log",
  "lyon",
  "num_cpus",
- "objc2 0.6.3",
- "objc2-metal 0.3.2",
  "parking",
  "parking_lot",
  "pin-project",
@@ -7555,8 +7582,6 @@ dependencies = [
  "web-sys",
  "web-time",
  "windows 0.62.2",
- "zed-font-kit",
- "zed-scap",
  "ztracing",
 ]
 
@@ -12086,9 +12111,7 @@ checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
 dependencies = [
  "bitflags 2.13.1",
  "block2 0.6.2",
- "dispatch2",
  "objc2 0.6.3",
- "objc2-core-foundation",
  "objc2-foundation 0.3.2",
 ]
 
