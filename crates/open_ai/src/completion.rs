@@ -2406,7 +2406,28 @@ mod tests {
     }
 
     #[test]
-    fn request_output_limits_reach_open_ai_payloads() -> Result<()> {
+    fn into_open_ai_can_send_max_tokens_parameter() -> Result<()> {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+            max_output_tokens: None,
+        };
+
         for (requested, model_maximum, expected) in [
             (None, None, None),
             (None, Some(4096), Some(4096)),
@@ -2414,10 +2435,8 @@ mod tests {
             (Some(8192), Some(4096), Some(4096)),
             (Some(1024), None, Some(1024)),
         ] {
-            let request = LanguageModelRequest {
-                max_output_tokens: requested,
-                ..Default::default()
-            };
+            let mut request = request.clone();
+            request.max_output_tokens = requested;
             for (parameter, field, absent_field) in [
                 (
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
@@ -2432,7 +2451,7 @@ mod tests {
             ] {
                 let chat = into_open_ai(
                     request.clone(),
-                    "gpt-4.1",
+                    "compatible-model",
                     false,
                     false,
                     model_maximum,
@@ -2460,46 +2479,6 @@ mod tests {
                 expected
             );
         }
-        Ok(())
-    }
-
-    #[test]
-    fn into_open_ai_can_send_max_tokens_parameter() -> Result<()> {
-        let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("Hello".into())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            tools: Vec::new(),
-            tool_choice: None,
-            stop: Vec::new(),
-            temperature: None,
-            thinking_allowed: false,
-            thinking_effort: None,
-            speed: None,
-            compact_at_tokens: None,
-            max_output_tokens: None,
-        };
-
-        let chat = into_open_ai(
-            request,
-            "compatible-model",
-            false,
-            false,
-            Some(4096),
-            ChatCompletionMaxTokensParameter::MaxTokens,
-            None,
-            false,
-        )?;
-
-        let serialized = serde_json::to_value(&chat)?;
-        assert_eq!(serialized.get("max_completion_tokens"), None);
-        assert_eq!(serialized["max_tokens"], json!(4096));
         Ok(())
     }
 

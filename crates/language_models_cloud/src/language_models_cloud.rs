@@ -1421,6 +1421,8 @@ mod tests {
             }
         });
         let model = cloud_test_model(http_client);
+        assert!(model.supports_explicit_compaction());
+        assert!(!model.supports_explicit_compaction_output_limit());
         let request = compact_test_request();
 
         let result = model.compact(request, &cx.to_async()).await.unwrap();
@@ -1904,14 +1906,6 @@ mod tests {
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
         );
-    }
-
-    #[test]
-    fn cloud_openai_explicit_compaction_does_not_support_output_limits() {
-        let model = cloud_test_model(FakeHttpClient::with_404_response());
-
-        assert!(model.supports_explicit_compaction());
-        assert!(!model.supports_explicit_compaction_output_limit());
     }
 
     #[gpui::test]

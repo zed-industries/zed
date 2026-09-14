@@ -493,26 +493,6 @@ mod tests {
     use language_model_core::{LanguageModelRequestMessage, LanguageModelRequestTool};
     use serde_json::json;
 
-    #[test]
-    fn request_output_limits_reach_google_payloads() -> Result<()> {
-        for limit in [None, Some(0), Some(1024)] {
-            let request = into_google(
-                LanguageModelRequest {
-                    max_output_tokens: limit,
-                    ..Default::default()
-                },
-                "gemini-3.5-flash".into(),
-                GoogleModelMode::Default,
-            )?;
-            let payload = serde_json::to_value(request)?;
-            assert_eq!(
-                payload["generationConfig"].get("maxOutputTokens").cloned(),
-                limit.map(|limit| json!(limit)),
-            );
-        }
-        Ok(())
-    }
-
     fn text_request() -> LanguageModelRequest {
         LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
@@ -540,6 +520,11 @@ mod tests {
         )
         .unwrap();
 
+        assert!(
+            serde_json::to_value(&request).unwrap()["generationConfig"]
+                .get("maxOutputTokens")
+                .is_none()
+        );
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.include_thoughts, Some(true));
         assert_eq!(thinking_config.thinking_level, Some(ThinkingLevel::Low));
@@ -566,6 +551,7 @@ mod tests {
             }
         });
         let mut request = text_request();
+        request.max_output_tokens = Some(1024);
         request.tools = vec![LanguageModelRequestTool::function(
             "grep".to_string(),
             "Search files".to_string(),
@@ -580,6 +566,7 @@ mod tests {
         )
         .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
+        assert_eq!(serialized["generationConfig"]["maxOutputTokens"], 1024);
         let declaration = &serialized["tools"][0]["functionDeclarations"][0];
 
         assert_eq!(declaration["parametersJsonSchema"], input_schema);
@@ -590,6 +577,7 @@ mod tests {
     fn into_google_turns_off_budget_thinking_when_supported() {
         let mut request = text_request();
         request.thinking_allowed = false;
+        request.max_output_tokens = Some(0);
 
         let request = into_google(
             request,
@@ -600,6 +588,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["generationConfig"]["maxOutputTokens"],
+            0
+        );
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.thinking_budget, Some(0));
         assert_eq!(thinking_config.include_thoughts, None);

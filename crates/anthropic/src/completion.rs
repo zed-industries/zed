@@ -874,26 +874,6 @@ mod tests {
     }
 
     #[test]
-    fn request_output_limits_reach_anthropic_payloads() -> Result<()> {
-        for (requested, expected) in [(None, 4096), (Some(1024), 1024), (Some(8192), 4096)] {
-            let request = into_anthropic(
-                LanguageModelRequest {
-                    max_output_tokens: requested,
-                    ..Default::default()
-                },
-                "claude-sonnet-4-6".into(),
-                1.0,
-                4096,
-                AnthropicModelMode::Default,
-                AnthropicPromptCacheMode::Automatic,
-                &ANTHROPIC_PROVIDER_ID,
-            )?;
-            assert_eq!(serde_json::to_value(request)?["max_tokens"], expected);
-        }
-        Ok(())
-    }
-
-    #[test]
     fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
         let request = LanguageModelRequest {
             messages: vec![
@@ -930,7 +910,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_output_tokens: None,
+            max_output_tokens: Some(1024),
         };
 
         let anthropic_request = into_anthropic(
@@ -944,6 +924,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            1024
+        );
         // No message content block should carry cache_control anymore; the
         // conversation breakpoint is set via top-level automatic caching.
         assert_eq!(anthropic_request.messages.len(), 1);
@@ -1039,7 +1023,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_output_tokens: None,
+            max_output_tokens: Some(8192),
         };
 
         let anthropic_request = into_anthropic(
@@ -1053,6 +1037,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,
@@ -1303,6 +1291,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,

@@ -538,7 +538,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn request_output_limit_serialization_is_backward_compatible() -> serde_json::Result<()> {
+    fn request_output_limit_serialization() -> serde_json::Result<()> {
         let request = LanguageModelRequest::default();
         let mut serialized = serde_json::to_value(&request)?;
         assert!(serialized.get("max_output_tokens").is_none());
