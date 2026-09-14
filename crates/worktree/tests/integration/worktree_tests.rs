@@ -15,7 +15,7 @@ use rpc::{AnyProtoClient, NoopProtoClient, proto};
 use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 
 use serde_json::json;
-use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore, WorktreeId};
+use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore, SplicingVec, WorktreeId};
 use std::{
     cell::Cell,
     env,
@@ -1208,7 +1208,7 @@ async fn test_real_fs_scan_symlinks_always(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         project_root.as_path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -1270,7 +1270,7 @@ async fn test_real_fs_scan_symlinks_expanded(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         project_root.as_path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -1435,7 +1435,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     const OLD_NAME: &str = "aaa.rs";
     const NEW_NAME: &str = "AAA.rs";
 
-    let fs = Arc::new(RealFs::new(None, cx.executor()));
+    let fs = RealFs::new(None, cx.executor());
     let temp_root = TempTree::new(json!({
         OLD_NAME: "",
     }));
@@ -1553,9 +1553,7 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_root_rescan_does_not_miss_event_before_readding_root_watcher(
-    cx: &mut TestAppContext,
-) {
+async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree("/root", json!({})).await;
@@ -1575,16 +1573,17 @@ async fn test_root_rescan_does_not_miss_event_before_readding_root_watcher(
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    fs.create_file_before_next_watch_add("/root", "/root/created-before-root-readd.txt");
+    // Dropping and re-registering the root watch would open a window in
+    // which filesystem events are lost.
     fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+    tree.flush_fs_events(cx).await;
 
-    wait_for_condition(cx, |cx| {
-        tree.read_with(cx, |tree, _| {
-            tree.entry_for_path(rel_path("created-before-root-readd.txt"))
-                .is_some()
-        })
-    })
-    .await;
+    let root_watch_calls = fs
+        .watch_calls()
+        .into_iter()
+        .filter(|path| path == Path::new("/root"))
+        .count();
+    assert_eq!(root_watch_calls, 1);
 }
 
 #[gpui::test]
@@ -1983,7 +1982,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     let worktree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -1991,9 +1990,6 @@ async fn test_write_file(cx: &mut TestAppContext) {
     )
     .await
     .unwrap();
-
-    #[cfg(not(target_os = "macos"))]
-    fs::fs_watcher::global(|_| {}).unwrap();
 
     cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
         .await;
@@ -2070,7 +2066,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
                 settings.project.worktree.file_scan_inclusions = Some(vec![
                     "node_modules/**/package.json".to_string(),
                     "**/.DS_Store".to_string(),
@@ -2082,7 +2078,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -2141,7 +2137,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["**/.DS_Store".to_string()]);
+                    Some(SplicingVec::from(vec!["**/.DS_Store".to_string()]));
                 settings.project.worktree.file_scan_inclusions =
                     Some(vec!["**/.DS_Store".to_string()]);
             });
@@ -2151,7 +2147,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -2204,7 +2200,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
                 settings.project.worktree.file_scan_inclusions =
                     Some(vec!["node_modules/**".to_string()]);
             });
@@ -2213,7 +2209,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -2239,7 +2235,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
                 settings.project.worktree.file_scan_inclusions = Some(vec![]);
             });
         });
@@ -2291,8 +2287,10 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "**/foo/**".to_string(),
+                    "**/.DS_Store".to_string(),
+                ]));
             });
         });
     });
@@ -2300,7 +2298,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -2333,7 +2331,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["**/node_modules/**".to_string()]);
+                    Some(SplicingVec::from(vec!["**/node_modules/**".to_string()]));
             });
         });
     });
@@ -2387,7 +2385,7 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -2487,11 +2485,11 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec![
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                     "**/.git".to_string(),
                     "node_modules/".to_string(),
                     "build_output".to_string(),
-                ]);
+                ]));
             });
         });
     });
@@ -2499,7 +2497,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -2616,7 +2614,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         dot_git_worktree_dir.clone(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -2773,7 +2771,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         assert!(tree.entry_for_path(rel_path("a/b")).unwrap().is_dir());
     });
 
-    let fs_real = Arc::new(RealFs::new(None, cx.executor()));
+    let fs_real = RealFs::new(None, cx.executor());
     let temp_root = TempTree::new(json!({
         "a": {}
     }));
@@ -3868,6 +3866,65 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
             WorktreeExpectations {
                 ignored_paths: &["bar"],
                 tracked_paths: &["foo", "sub/bar", "baz", "subrepo/bar"],
+                ..Default::default()
+            },
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_global_gitignore_without_repository(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let home = paths::home_dir();
+    let project_path = home.join("builds").join("my-project.com");
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        home,
+        json!({
+            ".config": {
+                "git": {
+                    "ignore": "foo\nbuilds\n*.com\n"
+                }
+            },
+            "builds": {
+                "my-project.com": {
+                    "foo": "",
+                    "keep_me": "",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_path.clone(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // Neither `builds` (an outside ancestor) nor `.com` (the root's own name) may ignore everything, but `foo` still should.
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &["foo"],
+                tracked_paths: &["keep_me"],
                 ..Default::default()
             },
         );
@@ -5364,7 +5421,7 @@ async fn test_ref_updates_in_dot_git_subdirectories_are_detected(cx: &mut TestAp
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -5591,7 +5648,8 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
         }
         let loaded = loaded.unwrap();
         assert_eq!(
-            loaded.text, case.expected_text,
+            loaded.text.to_string(),
+            case.expected_text,
             "Encoding mismatch for file: {}",
             case.name
         );
@@ -5885,6 +5943,70 @@ async fn test_single_file_worktree_deleted(cx: &mut TestAppContext) {
         deleted_event_received.get(),
         "Should receive Deleted event when single-file worktree root is deleted"
     );
+}
+
+#[gpui::test]
+async fn test_root_ancestor_rename_is_detected_without_fs_events(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project": {
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new(path!("/code/project")),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Renaming an ancestor of the root produces no event under the watched
+    // path, so only the periodic root check can notice it.
+    fs.rename(
+        Path::new(path!("/code")),
+        Path::new(path!("/src")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.background_executor.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.abs_path().as_ref(), Path::new(path!("/code/project")));
+    });
+
+    cx.background_executor
+        .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+    cx.background_executor.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.abs_path().as_ref(), Path::new(path!("/src/project")));
+        assert_eq!(tree.root_name(), "project");
+        assert_eq!(
+            tree.entries(false, 0)
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path("").into(),
+                rel_path("src").into(),
+                rel_path("src/main.rs").into(),
+            ]
+        );
+    });
 }
 
 #[gpui::test]

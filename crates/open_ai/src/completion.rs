@@ -1,14 +1,15 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
+use http_client::StatusCode;
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
     LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
-    StopReason, TokenUsage,
-    util::{fix_streamed_json, is_context_window_exceeded_message, parse_tool_arguments},
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent,
+    ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
+    util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -24,8 +25,8 @@ use crate::responses::{
     provider_compaction_items, provider_compaction_state_from_items,
 };
 use crate::{
-    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
-    ResponseStreamEvent, ServiceTier, ToolCall, ToolCallContent,
+    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort, ServiceTier,
+    ToolCall, ToolCallContent,
 };
 
 const RESPONSE_MESSAGE_PHASE_COMMENTARY: &str = "commentary";
@@ -73,6 +74,9 @@ pub fn into_open_ai(
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
     for message in request.messages {
+        let reasoning_details = interleaved_reasoning
+            .then(|| message.reasoning_details.clone())
+            .flatten();
         for content in message.content {
             match content {
                 MessageContent::Thinking { text, .. } if interleaved_reasoning => {
@@ -91,6 +95,7 @@ pub fn into_open_ai(
                             MessagePart::Text { text },
                             message.role,
                             &mut messages,
+                            reasoning_details.clone(),
                         );
                         if let Some(reasoning) = current_reasoning.take() {
                             if let Some(crate::RequestMessage::Assistant {
@@ -114,6 +119,7 @@ pub fn into_open_ai(
                         },
                         message.role,
                         &mut messages,
+                        reasoning_details.clone(),
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -129,12 +135,19 @@ pub fn into_open_ai(
                             function: FunctionContent {
                                 name: tool_use.name.to_string(),
                                 arguments: serde_json::to_string(input).unwrap_or_default(),
+                                thought_signature: interleaved_reasoning
+                                    .then(|| tool_use.thought_signature.clone())
+                                    .flatten(),
                             },
                         },
                     };
 
-                    if let Some(crate::RequestMessage::Assistant { tool_calls, .. }) =
-                        messages.last_mut()
+                    if let Some(crate::RequestMessage::Assistant {
+                        tool_calls,
+                        reasoning_details: existing_reasoning_details,
+                        ..
+                    }) = messages.last_mut()
+                        && existing_reasoning_details == &reasoning_details
                     {
                         tool_calls.push(tool_call);
                     } else {
@@ -142,6 +155,7 @@ pub fn into_open_ai(
                             content: None,
                             tool_calls: vec![tool_call],
                             reasoning_content: current_reasoning.take(),
+                            reasoning_details: reasoning_details.clone(),
                         });
                     }
                 }
@@ -679,17 +693,21 @@ fn add_message_content_part(
     new_part: MessagePart,
     role: Role,
     messages: &mut Vec<crate::RequestMessage>,
+    reasoning_details: Option<Arc<serde_json::Value>>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(crate::RequestMessage::User { content }))
-        | (
+        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+            content.push_part(new_part);
+        }
+        (
             Role::Assistant,
             Some(crate::RequestMessage::Assistant {
                 content: Some(content),
+                reasoning_details: existing_reasoning_details,
                 ..
             }),
-        )
-        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+        ) if existing_reasoning_details == &reasoning_details => {
             content.push_part(new_part);
         }
         _ => {
@@ -701,6 +719,7 @@ fn add_message_content_part(
                     content: Some(crate::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                     reasoning_content: None,
+                    reasoning_details,
                 },
                 Role::System => crate::RequestMessage::System {
                     content: crate::MessageContent::from(vec![new_part]),
@@ -708,164 +727,6 @@ fn add_message_content_part(
             });
         }
     }
-}
-
-pub struct OpenAiEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
-}
-
-impl OpenAiEventMapper {
-    pub fn new() -> Self {
-        Self {
-            tool_calls_by_index: HashMap::default(),
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: ResponseStreamEvent,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut events = Vec::new();
-        if let Some(usage) = event.usage
-            && let Some(prompt_tokens) = usage.prompt_tokens
-            && let Some(completion_tokens) = usage.completion_tokens
-        {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: prompt_tokens,
-                output_tokens: completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
-        }
-
-        let Some(choice) = event.choices.first() else {
-            return events;
-        };
-
-        if let Some(delta) = choice.delta.as_ref() {
-            if let Some(reasoning) = delta.reasoning.clone() {
-                push_thinking_event(reasoning, &mut events);
-            }
-            if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                push_thinking_event(reasoning_content, &mut events);
-            }
-            if let Some(content) = delta.content.clone() {
-                if !content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-                }
-            }
-
-            if let Some(tool_calls) = delta.tool_calls.as_ref() {
-                for tool_call in tool_calls {
-                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                    if let Some(tool_id) = tool_call.id.clone()
-                        && !tool_id.is_empty()
-                    {
-                        entry.id = tool_id;
-                    }
-
-                    if let Some(function) = tool_call.function.as_ref() {
-                        if let Some(name) = function.name.clone()
-                            && !name.is_empty()
-                        {
-                            entry.name = name;
-                        }
-
-                        if let Some(arguments) = function.arguments.clone() {
-                            entry.arguments.push_str(&arguments);
-                        }
-                    }
-
-                    if !entry.id.is_empty() && !entry.name.is_empty() {
-                        if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                            &fix_streamed_json(&entry.arguments),
-                        ) {
-                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                                LanguageModelToolUse {
-                                    id: entry.id.clone().into(),
-                                    name: entry.name.as_str().into(),
-                                    is_input_complete: false,
-                                    input: LanguageModelToolUseInput::Json(input),
-                                    raw_input: entry.arguments.clone(),
-                                    thought_signature: None,
-                                },
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-
-        match choice.finish_reason.as_deref() {
-            Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_call.id.clone().into(),
-                                name: tool_call.name.as_str().into(),
-                                is_input_complete: true,
-                                input: LanguageModelToolUseInput::Json(input),
-                                raw_input: tool_call.arguments.clone(),
-                                thought_signature: None,
-                            },
-                        )),
-                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: tool_call.id.into(),
-                            tool_name: tool_call.name.into(),
-                            raw_input: tool_call.arguments.clone().into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
-
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
-            }
-            Some(stop_reason) => {
-                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            None => {}
-        }
-
-        events
-    }
-}
-
-fn push_thinking_event(
-    text: String,
-    events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-) {
-    if !text.is_empty() {
-        events.push(Ok(LanguageModelCompletionEvent::Thinking {
-            text,
-            signature: None,
-        }));
-    }
-}
-
-#[derive(Default)]
-struct RawToolCall {
-    id: String,
-    name: String,
-    arguments: String,
 }
 
 pub struct OpenAiResponseEventMapper {
@@ -1140,17 +1001,31 @@ impl OpenAiResponseEventMapper {
                 events
             }
             ResponsesStreamEvent::Failed { response } => match response.error.as_ref() {
-                Some(error) => vec![Err(completion_error_from_response_error(error))],
-                None => vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_failure_message(&response)
-                )))],
+                Some(error) => vec![Err(completion_error_from_response_error(
+                    error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))],
+                None => vec![Err(LanguageModelCompletionError::from_provider_response(
+                    provider_name_for_id(&self.compaction_state_owner),
+                    None,
+                    Some("response.failed".to_string()),
+                    response_failure_message(&response),
+                    None,
+                    ProviderErrorCategory::Other,
+                ))],
             },
             ResponsesStreamEvent::Error { error } => {
-                vec![Err(completion_error_from_response_error(&error))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
             ResponsesStreamEvent::GenericError { error } => {
                 let error = error.into_response_error();
-                vec![Err(completion_error_from_response_error(&error))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
             ResponsesStreamEvent::ReasoningSummaryPartAdded {
                 item_id,
@@ -1477,13 +1352,74 @@ fn response_failure_message(response: &ResponsesSummary) -> String {
         .unwrap_or_else(|| "response.failed".to_string())
 }
 
-fn completion_error_from_response_error(error: &ResponseError) -> LanguageModelCompletionError {
-    let message = response_error_message(error);
-    if is_context_window_exceeded_message(&message) {
-        LanguageModelCompletionError::PromptTooLarge { tokens: None }
-    } else {
-        LanguageModelCompletionError::Other(anyhow!(message))
-    }
+fn completion_error_from_response_error(
+    error: &ResponseError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> LanguageModelCompletionError {
+    let category = response_error_category(
+        error.code.as_deref(),
+        error.error_type.as_deref(),
+        None,
+        &error.message,
+    );
+    LanguageModelCompletionError::from_provider_response(
+        provider,
+        None,
+        error.code.clone().or_else(|| error.error_type.clone()),
+        error.message.clone(),
+        None,
+        category,
+    )
+}
+
+pub(crate) fn response_error_category(
+    code: Option<&str>,
+    error_type: Option<&str>,
+    status: Option<StatusCode>,
+    message: &str,
+) -> ProviderErrorCategory {
+    code.and_then(response_error_category_from_discriminator)
+        .or_else(|| error_type.and_then(response_error_category_from_discriminator))
+        .unwrap_or_else(|| {
+            status
+                .map(|status| ProviderErrorCategory::from_http_status(status, message))
+                .unwrap_or(ProviderErrorCategory::Other)
+        })
+}
+
+fn response_error_category_from_discriminator(
+    discriminator: &str,
+) -> Option<ProviderErrorCategory> {
+    let category = match discriminator {
+        "context_length_exceeded" | "request_too_large" => {
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        }
+        "invalid_encrypted_content" => ProviderErrorCategory::InvalidEncryptedContent,
+        "invalid_request_error" => ProviderErrorCategory::InvalidRequest,
+        "authentication_error" => ProviderErrorCategory::Authentication,
+        "billing_error"
+        | "payment_required_error"
+        | "credit_balance_exhausted"
+        | "insufficient_quota"
+        | "organization_spend_limit_exceeded"
+        | "project_spend_limit_exceeded"
+        | "organization_usage_limit_exceeded"
+        | "usage_limit_reached" => ProviderErrorCategory::PaymentRequired,
+        "permission_error" => ProviderErrorCategory::Permission,
+        "cyber_policy" | "invalid_prompt" => ProviderErrorCategory::ContentPolicy,
+        "not_found_error" => ProviderErrorCategory::EndpointNotFound,
+        "conflict_error" => ProviderErrorCategory::Conflict,
+        "rate_limit_error" | "rate_limit_exceeded" => ProviderErrorCategory::RateLimit,
+        "timeout_error" | "request_timed_out" => ProviderErrorCategory::Timeout,
+        "api_error" | "internal_server_error" | "server_error" => {
+            ProviderErrorCategory::InternalServer
+        }
+        "overloaded_error" | "server_is_overloaded" | "slow_down" => {
+            ProviderErrorCategory::Overloaded
+        }
+        _ => return None,
+    };
+    Some(category)
 }
 
 fn response_error_message(error: &ResponseError) -> String {
@@ -1572,16 +1508,13 @@ mod tests {
         LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
         LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID, SharedString,
-        Speed,
+        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID,
+        OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, SharedString, Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
     use super::*;
-    use crate::{
-        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk,
-    };
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
@@ -1593,17 +1526,6 @@ mod tests {
                 .map(Result::unwrap)
                 .collect()
         })
-    }
-
-    fn map_completion_events(
-        events: Vec<ResponseStreamEvent>,
-    ) -> Vec<LanguageModelCompletionEvent> {
-        let mut mapper = OpenAiEventMapper::new();
-        let mut all_events = Vec::new();
-        for event in events {
-            all_events.extend(mapper.map_event(event));
-        }
-        all_events.into_iter().filter_map(|e| e.ok()).collect()
     }
 
     fn response_item_message(id: &str) -> ResponseOutputItem {
@@ -2942,13 +2864,14 @@ mod tests {
     }
 
     #[test]
-    fn responses_stream_failed_uses_response_error_message() {
+    fn responses_stream_failed_preserves_provider_rejection() {
         let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
                 status: Some("failed".into()),
                 error: Some(ResponseError {
                     code: Some("server_error".into()),
+                    error_type: None,
                     message: "The model failed to generate a response.".into(),
                     param: None,
                 }),
@@ -2958,10 +2881,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "server_error: The model failed to generate a response."
-        );
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "server_error"
+                && message == "The model failed to generate a response."
+        ));
     }
 
     #[test]
@@ -2980,11 +2912,23 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "ERR_SOMETHING: Something went wrong");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "ERR_SOMETHING"
+                && message == "Something went wrong"
+        ));
     }
 
     #[test]
-    fn responses_stream_deserializes_nested_error_event() {
+    fn responses_stream_preserves_nested_cyber_policy_rejection() {
         // In practice the Responses API often nests error fields under an
         // `error` object even though the public spec documents them at the top
         // level. Make sure we don't lose the message and code in that case.
@@ -2992,8 +2936,8 @@ mod tests {
             "type": "error",
             "error": {
                 "type": "invalid_request_error",
-                "code": "invalid_prompt",
-                "message": "Your prompt was flagged.",
+                "code": "cyber_policy",
+                "message": "This content was flagged as potentially violating our terms of use.",
                 "param": "input"
             },
             "sequence_number": 2
@@ -3005,10 +2949,99 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                category: ProviderErrorCategory::ContentPolicy,
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "cyber_policy"
+                && message == "This content was flagged as potentially violating our terms of use."
+        ));
+    }
+
+    #[test]
+    fn responses_stream_preserves_and_classifies_type_without_code() {
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "error",
+            "error": {
+                "type": "usage_limit_reached",
+                "message": "The usage limit has been reached",
+                "plan_type": "plus"
+            }
+        }))
+        .expect("nested usage limit error event");
+
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let mapped = mapper.map_event(event);
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::PaymentRequired,
+                ..
+            } if code == "usage_limit_reached"
+                && message == "The usage limit has been reached"
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_billing_codes_to_payment_required() {
+        for code in [
+            "billing_error",
+            "payment_required_error",
+            "credit_balance_exhausted",
+            "insufficient_quota",
+            "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded",
+            "organization_usage_limit_exceeded",
+        ] {
+            assert_eq!(
+                response_error_category(Some(code), None, None, ""),
+                ProviderErrorCategory::PaymentRequired,
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_stream_uses_known_type_when_code_is_unknown() {
         assert_eq!(
-            error.to_string(),
-            "invalid_prompt: Your prompt was flagged."
+            response_error_category(
+                Some("provider_specific_code"),
+                Some("usage_limit_reached"),
+                Some(StatusCode::TOO_MANY_REQUESTS),
+                "",
+            ),
+            ProviderErrorCategory::PaymentRequired
         );
+    }
+
+    #[test]
+    fn responses_stream_maps_invalid_prompt_to_content_policy() {
+        assert_eq!(
+            response_error_category(Some("invalid_prompt"), None, None, ""),
+            ProviderErrorCategory::ContentPolicy
+        );
+    }
+
+    #[test]
+    fn responses_stream_maps_overload_codes_to_overloaded() {
+        for code in ["overloaded_error", "server_is_overloaded", "slow_down"] {
+            assert_eq!(
+                response_error_category(Some(code), None, None, ""),
+                ProviderErrorCategory::Overloaded,
+                "{code}"
+            );
+        }
     }
 
     #[test]
@@ -3032,7 +3065,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3044,6 +3080,7 @@ mod tests {
                 status: Some("failed".into()),
                 error: Some(ResponseError {
                     code: Some("context_length_exceeded".into()),
+                    error_type: None,
                     message: "Your input exceeds the context window of this model.".into(),
                     param: Some("input".into()),
                 }),
@@ -3055,7 +3092,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3075,7 +3115,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "invalid_request_error: Invalid request.");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "invalid_request_error"
+                && message == "Invalid request."
+        ));
     }
 
     #[test]
@@ -3930,7 +3982,7 @@ mod tests {
             raw_input: tool_arguments.clone(),
             input: LanguageModelToolUseInput::Json(tool_input),
             is_input_complete: true,
-            thought_signature: None,
+            thought_signature: Some("thought-signature".into()),
         };
         let tool_result = LanguageModelToolResult {
             tool_use_id: tool_use_id,
@@ -3961,7 +4013,11 @@ mod tests {
                         MessageContent::ToolUse(tool_use),
                     ],
                     cache: false,
-                    reasoning_details: None,
+                    reasoning_details: Some(Arc::new(json!([{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]))),
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
@@ -3998,8 +4054,13 @@ mod tests {
                 {
                     "role": "assistant",
                     "content": "Searching now.",
-                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments}}],
-                    "reasoning_content": "I should search"
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments, "thought_signature": "thought-signature"}}],
+                    "reasoning_content": "I should search",
+                    "reasoning_details": [{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]
                 },
                 {"role": "tool", "content": "result", "tool_call_id": "call-1"}
             ])
@@ -4031,163 +4092,6 @@ mod tests {
                 {"role": "tool", "content": "result", "tool_call_id": "call-1"}
             ])
         );
-    }
-
-    #[test]
-    fn stream_maps_reasoning() {
-        let events = map_completion_events(vec![ResponseStreamEvent {
-            choices: vec![ChoiceDelta {
-                index: 0,
-                delta: Some(ResponseMessageDelta {
-                    role: None,
-                    content: None,
-                    reasoning: Some("thinking".into()),
-                    tool_calls: None,
-                    reasoning_content: None,
-                }),
-                finish_reason: None,
-            }],
-            usage: None,
-        }]);
-
-        assert_eq!(
-            events,
-            vec![LanguageModelCompletionEvent::Thinking {
-                text: "thinking".into(),
-                signature: None,
-            }]
-        );
-    }
-
-    #[test]
-    fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
-        // DashScope sends id="" and name="" in subsequent tool_calls delta
-        // chunks after the first chunk. OpenAiEventMapper must not overwrite
-        // the accumulated id and name with these empty strings.
-
-        let events = vec![
-            // First chunk: id and name are present
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: Some(ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("call_dashscope_test".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("list_directory".into()),
-                                arguments: Some("".into()),
-                            }),
-                        }]),
-                        reasoning_content: None,
-                    }),
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Subsequent chunks: DashScope sends id="" and name=""
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: Some(ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("".into()),
-                                arguments: Some("{\"path\": \"".into()),
-                            }),
-                        }]),
-                        reasoning_content: None,
-                    }),
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: Some(ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("".into()),
-                                arguments: Some("blog-scraper\"}".into()),
-                            }),
-                        }]),
-                        reasoning_content: None,
-                    }),
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Final chunk: finish_reason = "tool_calls"
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: None,
-                    finish_reason: Some("tool_calls".into()),
-                }],
-                usage: None,
-            },
-        ];
-
-        let mapped = map_completion_events(events);
-
-        // Events emitted:
-        //   1. Partial ToolUse from chunk 1 (fix_json("") → "{}", parseable)
-        //   2. Partial ToolUse from chunk 3 (arguments fully assembled)
-        //   3. Complete ToolUse from finish_reason="tool_calls" drain
-        //   4. Stop(ToolUse)
-        assert_eq!(mapped.len(), 4);
-
-        // Verify the complete ToolUse event (from finish_reason drain)
-        // has the correct id, name, and accumulated arguments.
-        let complete_tool_use = mapped.iter().find_map(|event| {
-            if let LanguageModelCompletionEvent::ToolUse(tool_use) = event {
-                if tool_use.is_input_complete {
-                    return Some(tool_use);
-                }
-            }
-            None
-        });
-        assert!(
-            complete_tool_use.is_some(),
-            "expected a completed ToolUse event"
-        );
-        let tool_use = complete_tool_use.unwrap();
-        assert_eq!(
-            tool_use.id.to_string(),
-            "call_dashscope_test",
-            "id must survive empty-string overwrites"
-        );
-        assert_eq!(
-            tool_use.name.as_ref(),
-            "list_directory",
-            "name must survive empty-string overwrites"
-        );
-        assert_eq!(
-            tool_use.raw_input, "{\"path\": \"blog-scraper\"}",
-            "arguments should accumulate across chunks"
-        );
-
-        // Verify the Stop event
-        assert!(mapped.iter().any(|event| {
-            matches!(
-                event,
-                LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
-            )
-        }));
     }
 
     #[test]

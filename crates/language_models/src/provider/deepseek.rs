@@ -295,6 +295,11 @@ impl LanguageModel for DeepSeekLanguageModel {
 
         vec![
             LanguageModelEffortLevel {
+                name: "Low".into(),
+                value: "low".into(),
+                is_default: false,
+            },
+            LanguageModelEffortLevel {
                 name: "High".into(),
                 value: "high".into(),
                 is_default: true,
@@ -343,10 +348,14 @@ impl LanguageModel for DeepSeekLanguageModel {
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
         let stream = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
 
         async move {
             let mapper = DeepSeekEventMapper::new();
-            Ok(mapper.map_stream(stream.await?).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(stream.await?).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }
@@ -518,6 +527,7 @@ fn deepseek_thinking(
 
 fn into_deepseek_reasoning_effort(effort: Option<&str>) -> Option<deepseek::ReasoningEffort> {
     match effort {
+        Some("low") => Some(deepseek::ReasoningEffort::Low),
         Some("high") => Some(deepseek::ReasoningEffort::High),
         Some("max") => Some(deepseek::ReasoningEffort::Max),
         _ => None,

@@ -17,7 +17,7 @@ use gpui::{
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     Scene, ScrollDelta, ScrollWheelEvent, Size, TextInputStateChange, TouchEvent, TouchId,
     TouchPhase, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowInsets, WindowParams, px, size,
+    WindowInsets, WindowParams, WindowVisibility, px, size,
 };
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
 use objc2::encode::{Encode, Encoding, RefEncode};
@@ -627,6 +627,8 @@ pub(crate) struct IosWindow {
     input_callback: RefCell<Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>>,
     /// Callback for active status changes
     active_status_callback: RefCell<Option<Box<dyn FnMut(bool)>>>,
+    visibility: Cell<WindowVisibility>,
+    visibility_callback: RefCell<Option<Box<dyn FnMut(WindowVisibility)>>>,
     /// Callback for hover status changes (not really applicable on iOS)
     hover_status_callback: RefCell<Option<Box<dyn FnMut(bool)>>>,
     /// Callback for resize events
@@ -798,6 +800,8 @@ impl IosWindow {
                 force_next_frame: Cell::new(true),
                 input_callback: RefCell::new(None),
                 active_status_callback: RefCell::new(None),
+                visibility: Cell::new(WindowVisibility::Visible),
+                visibility_callback: RefCell::new(None),
                 hover_status_callback: RefCell::new(None),
                 resize_callback: RefCell::new(None),
                 moved_callback: RefCell::new(None),
@@ -939,6 +943,7 @@ impl IosWindow {
             id,
             phase: touch_phase(touch).into(),
             position,
+            predicted_position: None,
             force: touch_force(touch),
             timestamp: Some(touch_timestamp(touch)),
         };
@@ -1284,6 +1289,14 @@ impl IosWindow {
         }
     }
 
+    pub(crate) fn notify_visibility_change(&self, visibility: WindowVisibility) {
+        if self.visibility.replace(visibility) != visibility
+            && let Some(callback) = self.visibility_callback.borrow_mut().as_mut()
+        {
+            callback(visibility);
+        }
+    }
+
     pub fn handle_layout_change(&self) {
         unsafe {
             let view_bounds: ObjcCGRect = msg_send![self.scroll_view, bounds];
@@ -1530,6 +1543,14 @@ impl PlatformWindow for IosWindow {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         *self.active_status_callback.borrow_mut() = Some(callback);
+    }
+
+    fn visibility(&self) -> WindowVisibility {
+        self.visibility.get()
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        *self.visibility_callback.borrow_mut() = Some(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {

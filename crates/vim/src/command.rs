@@ -732,13 +732,11 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
             cx.spawn_in(window, async move |editor, cx| {
                 if let Some(task) = task {
-                    text.push_str(
-                        &task
-                            .await
-                            .log_err()
-                            .map(|loaded_file| loaded_file.text)
-                            .unwrap_or_default(),
-                    );
+                    if let Some(loaded_file) = task.await.log_err() {
+                        for chunk in loaded_file.text.chunks() {
+                            text.push_str(chunk);
+                        }
+                    }
                 }
 
                 if !text.is_empty() && !is_end_of_file {

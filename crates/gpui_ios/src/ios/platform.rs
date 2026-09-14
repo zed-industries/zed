@@ -42,7 +42,7 @@ struct IosGestures;
 impl PlatformGestures for IosGestures {
     fn tuning(&self) -> GestureTuning {
         GestureTuning {
-            momentum_decay_per_ms: 0.99,
+            scroll_physics: gpui::ScrollPhysics::Exponential { decay_per_ms: 0.99 },
             ..GestureTuning::default()
         }
     }
@@ -213,7 +213,7 @@ impl Platform for IosPlatform {
         log::warn!("iOS apps cannot programmatically quit");
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {
+    fn restart(&self, _binary_path: Option<PathBuf>, _arguments: Vec<std::ffi::OsString>) {
         // iOS apps cannot restart themselves
         log::warn!("iOS apps cannot restart themselves");
     }
@@ -360,8 +360,11 @@ impl Platform for IosPlatform {
         // Would use UIDocumentInteractionController or UIActivityViewController
     }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        super::ffi::set_quit_callback(callback);
+    fn on_quit(&self, mut callback: Box<dyn FnMut() -> bool>) {
+        super::ffi::set_quit_callback(Box::new(move || {
+            // UIKit's termination notification cannot be vetoed.
+            callback();
+        }));
     }
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
@@ -369,6 +372,14 @@ impl Platform for IosPlatform {
     }
 
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn prevent_idle_sleep(&self, _reason: &str) -> Task<Result<gpui::ActivityGuard>> {
+        Task::ready(Err(anyhow!(
+            "Idle sleep prevention is not implemented for iOS"
+        )))
+    }
 
     fn on_app_lifecycle(&self, callback: Box<dyn FnMut(AppLifecyclePhase)>) {
         super::ffi::set_app_lifecycle_callback(callback);

@@ -25,7 +25,7 @@ mod apple_build {
 
     fn generate_shader_bindings() -> PathBuf {
         let output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("scene.h");
-        let gpui_dir: PathBuf = gpui::GPUI_MANIFEST_DIR.into();
+        let gpui_dir = find_gpui_crate_dir();
 
         let mut config = Config {
             include_guard: Some("SCENE_H".into()),
@@ -89,6 +89,15 @@ mod apple_build {
         output_path
     }
 
+    /// Locate the gpui crate directory relative to this crate. Resolved at
+    /// build-script runtime against this crate's manifest dir, so no checkout
+    /// path is baked into a compiled artifact (which corgi rejects).
+    fn find_gpui_crate_dir() -> PathBuf {
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../gpui")
+    }
+
+    /// To enable runtime compilation, we need to "stitch" the shaders file with the generated header
+    /// so that it is self-contained.
     #[cfg(feature = "runtime_shaders")]
     fn emit_stitched_shaders(header_path: &Path) {
         let header_contents = std::fs::read_to_string(header_path).unwrap();
@@ -121,6 +130,13 @@ mod apple_build {
             PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
         println!("cargo:rerun-if-changed={shader_path}");
 
+        // The metal compiler records the resolved absolute path of its input
+        // unconditionally. Compile a copy staged in OUT_DIR so the recorded
+        // location is the build's canonical output directory, never the
+        // checkout (corgi rejects artifacts that embed the build path).
+        let staged_shader_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metal");
+        std::fs::copy(shader_path, &staged_shader_path).unwrap();
+
         let output = Command::new("xcrun")
             .args([
                 "-sdk",
@@ -130,11 +146,9 @@ mod apple_build {
                 minimum_version_argument,
                 "-MO",
                 "-c",
-                shader_path,
-                "-include",
-                header_path.to_str().unwrap(),
-                "-o",
             ])
+            .arg(&staged_shader_path)
+            .args(["-include", header_path.to_str().unwrap(), "-o"])
             .arg(&air_output_path)
             .output()
             .unwrap();
@@ -149,7 +163,7 @@ mod apple_build {
 
         let output = Command::new("xcrun")
             .args(["-sdk", sdk, "metallib"])
-            .arg(air_output_path)
+            .arg(&air_output_path)
             .arg("-o")
             .arg(metallib_output_path)
             .output()
@@ -162,5 +176,11 @@ mod apple_build {
             );
             process::exit(1);
         }
+
+        // The .air intermediate records the compiler's working directory in
+        // its debug info; the metallib built from it does not. Nothing reads
+        // the .air after this point, so drop it rather than leave a
+        // checkout-path-bearing file in OUT_DIR.
+        std::fs::remove_file(&air_output_path).unwrap();
     }
 }

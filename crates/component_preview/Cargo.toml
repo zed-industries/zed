@@ -21,29 +21,29 @@ client.workspace = true
 collections.workspace = true
 component.workspace = true
 db.workspace = true
-fs.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true
-node_runtime.workspace = true
 notifications.workspace = true
 project.workspace = true
-release_channel.workspace = true
-reqwest_client.workspace = true
-session.workspace = true
-settings.workspace = true
-theme.workspace = true
-theme_settings.workspace = true
 ui.workspace = true
 ui_input.workspace = true
-uuid.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
 editor.workspace = true
 env_logger.workspace = true
+fs.workspace = true
 gpui_platform = { workspace = true, features = ["screen-capture", "font-kit", "wayland", "x11"] }
+node_runtime.workspace = true
+release_channel.workspace = true
+reqwest_client.workspace = true
+session.workspace = true
+settings.workspace = true
+theme.workspace = true
+theme_settings.workspace = true
+uuid.workspace = true
 
 [[example]]
 name = "component_preview"

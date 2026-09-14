@@ -60,7 +60,7 @@ impl WorktreeSettings {
 impl Settings for WorktreeSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let worktree = content.project.worktree.clone();
-        let file_scan_exclusions = worktree.file_scan_exclusions.unwrap();
+        let file_scan_exclusions = worktree.file_scan_exclusions.unwrap().0;
         let file_scan_inclusions = worktree.file_scan_inclusions.unwrap();
         let private_files = worktree.private_files.unwrap().0;
         let hidden_files = worktree.hidden_files.unwrap();

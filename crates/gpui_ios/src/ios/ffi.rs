@@ -1,6 +1,6 @@
 //! Native entry points used by an iOS application delegate.
 
-use gpui::{App, AppLifecyclePhase, Application, ApplicationHandle};
+use gpui::{App, AppLifecyclePhase, Application, ApplicationHandle, WindowVisibility};
 use std::{cell::UnsafeCell, ffi::c_void, rc::Rc, sync::OnceLock};
 
 type AppCallback = Box<dyn FnOnce(&mut App)>;
@@ -155,6 +155,20 @@ fn notify_windows_active(is_active: bool) {
 }
 
 fn notify_app_lifecycle(phase: AppLifecyclePhase) {
+    let visibility = match phase {
+        AppLifecyclePhase::Foreground => Some(WindowVisibility::Visible),
+        AppLifecyclePhase::Background => Some(WindowVisibility::Hidden),
+        _ => None,
+    };
+    if let Some(visibility) = visibility {
+        unsafe {
+            for &window in &*window_list().0.get() {
+                if let Some(window) = window.as_ref() {
+                    window.notify_visibility_change(visibility);
+                }
+            }
+        }
+    }
     let callback = unsafe { (*app_state().callbacks.get()).app_lifecycle.take() };
     if let Some(mut callback) = callback {
         callback(phase);

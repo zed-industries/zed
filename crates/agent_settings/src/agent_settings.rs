@@ -10,13 +10,13 @@ use anyhow::Context as _;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
-use gpui::{App, Pixels, SharedString, px};
+use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
+    DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
     update_settings_file, update_settings_file_with_completion,
@@ -227,6 +227,7 @@ pub struct AgentSettings {
 
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub play_sound_when_agent_done: PlaySoundWhenAgentDone,
+    pub prevent_idle_sleep: bool,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
     pub auto_compact: AutoCompactSettings,
@@ -759,10 +760,10 @@ impl Settings for AgentSettings {
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
             sidebar_side: agent.sidebar_side.unwrap(),
-            default_width: px(agent.default_width.unwrap()),
-            default_height: px(agent.default_height.unwrap()),
+            default_width: agent.default_width.unwrap().into_gpui(),
+            default_height: agent.default_height.unwrap().into_gpui(),
             max_content_width: if agent.limit_content_width.unwrap() {
-                Some(px(agent.max_content_width.unwrap()))
+                Some(agent.max_content_width.unwrap().into_gpui())
             } else {
                 None
             },
@@ -792,6 +793,7 @@ impl Settings for AgentSettings {
 
             notify_when_agent_waiting: agent.notify_when_agent_waiting.unwrap(),
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap_or_default(),
+            prevent_idle_sleep: agent.prevent_idle_sleep.unwrap(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,
             auto_compact: {
@@ -1060,6 +1062,33 @@ mod tests {
     fn test_invalid_regex_returns_none() {
         let result = CompiledRegex::new("[invalid(regex", false);
         assert!(result.is_none());
+    }
+
+    #[gpui::test]
+    fn test_prevent_idle_sleep_defaults_to_true_and_follows_user_settings(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+        assert!(AgentSettings::get_global(cx).prevent_idle_sleep);
+
+        for (content, expected) in [
+            (r#"{"agent": {"prevent_idle_sleep": false}}"#, false),
+            (r#"{"agent": {"prevent_idle_sleep": true}}"#, true),
+            (r#"{"agent": {"prevent_idle_sleep": null}}"#, true),
+            (r#"{"agent": {}}"#, true),
+        ] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(content, cx)
+                    .expect("user settings should load");
+            });
+            assert_eq!(
+                AgentSettings::get_global(cx).prevent_idle_sleep,
+                expected,
+                "{content}"
+            );
+        }
     }
 
     #[gpui::test]

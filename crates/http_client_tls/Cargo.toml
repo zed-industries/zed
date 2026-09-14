@@ -19,6 +19,4 @@ doctest = true
 log.workspace = true
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
-
-[target.'cfg(target_os = "ios")'.dependencies]
 webpki-roots.workspace = true
