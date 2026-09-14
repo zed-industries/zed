@@ -1,35 +1,29 @@
 //! The engine execution seam for a window frame.
 //!
-//! A `FrameSession` owns the frame's layout tree behind interior mutability.
-//! The facade drives it by converting its `Style` to a taffy style and passing
-//! itself as the measure context; because the tree is behind a `RefCell`, the
-//! facade can do that without taking the engine out of the window to satisfy
-//! the borrow checker.
+//! A `FrameSession` owns the frame's layout engine behind interior mutability,
+//! so the facade can drive it with `&self` without taking the engine out of the
+//! window to satisfy the borrow checker. The engine itself is a trait object, so
+//! the layout implementation can be swapped without the facade naming it.
 //!
 //! The scene graph stays in the facade's double-buffered frame, and frame
 //! presentation stays in the facade because `PlatformWindow` lives above this
 //! crate.
 
-use crate::{LayoutId, MeasureContext, TaffyLayoutEngine};
+use crate::LayoutEngine;
+use gpui_engine::{BoxedMeasureFn, EngineLayoutStyle, LayoutId, MeasureContext};
 use gpui_types::{AvailableSpace, Bounds, Pixels, Size};
 use std::cell::RefCell;
 
 /// A window's layout engine session.
 pub struct FrameSession {
-    layout_engine: RefCell<TaffyLayoutEngine>,
-}
-
-impl Default for FrameSession {
-    fn default() -> Self {
-        Self::new()
-    }
+    layout_engine: RefCell<Box<dyn LayoutEngine>>,
 }
 
 impl FrameSession {
-    /// Creates an empty session with a fresh layout tree.
-    pub fn new() -> Self {
+    /// Creates a session that drives `layout_engine`.
+    pub fn new(layout_engine: Box<dyn LayoutEngine>) -> Self {
         Self {
-            layout_engine: RefCell::new(TaffyLayoutEngine::new()),
+            layout_engine: RefCell::new(layout_engine),
         }
     }
 
@@ -38,31 +32,33 @@ impl FrameSession {
         self.layout_engine.borrow_mut().clear();
     }
 
-    /// Adds a node built from an already-converted taffy style.
+    /// Adds a node built from `style`.
     pub fn request_layout(
         &self,
-        taffy_style: taffy::style::Style,
+        style: &EngineLayoutStyle,
+        rem_size: Pixels,
+        scale_factor: f32,
         children: &[LayoutId],
     ) -> LayoutId {
         self.layout_engine
             .borrow_mut()
-            .request_layout(taffy_style, children)
+            .request_layout(style, rem_size, scale_factor, children)
     }
 
     /// Adds a leaf whose size is resolved by `measure` during layout.
     pub fn request_measured_layout(
         &self,
-        taffy_style: taffy::style::Style,
-        measure: impl FnMut(
-            Size<Option<Pixels>>,
-            Size<AvailableSpace>,
-            &mut dyn MeasureContext,
-        ) -> Size<Pixels>
-        + 'static,
+        style: &EngineLayoutStyle,
+        rem_size: Pixels,
+        scale_factor: f32,
+        measure: BoxedMeasureFn,
     ) -> LayoutId {
-        self.layout_engine
-            .borrow_mut()
-            .request_measured_layout(taffy_style, measure)
+        self.layout_engine.borrow_mut().request_measured_layout(
+            style,
+            rem_size,
+            scale_factor,
+            measure,
+        )
     }
 
     /// Treats any `auto` dimension of `id`'s style as filling `size`.

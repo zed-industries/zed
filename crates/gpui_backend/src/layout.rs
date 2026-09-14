@@ -1,13 +1,13 @@
 //! Taffy-backed layout evaluation.
 //!
 //! The engine owns the `taffy` tree and translates between [`LayoutId`] and
-//! `taffy::NodeId`. Style-to-taffy conversion lives in the facade, so the
-//! engine receives an already-converted `taffy::style::Style`. Custom measure
-//! callbacks are invoked with a type-erased [`MeasureContext`], so the engine
-//! never names the facade's window or application types.
+//! `taffy::NodeId`. It receives the engine's layout style and converts it here,
+//! so the facade never names `taffy`. Custom measure callbacks are invoked with
+//! a type-erased [`MeasureContext`], so the engine never names the facade's
+//! window or application types.
 
 use collections::{FxHashMap, FxHashSet};
-use gpui_engine::{LayoutId, MeasureContext};
+use gpui_engine::{BoxedMeasureFn, EngineLayoutStyle, LayoutEngine, LayoutId, MeasureContext};
 use gpui_types::{
     AvailableSpace, Bounds, Pixels, Point, Size, ceil_to_device_pixel, round_half_toward_zero,
     round_to_device_pixel, size,
@@ -19,9 +19,7 @@ type StackSafe<T> = stacksafe::StackSafe<T>;
 #[cfg(not(feature = "stacker"))]
 type StackSafe<T> = T;
 
-type MeasureFn =
-    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut dyn MeasureContext) -> Size<Pixels>;
-type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
+type NodeMeasureFn = StackSafe<BoxedMeasureFn>;
 
 struct NodeContext {
     measure: NodeMeasureFn,
@@ -70,7 +68,7 @@ impl TaffyLayoutEngine {
     }
 
     /// Adds a leaf or container node built from an already-converted taffy style.
-    pub fn request_layout(
+    fn request_layout_taffy(
         &mut self,
         taffy_style: taffy::style::Style,
         children: &[LayoutId],
@@ -89,17 +87,11 @@ impl TaffyLayoutEngine {
     }
 
     /// Adds a leaf whose size is resolved by `measure` during layout.
-    pub fn request_measured_layout(
+    fn request_measured_layout_taffy(
         &mut self,
         taffy_style: taffy::style::Style,
-        measure: impl FnMut(
-            Size<Option<Pixels>>,
-            Size<AvailableSpace>,
-            &mut dyn MeasureContext,
-        ) -> Size<Pixels>
-        + 'static,
+        measure: BoxedMeasureFn,
     ) -> LayoutId {
-        let measure = Box::new(measure) as Box<MeasureFn>;
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
 
@@ -372,6 +364,52 @@ impl TaffyLayoutEngine {
         let bounds = (snapped_bounds / scale_factor).map(Pixels);
         self.absolute_layout_bounds.insert(id, bounds);
         bounds
+    }
+}
+
+impl LayoutEngine for TaffyLayoutEngine {
+    fn clear(&mut self) {
+        TaffyLayoutEngine::clear(self)
+    }
+
+    fn request_layout(
+        &mut self,
+        style: &EngineLayoutStyle,
+        rem_size: Pixels,
+        scale_factor: f32,
+        children: &[LayoutId],
+    ) -> LayoutId {
+        let taffy_style = crate::layout_style::to_taffy_style(style, rem_size, scale_factor);
+        TaffyLayoutEngine::request_layout_taffy(self, taffy_style, children)
+    }
+
+    fn request_measured_layout(
+        &mut self,
+        style: &EngineLayoutStyle,
+        rem_size: Pixels,
+        scale_factor: f32,
+        measure: BoxedMeasureFn,
+    ) -> LayoutId {
+        let taffy_style = crate::layout_style::to_taffy_style(style, rem_size, scale_factor);
+        TaffyLayoutEngine::request_measured_layout_taffy(self, taffy_style, measure)
+    }
+
+    fn stretch_auto_size_to_fill(&mut self, id: LayoutId, size: Size<Pixels>, scale_factor: f32) {
+        TaffyLayoutEngine::stretch_auto_size_to_fill(self, id, size, scale_factor)
+    }
+
+    fn compute_layout(
+        &mut self,
+        id: LayoutId,
+        available_space: Size<AvailableSpace>,
+        scale_factor: f32,
+        context: &mut dyn MeasureContext,
+    ) {
+        TaffyLayoutEngine::compute_layout(self, id, available_space, scale_factor, context)
+    }
+
+    fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
+        TaffyLayoutEngine::layout_bounds(self, id, scale_factor)
     }
 }
 

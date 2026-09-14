@@ -127,7 +127,6 @@ smallvec.workspace = true
 stacksafe = { workspace = true, optional = true }
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "=0.13.0"
 thiserror.workspace = true
 tracing.workspace = true
 gpui_util.workspace = true

@@ -7541,7 +7541,6 @@ dependencies = [
  "stacksafe",
  "strum 0.28.0",
  "sum_tree",
- "taffy",
  "thiserror 2.0.17",
  "tracing",
  "ttf-parser",

@@ -72,7 +72,7 @@ pub use a11y::A11ySubtreeBuilder;
 use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
 use self::a11y::ROOT_NODE_ID;
-use crate::taffy::to_taffy_style;
+use crate::engine_layout::to_engine_layout_style;
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
@@ -2008,7 +2008,7 @@ impl Window {
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
-            layout_session: Rc::new(FrameSession::new()),
+            layout_session: Rc::new(FrameSession::new(Box::new(crate::TaffyLayoutEngine::new()))),
             root: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
@@ -4865,10 +4865,14 @@ impl Window {
         cx.layout_id_buffer.extend(children);
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
-        let taffy_style = to_taffy_style(&style, rem_size, scale_factor);
+        let engine_style = to_engine_layout_style(&style);
 
-        self.layout_session
-            .request_layout(taffy_style, &cx.layout_id_buffer)
+        self.layout_session.request_layout(
+            &engine_style,
+            rem_size,
+            scale_factor,
+            &cx.layout_id_buffer,
+        )
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -4888,7 +4892,7 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
-        let taffy_style = to_taffy_style(&style, rem_size, scale_factor);
+        let engine_style = to_engine_layout_style(&style);
         let measure = move |known_dimensions, available_space, context: &mut dyn MeasureContext| {
             let (window, cx) = context.handles();
             let window = window
@@ -4899,8 +4903,12 @@ impl Window {
                 .expect("measure context app should be an App");
             measure(known_dimensions, available_space, window, cx)
         };
-        self.layout_session
-            .request_measured_layout(taffy_style, measure)
+        self.layout_session.request_measured_layout(
+            &engine_style,
+            rem_size,
+            scale_factor,
+            Box::new(measure),
+        )
     }
 
     /// Compute the layout for the given id within the given available space.

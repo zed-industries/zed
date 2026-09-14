@@ -19,6 +19,8 @@ pub struct EngineLayoutStyle {
     pub display: Display,
     /// How overflowing children affect this node's scrollable area.
     pub overflow: Point<Overflow>,
+    /// Space reserved for the scrollbars of `Overflow::Scroll` nodes.
+    pub scrollbar_width: AbsoluteLength,
     /// The positioning strategy for this node.
     pub position: Position,
     /// Offsets applied relative to the layout position.
