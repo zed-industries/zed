@@ -1217,6 +1217,11 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: false
     pub multi_buffer_hide_symbols: Option<bool>,
+    /// Whether an open buffer search takes over the outline panel, replacing
+    /// symbols and project search results with the buffer search matches.
+    ///
+    /// Default: false
+    pub prefer_buffer_search_results: Option<bool>,
 }
 
 #[derive(

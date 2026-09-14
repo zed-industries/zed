@@ -19,6 +19,7 @@ pub struct OutlinePanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub expand_outlines_with_depth: usize,
     pub multi_buffer_hide_symbols: bool,
+    pub prefer_buffer_search_results: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -78,6 +79,7 @@ impl Settings for OutlinePanelSettings {
             },
             expand_outlines_with_depth: panel.expand_outlines_with_depth.unwrap(),
             multi_buffer_hide_symbols: panel.multi_buffer_hide_symbols.unwrap(),
+            prefer_buffer_search_results: panel.prefer_buffer_search_results.unwrap(),
         }
     }
 }

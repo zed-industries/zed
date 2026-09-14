@@ -5975,7 +5975,8 @@ You can define these in user or project settings; project settings are merged on
     "scrollbar": {
       "show": null
     },
-    "multi_buffer_hide_symbols": false
+    "multi_buffer_hide_symbols": false,
+    "prefer_buffer_search_results": false
   }
 }
 ```
