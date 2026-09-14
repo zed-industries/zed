@@ -9,7 +9,7 @@ use windows::Win32::Graphics::{
     Dxgi::Common::*,
 };
 
-use gpui_engine_default::{
+use gpui_engine::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, PlatformAtlas,
 };
 use gpui_platform::{Bounds, DevicePixels, Point, Size};
@@ -342,7 +342,7 @@ fn etagere_point_to_device(value: etagere::Point) -> Point<DevicePixels> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_engine_default::{ImageId, RenderImageParams};
+    use gpui_engine::{ImageId, RenderImageParams};
     use std::borrow::Cow;
     use windows::Win32::{
         Foundation::HMODULE,

@@ -14,8 +14,8 @@ doctest = false
 
 [features]
 default = []
-test-support = ["gpui_engine_default/test-support"]
-bench-support = ["test-support", "gpui_engine_default/bench-support"]
+test-support = ["gpui_engine/test-support"]
+bench-support = ["test-support", "gpui_engine/bench-support"]
 profiler = []
 wayland = []
 x11 = ["scap?/x11"]
@@ -32,7 +32,7 @@ etagere.workspace = true
 bitflags.workspace = true
 futures.workspace = true
 gpui_shared_string.workspace = true
-gpui_engine_default.workspace = true
+gpui_engine.workspace = true
 gpui_types.workspace = true
 gpui_util.workspace = true
 image.workspace = true

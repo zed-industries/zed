@@ -10,7 +10,7 @@ use crate::{
     WindowInsets,
 };
 use futures::channel::oneshot;
-use gpui_engine_default::SceneRenderer;
+use gpui_engine::SceneRenderer;
 use gpui_types::{Bounds, Capslock, Modifiers, Pixels, Point, Size};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]

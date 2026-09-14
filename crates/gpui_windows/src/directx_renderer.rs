@@ -21,7 +21,7 @@ use windows::{
 
 use crate::directx_renderer::shader_resources::{RawShaderBytes, ShaderModule, ShaderTarget};
 use crate::*;
-use gpui_engine_default::{
+use gpui_engine::{
     AtlasTextureId, MonochromeSprite, PaintSurface, Path, PlatformAtlas, PolychromeSprite,
     PrimitiveBatch, Quad, Scene, SceneRenderer, SubpixelSprite, Underline,
     get_gamma_correction_ratios,

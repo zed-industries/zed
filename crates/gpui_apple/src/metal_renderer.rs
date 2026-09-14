@@ -6,7 +6,7 @@ use cocoa::{
     foundation::{NSSize, NSUInteger},
     quartzcore::AutoresizingMask,
 };
-use gpui_engine_default::{
+use gpui_engine::{
     AtlasTextureId, PaintSurface, Path, PlatformAtlas, PrimitiveBatch, Scene, SceneRenderer,
 };
 use gpui_platform::{

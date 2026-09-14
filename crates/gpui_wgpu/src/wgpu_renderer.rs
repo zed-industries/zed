@@ -1,7 +1,7 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
-use gpui_engine_default::{
+use gpui_engine::{
     AtlasTextureId, Path, PlatformAtlas, PrimitiveBatch, Scene, SceneRenderer,
     get_gamma_correction_ratios,
 };
@@ -2202,7 +2202,7 @@ impl RenderingParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_engine_default::{MonochromeSprite, PolychromeSprite, Quad, SubpixelSprite, Underline};
+    use gpui_engine::{MonochromeSprite, PolychromeSprite, Quad, SubpixelSprite, Underline};
     use gpui_platform::Shadow;
 
     #[test]

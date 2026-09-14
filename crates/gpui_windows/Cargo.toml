@@ -17,7 +17,7 @@ test-support = ["gpui_platform/test-support"]
 screen-capture = ["gpui_platform/screen-capture", "scap"]
 
 [dependencies]
-gpui_engine_default.workspace = true
+gpui_engine.workspace = true
 gpui_platform.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
