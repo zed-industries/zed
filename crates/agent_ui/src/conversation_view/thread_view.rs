@@ -7797,6 +7797,7 @@ impl ThreadView {
         group: SharedString,
         is_preview: bool,
         command: Entity<Markdown>,
+        tool_name: Option<&SharedString>,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -7822,9 +7823,20 @@ impl ThreadView {
         style.code_block_overflow_x_scroll = false;
 
         let header_bg = self.tool_card_header_bg(cx);
+        let mut tool_icon = Self::tool_call_icon_tooltip(tool_name, false).map(|tooltip| {
+            div()
+                .id(SharedString::from(format!("{group}-tool-icon")))
+                .flex_none()
+                .tooltip(Tooltip::text(tooltip))
+                .child(
+                    Icon::new(IconName::ToolTerminal)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+        });
         let run_command_label = if is_preview {
             Some(
-                h_flex().h_6().child(
+                h_flex().h_6().gap_1p5().children(tool_icon.take()).child(
                     Label::new("Run Command")
                         .buffer_font(cx)
                         .size(LabelSize::XSmall)
@@ -7855,7 +7867,16 @@ impl ThreadView {
             .p_1p5()
             .bg(header_bg)
             .when(is_preview, |this| this.pt_1().children(run_command_label))
-            .child(markdown_element)
+            .child(if let Some(tool_icon) = tool_icon {
+                h_flex()
+                    .items_start()
+                    .gap_1p5()
+                    .child(tool_icon)
+                    .child(div().min_w_0().flex_1().child(markdown_element))
+                    .into_any_element()
+            } else {
+                markdown_element.into_any_element()
+            })
             .child(div().absolute().top_1().right_1().child(copy_button))
     }
 
@@ -7919,6 +7940,7 @@ impl ThreadView {
             header_group.clone(),
             false,
             tool_call.label.clone(),
+            tool_call.tool_name.as_ref(),
             window,
             cx,
         );
@@ -8501,6 +8523,7 @@ impl ThreadView {
                         card_header_id.clone(),
                         true,
                         tool_call.label.clone(),
+                        tool_call.tool_name.as_ref(),
                         window,
                         cx,
                     ))
@@ -9998,6 +10021,19 @@ impl ThreadView {
             .into_any_element()
     }
 
+    fn tool_call_icon_tooltip(
+        tool_name: Option<&SharedString>,
+        interrupted_edit: bool,
+    ) -> Option<SharedString> {
+        let tool_name = tool_name.filter(|name| !name.trim().is_empty());
+        match (tool_name, interrupted_edit) {
+            (Some(name), true) => Some(format!("Interrupted Edit\nTool: {name}").into()),
+            (Some(name), false) => Some(format!("Tool: {name}").into()),
+            (None, true) => Some("Interrupted Edit".into()),
+            (None, false) => None,
+        }
+    }
+
     fn render_tool_call_label(
         &self,
         entry_ix: usize,
@@ -10021,10 +10057,9 @@ impl ThreadView {
             Icon::new(IconName::ToolPencil).color(Color::Muted)
         };
 
-        let tool_icon = if is_file && has_failed && has_revealed_diff {
+        let interrupted_edit = is_file && has_failed && has_revealed_diff;
+        let tool_icon = if interrupted_edit {
             div()
-                .id(entry_ix)
-                .tooltip(Tooltip::text("Interrupted Edit"))
                 .child(DecoratedIcon::new(
                     file_icon,
                     Some(
@@ -10106,7 +10141,19 @@ impl ThreadView {
                     .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.5)))
             })
             .overflow_hidden()
-            .child(tool_icon)
+            .child(
+                div()
+                    .id(("tool-call-icon", entry_ix))
+                    .flex_none()
+                    .when_some(
+                        Self::tool_call_icon_tooltip(
+                            tool_call.tool_name.as_ref(),
+                            interrupted_edit,
+                        ),
+                        |this, tooltip| this.tooltip(Tooltip::text(tooltip)),
+                    )
+                    .child(tool_icon),
+            )
             .child(if has_location {
                 h_flex()
                     .id(("open-tool-call-location", entry_ix))
@@ -12724,6 +12771,33 @@ mod tests {
     use std::path::Path;
     use util::path;
     use workspace::MultiWorkspace;
+
+    #[test]
+    fn test_tool_call_icon_tooltip() {
+        for (name, interrupted_edit, expected) in [
+            (None, false, None),
+            (Some(" \t\n"), false, None),
+            (Some("read_file"), false, Some("Tool: read_file")),
+            (
+                Some("  mcp__server__**read_file**<raw>  "),
+                false,
+                Some("Tool:   mcp__server__**read_file**<raw>  "),
+            ),
+            (None, true, Some("Interrupted Edit")),
+            (Some(" \t\n"), true, Some("Interrupted Edit")),
+            (
+                Some("edit_file"),
+                true,
+                Some("Interrupted Edit\nTool: edit_file"),
+            ),
+        ] {
+            let name = name.map(SharedString::from);
+            assert_eq!(
+                ThreadView::tool_call_icon_tooltip(name.as_ref(), interrupted_edit).as_deref(),
+                expected,
+            );
+        }
+    }
 
     fn native_command(name: &str) -> acp::AvailableCommand {
         acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
