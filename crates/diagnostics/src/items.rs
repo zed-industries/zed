@@ -62,8 +62,9 @@ impl Render for DiagnosticIndicator {
         let status = if let Some(diagnostic) = &self.current_diagnostic {
             let message = diagnostic
                 .message
+                .as_str()
                 .split_once('\n')
-                .map_or(&*diagnostic.message, |(first, _)| first);
+                .map_or(diagnostic.message.as_str(), |(first, _)| first);
             let diagnostics_already_active = self.any_active_diagnostics(cx);
             let tooltip = if !diagnostics_already_active {
                 "Expand Diagnostics"

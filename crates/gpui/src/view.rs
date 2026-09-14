@@ -457,42 +457,17 @@ impl<V: View> Element for ViewElement<V> {
     ) {
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
-            window.with_rendered_view(entity_id, |window| {
-                let caching_disabled = window.is_inspector_picking(cx);
-                if self.cached_style.is_some() && !caching_disabled {
-                    window.with_element_state::<ViewElementState, _>(
-                        global_id.unwrap(),
-                        |element_state, window| {
-                            let mut element_state = element_state.unwrap();
-
-                            let paint_start = window.paint_index();
-
-                            if let Some(element) = element {
-                                let refreshing = mem::replace(&mut window.refreshing, true);
-                                element.paint(window, cx);
-                                window.refreshing = refreshing;
-                            } else {
-                                window.reuse_paint(element_state.paint_range.clone());
-                            }
-
-                            let paint_end = window.paint_index();
-                            element_state.paint_range = paint_start..paint_end;
-
-                            ((), element_state)
-                        },
-                    )
-                } else {
-                    element.as_mut().unwrap().paint(window, cx);
-                }
-            });
+            paint_view(
+                entity_id,
+                self.cached_style.is_some(),
+                global_id,
+                element,
+                window,
+                cx,
+            );
         } else {
             // Stateless path: just paint the element.
-            window.with_id(
-                ElementId::Name(std::any::type_name::<V>().into()),
-                |window| {
-                    element.as_mut().unwrap().paint(window, cx);
-                },
-            );
+            paint_component(std::any::type_name::<V>(), element, window, cx);
         }
     }
 }
@@ -504,4 +479,55 @@ impl Render for EmptyView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Empty
     }
+}
+
+#[inline(never)]
+fn paint_view(
+    entity_id: EntityId,
+    cached: bool,
+    global_id: Option<&GlobalElementId>,
+    element: &mut Option<AnyElement>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.with_rendered_view(entity_id, |window| {
+        let caching_disabled = window.is_inspector_picking(cx);
+        if cached && !caching_disabled {
+            window.with_element_state::<ViewElementState, _>(
+                global_id.unwrap(),
+                |element_state, window| {
+                    let mut element_state = element_state.unwrap();
+
+                    let paint_start = window.paint_index();
+
+                    if let Some(element) = element {
+                        let refreshing = mem::replace(&mut window.refreshing, true);
+                        element.paint(window, cx);
+                        window.refreshing = refreshing;
+                    } else {
+                        window.reuse_paint(element_state.paint_range.clone());
+                    }
+
+                    let paint_end = window.paint_index();
+                    element_state.paint_range = paint_start..paint_end;
+
+                    ((), element_state)
+                },
+            )
+        } else {
+            element.as_mut().unwrap().paint(window, cx);
+        }
+    });
+}
+
+#[inline(never)]
+fn paint_component(
+    name: &'static str,
+    element: &mut Option<AnyElement>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.with_id(ElementId::Name(name.into()), |window| {
+        element.as_mut().unwrap().paint(window, cx);
+    });
 }

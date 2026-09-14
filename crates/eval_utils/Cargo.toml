@@ -14,5 +14,4 @@ doctest = false
 
 [dependencies]
 gpui_platform.workspace = true
-serde.workspace = true
 smol.workspace = true

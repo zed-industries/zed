@@ -157,7 +157,7 @@ impl<'a> PathContextCondition<'a> {
             job: job.job.add_need(set_by_step.clone()).cond(Expression::new(
                 format!(
                     "needs.{}.outputs.{} == 'true' {merge_queue_condition}",
-                    &set_by_step,
+                    set_by_step,
                     self.condition.name,
                     merge_queue_condition = self
                         .run_in_merge_queue

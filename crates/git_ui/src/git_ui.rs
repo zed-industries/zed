@@ -255,6 +255,22 @@ pub fn init(cx: &mut App) {
                 panel.stash_all(action, window, cx);
             });
         });
+        workspace.register_action(|workspace, action: &git::StashStaged, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_staged(action, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, action: &git::StashTracked, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_tracked(action, window, cx);
+            });
+        });
         workspace.register_action(|workspace, action: &git::StashPop, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;

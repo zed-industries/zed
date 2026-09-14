@@ -48,9 +48,12 @@ jobs:
             const STAFF_TEAM_SLUG = 'staff';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
             const GUILD_LABEL = 'guild';
-            // Guild cohort members are outside collaborators holding this custom
-            // repository role, not members of an org team.
-            const GUILD_ROLE_NAME = 'Guild Assign issues/PRs';
+            // Guild cohort members are outside collaborators holding one of these
+            // custom repository roles, not members of an org team.
+            const GUILD_ROLE_NAMES = [
+              'Guild Assign issues/PRs',
+              'Guild Assign issues/PRs and Close PRs',
+            ];
             const COMMUNITY_CHAMPION_LABEL = 'community champion';
             const COMMUNITY_CHAMPIONS = [
               '0x2CA',
@@ -81,6 +84,7 @@ jobs:
               'findrakecil',
               'FloppyDisco',
               'gko',
+              'HalavicH',
               'huacnlee',
               'imumesh18',
               'injust',
@@ -158,7 +162,8 @@ jobs:
                 // role_name is the effective (highest) role; for cohort outside
                 // collaborators that is the custom role. Built-in roles come back
                 // lowercased and won't match.
-                return (response.data.role_name || '').toLowerCase() === GUILD_ROLE_NAME.toLowerCase();
+                const roleName = (response.data.role_name || '').toLowerCase();
+                return GUILD_ROLE_NAMES.some((name) => name.toLowerCase() === roleName);
               } catch (error) {
                 if (error.status !== 404) {
                   throw error;
