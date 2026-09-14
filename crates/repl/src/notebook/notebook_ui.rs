@@ -1,6 +1,6 @@
 #![allow(unused, dead_code)]
 use std::future::Future;
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use client::proto::ViewId;
@@ -16,7 +16,7 @@ use gpui::{
 use jupyter_protocol::JupyterKernelspec;
 use language::{Language, LanguageRegistry};
 use log;
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use settings::Settings as _;
 use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
@@ -230,7 +230,7 @@ impl NotebookEditor {
         };
         editor.launch_kernel(window, cx);
         editor.refresh_language(cx);
-        editor.refresh_kernelspecs(cx);
+        Self::refresh_kernelspecs(&editor.project, editor.worktree_id, cx);
 
         cx.subscribe(&notebook_item, |this, _item, _event, cx| {
             this.refresh_language(cx);
@@ -240,16 +240,12 @@ impl NotebookEditor {
         editor
     }
 
-    fn refresh_kernelspecs(&mut self, cx: &mut Context<Self>) {
-        let store = ReplStore::global(cx);
-        let project = self.project.clone();
-        let worktree_id = self.worktree_id;
-
-        let refresh_task = store.update(cx, |store, cx| {
-            store.refresh_python_kernelspecs(worktree_id, &project, cx)
-        });
-
-        cx.background_spawn(refresh_task).detach_and_log_err(cx);
+    fn refresh_kernelspecs(project: &Entity<Project>, worktree_id: WorktreeId, cx: &mut App) {
+        ReplStore::global(cx)
+            .update(cx, |store, cx| {
+                store.refresh_python_kernelspecs(worktree_id, project, cx)
+            })
+            .detach_and_log_err(cx);
     }
 
     fn refresh_language(&mut self, cx: &mut Context<Self>) {
@@ -1330,7 +1326,14 @@ impl NotebookEditor {
                         kernel_status.to_string()
                     )),
                 )
-                .with_handle(kernel_picker_handle),
+                .with_handle(kernel_picker_handle)
+                // The store's list is a snapshot from when the notebook opened, so an
+                // environment created since (say, `uv sync` in a terminal) would never
+                // appear until the tab was reopened. Rescan whenever the picker opens.
+                .on_open(Rc::new({
+                    let project = self.project.clone();
+                    move |_window, cx| Self::refresh_kernelspecs(&project, worktree_id, cx)
+                })),
             )
             .child(
                 h_flex()
