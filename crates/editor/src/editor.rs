@@ -1122,6 +1122,7 @@ pub struct Editor {
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
     buffer_serialization: Option<BufferSerialization>,
+    pending_serialization: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
@@ -2502,6 +2503,7 @@ impl Editor {
                         .restore_unsaved_buffers,
                 )
             }),
+            pending_serialization: None,
             blame: None,
             blame_subscription: None,
             pending_blame_hover_observation: None,

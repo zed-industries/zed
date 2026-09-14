@@ -11,7 +11,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use fs::MTime;
-use futures::{channel::oneshot, future::try_join_all};
+use futures::{FutureExt as _, channel::oneshot, future::try_join_all};
 use git::status::GitSummary;
 use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
@@ -1513,32 +1513,44 @@ impl SerializableItem for Editor {
         let snapshot = buffer.read(cx).snapshot();
 
         let db = EditorDb::global(cx);
-        Some(cx.background_spawn(async move {
-            let (contents, language) = if serialize_dirty_buffers && is_dirty {
-                let contents = snapshot.text();
-                let language = snapshot.language().and_then(|language| {
-                    if content_language_detection_enabled && *language == *PLAIN_TEXT {
-                        None
-                    } else {
-                        Some(language.name().to_string())
-                    }
-                });
-                (Some(contents), language)
-            } else {
-                (None, None)
-            };
+        let previous_serialization = self.pending_serialization.take();
+        let serialization = cx
+            .background_spawn(async move {
+                if let Some(previous_serialization) = previous_serialization {
+                    previous_serialization.await.log_err();
+                }
 
-            let editor = SerializedEditor {
-                abs_path,
-                contents,
-                language,
-                mtime,
-            };
-            log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
-            db.save_serialized_editor(item_id, workspace_id, editor)
-                .await
-                .context("failed to save serialized editor")
-        }))
+                let (contents, language) = if serialize_dirty_buffers && is_dirty {
+                    let contents = snapshot.text();
+                    let language = snapshot.language().and_then(|language| {
+                        if content_language_detection_enabled && *language == *PLAIN_TEXT {
+                            None
+                        } else {
+                            Some(language.name().to_string())
+                        }
+                    });
+                    (Some(contents), language)
+                } else {
+                    (None, None)
+                };
+
+                let editor = SerializedEditor {
+                    abs_path,
+                    contents,
+                    language,
+                    mtime,
+                };
+                log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
+                db.save_serialized_editor(item_id, workspace_id, editor)
+                    .await
+                    .context("failed to save serialized editor")
+                    .map_err(Arc::new)
+            })
+            .shared();
+        self.pending_serialization = Some(serialization.clone());
+        Some(
+            cx.background_spawn(async move { serialization.await.map_err(|error| anyhow!(error)) }),
+        )
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -3492,5 +3504,288 @@ mod tests {
             assert!(buffer.file().is_none());
             assert!(buffer.is_dirty());
         });
+    }
+
+    #[gpui::test(iterations = 20)]
+    async fn test_serialization_orders_production_predecessors(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let workspace_id = cx
+            .update(|cx| workspace::WorkspaceDb::global(cx))
+            .next_id()
+            .await
+            .expect("failed to reserve workspace");
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/serialization"), json!({ "original.txt": "disk" }))
+            .await;
+        let project = Project::test(fs, [path!("/serialization").as_ref()], cx).await;
+        let app_state = cx.update(workspace::AppState::test);
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(Some(workspace_id), project.clone(), app_state, window, cx)
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/serialization/original.txt"), cx)
+            })
+            .await
+            .expect("failed to open buffer");
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer.clone(), Some(project), window, cx)
+        });
+        let item_id = editor.entity_id().as_u64();
+        let latest_contents = "latest\0λ\n  trailing space \n";
+        let [
+            first_serialization,
+            middle_serialization,
+            latest_serialization,
+        ] = workspace.update(cx, |workspace, cx| {
+            editor.update(cx, |editor, cx| {
+                [("first", false), ("middle", false), (latest_contents, true)].map(
+                    |(contents, closing)| {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_text(contents, cx);
+                            assert!(buffer.is_dirty());
+                        });
+                        editor
+                            .serialize(workspace, item_id, closing, cx)
+                            .expect("serialization was skipped")
+                    },
+                )
+            })
+        });
+        drop(middle_serialization);
+        latest_serialization
+            .await
+            .expect("latest serialization failed");
+        first_serialization
+            .await
+            .expect("first serialization failed");
+        cx.run_until_parked();
+        let persisted = cx
+            .update(|_, cx| EditorDb::global(cx))
+            .get_serialized_editor(item_id, workspace_id)
+            .expect("failed to read editor payload")
+            .expect("editor payload was not saved");
+        assert_eq!(persisted.contents.as_deref(), Some(latest_contents));
+        assert_eq!(
+            persisted.abs_path,
+            Some(PathBuf::from(path!("/serialization/original.txt")))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_serialization_orders_clean_to_dirty(cx: &mut gpui::TestAppContext) {
+        assert_serialization_order(Ok(None), Some("latest\0λ"), false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_serialization_orders_dirty_to_clean(cx: &mut gpui::TestAppContext) {
+        assert_serialization_order(Ok(Some("old")), None, false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_serialization_orders_dirty_to_dirty(cx: &mut gpui::TestAppContext) {
+        assert_serialization_order(Ok(Some("old")), Some("latest"), false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_serialization_orders_save_as(cx: &mut gpui::TestAppContext) {
+        assert_serialization_order(Ok(Some("old")), Some("latest"), true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_serialization_orders_writes_after_failure(cx: &mut gpui::TestAppContext) {
+        assert_serialization_order(
+            Err(anyhow!("previous serialization failed")),
+            Some("latest"),
+            false,
+            cx,
+        )
+        .await;
+    }
+
+    async fn assert_serialization_order(
+        previous_contents: Result<Option<&str>>,
+        contents: Option<&str>,
+        save_as: bool,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let database = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+        let workspace_id = database
+            .next_id()
+            .await
+            .expect("failed to reserve workspace");
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/serialization"), json!({ "original.txt": "disk" }))
+            .await;
+        let project = Project::test(fs, [path!("/serialization").as_ref()], cx).await;
+        let app_state = cx.update(workspace::AppState::test);
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(Some(workspace_id), project.clone(), app_state, window, cx)
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/serialization/original.txt"), cx)
+            })
+            .await
+            .expect("failed to open buffer");
+        if let Ok(Some(previous_contents)) = previous_contents.as_ref() {
+            buffer.update(cx, |buffer, cx| buffer.set_text(*previous_contents, cx));
+        }
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                workspace.active_pane().clone(),
+                Box::new(editor.clone()),
+                None,
+                true,
+                true,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+
+        let item_id = editor.entity_id().as_u64();
+        let database = cx.update(|_, cx| EditorDb::global(cx));
+        let baseline = SerializedEditor {
+            abs_path: Some(PathBuf::from(path!("/serialization/original.txt"))),
+            contents: Some("baseline".to_owned()),
+            language: None,
+            mtime: buffer.read_with(cx, |buffer, _| buffer.saved_mtime()),
+        };
+        database
+            .save_serialized_editor(item_id, workspace_id, baseline.clone())
+            .await
+            .expect("failed to seed payload");
+        let previous_failed = previous_contents.is_err();
+        let previous_payload = previous_contents.map(|contents| SerializedEditor {
+            contents: contents.map(str::to_owned),
+            ..baseline.clone()
+        });
+        let (release_previous, previous_released) = oneshot::channel();
+        let previous_serialization = cx
+            .executor()
+            .spawn({
+                let database = database.clone();
+                async move {
+                    previous_released
+                        .await
+                        .expect("previous write gate was dropped");
+                    let payload = previous_payload.map_err(Arc::new)?;
+                    database
+                        .save_serialized_editor(item_id, workspace_id, payload)
+                        .await
+                        .map_err(Arc::new)
+                }
+            })
+            .shared();
+        editor.update(cx, |editor, _| {
+            editor.pending_serialization = Some(previous_serialization.clone());
+        });
+
+        if save_as {
+            let project_path = buffer.read_with(cx, |buffer, cx| ProjectPath {
+                worktree_id: buffer.file().expect("missing file").worktree_id(cx),
+                path: Arc::from(RelPath::from_unix_str("renamed.txt").expect("invalid test path")),
+            });
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.save_as(project.clone(), project_path, window, cx)
+                })
+                .await
+                .expect("Save As failed");
+        }
+        if let Some(contents) = contents {
+            buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
+        } else {
+            project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+                .await
+                .expect("failed to save buffer");
+        }
+        let ordinary_serialization = workspace.update(cx, |workspace, cx| {
+            editor
+                .update(cx, |editor, cx| {
+                    editor.serialize(workspace, item_id, false, cx)
+                })
+                .expect("ordinary serialization was skipped")
+        });
+        drop(ordinary_serialization);
+        let closing_serialization = workspace.update(cx, |workspace, cx| {
+            editor
+                .update(cx, |editor, cx| {
+                    editor.serialize(workspace, item_id, true, cx)
+                })
+                .expect("closing serialization was skipped")
+        });
+        let flush = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.flush_serialization(window, cx)
+        });
+        cx.run_until_parked();
+        assert!(!closing_serialization.is_ready());
+        assert!(!flush.is_ready());
+        assert_eq!(
+            database
+                .get_serialized_editor(item_id, workspace_id)
+                .expect("failed to read payload"),
+            Some(baseline)
+        );
+
+        release_previous
+            .send(())
+            .expect("previous write was cancelled");
+        flush.await;
+        closing_serialization
+            .await
+            .expect("closing serialization failed");
+        let previous_result = previous_serialization.await;
+        if previous_failed {
+            assert_eq!(
+                previous_result
+                    .expect_err("previous write should fail")
+                    .to_string(),
+                "previous serialization failed"
+            );
+        } else {
+            previous_result.expect("previous serialization failed");
+        }
+        cx.run_until_parked();
+        let persisted = database
+            .get_serialized_editor(item_id, workspace_id)
+            .expect("failed to read payload")
+            .expect("payload was not saved");
+        assert_eq!(persisted.contents.as_deref(), contents);
+        assert_eq!(
+            persisted.abs_path,
+            Some(PathBuf::from(if save_as {
+                path!("/serialization/renamed.txt")
+            } else {
+                path!("/serialization/original.txt")
+            }))
+        );
+        assert_eq!(
+            persisted.mtime,
+            buffer.read_with(cx, |buffer, _| buffer.saved_mtime())
+        );
     }
 }
