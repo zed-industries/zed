@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use collections::{HashMap, IndexMap};
 use credentials_provider::CredentialsProvider;
-use deepseek::DEEPSEEK_API_URL;
+use deepseek::{DEEPSEEK_API_URL, ImageUrl, UserContent, UserContentPart};
 
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
@@ -168,6 +168,10 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
 
         models.insert("deepseek-v4-flash", deepseek::Model::V4Flash);
         models.insert("deepseek-v4-pro", deepseek::Model::V4Pro);
+        models.insert(
+            "deepseek-v4-flash-vision-exp",
+            deepseek::Model::V4FlashVisionExp,
+        );
 
         for available_model in &Self::settings(cx).available_models {
             models.insert(
@@ -284,7 +288,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     fn supports_thinking(&self) -> bool {
         matches!(
             self.model,
-            deepseek::Model::V4Flash | deepseek::Model::V4Pro
+            deepseek::Model::V4Flash | deepseek::Model::V4Pro | deepseek::Model::V4FlashVisionExp
         )
     }
 
@@ -317,7 +321,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        matches!(self.model, deepseek::Model::V4FlashVisionExp)
     }
 
     fn telemetry_id(&self) -> String {
@@ -379,6 +383,39 @@ pub fn into_deepseek(
     let mut current_reasoning: Option<String> = None;
 
     for message in request.messages {
+        // User messages containing images are sent as a single multimodal
+        // message, with text and image parts in order.
+        let send_images = message.role == Role::User
+            && matches!(model, deepseek::Model::V4FlashVisionExp)
+            && message
+                .content
+                .iter()
+                .any(|content| matches!(content, MessageContent::Image(_)));
+
+        if send_images {
+            let mut parts = Vec::new();
+            for content in message.content {
+                match content {
+                    MessageContent::Text(text) if !text.trim().is_empty() => {
+                        parts.push(UserContentPart::Text { text });
+                    }
+                    MessageContent::Image(image) => {
+                        parts.push(UserContentPart::ImageUrl {
+                            image_url: ImageUrl {
+                                url: image.to_base64_url(),
+                                detail: None,
+                            },
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            messages.push(deepseek::RequestMessage::User {
+                content: UserContent::Parts(parts),
+            });
+            continue;
+        }
+
         for content in message.content {
             match content {
                 MessageContent::Text(text) => {
@@ -390,7 +427,9 @@ pub fn into_deepseek(
 
                     if should_add {
                         messages.push(match message.role {
-                            Role::User => deepseek::RequestMessage::User { content: text },
+                            Role::User => deepseek::RequestMessage::User {
+                                content: UserContent::Text(text),
+                            },
                             Role::Assistant => deepseek::RequestMessage::Assistant {
                                 content: Some(text),
                                 tool_calls: Vec::new(),
@@ -512,7 +551,7 @@ fn deepseek_thinking(
     thinking_allowed: bool,
 ) -> Option<deepseek::Thinking> {
     let kind = match model {
-        deepseek::Model::V4Flash | deepseek::Model::V4Pro => {
+        deepseek::Model::V4Flash | deepseek::Model::V4Pro | deepseek::Model::V4FlashVisionExp => {
             if thinking_allowed {
                 deepseek::ThinkingType::Enabled
             } else {
