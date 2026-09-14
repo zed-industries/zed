@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use crate::MacWindowExt;
 use crate::{
     App, Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit, Pixels,
     Style, StyleRefinement, Styled, Window,

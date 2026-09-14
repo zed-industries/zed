@@ -30,8 +30,6 @@ use crate::TouchEvent;
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
-#[cfg(target_os = "macos")]
-use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use gpui_engine::FrameSession;
@@ -65,9 +63,13 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+#[cfg(target_os = "macos")]
+mod mac;
 mod prompts;
 
 pub use a11y::A11ySubtreeBuilder;
+#[cfg(target_os = "macos")]
+pub use mac::*;
 
 use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
@@ -4827,25 +4829,6 @@ impl Window {
             opacity,
         });
         Ok(())
-    }
-
-    /// Paint a surface into the scene for the next frame at the current z-index.
-    ///
-    /// This method should only be called as part of the paint phase of element drawing.
-    #[cfg(target_os = "macos")]
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
-        use crate::PaintSurface;
-
-        self.invalidator.debug_assert_paint();
-
-        let bounds = self.snap_bounds(bounds);
-        let content_mask = self.snapped_content_mask();
-        self.next_frame.scene.insert_primitive(PaintSurface {
-            order: 0,
-            bounds,
-            content_mask,
-            image_buffer,
-        });
     }
 
     /// Removes an image from the sprite atlas.

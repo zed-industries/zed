@@ -58,6 +58,10 @@
 //! replaced. [`LayoutId`](crate::LayoutId) is likewise an opaque token, so a
 //! custom element keeps working when the layout engine is replaced.
 //!
+//! Anything that only applies to one platform lives in an extension trait
+//! beside [`Window`](crate::Window) instead of on it: on macOS, `MacWindowExt`
+//! adds `paint_surface` for CoreVideo buffers.
+//!
 //! ## What is not authoring API
 //!
 //! Part of [`Window`](crate::Window)'s public surface exists for the runtime and
