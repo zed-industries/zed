@@ -56,6 +56,15 @@ impl raw_window_handle::HasDisplayHandle for WebDisplaySource {
     }
 }
 
+/// Backends to try in order, and whether the attempt rejects software adapters
+/// regardless of what the caller asked for. Vulkan alone must reject them, or a
+/// software Vulkan driver would win before hardware GL is ever offered.
+#[cfg(not(target_family = "wasm"))]
+const BACKEND_ATTEMPTS: [(wgpu::Backends, bool); 2] = [
+    (wgpu::Backends::VULKAN, true),
+    (wgpu::Backends::VULKAN.union(wgpu::Backends::GL), false),
+];
+
 #[derive(Clone, Copy)]
 pub struct CompositorGpuHint {
     pub vendor_id: u32,
@@ -63,24 +72,6 @@ pub struct CompositorGpuHint {
 }
 
 impl WgpuContext {
-    #[cfg(not(target_family = "wasm"))]
-    pub fn new(
-        instance: wgpu::Instance,
-        surface: &wgpu::Surface<'_>,
-        compositor_gpu: Option<CompositorGpuHint>,
-    ) -> anyhow::Result<Self> {
-        Self::new_with_options(instance, surface, compositor_gpu, false)
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    pub fn new_rejecting_software(
-        instance: wgpu::Instance,
-        surface: &wgpu::Surface<'_>,
-        compositor_gpu: Option<CompositorGpuHint>,
-    ) -> anyhow::Result<Self> {
-        Self::new_with_options(instance, surface, compositor_gpu, true)
-    }
-
     #[cfg(not(target_family = "wasm"))]
     fn new_with_options(
         instance: wgpu::Instance,
@@ -287,14 +278,47 @@ impl WgpuContext {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
+    fn instance(
+        display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>,
+        backends: wgpu::Backends,
+    ) -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
+            backends,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             display: Some(display),
         })
+    }
+
+    /// Creates the instance, its surface and the context together, since the
+    /// surface has to come from the instance used to select the adapter, and a
+    /// failing backend has to be retried from the instance up.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn new_with_surface(
+        mut display: impl FnMut() -> Box<dyn wgpu::wgt::WgpuHasDisplayHandle>,
+        mut create_surface: impl FnMut(&wgpu::Instance) -> anyhow::Result<wgpu::Surface<'static>>,
+        compositor_gpu: Option<CompositorGpuHint>,
+        reject_software: bool,
+    ) -> anyhow::Result<(Self, wgpu::Surface<'static>)> {
+        let mut last_error = anyhow::anyhow!("No GPU backend was attempted");
+        for (backends, always_reject_software) in BACKEND_ATTEMPTS {
+            let instance = Self::instance(display(), backends);
+            let reject_software = reject_software || always_reject_software;
+            let attempt = create_surface(&instance).and_then(|surface| {
+                let context =
+                    Self::new_with_options(instance, &surface, compositor_gpu, reject_software)?;
+                Ok((context, surface))
+            });
+            match attempt {
+                Ok(context_and_surface) => return Ok(context_and_surface),
+                Err(error) => {
+                    log::info!("GPU initialization failed for {backends:?}: {error:#}");
+                    last_error = error.context(format!("{backends:?} initialization failed"));
+                }
+            }
+        }
+        Err(last_error)
     }
 
     pub fn check_compatible_with_surface(&self, surface: &wgpu::Surface<'_>) -> anyhow::Result<()> {
@@ -341,59 +365,8 @@ impl WgpuContext {
             log::info!("ZED_DEVICE_ID filter: {:#06x}", device_id);
         }
 
-        // Sort adapters into a single priority order. Tiers (from highest to lowest):
-        //
-        // 1. ZED_DEVICE_ID match — explicit user override
-        // 2. Compositor GPU match — the GPU the display server is rendering on
-        // 3. Device type (Discrete > Integrated > Other > Virtual > Cpu).
-        //    "Other" ranks above "Virtual" because OpenGL seems to count as "Other".
-        // 4. Backend — prefer Vulkan/Metal/Dx12 over GL/etc.
         adapters.sort_by_key(|adapter| {
-            let info = adapter.get_info();
-
-            // Backends like OpenGL report device=0 for all adapters, so
-            // device-based matching is only meaningful when non-zero.
-            let device_known = info.device != 0;
-
-            let user_override: u8 = match device_id_filter {
-                Some(id) if device_known && info.device == id => 0,
-                _ => 1,
-            };
-
-            let compositor_match: u8 = match compositor_gpu {
-                Some(hint)
-                    if device_known
-                        && info.vendor == hint.vendor_id
-                        && info.device == hint.device_id =>
-                {
-                    0
-                }
-                _ => 1,
-            };
-
-            let type_priority: u8 = if info.device_type == wgpu::DeviceType::Cpu {
-                4
-            } else {
-                match info.device_type {
-                    wgpu::DeviceType::DiscreteGpu => 0,
-                    wgpu::DeviceType::IntegratedGpu => 1,
-                    wgpu::DeviceType::Other => 2,
-                    wgpu::DeviceType::VirtualGpu => 3,
-                    wgpu::DeviceType::Cpu => 4,
-                }
-            };
-
-            let backend_priority: u8 = match info.backend {
-                wgpu::Backend::Vulkan | wgpu::Backend::Metal | wgpu::Backend::Dx12 => 0,
-                _ => 1,
-            };
-
-            (
-                user_override,
-                compositor_match,
-                type_priority,
-                backend_priority,
-            )
+            adapter_priority(&adapter.get_info(), device_id_filter, compositor_gpu)
         });
 
         // Log all available adapters (in sorted order)
@@ -565,6 +538,54 @@ impl WgpuContext {
     }
 }
 
+/// Sort key for adapter selection, lowest first: `ZED_DEVICE_ID` override, then
+/// compositor GPU, then device type, then backend. "Other" ranks above "Virtual"
+/// because OpenGL seems to count as "Other".
+#[cfg(not(target_family = "wasm"))]
+fn adapter_priority(
+    info: &wgpu::AdapterInfo,
+    device_id_filter: Option<u32>,
+    compositor_gpu: Option<&CompositorGpuHint>,
+) -> (u8, u8, u8, u8) {
+    // Backends like OpenGL report device=0 for all adapters, so device-based
+    // matching is only meaningful when non-zero.
+    let device_known = info.device != 0;
+
+    let user_override: u8 = match device_id_filter {
+        Some(id) if device_known && info.device == id => 0,
+        _ => 1,
+    };
+
+    let compositor_match: u8 = match compositor_gpu {
+        Some(hint)
+            if device_known && info.vendor == hint.vendor_id && info.device == hint.device_id =>
+        {
+            0
+        }
+        _ => 1,
+    };
+
+    let type_priority: u8 = match info.device_type {
+        wgpu::DeviceType::DiscreteGpu => 0,
+        wgpu::DeviceType::IntegratedGpu => 1,
+        wgpu::DeviceType::Other => 2,
+        wgpu::DeviceType::VirtualGpu => 3,
+        wgpu::DeviceType::Cpu => 4,
+    };
+
+    let backend_priority: u8 = match info.backend {
+        wgpu::Backend::Vulkan | wgpu::Backend::Metal | wgpu::Backend::Dx12 => 0,
+        _ => 1,
+    };
+
+    (
+        user_override,
+        compositor_match,
+        type_priority,
+        backend_priority,
+    )
+}
+
 #[cfg(not(target_family = "wasm"))]
 fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
     let mut id = id.trim();
@@ -584,7 +605,150 @@ fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_pci_id;
+    use super::{adapter_priority, parse_pci_id, CompositorGpuHint, BACKEND_ATTEMPTS};
+
+    fn adapter_info(
+        device_type: wgpu::DeviceType,
+        backend: wgpu::Backend,
+        vendor: u32,
+        device: u32,
+    ) -> wgpu::AdapterInfo {
+        wgpu::AdapterInfo {
+            name: String::new(),
+            vendor,
+            device,
+            device_type,
+            device_pci_bus_id: String::new(),
+            driver: String::new(),
+            driver_info: String::new(),
+            backend,
+            subgroup_min_size: 0,
+            subgroup_max_size: 0,
+            transient_saves_memory: false,
+        }
+    }
+
+    #[test]
+    fn hardware_gl_outranks_software_vulkan() {
+        let hardware_gl = adapter_info(wgpu::DeviceType::Other, wgpu::Backend::Gl, 0x8086, 0);
+        let software_vulkan = adapter_info(wgpu::DeviceType::Cpu, wgpu::Backend::Vulkan, 0x10005, 0);
+        assert!(
+            adapter_priority(&hardware_gl, None, None)
+                < adapter_priority(&software_vulkan, None, None)
+        );
+    }
+
+    #[test]
+    fn vulkan_outranks_gl_for_the_same_device_type() {
+        let vulkan = adapter_info(
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Vulkan,
+            0x8086,
+            0x7d55,
+        );
+        let gl = adapter_info(
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Gl,
+            0x8086,
+            0x7d55,
+        );
+        assert!(adapter_priority(&vulkan, None, None) < adapter_priority(&gl, None, None));
+    }
+
+    #[test]
+    fn device_type_ranks_discrete_above_integrated_above_software() {
+        let types = [
+            wgpu::DeviceType::DiscreteGpu,
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::DeviceType::Other,
+            wgpu::DeviceType::VirtualGpu,
+            wgpu::DeviceType::Cpu,
+        ];
+        for pair in types.windows(2) {
+            let higher = adapter_info(pair[0], wgpu::Backend::Vulkan, 0x8086, 0x1);
+            let lower = adapter_info(pair[1], wgpu::Backend::Vulkan, 0x8086, 0x1);
+            assert!(
+                adapter_priority(&higher, None, None) < adapter_priority(&lower, None, None),
+                "{:?} should outrank {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    #[test]
+    fn compositor_match_outranks_a_faster_device_type() {
+        let hint = CompositorGpuHint {
+            vendor_id: 0x8086,
+            device_id: 0x7d55,
+        };
+        let integrated_match = adapter_info(
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Vulkan,
+            0x8086,
+            0x7d55,
+        );
+        let discrete_other = adapter_info(
+            wgpu::DeviceType::DiscreteGpu,
+            wgpu::Backend::Vulkan,
+            0x10de,
+            0x2f18,
+        );
+        assert!(
+            adapter_priority(&integrated_match, None, Some(&hint))
+                < adapter_priority(&discrete_other, None, Some(&hint))
+        );
+    }
+
+    #[test]
+    fn device_id_override_outranks_the_compositor_match() {
+        let hint = CompositorGpuHint {
+            vendor_id: 0x8086,
+            device_id: 0x7d55,
+        };
+        let compositor_gpu = adapter_info(
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Vulkan,
+            0x8086,
+            0x7d55,
+        );
+        let overridden = adapter_info(
+            wgpu::DeviceType::DiscreteGpu,
+            wgpu::Backend::Vulkan,
+            0x10de,
+            0x2f18,
+        );
+        assert!(
+            adapter_priority(&overridden, Some(0x2f18), Some(&hint))
+                < adapter_priority(&compositor_gpu, Some(0x2f18), Some(&hint))
+        );
+    }
+
+    #[test]
+    fn a_zero_device_id_never_matches_an_override_or_the_compositor() {
+        let hint = CompositorGpuHint {
+            vendor_id: 0x8086,
+            device_id: 0,
+        };
+        let gl = adapter_info(wgpu::DeviceType::Other, wgpu::Backend::Gl, 0x8086, 0);
+        assert_eq!(adapter_priority(&gl, Some(0), Some(&hint)).0, 1);
+        assert_eq!(adapter_priority(&gl, Some(0), Some(&hint)).1, 1);
+    }
+
+    #[test]
+    fn the_vulkan_only_attempt_rejects_software_and_the_last_one_offers_gl() {
+        let (backends, always_reject_software) = BACKEND_ATTEMPTS[0];
+        assert_eq!(backends, wgpu::Backends::VULKAN);
+        assert!(
+            always_reject_software,
+            "a software Vulkan driver must not win before hardware GL has been offered"
+        );
+
+        let (backends, always_reject_software) = BACKEND_ATTEMPTS[BACKEND_ATTEMPTS.len() - 1];
+        assert!(backends.contains(wgpu::Backends::GL));
+        assert!(backends.contains(wgpu::Backends::VULKAN));
+        assert!(!always_reject_software);
+    }
 
     #[test]
     fn test_parse_device_id() {
