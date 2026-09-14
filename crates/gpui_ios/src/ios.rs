@@ -1,15 +1,13 @@
 //! UIKit-backed implementation details for the iOS GPUI platform.
 
-mod dispatcher;
+mod application;
 mod display;
 mod events;
-pub mod ffi;
 mod platform;
 mod text_input;
 mod text_system;
 mod window;
 
-pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub use platform::*;
 pub(crate) use text_system::*;

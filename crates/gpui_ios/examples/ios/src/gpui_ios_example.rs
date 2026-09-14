@@ -1,17 +1,16 @@
 //! Native iOS smoke application for GPUI.
 //!
-//! This static library supplies a small GPUI view to the Objective-C simulator
-//! host so the iOS platform can be exercised independently of a product app.
+//! This uses the same platform-neutral application entry point as desktop GPUI apps.
 
-#![cfg(target_os = "ios")]
+#[cfg(target_os = "ios")]
+use gpui::{Context, Window, WindowOptions, div, prelude::*, px, rgb};
 
-use gpui::{App, Context, Window, WindowOptions, div, prelude::*, px, rgb};
-use std::{cell::Cell, rc::Rc};
-
+#[cfg(target_os = "ios")]
 struct IosExample {
     tap_count: usize,
 }
 
+#[cfg(target_os = "ios")]
 impl Render for IosExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
@@ -42,26 +41,25 @@ impl Render for IosExample {
                 div()
                     .max_w(px(320.))
                     .text_center()
-                    .child("UIKit host, direct Metal renderer, GPUI touch events"),
+                    .child("Rust app, native UIKit loop, GPUI rendering"),
             )
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn gpui_ios_example_run() -> bool {
-    let did_open_window = Rc::new(Cell::new(false));
-    gpui_ios::ios::ffi::set_app_callback(Box::new({
-        let did_open_window = did_open_window.clone();
-        move |cx: &mut App| match cx.open_window(WindowOptions::default(), |_, cx| {
+#[cfg(target_os = "ios")]
+fn main() {
+    gpui_platform::application().run(|cx| {
+        gpui_ios::ios::set_status_bar_style(gpui_ios::StatusBarContentStyle::Light);
+        match cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|_| IosExample { tap_count: 0 })
         }) {
-            Ok(_) => {
-                did_open_window.set(true);
-                cx.activate(true);
-            }
+            Ok(_) => cx.activate(true),
             Err(error) => log::error!("failed to open GPUI iOS example window: {error:#}"),
         }
-    }));
-    gpui_ios::ios::ffi::run_app();
-    did_open_window.get()
+    });
+}
+
+#[cfg(not(target_os = "ios"))]
+fn main() {
+    eprintln!("Build this example for an iOS target and package it with build-simulator.sh.");
 }

@@ -7564,6 +7564,7 @@ name = "gpui_apple"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-task",
  "block",
  "cbindgen",
  "collections",
@@ -7571,14 +7572,19 @@ dependencies = [
  "core-graphics 0.24.0",
  "core-video",
  "derive_more",
+ "dispatch2",
  "etagere",
  "foreign-types 0.5.0",
  "gpui",
+ "gpui_util",
  "image",
+ "libc",
  "log",
+ "mach2 0.5.0",
  "metal",
  "objc",
  "objc2 0.6.3",
+ "objc2-foundation 0.3.2",
  "parking_lot",
 ]
 
@@ -7592,7 +7598,6 @@ dependencies = [
  "core-foundation-sys",
  "core-graphics 0.24.0",
  "core-text",
- "dispatch2",
  "futures 0.3.34",
  "gpui",
  "gpui_apple",
@@ -7619,6 +7624,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "gpui_ios",
+ "gpui_platform",
  "log",
 ]
 
@@ -7674,7 +7680,6 @@ dependencies = [
  "accesskit",
  "accesskit_macos",
  "anyhow",
- "async-task",
  "block",
  "block2 0.6.2",
  "cocoa 0.26.0",
@@ -7694,7 +7699,6 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "mach2 0.5.0",
  "media",
  "metal",
  "objc",
@@ -7730,6 +7734,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
+ "gpui_ios",
  "gpui_linux",
  "gpui_macos",
  "gpui_web",

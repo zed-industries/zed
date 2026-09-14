@@ -1172,7 +1172,7 @@ pub struct Window {
     /// window, so that only actual changes are forwarded (reconfiguring a live
     /// input session can restart the IME connection).
     last_text_input_configuration: Option<TextInputConfiguration>,
-    focused_text_input_active: bool,
+    focused_text_input: Option<FocusId>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
@@ -2052,7 +2052,7 @@ impl Window {
             element_opacity: 1.0,
             requested_autoscroll: None,
             last_text_input_configuration: None,
-            focused_text_input_active: false,
+            focused_text_input: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
@@ -3238,7 +3238,7 @@ impl Window {
         // paint_range indices remain valid for reuse_paint on the next frame.
         // Search backwards to find the last Some entry, since reuse_paint may
         // have copied None slots from the previous frame. (Fixes #50456)
-        let focused_text_input_active = if let Some(mut input_handler) = self
+        let focused_text_input = if let Some(mut input_handler) = self
             .next_frame
             .input_handlers
             .iter_mut()
@@ -3247,19 +3247,21 @@ impl Window {
         {
             let accepts_text_input = input_handler.accepts_text_input(self, cx);
             self.platform_window.set_input_handler(input_handler);
-            accepts_text_input
+            self.focus.filter(|_| accepts_text_input)
         } else {
-            false
+            None
         };
         self.apply_text_input_configuration(cx);
-        if focused_text_input_active != self.focused_text_input_active {
-            self.focused_text_input_active = focused_text_input_active;
-            self.platform_window
-                .text_input_state_changed(if focused_text_input_active {
-                    TextInputStateChange::FocusGained
-                } else {
-                    TextInputStateChange::FocusLost
-                });
+        if focused_text_input != self.focused_text_input {
+            let previous = mem::replace(&mut self.focused_text_input, focused_text_input);
+            if previous.is_some() {
+                self.platform_window
+                    .text_input_state_changed(TextInputStateChange::FocusLost);
+            }
+            if focused_text_input.is_some() {
+                self.platform_window
+                    .text_input_state_changed(TextInputStateChange::FocusGained);
+            }
         }
 
         self.layout_engine.as_mut().unwrap().clear();
@@ -5156,9 +5158,31 @@ impl Window {
 
         if focus_handle.is_focused(self) {
             let cx = self.to_async(cx);
-            self.next_frame
-                .input_handlers
-                .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
+            self.next_frame.input_handlers.push(Some(
+                PlatformInputHandler::new(cx, Box::new(input_handler)).with_focus(focus_handle.id),
+            ));
+        }
+    }
+
+    /// Notifies native text services that the focused component's text changed.
+    ///
+    /// Text components should call this after application-driven edits, in addition
+    /// to notifying GPUI to redraw. Unfocused or unregistered components are ignored.
+    pub fn notify_text_input_changed(&self, focus_handle: &FocusHandle) {
+        if self.focused_text_input == Some(focus_handle.id) && focus_handle.is_focused(self) {
+            self.platform_window
+                .text_input_state_changed(TextInputStateChange::ContentChanged);
+        }
+    }
+
+    /// Notifies native text services that the focused component's selection changed.
+    ///
+    /// Text components should call this after application-driven selection changes,
+    /// in addition to notifying GPUI to redraw.
+    pub fn notify_text_selection_changed(&self, focus_handle: &FocusHandle) {
+        if self.focused_text_input == Some(focus_handle.id) && focus_handle.is_focused(self) {
+            self.platform_window
+                .text_input_state_changed(TextInputStateChange::SelectionChanged);
         }
     }
 

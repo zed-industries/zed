@@ -12,8 +12,19 @@ workspace = true
 path = "src/gpui_ios.rs"
 crate-type = ["staticlib", "rlib"]
 
+[[test]]
+name = "text_input"
+path = "tests/text_input.rs"
+harness = false
+
+[features]
+runtime_shaders = ["gpui_apple/runtime_shaders"]
+
 [dependencies]
 gpui.workspace = true
+
+[target.'cfg(target_os = "ios")'.dev-dependencies]
+objc2-ui-kit = { workspace = true, features = ["UIConversationContext"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 anyhow.workspace = true
@@ -34,7 +45,6 @@ objc2-quartz-core.workspace = true
 objc2-core-foundation.workspace = true
 objc2-core-text.workspace = true
 objc2-security.workspace = true
-dispatch2.workspace = true
 parking_lot.workspace = true
 pathfinder_geometry.workspace = true
 raw-window-handle.workspace = true

@@ -8,11 +8,14 @@ license = "Apache-2.0"
 [lints]
 workspace = true
 
-[lib]
+[[bin]]
+name = "gpui_ios_example"
 path = "src/gpui_ios_example.rs"
-crate-type = ["staticlib"]
+test = false
+bench = false
 
 [target.'cfg(target_os = "ios")'.dependencies]
 gpui.workspace = true
 gpui_ios.workspace = true
+gpui_platform.workspace = true
 log.workspace = true

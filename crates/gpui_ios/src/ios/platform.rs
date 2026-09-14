@@ -8,7 +8,7 @@
 //! - Touch-based input instead of mouse
 //! - System keyboard handling differs significantly
 
-use super::{IosDispatcher, IosDisplay, IosWindow};
+use super::{IosDisplay, IosWindow};
 use anyhow::{Context as _, anyhow};
 use futures::channel::oneshot;
 use gpui::{
@@ -17,6 +17,7 @@ use gpui::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, Task, ThermalState, WindowAppearance, WindowParams,
 };
+use gpui_apple::AppleDispatcher;
 use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained};
 use objc2_core_foundation::{CFData, CFDictionary, CFRetained, CFString, CFType, kCFBooleanTrue};
 use objc2_foundation::{NSBundle, NSDictionary, NSString, NSURL};
@@ -48,7 +49,7 @@ impl Default for IosPlatform {
 
 impl IosPlatform {
     pub fn new() -> Self {
-        let dispatcher = Arc::new(IosDispatcher);
+        let dispatcher = Arc::new(AppleDispatcher::new());
 
         let text_system: Arc<dyn PlatformTextSystem> = Arc::new(super::IosTextSystem::new());
 
@@ -61,7 +62,7 @@ impl IosPlatform {
     }
 
     fn root_view_controller() -> Option<Retained<UIViewController>> {
-        let window = if let Some(scene) = super::ffi::window_scene() {
+        let window = if let Some(scene) = super::application::window_scene() {
             let windows = scene.windows();
             windows
                 .iter()
@@ -143,7 +144,7 @@ impl Platform for IosPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
-        super::ffi::set_finish_launching_callback(on_finish_launching);
+        super::application::run(on_finish_launching);
     }
 
     fn quit(&self) {
@@ -195,8 +196,7 @@ impl Platform for IosPlatform {
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let window = Box::new(IosWindow::new(handle, options)?);
-        // Register the window with FFI layer so Objective-C can access it for rendering
-        window.register_with_ffi();
+        window.register();
         Ok(window)
     }
 
@@ -235,7 +235,7 @@ impl Platform for IosPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        super::ffi::set_open_urls_callback(callback);
+        super::application::set_open_urls_callback(callback);
     }
 
     fn register_url_scheme(&self, _url: &str) -> Task<Result<()>> {
@@ -285,7 +285,7 @@ impl Platform for IosPlatform {
     }
 
     fn on_quit(&self, mut callback: Box<dyn FnMut() -> bool>) {
-        super::ffi::set_quit_callback(Box::new(move || {
+        super::application::set_quit_callback(Box::new(move || {
             // UIKit's termination notification cannot be vetoed.
             callback();
         }));
@@ -306,11 +306,11 @@ impl Platform for IosPlatform {
     }
 
     fn on_app_lifecycle(&self, callback: Box<dyn FnMut(AppLifecyclePhase)>) {
-        super::ffi::set_app_lifecycle_callback(callback);
+        super::application::set_app_lifecycle_callback(callback);
     }
 
     fn on_memory_warning(&self, callback: Box<dyn FnMut()>) {
-        super::ffi::set_memory_warning_callback(callback);
+        super::application::set_memory_warning_callback(callback);
     }
 
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {

@@ -11,13 +11,14 @@
 
 use super::IosDisplay;
 use super::events::*;
+use super::text_input::TextInputView;
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, EditMenuActions,
     GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    Scene, Size, TextInputStateChange, TouchEvent, TouchId, TouchPhase, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets, WindowParams,
-    WindowVisibility, px, size,
+    Scene, Size, TextInputConfiguration, TextInputStateChange, TouchEvent, TouchId, TouchPhase,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets,
+    WindowParams, WindowVisibility, px, size,
 };
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
 use objc2::rc::Retained;
@@ -26,20 +27,17 @@ use objc2::{
     ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSObjectNSDelayedPerforming, NSObjectProtocol, NSSet,
-    NSString, NSValue,
-};
+use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSSet, NSValue};
 use objc2_quartz_core::CAMetalLayer;
 use objc2_ui_kit::{
-    NSValueUIGeometryExtensions, UIKeyInput, UIKeyboardFrameEndUserInfoKey, UIKeyboardType,
+    NSValueUIGeometryExtensions, UIKeyboardFrameEndUserInfoKey,
     UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification,
-    UIResponderStandardEditActions, UIStatusBarStyle, UITextAutocapitalizationType,
-    UITextAutocorrectionType, UITextInputTraits,
+    UIResponderStandardEditActions, UIStatusBarStyle,
 };
 use objc2_ui_kit::{
-    UIEditMenuConfiguration, UIEditMenuInteraction, UIEvent, UIScreen, UITouch, UITraitEnvironment,
-    UIUserInterfaceStyle, UIView, UIViewAutoresizing, UIViewController, UIWindow,
+    UIEditMenuConfiguration, UIEditMenuInteraction, UIEvent, UIScreen, UITouch, UITraitCollection,
+    UITraitEnvironment, UIUserInterfaceStyle, UIView, UIViewAutoresizing, UIViewController,
+    UIWindow, UIWindowScene,
 };
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, UiKitDisplayHandle, UiKitWindowHandle};
@@ -47,7 +45,7 @@ use std::{
     cell::{Cell, RefCell},
     ffi::c_void,
     ptr::NonNull,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -67,21 +65,21 @@ static KEYBOARD_OBSERVERS_REGISTERED: std::sync::Once = std::sync::Once::new();
 static STATUS_BAR_STYLE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 #[derive(Default)]
-struct WindowReference(Cell<Option<NonNull<IosWindow>>>);
+pub(super) struct WindowReference(pub(super) RefCell<Weak<IosWindowState>>);
 
 impl WindowReference {
-    fn with_window<R>(&self, callback: impl FnOnce(&IosWindow) -> R) -> Option<R> {
-        let window = self.0.get()?;
-        // Installed only after the window is boxed, cleared before it drops,
-        // and accessed only by our main-thread-only UIKit subclasses.
-        Some(callback(unsafe { window.as_ref() }))
+    pub(super) fn with_window<R>(&self, callback: impl FnOnce(&IosWindowState) -> R) -> Option<R> {
+        let window = self.0.borrow().upgrade()?;
+        // Keep callback storage and native objects alive even if the callback
+        // synchronously closes the platform window.
+        Some(callback(&window))
     }
 
-    fn dispatch_edit_menu_shortcut(&self, key: &str) {
+    pub(super) fn dispatch_edit_menu_shortcut(&self, key: &str) {
         self.with_window(|window| window.dispatch_edit_menu_shortcut(key));
     }
 
-    fn can_perform_action(&self, action: Sel) -> bool {
+    pub(super) fn can_perform_action(&self, action: Sel) -> bool {
         self.with_window(|window| {
             let actions = window.edit_menu_actions.get();
             (action == sel!(cut:) && actions.cut)
@@ -90,6 +88,44 @@ impl WindowReference {
                 || (action == sel!(selectAll:) && actions.select_all)
         })
         .unwrap_or(false)
+    }
+}
+
+struct CallbackSlot<T> {
+    value: RefCell<Option<T>>,
+    generation: Cell<u64>,
+}
+
+impl<T> Default for CallbackSlot<T> {
+    fn default() -> Self {
+        Self {
+            value: RefCell::new(None),
+            generation: Cell::new(0),
+        }
+    }
+}
+
+impl<T> CallbackSlot<T> {
+    fn set(&self, value: T) {
+        self.generation.set(self.generation.get().wrapping_add(1));
+        drop(self.value.replace(Some(value)));
+    }
+
+    fn take(&self) -> Option<T> {
+        // Even an empty take can mean the focused handler was withdrawn during a callback.
+        self.generation.set(self.generation.get().wrapping_add(1));
+        self.value.borrow_mut().take()
+    }
+
+    fn with<R>(&self, callback: impl FnOnce(&mut T) -> R) -> Option<R> {
+        let mut value = self.value.borrow_mut().take()?;
+        let generation = self.generation.get();
+        let result = callback(&mut value);
+        // Do not resurrect a handler that application code replaced or removed.
+        if self.generation.get() == generation {
+            drop(self.value.replace(Some(value)));
+        }
+        Some(result)
     }
 }
 
@@ -116,7 +152,7 @@ define_class!(
             unsafe {
                 let _: () = msg_send![super(self), viewDidLayoutSubviews];
             }
-            self.ivars().with_window(IosWindow::handle_layout_change);
+            self.ivars().with_window(IosWindowState::handle_layout_change);
         }
     }
 );
@@ -141,18 +177,9 @@ pub fn set_status_bar_style(style: crate::StatusBarContentStyle) {
     };
     STATUS_BAR_STYLE.store(value, std::sync::atomic::Ordering::Relaxed);
 
-    // Ask UIKit to re-query the status bar style
-    unsafe {
-        if let Some(wrapper) = super::ffi::IOS_WINDOW_LIST.get() {
-            let windows = &*wrapper.0.get();
-            if let Some(&window_ptr) = windows.last() {
-                if !window_ptr.is_null() {
-                    let window = &*window_ptr;
-                    window.view_controller.setNeedsStatusBarAppearanceUpdate();
-                }
-            }
-        }
-    }
+    super::application::with_windows(|window| {
+        window.view_controller.setNeedsStatusBarAppearanceUpdate();
+    });
 }
 
 define_class!(
@@ -168,6 +195,21 @@ define_class!(
         #[unsafe(method(layerClass))]
         fn layer_class() -> &'static AnyClass {
             CAMetalLayer::class()
+        }
+
+        // This callback also covers iOS 15/16, before UIKit's trait-registration API.
+        #[unsafe(method(traitCollectionDidChange:))]
+        fn trait_collection_did_change(&self, previous: Option<&UITraitCollection>) {
+            unsafe {
+                let _: () = msg_send![super(self), traitCollectionDidChange: previous];
+                if self
+                    .traitCollection()
+                    .hasDifferentColorAppearanceComparedToTraitCollection(previous)
+                {
+                    self.ivars()
+                        .with_window(IosWindowState::notify_appearance_changed);
+                }
+            }
         }
 
         #[unsafe(method(touchesBegan:withEvent:))]
@@ -233,121 +275,20 @@ impl MetalView {
     }
 }
 
-struct TextInputIvars {
-    window: WindowReference,
-    keyboard_type: Cell<UIKeyboardType>,
-    autocorrection_type: Cell<UITextAutocorrectionType>,
-    autocapitalization_type: Cell<UITextAutocapitalizationType>,
+pub(crate) struct IosWindow {
+    state: Rc<IosWindowState>,
 }
 
-define_class!(
-    #[unsafe(super = UIView)]
-    #[thread_kind = MainThreadOnly]
-    #[name = "GPUITextInputView"]
-    #[ivars = TextInputIvars]
-    struct TextInputView;
+impl std::ops::Deref for IosWindow {
+    type Target = IosWindowState;
 
-    unsafe impl NSObjectProtocol for TextInputView {}
-
-    impl TextInputView {
-        #[unsafe(method(canBecomeFirstResponder))]
-        fn can_become_first_responder(&self) -> bool {
-            true
-        }
-
-        #[unsafe(method(canPerformAction:withSender:))]
-        fn can_perform_action(&self, action: Sel, _sender: Option<&AnyObject>) -> bool {
-            self.ivars().window.can_perform_action(action)
-        }
-    }
-
-    unsafe impl UIKeyInput for TextInputView {
-        #[unsafe(method(hasText))]
-        fn has_text(&self) -> bool {
-            // Keep deletion available even though the text lives in GPUI, not this view.
-            true
-        }
-
-        #[unsafe(method(insertText:))]
-        fn insert_text(&self, text: &NSString) {
-            self.ivars().window.with_window(|window| window.handle_text_input(text));
-        }
-
-        #[unsafe(method(deleteBackward))]
-        fn delete_backward(&self) {
-            self.ivars().window.with_window(IosWindow::handle_delete_backward);
-        }
-    }
-
-    unsafe impl UITextInputTraits for TextInputView {
-        #[unsafe(method(keyboardType))]
-        fn keyboard_type(&self) -> UIKeyboardType {
-            self.ivars().keyboard_type.get()
-        }
-
-        #[unsafe(method(setKeyboardType:))]
-        fn set_keyboard_type(&self, value: UIKeyboardType) {
-            self.ivars().keyboard_type.set(value);
-        }
-
-        #[unsafe(method(autocorrectionType))]
-        fn autocorrection_type(&self) -> UITextAutocorrectionType {
-            self.ivars().autocorrection_type.get()
-        }
-
-        #[unsafe(method(setAutocorrectionType:))]
-        fn set_autocorrection_type(&self, value: UITextAutocorrectionType) {
-            self.ivars().autocorrection_type.set(value);
-        }
-
-        #[unsafe(method(autocapitalizationType))]
-        fn autocapitalization_type(&self) -> UITextAutocapitalizationType {
-            self.ivars().autocapitalization_type.get()
-        }
-
-        #[unsafe(method(setAutocapitalizationType:))]
-        fn set_autocapitalization_type(&self, value: UITextAutocapitalizationType) {
-            self.ivars().autocapitalization_type.set(value);
-        }
-    }
-
-    unsafe impl UIResponderStandardEditActions for TextInputView {
-        #[unsafe(method(cut:))]
-        unsafe fn cut(&self, _sender: Option<&AnyObject>) {
-            self.ivars().window.dispatch_edit_menu_shortcut("x");
-        }
-
-        #[unsafe(method(copy:))]
-        unsafe fn copy(&self, _sender: Option<&AnyObject>) {
-            self.ivars().window.dispatch_edit_menu_shortcut("c");
-        }
-
-        #[unsafe(method(paste:))]
-        unsafe fn paste(&self, _sender: Option<&AnyObject>) {
-            self.ivars().window.dispatch_edit_menu_shortcut("v");
-        }
-
-        #[unsafe(method(selectAll:))]
-        unsafe fn select_all(&self, _sender: Option<&AnyObject>) {
-            self.ivars().window.dispatch_edit_menu_shortcut("a");
-        }
-    }
-);
-
-impl TextInputView {
-    fn new(frame: CGRect, main_thread: MainThreadMarker) -> Retained<Self> {
-        let this = Self::alloc(main_thread).set_ivars(TextInputIvars {
-            window: WindowReference::default(),
-            keyboard_type: Cell::new(UIKeyboardType::Default),
-            autocorrection_type: Cell::new(UITextAutocorrectionType::Default),
-            autocapitalization_type: Cell::new(UITextAutocapitalizationType::None),
-        });
-        unsafe { msg_send![super(this), initWithFrame: frame] }
+    fn deref(&self) -> &Self::Target {
+        &self.state
     }
 }
 
 #[allow(clippy::type_complexity)]
-pub(crate) struct IosWindow {
+pub(crate) struct IosWindowState {
     /// The UIWindow object
     window: Retained<UIWindow>,
     /// The UIViewController
@@ -363,31 +304,31 @@ pub(crate) struct IosWindow {
     /// Scale factor
     scale_factor: Cell<f32>,
     /// Input handler for text input
-    input_handler: RefCell<Option<PlatformInputHandler>>,
-    request_frame_callback: RefCell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
+    input_handler: CallbackSlot<PlatformInputHandler>,
+    request_frame_callback: CallbackSlot<Box<dyn FnMut(RequestFrameOptions)>>,
     force_next_frame: Cell<bool>,
     /// Callback for input events
-    input_callback: RefCell<Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>>,
+    input_callback: CallbackSlot<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     /// Callback for active status changes
-    active_status_callback: RefCell<Option<Box<dyn FnMut(bool)>>>,
+    active_status_callback: CallbackSlot<Box<dyn FnMut(bool)>>,
     visibility: Cell<WindowVisibility>,
-    visibility_callback: RefCell<Option<Box<dyn FnMut(WindowVisibility)>>>,
+    visibility_callback: CallbackSlot<Box<dyn FnMut(WindowVisibility)>>,
     /// Callback for hover status changes (not really applicable on iOS)
-    hover_status_callback: RefCell<Option<Box<dyn FnMut(bool)>>>,
+    hover_status_callback: CallbackSlot<Box<dyn FnMut(bool)>>,
     /// Callback for resize events
-    resize_callback: RefCell<Option<Box<dyn FnMut(Size<Pixels>, f32)>>>,
+    resize_callback: CallbackSlot<Box<dyn FnMut(Size<Pixels>, f32)>>,
     /// Callback for move events (not applicable on iOS)
-    moved_callback: RefCell<Option<Box<dyn FnMut()>>>,
+    moved_callback: CallbackSlot<Box<dyn FnMut()>>,
     /// Callback for should close
-    should_close_callback: RefCell<Option<Box<dyn FnMut() -> bool>>>,
+    should_close_callback: CallbackSlot<Box<dyn FnMut() -> bool>>,
     /// Callback for hit test
-    hit_test_callback: RefCell<Option<Box<dyn FnMut() -> Option<WindowControlArea>>>>,
+    hit_test_callback: CallbackSlot<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     /// Callback for close
-    close_callback: RefCell<Option<Box<dyn FnOnce()>>>,
+    close_callback: CallbackSlot<Box<dyn FnOnce()>>,
     /// Callback for appearance changes
-    appearance_changed_callback: RefCell<Option<Box<dyn FnMut()>>>,
-    insets_changed_callback: RefCell<Option<Box<dyn FnMut(WindowInsets)>>>,
-    keyboard_dismiss_callback: RefCell<Option<Box<dyn FnMut()>>>,
+    appearance_changed_callback: CallbackSlot<Box<dyn FnMut()>>,
+    insets_changed_callback: CallbackSlot<Box<dyn FnMut(WindowInsets)>>,
+    keyboard_dismiss_callback: CallbackSlot<Box<dyn FnMut()>>,
     keyboard_dismiss_touch: Cell<Option<KeyboardDismissTouch>>,
     keyboard_height: Cell<f32>,
     /// Current mouse position (from touch)
@@ -397,12 +338,8 @@ pub(crate) struct IosWindow {
     renderer: Mutex<MetalRenderer>,
 }
 
-// Required for raw_window_handle
-unsafe impl Send for IosWindow {}
-unsafe impl Sync for IosWindow {}
-
 impl IosWindow {
-    #[allow(deprecated)] // The embedded host may not supply a UIWindowScene.
+    #[allow(deprecated)] // Window construction can precede scene connection.
     pub fn new(_handle: AnyWindowHandle, _params: WindowParams) -> anyhow::Result<Self> {
         // Create the window on the main screen
         let screen = IosDisplay::main();
@@ -412,7 +349,7 @@ impl IosWindow {
         unsafe {
             let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
             // Create UIWindow
-            let window_scene = super::ffi::window_scene();
+            let window_scene = super::application::window_scene();
             let window_scene = window_scene.as_deref();
             let screen_obj = if let Some(scene) = window_scene {
                 scene.screen()
@@ -485,7 +422,7 @@ impl IosWindow {
             );
             renderer.update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
 
-            let ios_window = Self {
+            let state = IosWindowState {
                 window,
                 view_controller,
                 view,
@@ -494,22 +431,22 @@ impl IosWindow {
                 edit_menu_actions: Cell::new(EditMenuActions::default()),
                 bounds: Cell::new(screen_bounds),
                 scale_factor: Cell::new(scale_factor),
-                input_handler: RefCell::new(None),
-                request_frame_callback: RefCell::new(None),
+                input_handler: CallbackSlot::default(),
+                request_frame_callback: CallbackSlot::default(),
                 force_next_frame: Cell::new(true),
-                input_callback: RefCell::new(None),
-                active_status_callback: RefCell::new(None),
+                input_callback: CallbackSlot::default(),
+                active_status_callback: CallbackSlot::default(),
                 visibility: Cell::new(WindowVisibility::Visible),
-                visibility_callback: RefCell::new(None),
-                hover_status_callback: RefCell::new(None),
-                resize_callback: RefCell::new(None),
-                moved_callback: RefCell::new(None),
-                should_close_callback: RefCell::new(None),
-                hit_test_callback: RefCell::new(None),
-                close_callback: RefCell::new(None),
-                appearance_changed_callback: RefCell::new(None),
-                insets_changed_callback: RefCell::new(None),
-                keyboard_dismiss_callback: RefCell::new(None),
+                visibility_callback: CallbackSlot::default(),
+                hover_status_callback: CallbackSlot::default(),
+                resize_callback: CallbackSlot::default(),
+                moved_callback: CallbackSlot::default(),
+                should_close_callback: CallbackSlot::default(),
+                hit_test_callback: CallbackSlot::default(),
+                close_callback: CallbackSlot::default(),
+                appearance_changed_callback: CallbackSlot::default(),
+                insets_changed_callback: CallbackSlot::default(),
+                keyboard_dismiss_callback: CallbackSlot::default(),
                 keyboard_dismiss_touch: Cell::new(None),
                 keyboard_height: Cell::new(0.),
                 mouse_position: Cell::new(Point::default()),
@@ -517,22 +454,29 @@ impl IosWindow {
                 renderer: Mutex::new(renderer),
             };
 
-            Ok(ios_window)
+            Ok(Self {
+                state: Rc::new(state),
+            })
         }
     }
 
-    /// Register this window with the FFI layer after it's been stored.
-    /// This must be called after the window is placed at a stable address
-    /// (e.g., in a Box or Arc).
-    pub(crate) fn register_with_ffi(&self) {
-        super::ffi::register_window(self as *const Self);
+    pub(crate) fn register(&self) {
+        super::application::register_window(&self.state);
 
-        let window = Some(NonNull::from(self));
-        self.view_controller.ivars().0.set(window);
-        self.view.ivars().0.set(window);
-        self.text_input_view.ivars().window.0.set(window);
+        let window = Rc::downgrade(&self.state);
+        *self.view_controller.ivars().0.borrow_mut() = window.clone();
+        *self.view.ivars().0.borrow_mut() = window.clone();
+        self.text_input_view.set_window(window);
 
-        Self::register_keyboard_observers();
+        IosWindowState::register_keyboard_observers();
+    }
+}
+
+impl IosWindowState {
+    pub(super) fn attach_to_scene(&self, scene: &UIWindowScene) {
+        self.window.setWindowScene(Some(scene));
+        self.window.makeKeyAndVisible();
+        self.handle_layout_change();
     }
 
     fn register_keyboard_observers() {
@@ -552,23 +496,13 @@ impl IosWindow {
                         return;
                     };
                     let frame = frame_value.CGRectValue();
-                    if let Some(wrapper) = super::ffi::IOS_WINDOW_LIST.get() {
-                        for &window in &*wrapper.0.get() {
-                            if let Some(window) = window.as_ref() {
-                                window.set_keyboard_height(frame.size.height as f32);
-                            }
-                        }
-                    }
+                    super::application::with_windows(|window| {
+                        window.set_keyboard_height(frame.size.height as f32);
+                    });
                 });
 
             let hide_block = block2::RcBlock::new(move |_notification: NonNull<NSNotification>| {
-                if let Some(wrapper) = super::ffi::IOS_WINDOW_LIST.get() {
-                    for &window in &*wrapper.0.get() {
-                        if let Some(window) = window.as_ref() {
-                            window.set_keyboard_height(0.);
-                        }
-                    }
-                }
+                super::application::with_windows(|window| window.set_keyboard_height(0.));
             });
 
             notification_center.addObserverForName_object_queue_usingBlock(
@@ -606,9 +540,8 @@ impl IosWindow {
             force: touch_force(touch),
         };
         self.handle_keyboard_dismiss_touch(&event);
-        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-            callback(PlatformInput::Touch(event));
-        }
+        self.input_callback
+            .with(|callback| callback(PlatformInput::Touch(event)));
     }
 
     fn handle_keyboard_dismiss_touch(&self, event: &TouchEvent) {
@@ -652,18 +585,13 @@ impl IosWindow {
     }
 
     pub(super) fn request_frame(&self) {
-        let callback = self.request_frame_callback.borrow_mut().take();
-        if let Some(mut callback) = callback {
+        self.request_frame_callback.with(|callback| {
             let force_render = self.force_next_frame.replace(false);
             callback(RequestFrameOptions {
                 force_render,
                 ..Default::default()
             });
-            let mut callback_slot = self.request_frame_callback.borrow_mut();
-            if callback_slot.is_none() {
-                *callback_slot = Some(callback);
-            }
-        }
+        });
     }
 
     /// Query the safe area insets from the UIView.
@@ -698,9 +626,12 @@ impl IosWindow {
     }
 
     fn notify_insets_changed(&self) {
-        if let Some(callback) = self.insets_changed_callback.borrow_mut().as_mut() {
-            callback(self.current_insets());
-        }
+        self.insets_changed_callback
+            .with(|callback| callback(self.current_insets()));
+    }
+
+    fn notify_appearance_changed(&self) {
+        self.appearance_changed_callback.with(|callback| callback());
     }
 
     fn set_keyboard_height(&self, height: f32) {
@@ -715,82 +646,24 @@ impl IosWindow {
         self.notify_insets_changed();
     }
 
-    /// Defers the UIKit responder transition to avoid synchronous layout callbacks
-    /// re-entering GPUI while an input event is being dispatched.
     pub fn show_keyboard(&self) {
-        self.text_input_view
-            .setKeyboardType(UIKeyboardType::Default);
-        self.text_input_view
-            .setAutocorrectionType(UITextAutocorrectionType::No);
-        self.text_input_view
-            .setAutocapitalizationType(UITextAutocapitalizationType::None);
-        unsafe {
-            self.text_input_view.performSelector_withObject_afterDelay(
-                sel!(becomeFirstResponder),
-                None,
-                0.0,
-            );
-        }
+        self.text_input_view.set_keyboard_visible(true);
     }
 
     pub fn hide_keyboard(&self) {
-        unsafe {
-            self.text_input_view.performSelector_withObject_afterDelay(
-                sel!(resignFirstResponder),
-                None,
-                0.0,
-            );
-        }
+        self.text_input_view.set_keyboard_visible(false);
     }
 
     fn dismiss_keyboard(&self) {
         self.hide_keyboard();
-        if let Some(callback) = self.keyboard_dismiss_callback.borrow_mut().as_mut() {
-            callback();
-        }
+        self.keyboard_dismiss_callback.with(|callback| callback());
     }
 
-    pub fn handle_text_input(&self, text: &NSString) {
-        let text_str = text.to_string();
-
-        if let Some(handler) = self.input_handler.borrow_mut().as_mut() {
-            handler.replace_text_in_range(None, &text_str);
-            return;
-        }
-
-        for character in text_str.chars() {
-            let keystroke = gpui::Keystroke {
-                modifiers: Modifiers::default(),
-                key: character.to_string(),
-                key_char: Some(character.to_string()),
-            };
-
-            let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
-                keystroke,
-                is_held: false,
-                prefer_character_input: true,
-            });
-
-            if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-                callback(event);
-            }
-        }
-    }
-
-    pub fn handle_delete_backward(&self) {
-        let keystroke = gpui::Keystroke {
-            modifiers: Modifiers::default(),
-            key: "backspace".to_string(),
-            key_char: None,
-        };
-        let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
-            keystroke,
-            is_held: false,
-            prefer_character_input: false,
-        });
-        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-            callback(event);
-        }
+    pub(super) fn with_input_handler<R>(
+        &self,
+        callback: impl FnOnce(&mut PlatformInputHandler) -> R,
+    ) -> Option<R> {
+        self.input_handler.with(callback)
     }
 
     fn dispatch_edit_menu_shortcut(&self, key: &str) {
@@ -806,42 +679,21 @@ impl IosWindow {
             is_held: false,
             prefer_character_input: false,
         });
-        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-            callback(event);
-        }
+        self.input_callback.with(|callback| callback(event));
     }
 
-    pub fn handle_key_event(&self, key_code: u32, modifier_flags: u32, is_key_down: bool) {
-        use super::text_input::{key_code_to_key_down, key_code_to_key_up};
-
-        let event = if is_key_down {
-            key_code_to_key_down(key_code, modifier_flags)
-        } else {
-            key_code_to_key_up(key_code, modifier_flags)
-        };
-
-        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-            callback(event);
-        }
-    }
-
-    /// Notify the window of active status changes (foreground/background).
-    ///
-    /// This is called by the FFI layer when the app transitions between
-    /// foreground and background states.
+    /// Notify the window when its UIKit scene becomes active or inactive.
     pub fn notify_active_status_change(&self, is_active: bool) {
         log::info!("GPUI iOS: Window active status changed to: {}", is_active);
 
-        if let Some(callback) = self.active_status_callback.borrow_mut().as_mut() {
-            callback(is_active);
-        }
+        self.active_status_callback
+            .with(|callback| callback(is_active));
     }
 
     pub(crate) fn notify_visibility_change(&self, visibility: WindowVisibility) {
-        if self.visibility.replace(visibility) != visibility
-            && let Some(callback) = self.visibility_callback.borrow_mut().as_mut()
-        {
-            callback(visibility);
+        if self.visibility.replace(visibility) != visibility {
+            self.visibility_callback
+                .with(|callback| callback(visibility));
         }
     }
 
@@ -888,26 +740,18 @@ impl IosWindow {
             .lock()
             .update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
 
-        // Fire the resize callback so GPUI re-layouts at the new size.
-        let cb = self.resize_callback.borrow_mut().take();
-        if let Some(mut cb) = cb {
-            cb(new_size, new_scale);
-            // Restore the callback for future resize events.
-            let mut slot = self.resize_callback.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(cb);
-            }
-        }
+        self.resize_callback
+            .with(|callback| callback(new_size, new_scale));
     }
 }
 
 impl Drop for IosWindow {
     fn drop(&mut self) {
-        super::ffi::unregister_window(self);
+        super::application::unregister_window(&self.state);
 
-        self.view_controller.ivars().0.set(None);
-        self.view.ivars().0.set(None);
-        self.text_input_view.ivars().window.0.set(None);
+        *self.view_controller.ivars().0.borrow_mut() = Weak::new();
+        *self.view.ivars().0.borrow_mut() = Weak::new();
+        self.text_input_view.set_window(Weak::new());
         self.text_input_view.removeFromSuperview();
         if let Some(interaction) = &self.edit_menu_interaction {
             self.view
@@ -988,11 +832,14 @@ impl PlatformWindow for IosWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        *self.input_handler.borrow_mut() = Some(input_handler);
+        self.input_handler.set(input_handler);
+        self.text_input_view.refresh_keyboard();
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.input_handler.borrow_mut().take()
+        let handler = self.input_handler.take();
+        self.text_input_view.refresh_keyboard();
+        handler
     }
 
     fn prompt(
@@ -1047,15 +894,15 @@ impl PlatformWindow for IosWindow {
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
-        *self.request_frame_callback.borrow_mut() = Some(callback);
+        self.request_frame_callback.set(callback);
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
-        *self.input_callback.borrow_mut() = Some(callback);
+        self.input_callback.set(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        *self.active_status_callback.borrow_mut() = Some(callback);
+        self.active_status_callback.set(callback);
     }
 
     fn visibility(&self) -> WindowVisibility {
@@ -1063,35 +910,35 @@ impl PlatformWindow for IosWindow {
     }
 
     fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
-        *self.visibility_callback.borrow_mut() = Some(callback);
+        self.visibility_callback.set(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        *self.hover_status_callback.borrow_mut() = Some(callback);
+        self.hover_status_callback.set(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        *self.resize_callback.borrow_mut() = Some(callback);
+        self.resize_callback.set(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        *self.moved_callback.borrow_mut() = Some(callback);
+        self.moved_callback.set(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        *self.should_close_callback.borrow_mut() = Some(callback);
+        self.should_close_callback.set(callback);
     }
 
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
-        *self.hit_test_callback.borrow_mut() = Some(callback);
+        self.hit_test_callback.set(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
-        *self.close_callback.borrow_mut() = Some(callback);
+        self.close_callback.set(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        *self.appearance_changed_callback.borrow_mut() = Some(callback);
+        self.appearance_changed_callback.set(callback);
     }
 
     fn draw(&self, scene: &Scene) {
@@ -1119,7 +966,7 @@ impl PlatformWindow for IosWindow {
     }
 
     fn on_insets_changed(&self, callback: Box<dyn FnMut(WindowInsets)>) {
-        *self.insets_changed_callback.borrow_mut() = Some(callback);
+        self.insets_changed_callback.set(callback);
     }
 
     fn show_soft_keyboard(&self) {
@@ -1131,7 +978,7 @@ impl PlatformWindow for IosWindow {
     }
 
     fn set_keyboard_dismiss_handler(&self, callback: Box<dyn FnMut()>) {
-        *self.keyboard_dismiss_callback.borrow_mut() = Some(callback);
+        self.keyboard_dismiss_callback.set(callback);
     }
 
     fn show_edit_menu(&self, position: Point<Pixels>, actions: EditMenuActions) -> bool {
@@ -1157,12 +1004,66 @@ impl PlatformWindow for IosWindow {
     }
 
     fn text_input_state_changed(&self, change: TextInputStateChange) {
-        match change {
-            TextInputStateChange::FocusGained => self.show_keyboard(),
-            TextInputStateChange::FocusLost => self.hide_keyboard(),
-            TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {
-                self.text_input_view.reloadInputViews();
-            }
-        }
+        self.text_input_view.state_changed(change);
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        self.text_input_view.set_configuration(&configuration);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CallbackSlot;
+
+    #[test]
+    fn callback_is_unavailable_during_dispatch_and_restored_afterward() {
+        let slot = CallbackSlot::default();
+        slot.set(1);
+        assert_eq!(
+            slot.with(|value| {
+                *value += 1;
+                assert!(
+                    slot.with(|_| panic!("reentered the same handler"))
+                        .is_none()
+                );
+                *value
+            }),
+            Some(2)
+        );
+        assert_eq!(slot.with(|value| *value), Some(2));
+    }
+
+    #[test]
+    fn callback_replacement_during_dispatch_is_preserved() {
+        let slot = CallbackSlot::default();
+        slot.set(1);
+        slot.with(|_| {
+            slot.set(2);
+            slot.with(|value| *value += 1);
+        });
+        assert_eq!(slot.take(), Some(3));
+    }
+
+    #[test]
+    fn withdrawing_an_in_flight_handler_does_not_restore_it() {
+        let slot = CallbackSlot::default();
+        slot.set(1);
+        slot.with(|_| assert!(slot.take().is_none()));
+        assert!(
+            slot.with(|_| panic!("restored a withdrawn handler"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn removing_a_replacement_does_not_resurrect_the_previous_handler() {
+        let slot = CallbackSlot::default();
+        slot.set(1);
+        slot.with(|_| {
+            slot.set(2);
+            assert_eq!(slot.take(), Some(2));
+        });
+        assert!(slot.take().is_none());
     }
 }
