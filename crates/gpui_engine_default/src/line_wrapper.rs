@@ -1,5 +1,6 @@
-use crate::{FontId, TextRun, TextSystem};
+use crate::TextSystem;
 use collections::HashMap;
+use gpui_engine::{FontId, TextRun};
 use gpui_shared_string::SharedString;
 use gpui_types::{Pixels, px};
 use std::{borrow::Cow, iter, sync::Arc};

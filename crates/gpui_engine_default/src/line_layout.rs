@@ -1,5 +1,5 @@
-use crate::{FontRun, LineLayout, PlatformTextSystem, ShapedRun};
 use collections::FxHashMap;
+use gpui_engine::{FontRun, LineLayout, PlatformTextSystem, ShapedRun};
 use gpui_shared_string::SharedString;
 use gpui_types::{Pixels, Point, Size, point, px};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -851,7 +851,7 @@ impl AsCacheKeyRef for CacheKeyRef<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FontId, GlyphId, ShapedGlyph};
+    use gpui_engine::{FontId, GlyphId, ShapedGlyph};
 
     fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
         ShapedGlyph {

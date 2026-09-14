@@ -9,8 +9,7 @@
 //! presentation stays in the facade because `PlatformWindow` lives above this
 //! crate.
 
-use crate::LayoutEngine;
-use gpui_engine::{BoxedMeasureFn, EngineLayoutStyle, LayoutId, MeasureContext};
+use gpui_engine::{BoxedMeasureFn, EngineLayoutStyle, LayoutEngine, LayoutId, MeasureContext};
 use gpui_types::{AvailableSpace, Bounds, Pixels, Size};
 use std::cell::RefCell;
 

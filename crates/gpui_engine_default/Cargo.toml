@@ -21,24 +21,11 @@ bench-support = ["test-support", "gpui_engine/bench-support"]
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-derive_more.workspace = true
-etagere.workspace = true
 gpui_engine.workspace = true
 gpui_shared_string.workspace = true
 gpui_types.workspace = true
-image.workspace = true
 itertools.workspace = true
-log.workspace = true
 parking_lot.workspace = true
-schemars.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 smallvec.workspace = true
 stacksafe = { workspace = true, optional = true }
 taffy = "=0.13.0"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-core-video.workspace = true
-
-[dev-dependencies]
-rand.workspace = true

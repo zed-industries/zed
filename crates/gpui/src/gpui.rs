@@ -117,6 +117,7 @@ macro_rules! bench_main {
         criterion::criterion_main!($($tokens)*);
     };
 }
+pub use gpui_engine::*;
 pub use gpui_engine_default::*;
 pub use gpui_platform::*;
 pub use gpui_util::arc_cow::ArcCow;

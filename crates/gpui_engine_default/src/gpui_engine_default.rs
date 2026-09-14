@@ -2,9 +2,8 @@
 //! and wrapping caches the facade drives.
 //!
 //! The scene representation and the engine's interface contracts live in
-//! [`gpui_engine`]; this crate holds the concrete implementations that depend on
-//! `taffy`. During the crate split it re-exports `gpui_engine`, so existing
-//! `gpui_engine_default::...` paths keep resolving.
+//! [`gpui_engine`]; this crate holds the concrete implementations that depend
+//! on `taffy`.
 
 #![warn(missing_docs)]
 
@@ -15,7 +14,6 @@ mod line_layout;
 mod line_wrapper;
 mod text_system;
 
-pub use gpui_engine::*;
 pub use layout::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
