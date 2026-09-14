@@ -9260,7 +9260,7 @@ async fn test_context_menu_new_file_in_empty_hidden_root(cx: &mut gpui::TestAppC
             .last_worktree_root_id
             .expect("hidden root should be available for background context menu actions");
         panel.deploy_context_menu(
-            gpui::point(gpui::px(1.), gpui::px(1.)),
+            ContextMenuPlacement::AtMouse(point(px(1.), px(1.))),
             root_entry_id,
             window,
             cx,
@@ -11171,7 +11171,7 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
 
     panel.update_in(cx, |panel, window, cx| {
         panel.deploy_context_menu(
-            gpui::point(gpui::px(1.), gpui::px(1.)),
+            ContextMenuPlacement::AtMouse(point(px(1.), px(1.))),
             child_entry_id,
             window,
             cx,
@@ -11188,7 +11188,7 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
 
     panel.update_in(cx, |panel, window, cx| {
         panel.deploy_context_menu(
-            gpui::point(gpui::px(2.), gpui::px(2.)),
+            ContextMenuPlacement::AtMouse(point(px(2.), px(2.))),
             subdir_entry_id,
             window,
             cx,
@@ -11266,6 +11266,260 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
             .await,
         "file should not be created under subdir when parent is the active ancestor"
     );
+}
+
+#[gpui::test]
+async fn test_context_menu_opens_at_mouse_position(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(3, DockSide::Left, cx).await;
+    let cx = &mut cx;
+
+    let mouse_position = point(px(37.), px(83.));
+    let entry_id =
+        find_project_entry(&panel, "root/file_2.txt", cx).expect("file should exist for this test");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(
+            ContextMenuPlacement::AtMouse(mouse_position),
+            entry_id,
+            window,
+            cx,
+        );
+    });
+
+    panel.update(cx, |panel, _| {
+        let context_menu = panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+        assert_eq!(context_menu.position, mouse_position);
+        assert_eq!(
+            context_menu.anchor, None,
+            "mouse-deployed menus should not force an anchor"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_context_menu_for_entry_in_upper_half_opens_downwards(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(3, DockSide::Left, cx).await;
+    let cx = &mut cx;
+
+    let entry_id =
+        find_project_entry(&panel, "root/file_1.txt", cx).expect("file should exist for this test");
+    let offset_before = panel.read_with(cx, |panel, _| panel.scroll_handle.offset());
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(ContextMenuPlacement::AtEntry, entry_id, window, cx);
+    });
+
+    panel.update_in(cx, |panel, window, _| {
+        let context_menu = panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+        let selection = panel.selection.expect("deploying should select the entry");
+        assert_eq!(selection.entry_id, entry_id);
+
+        let (_, _, index) = panel
+            .index_for_selection(selection)
+            .expect("selected entry should be visible");
+        let row_height = panel
+            .entry_row_height()
+            .expect("the entries list should have been laid out");
+        let viewport = panel.scroll_handle.viewport();
+        assert!(
+            viewport.right() < window.viewport_size().center().x,
+            "the panel should be docked on the left side of the window"
+        );
+        assert_eq!(
+            panel.scroll_handle.offset(),
+            offset_before,
+            "an entry that is already visible should not cause scrolling"
+        );
+
+        let expected_entry_bottom = viewport.top() + offset_before.y + row_height * (index + 1);
+        assert!(
+            expected_entry_bottom < window.viewport_size().height / 2.,
+            "test entry should be in the upper half of the window"
+        );
+        assert_eq!(
+            context_menu.position,
+            point(viewport.left(), expected_entry_bottom) + CONTEXT_MENU_KEYBOARD_OFFSET,
+            "menu should hang off the bottom left corner of the entry"
+        );
+        assert_eq!(context_menu.anchor, Some(Anchor::TopLeft));
+    });
+}
+
+#[gpui::test]
+async fn test_context_menu_for_entry_in_right_docked_panel_opens_leftwards(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(3, DockSide::Right, cx).await;
+    let cx = &mut cx;
+
+    let entry_id =
+        find_project_entry(&panel, "root/file_1.txt", cx).expect("file should exist for this test");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(ContextMenuPlacement::AtEntry, entry_id, window, cx);
+    });
+
+    panel.update_in(cx, |panel, window, _| {
+        let context_menu = panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+        let selection = panel.selection.expect("deploying should select the entry");
+        let (_, _, index) = panel
+            .index_for_selection(selection)
+            .expect("selected entry should be visible");
+        let row_height = panel
+            .entry_row_height()
+            .expect("the entries list should have been laid out");
+        let viewport = panel.scroll_handle.viewport();
+        assert!(
+            viewport.left() > window.viewport_size().center().x,
+            "the panel should be docked on the right side of the window"
+        );
+
+        let expected_entry_bottom =
+            viewport.top() + panel.scroll_handle.offset().y + row_height * (index + 1);
+        assert_eq!(
+            context_menu.position,
+            point(viewport.right(), expected_entry_bottom) + CONTEXT_MENU_KEYBOARD_OFFSET,
+            "menu should hang off the bottom right corner of the entry"
+        );
+        assert_eq!(context_menu.anchor, Some(Anchor::TopRight));
+    });
+}
+
+#[gpui::test]
+async fn test_context_menu_for_entry_in_lower_half_scrolls_into_view_and_opens_upwards(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(200, DockSide::Left, cx).await;
+    let cx = &mut cx;
+
+    let entry_id = find_project_entry(&panel, "root/file_199.txt", cx)
+        .expect("file should exist for this test");
+    panel.read_with(cx, |panel, _| {
+        assert!(
+            panel.scroll_handle.is_scrollable(),
+            "the entries list should overflow the panel for this test"
+        );
+        assert_eq!(panel.scroll_handle.offset().y, Pixels::ZERO);
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(ContextMenuPlacement::AtEntry, entry_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, _| {
+        let context_menu = panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+        let selection = panel.selection.expect("deploying should select the entry");
+        let (_, _, index) = panel
+            .index_for_selection(selection)
+            .expect("selected entry should be visible");
+        let row_height = panel
+            .entry_row_height()
+            .expect("the entries list should have been laid out");
+        let viewport = panel.scroll_handle.viewport();
+        let offset = panel.scroll_handle.offset();
+
+        assert!(
+            offset.y < Pixels::ZERO,
+            "the list should have scrolled to reveal the entry"
+        );
+        let entry_top = viewport.top() + offset.y + row_height * index;
+        let entry_bottom = entry_top + row_height;
+        assert!(
+            entry_top >= viewport.top() && entry_bottom <= viewport.bottom() + px(0.01),
+            "the entry should be scrolled into view, got {entry_top}..{entry_bottom} in {viewport:?}"
+        );
+        assert!(
+            entry_top > window.viewport_size().height / 2.,
+            "test entry should be in the lower half of the window"
+        );
+        assert_eq!(
+            context_menu.position,
+            point(viewport.left(), entry_top) - CONTEXT_MENU_KEYBOARD_OFFSET,
+            "menu should hang off the top left corner of the entry"
+        );
+        assert_eq!(context_menu.anchor, Some(Anchor::BottomLeft));
+    });
+}
+
+#[gpui::test]
+async fn test_panel_keeps_focus_highlight_while_context_menu_is_deployed(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(3, DockSide::Left, cx).await;
+    let cx = &mut cx;
+
+    let entry_id =
+        find_project_entry(&panel, "root/file_1.txt", cx).expect("file should exist for this test");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.focus_handle.focus(window, cx);
+        assert!(panel.contains_focus(window, cx));
+
+        panel.deploy_context_menu(ContextMenuPlacement::AtEntry, entry_id, window, cx);
+        // No frame has been drawn since the menu took focus, so the rendered element tree does
+        // not know about the menu yet. The panel must still consider itself focused so the
+        // selected entry keeps its focus border on this frame.
+        assert!(
+            panel
+                .context_menu
+                .as_ref()
+                .is_some_and(|context_menu| context_menu.menu.focus_handle(cx).is_focused(window)),
+            "deploying should focus the context menu"
+        );
+        assert!(panel.contains_focus(window, cx));
+    });
+
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.contains_focus(window, cx));
+    });
+}
+
+async fn open_panel_with_files(
+    file_count: usize,
+    dock: DockSide,
+    cx: &mut gpui::TestAppContext,
+) -> (Entity<ProjectPanel>, VisualTestContext) {
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(ProjectPanelSettings { dock, ..settings }, cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let files = (0..file_count)
+        .map(|index| (format!("file_{index}.txt"), json!("")))
+        .collect::<serde_json::Map<_, _>>();
+    fs.insert_tree(path!("/root"), serde_json::Value::Object(files))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        panel
+    });
+    cx.run_until_parked();
+    (panel, cx)
 }
 
 async fn run_create_file_in_folded_path_case(
