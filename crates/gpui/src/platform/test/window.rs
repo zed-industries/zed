@@ -4,7 +4,7 @@ use crate::{
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TextInputConfiguration,
     TextInputStateChange, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowInsets, WindowParams,
+    WindowControlArea, WindowInsets, WindowParams, WindowVisibility,
 };
 use collections::HashMap;
 use gpui_util::ResultExt as _;
@@ -34,6 +34,8 @@ pub(crate) struct TestWindowState {
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+    visibility: WindowVisibility,
+    visibility_callback: Option<Box<dyn FnMut(WindowVisibility)>>,
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     visual_viewport: Option<Bounds<Pixels>>,
@@ -105,6 +107,8 @@ impl TestWindow {
             hit_test_window_control_callback: None,
             input_callback: None,
             active_status_change_callback: None,
+            visibility: WindowVisibility::Visible,
+            visibility_callback: None,
             hover_status_change_callback: None,
             resize_callback: None,
             visual_viewport: None,
@@ -151,6 +155,18 @@ impl TestWindow {
 
     pub fn frame_scheduled(&self) -> bool {
         self.0.lock().frame_scheduled
+    }
+
+    pub fn simulate_visibility_change(&self, visibility: WindowVisibility) {
+        let callback = {
+            let mut state = self.0.lock();
+            state.visibility = visibility;
+            state.visibility_callback.take()
+        };
+        if let Some(mut callback) = callback {
+            callback(visibility);
+            self.0.lock().visibility_callback = Some(callback);
+        }
     }
 
     pub fn simulate_visual_viewport_change(&self, bounds: Bounds<Pixels>) {
@@ -394,6 +410,10 @@ impl PlatformWindow for TestWindow {
         false
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.0.lock().visibility
+    }
+
     fn is_hovered(&self) -> bool {
         false
     }
@@ -444,12 +464,16 @@ impl PlatformWindow for TestWindow {
     }
 
     fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
-        // Recording invocations (rather than delivering a frame) lets tests
-        // assert the wake protocol without coupling to frame timing; tests
-        // deliver frames explicitly via `simulate_frame_request`.
+        // Tests can inspect wakes without delivering a frame synchronously.
         let frame_wake_count = self.0.lock().frame_wake_count.clone();
+        #[cfg(feature = "bench-support")]
+        let window = Rc::downgrade(&self.0);
         Some(Rc::new(move || {
             frame_wake_count.set(frame_wake_count.get() + 1);
+            #[cfg(feature = "bench-support")]
+            if let Some(window) = window.upgrade() {
+                TestWindow(window).schedule_frame();
+            }
         }))
     }
 
@@ -470,6 +494,10 @@ impl PlatformWindow for TestWindow {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.lock().active_status_change_callback = Some(callback)
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.0.lock().visibility_callback = Some(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
