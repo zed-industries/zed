@@ -1150,8 +1150,6 @@ impl OutlinePanel {
                     } else if &outline_panel_settings != new_settings {
                         let old_expansion_depth = outline_panel_settings.expand_outlines_with_depth;
                         let old_hide_symbols = outline_panel_settings.multi_buffer_hide_symbols;
-                        let old_prefer_buffer_search_results =
-                            outline_panel_settings.prefer_buffer_search_results;
                         outline_panel_settings = *new_settings;
 
                         let mut update_cached_entries = false;
@@ -1159,13 +1157,6 @@ impl OutlinePanel {
                             outline_panel.hide_symbols_override = None;
                             outline_panel.update_non_fs_items(window, cx);
                             outline_panel.remap_selection_for_hidden_symbols(window, cx);
-                            update_cached_entries = true;
-                        }
-                        if old_prefer_buffer_search_results
-                            != outline_panel_settings.prefer_buffer_search_results
-                        {
-                            outline_panel.selected_entry.invalidate();
-                            outline_panel.update_non_fs_items(window, cx);
                             update_cached_entries = true;
                         }
                         if old_expansion_depth != outline_panel_settings.expand_outlines_with_depth
@@ -4686,16 +4677,16 @@ impl OutlinePanel {
             .active_item()
             .and_then(|item| item.downcast::<ProjectSearchView>());
 
-        let buffer_search_matches =
-            if OutlinePanelSettings::get_global(cx).prefer_buffer_search_results {
-                self.active_editor()
-                    .map(|active_editor| {
-                        active_editor.update(cx, |editor, cx| editor.get_matches(window, cx).0)
-                    })
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
+        // Single-file views always show their outline
+        let buffer_search_matches = if self.is_singleton_active(cx) {
+            Vec::new()
+        } else {
+            self.active_editor()
+                .map(|active_editor| {
+                    active_editor.update(cx, |editor, cx| editor.get_matches(window, cx).0)
+                })
+                .unwrap_or_default()
+        };
         let project_search_matches = if buffer_search_matches.is_empty() {
             project_search
                 .as_ref()
@@ -9921,17 +9912,6 @@ outline: struct OutlineEntryExcerpt
         });
     }
 
-    fn search_entry_kinds(outline_panel: &OutlinePanel) -> Vec<SearchKind> {
-        outline_panel
-            .cached_entries
-            .iter()
-            .filter_map(|cached| match &cached.entry {
-                PanelEntry::Search(search_entry) => Some(search_entry.kind),
-                _ => None,
-            })
-            .collect()
-    }
-
     fn mark_deleted(name: String, is_deleted: bool) -> String {
         if is_deleted {
             format!("~~{name}~~")
@@ -11121,26 +11101,11 @@ outline: fn main"
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let (window, workspace) = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        update_outline_panel_settings(cx, |settings| {
-            settings.prefer_buffer_search_results = Some(true);
-        });
 
-        let editor = workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(
-                    PathBuf::from("/test/foo.txt"),
-                    OpenOptions {
-                        visible: Some(OpenVisible::All),
-                        ..OpenOptions::default()
-                    },
-                    window,
-                    cx,
-                )
-            })
-            .await
-            .unwrap()
-            .downcast::<Editor>()
-            .unwrap();
+        // Single-file views always show their outline, so the search match rendering
+        // is exercised through a multi buffer.
+        let buffer = open_buffer(&project, "/test/foo.txt", cx).await;
+        let editor = add_multi_buffer_editor(&workspace, &project, &[(&buffer, Vec::new())], cx);
 
         let outline_panel = outline_panel(&workspace, cx);
 
@@ -11163,29 +11128,41 @@ outline: fn main"
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                "search: | Field«  »        | Meaning                |  <==== selected
-search: | Field  «  »      | Meaning                |
-search: | Field    «  »    | Meaning                |
-search: | Field      «  »  | Meaning                |
-search: | Field        «  »| Meaning                |
-search: | Field          | Meaning«  »              |
-search: | Field          | Meaning  «  »            |
-search: | Field          | Meaning    «  »          |
-search: | Field          | Meaning      «  »        |
-search: | Field          | Meaning        «  »      |
-search: | Field          | Meaning          «  »    |
-search: | Field          | Meaning            «  »  |
-search: | Field          | Meaning              «  »|"
+                "test/
+  foo.txt
+    search: | Field«  »        | Meaning                |  <==== selected
+    search: | Field  «  »      | Meaning                |
+    search: | Field    «  »    | Meaning                |
+    search: | Field      «  »  | Meaning                |
+    search: | Field        «  »| Meaning                |
+    search: | Field          | Meaning«  »              |
+    search: | Field          | Meaning  «  »            |
+    search: | Field          | Meaning    «  »          |
+    search: | Field          | Meaning      «  »        |
+    search: | Field          | Meaning        «  »      |
+    search: | Field          | Meaning          «  »    |
+    search: | Field          | Meaning            «  »  |
+    search: | Field          | Meaning              «  »|"
             );
         });
 
+        let second_search_entry_index = outline_panel.read_with(cx, |panel, _| {
+            panel
+                .cached_entries
+                .iter()
+                .enumerate()
+                .filter(|(_, cached)| matches!(cached.entry, PanelEntry::Search(_)))
+                .map(|(index, _)| index)
+                .nth(1)
+                .expect("second search result")
+        });
         let entries_capacity = outline_panel.update_in(cx, |panel, window, cx| {
             panel
                 .cached_entries
                 .reserve(panel.cached_entries.capacity() + 1);
             let entry = panel
                 .cached_entries
-                .get(1)
+                .get(second_search_entry_index)
                 .expect("second search result")
                 .entry
                 .clone();
@@ -11198,7 +11175,10 @@ search: | Field          | Meaning              «  »|"
             assert_eq!(panel.cached_entries.capacity(), entries_capacity);
             assert_eq!(
                 panel.selected_entry(),
-                panel.cached_entries.get(1).map(|cached| &cached.entry)
+                panel
+                    .cached_entries
+                    .get(second_search_entry_index)
+                    .map(|cached| &cached.entry)
             );
         });
 
@@ -11221,7 +11201,9 @@ search: | Field          | Meaning              «  »|"
                     panel.selected_entry(),
                     cx
                 ),
-                "search: | «Field»          | Meaning                |  <==== selected"
+                "test/
+  foo.txt
+    search: | «Field»          | Meaning                |  <==== selected"
             );
         });
     }
@@ -11279,7 +11261,6 @@ search: | Field          | Meaning              «  »|"
         deploy_non_empty_buffer_search(&workspace, &editor, "needle", cx).await;
         wait_for_outline_tasks(&outline_panel, cx).await;
 
-        // The opt-in behavior for a singleton buffer is covered by `test_buffer_search`.
         assert_tree(
             &outline_panel,
             &project,
@@ -11287,141 +11268,6 @@ search: | Field          | Meaning              «  »|"
                 "
                 outline: fn needle_one  <==== selected
                 outline: fn needle_two"
-            ),
-            cx,
-        );
-    }
-
-    #[gpui::test]
-    async fn test_buffer_search_does_not_replace_project_search(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        let root = path!("/rust-analyzer");
-        populate_with_test_ra_project(&fs, root).await;
-        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
-
-        workspace.update_in(cx, |workspace, window, cx| {
-            ProjectSearchView::deploy_search(
-                workspace,
-                &workspace::DeploySearch::default(),
-                window,
-                cx,
-            )
-        });
-        let search_view = workspace.update_in(cx, |workspace, _window, cx| {
-            workspace
-                .active_pane()
-                .read(cx)
-                .items()
-                .find_map(|item| item.downcast::<ProjectSearchView>())
-                .expect("Project search view expected to appear after new search event trigger")
-        });
-        perform_project_search(&search_view, "param_names_for_lifetime_elision_hints", cx);
-        wait_for_outline_tasks(&outline_panel, cx).await;
-
-        let project_search_entries = outline_panel.read_with(cx, |panel, _| {
-            let kinds = search_entry_kinds(panel);
-            assert!(
-                !kinds.is_empty() && kinds.iter().all(|kind| *kind == SearchKind::Project),
-                "project search matches should be displayed, got {kinds:?}"
-            );
-            kinds.len()
-        });
-
-        let results_editor =
-            search_view.read_with(cx, |search_view, _| search_view.results_editor().clone());
-        deploy_non_empty_buffer_search(&workspace, &results_editor, "config", cx).await;
-        wait_for_outline_tasks(&outline_panel, cx).await;
-
-        outline_panel.read_with(cx, |panel, _| {
-            assert_eq!(
-                search_entry_kinds(panel),
-                vec![SearchKind::Project; project_search_entries],
-                "buffer search should not replace the project search results"
-            );
-        });
-
-        update_outline_panel_settings(cx, |settings| {
-            settings.prefer_buffer_search_results = Some(true);
-        });
-        wait_for_outline_tasks(&outline_panel, cx).await;
-        outline_panel.read_with(cx, |panel, _| {
-            let kinds = search_entry_kinds(panel);
-            assert!(
-                !kinds.is_empty() && kinds.iter().all(|kind| *kind == SearchKind::Buffer),
-                "opting in should let the buffer search override the project search \
-                 without any further editor events, got {kinds:?}"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_buffer_search_does_not_replace_multi_buffer_outlines(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/test"),
-            json!({
-                "src": {
-                    "one.rs": indoc!("
-                        fn needle_one() {
-                            let x = 1;
-                        }
-                    "),
-                    "two.rs": indoc!("
-                        fn needle_two() {
-                            let y = 2;
-                        }
-                    "),
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
-
-        let buffer_one = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
-        let buffer_two = open_buffer(&project, path!("/test/src/two.rs"), cx).await;
-        let editor = add_multi_buffer_editor(
-            &workspace,
-            &project,
-            &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
-            cx,
-        );
-        wait_for_outline_tasks(&outline_panel, cx).await;
-
-        deploy_non_empty_buffer_search(&workspace, &editor, "needle", cx).await;
-        wait_for_outline_tasks(&outline_panel, cx).await;
-
-        // The opt-in behavior for a multi buffer is covered by
-        // `test_excerpt_outlines_scoped_to_excerpt_range`.
-        assert_tree(
-            &outline_panel,
-            &project,
-            indoc!(
-                "
-                test/
-                  src/
-                    one.rs
-                        outline: fn needle_one  <==== selected
-                    two.rs
-                        outline: fn needle_two"
             ),
             cx,
         );
@@ -12482,9 +12328,6 @@ test/
                     .map(|index| format!("fn needle_{index:04}"))
                     .collect::<Vec<_>>(),
             );
-        });
-        update_outline_panel_settings(cx, |settings| {
-            settings.prefer_buffer_search_results = Some(true);
         });
         let search_bar = cx.update(|window, cx| {
             cx.new(|cx| {

@@ -6122,7 +6122,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn outline_panel_section() -> [SettingsPageItem; 13] {
+    fn outline_panel_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Outline Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6356,29 +6356,6 @@ fn panels_page() -> SettingsPage {
                             .outline_panel
                             .get_or_insert_default()
                             .multi_buffer_hide_symbols = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Prefer Buffer Search Results",
-                description: "Whether an open buffer search takes over the outline panel, replacing symbols and project search results with the buffer search matches.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("outline_panel.prefer_buffer_search_results"),
-                    pick: |settings_content| {
-                        settings_content
-                            .outline_panel
-                            .as_ref()?
-                            .prefer_buffer_search_results
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .outline_panel
-                            .get_or_insert_default()
-                            .prefer_buffer_search_results = value;
                     },
                 }),
                 metadata: None,
