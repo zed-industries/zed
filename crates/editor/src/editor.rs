@@ -1077,7 +1077,7 @@ pub struct Editor {
     /// without selecting the matched text.
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(WeakEntity<Workspace>, Option<WorkspaceId>)>,
+    workspace: Option<(WeakEntity<Workspace>, Option<(WorkspaceId, ItemId)>)>,
     input_enabled: bool,
     expects_character_input: bool,
     use_modal_editing: bool,
@@ -3105,6 +3105,7 @@ impl Editor {
             .as_ref()
             .filter(|_| self.should_serialize_buffer())
             .and_then(|workspace| workspace.1)
+            .map(|(workspace_id, _)| workspace_id)
     }
 
     pub fn title<'a>(&self, cx: &'a App) -> Cow<'a, str> {

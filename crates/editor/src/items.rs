@@ -1127,7 +1127,15 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
+        let serialization_id = workspace.database_id().and_then(|workspace_id| {
+            workspace
+                .serialization_id(Self::serialized_item_kind(), cx.entity_id(), cx)
+                .context("failed to associate editor with persisted item ID")
+                .log_err()
+                .map(|item_id| (workspace_id, item_id))
+        });
+        self.workspace = Some((workspace.weak_handle(), serialization_id));
+
         if let Some(workspace_entity) = &workspace.weak_handle().upgrade() {
             cx.subscribe(
                 workspace_entity,
@@ -1458,6 +1466,7 @@ impl SerializableItem for Editor {
         }
 
         let workspace_id = workspace.database_id()?;
+        self.workspace = Some((workspace.weak_handle(), Some((workspace_id, item_id))));
 
         let buffer = self.buffer().read(cx).as_singleton()?;
 
@@ -2594,7 +2603,7 @@ mod tests {
     use super::*;
     use fs::MTime;
     use gpui::{App, VisualTestContext};
-    use language::TestFile;
+    use language::{TestFile, language_settings::SoftWrap};
     use project::FakeFs;
     use serde_json::json;
     use std::path::{Path, PathBuf};
@@ -3536,7 +3545,11 @@ mod tests {
         let editor = cx.new_window_entity(|window, cx| {
             Editor::for_buffer(buffer.clone(), Some(project), window, cx)
         });
-        let item_id = editor.entity_id().as_u64();
+        let item_id = workspace.update(cx, |workspace, cx| {
+            workspace
+                .serialization_id(Editor::serialized_item_kind(), editor.entity_id(), cx)
+                .expect("failed to associate editor")
+        });
         let latest_contents = "latest\0λ\n  trailing space \n";
         let [
             first_serialization,
@@ -3606,6 +3619,274 @@ mod tests {
             cx,
         )
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_split_pane_restore_preserves_colliding_editor_payloads(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let workspace_id = cx
+            .update(|cx| workspace::WorkspaceDb::global(cx))
+            .next_id()
+            .await
+            .expect("failed to reserve workspace");
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let app_state = cx.update(workspace::AppState::test);
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                let mut workspace =
+                    Workspace::new(Some(workspace_id), project.clone(), app_state, window, cx);
+                workspace.set_restoring_workspace(true);
+                workspace
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (first_pane, second_pane) = workspace.update_in(cx, |workspace, window, cx| {
+            let first_pane = workspace.active_pane().clone();
+            let second_pane = workspace.split_pane(
+                first_pane.clone(),
+                workspace::SplitDirection::Right,
+                window,
+                cx,
+            );
+            (first_pane, second_pane)
+        });
+        let database = cx.update(|_, cx| EditorDb::global(cx));
+        let scrollable_text = format!("{}\n", "scrollable text ".repeat(32)).repeat(64);
+        let expected = ["first pane\0λ\n", "second pane\n  distinct text \n"]
+            .map(|prefix| format!("{prefix}{scrollable_text}"));
+        let first_saved_id = 1;
+        database
+            .save_serialized_editor(
+                first_saved_id,
+                workspace_id,
+                SerializedEditor {
+                    contents: Some(expected[0].to_owned()),
+                    ..SerializedEditor::default()
+                },
+            )
+            .await
+            .expect("failed to seed first editor");
+        let first = deserialize_editor(
+            first_saved_id,
+            workspace_id,
+            workspace.clone(),
+            project.clone(),
+            cx,
+        )
+        .await;
+        let second_saved_id = first.entity_id().as_u64();
+        assert_ne!(first_saved_id, second_saved_id);
+        database
+            .save_serialized_editor(
+                second_saved_id,
+                workspace_id,
+                SerializedEditor {
+                    contents: Some(expected[1].to_owned()),
+                    ..SerializedEditor::default()
+                },
+            )
+            .await
+            .expect("failed to seed colliding editor");
+        let saved_texts = || {
+            [first_saved_id, second_saved_id].map(|item_id| {
+                database
+                    .get_serialized_editor(item_id, workspace_id)
+                    .expect("failed to read saved editor")
+                    .expect("saved editor was removed")
+                    .contents
+                    .expect("saved contents were removed")
+            })
+        };
+        assert_eq!(saved_texts(), expected);
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .register_serialized_item_id(
+                    Editor::serialized_item_kind(),
+                    first.entity_id(),
+                    first_saved_id,
+                    cx,
+                )
+                .expect("failed to register first editor");
+        });
+        first_pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(first.clone()), true, true, None, window, cx);
+        });
+        cx.run_until_parked();
+        assert!(workspace.read_with(cx, |workspace, _| workspace.is_restoring()));
+        let interrupted_texts = saved_texts();
+        let second = deserialize_editor(
+            second_saved_id,
+            workspace_id,
+            workspace.clone(),
+            project.clone(),
+            cx,
+        )
+        .await;
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .register_serialized_item_id(
+                    Editor::serialized_item_kind(),
+                    second.entity_id(),
+                    second_saved_id,
+                    cx,
+                )
+                .expect("failed to register second editor");
+        });
+        second_pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(second.clone()), true, true, None, window, cx);
+        });
+        let restored_texts =
+            [&first, &second].map(|editor| editor.read_with(cx, |editor, cx| editor.text(cx)));
+        assert_eq!(
+            (interrupted_texts, restored_texts),
+            (expected.clone(), expected.clone())
+        );
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.set_restoring_workspace(false);
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+        let workspace_database = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+        let saved_graph = || {
+            workspace_database
+                .select_bound::<WorkspaceId, (u64, Option<ItemId>)>(
+                    "SELECT panes.pane_id, items.item_id FROM panes
+                    JOIN center_panes USING (pane_id)
+                    LEFT JOIN items USING (pane_id, workspace_id)
+                    WHERE workspace_id = ? ORDER BY panes.pane_id, items.item_id",
+                )
+                .expect("failed to prepare graph query")(workspace_id)
+            .expect("failed to read saved graph")
+        };
+        let original_graph = saved_graph();
+        assert_eq!(
+            original_graph
+                .iter()
+                .map(|(_, item_id)| *item_id)
+                .collect::<Vec<_>>(),
+            vec![Some(first_saved_id), Some(second_saved_id)]
+        );
+        workspace_database
+            .write(|connection| {
+                connection.exec(
+                    "CREATE TRIGGER fail_editor_graph_publication BEFORE INSERT ON items
+                    BEGIN SELECT RAISE(ABORT, 'injected graph publication failure'); END;",
+                )?()
+            })
+            .await
+            .expect("failed to install graph failure trigger");
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(
+                second_pane.clone(),
+                workspace::SplitDirection::Down,
+                window,
+                cx,
+            );
+        });
+        let latest = [
+            format!("latest first pane\0λ\n{scrollable_text}"),
+            expected[1].clone(),
+        ];
+        first.update(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("missing buffer")
+                .update(cx, |buffer, cx| buffer.set_text(latest[0].as_str(), cx));
+        });
+        for (editor, selection) in [(&first, (1, 4)), (&second, (14, 22))] {
+            editor.update_in(cx, |editor, window, cx| {
+                editor.set_soft_wrap_mode(SoftWrap::None, cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([
+                        MultiBufferOffset(selection.0)..MultiBufferOffset(selection.1)
+                    ]);
+                });
+                let anchor = editor
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .anchor_before(Point::new(1, 0));
+                editor.set_scroll_anchor(
+                    ScrollAnchor {
+                        anchor,
+                        offset: point(1.5, 0.25),
+                    },
+                    window,
+                    cx,
+                );
+            });
+        }
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        assert_eq!(saved_texts(), latest);
+        assert_eq!(saved_graph(), original_graph);
+        for editor in [&first, &second] {
+            editor.read_with(cx, |editor, cx| {
+                assert_eq!(editor.scroll_manager.offset(cx), point(1.5, 0.25));
+            });
+        }
+        workspace_database
+            .write(|connection| connection.exec("DROP TRIGGER fail_editor_graph_publication")?())
+            .await
+            .expect("failed to remove graph failure trigger");
+        for (item_id, text, selection) in [
+            (first_saved_id, latest[0].as_str(), (1, 4)),
+            (second_saved_id, latest[1].as_str(), (14, 22)),
+        ] {
+            assert_eq!(
+                database
+                    .get_editor_selections(item_id, workspace_id)
+                    .expect("failed to read selections"),
+                vec![selection]
+            );
+            assert_eq!(
+                database
+                    .get_scroll_position(item_id, workspace_id)
+                    .expect("failed to read scroll"),
+                Some((1, 1.5, 0.25))
+            );
+            let restored = deserialize_editor(
+                item_id,
+                workspace_id,
+                workspace.clone(),
+                project.clone(),
+                cx,
+            )
+            .await;
+            restored.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), text);
+                let snapshot = editor.display_snapshot(cx);
+                let newest = editor.selections.newest::<MultiBufferOffset>(&snapshot);
+                assert_eq!((newest.start.0, newest.end.0), selection);
+                let scroll = editor
+                    .scroll_manager
+                    .scroll_anchor_entity()
+                    .read(cx)
+                    .scroll_anchor;
+                assert_eq!(
+                    scroll.anchor.to_point(snapshot.buffer_snapshot()),
+                    Point::new(1, 0)
+                );
+                assert_eq!(scroll.offset, point(1.5, 0.25));
+                assert!(editor.workspace.is_none());
+            });
+        }
     }
 
     async fn assert_serialization_order(

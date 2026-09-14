@@ -10,13 +10,14 @@ use ui::{App, Context, Window};
 use util::ResultExt as _;
 
 use db::{
+    kvp::KeyValueStore,
     query,
     sqlez::{domain::Domain, statement::Statement, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
 };
 use workspace::{
-    ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, SplitDirection,
-    Workspace, WorkspaceDb, WorkspaceId,
+    ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, SplitDirection, Workspace,
+    WorkspaceDb, WorkspaceId,
 };
 
 use crate::{
@@ -27,17 +28,23 @@ use crate::{
 pub(crate) fn serialize_pane_group(
     pane_group: &PaneGroup,
     active_pane: &Entity<Pane>,
+    workspace: &mut Workspace,
     cx: &mut App,
-) -> SerializedPaneGroup {
-    build_serialized_pane_group(&pane_group.root, active_pane, cx)
+) -> Result<(SerializedPaneGroup, Vec<Task<Result<()>>>)> {
+    let mut tasks = Vec::new();
+    let group =
+        build_serialized_pane_group(&pane_group.root, active_pane, workspace, &mut tasks, cx)?;
+    Ok((group, tasks))
 }
 
 fn build_serialized_pane_group(
     pane_group: &Member,
     active_pane: &Entity<Pane>,
+    workspace: &mut Workspace,
+    tasks: &mut Vec<Task<Result<()>>>,
     cx: &mut App,
-) -> SerializedPaneGroup {
-    match pane_group {
+) -> Result<SerializedPaneGroup> {
+    Ok(match pane_group {
         Member::Axis(PaneAxis {
             axis,
             members,
@@ -47,44 +54,61 @@ fn build_serialized_pane_group(
             axis: SerializedAxis(*axis),
             children: members
                 .iter()
-                .map(|member| build_serialized_pane_group(member, active_pane, cx))
-                .collect::<Vec<_>>(),
+                .map(|member| {
+                    build_serialized_pane_group(member, active_pane, workspace, tasks, cx)
+                })
+                .collect::<Result<Vec<_>>>()?,
             flexes: Some(flexes.lock().clone()),
         },
-        Member::Pane(pane_handle) => {
-            SerializedPaneGroup::Pane(serialize_pane(pane_handle, pane_handle == active_pane, cx))
-        }
-    }
+        Member::Pane(pane_handle) => SerializedPaneGroup::Pane(serialize_pane(
+            pane_handle,
+            pane_handle == active_pane,
+            workspace,
+            tasks,
+            cx,
+        )?),
+    })
 }
 
-fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> SerializedPane {
-    let mut items_to_serialize = HashSet::default();
+fn serialize_pane(
+    pane: &Entity<Pane>,
+    active: bool,
+    workspace: &mut Workspace,
+    tasks: &mut Vec<Task<Result<()>>>,
+    cx: &mut App,
+) -> Result<SerializedPane> {
     let pane = pane.read(cx);
-    let children = pane
-        .items()
-        .filter_map(|item| {
-            let terminal_view = item.act_as::<TerminalView>(cx)?;
-            if terminal_view.read(cx).terminal().read(cx).task().is_some() {
-                None
-            } else {
-                let id = item.item_id().as_u64();
-                items_to_serialize.insert(id);
-                Some(id)
-            }
-        })
-        .collect::<Vec<_>>();
-    let active_item = pane
-        .active_item()
-        .map(|item| item.item_id().as_u64())
-        .filter(|active_id| items_to_serialize.contains(active_id));
-
+    let active_runtime_id = pane.active_item().map(|item| item.item_id());
     let pinned_count = pane.pinned_count();
-    SerializedPane {
+    let terminals = pane
+        .items()
+        .filter_map(|item| item.act_as::<TerminalView>(cx))
+        .filter(|terminal| terminal.read(cx).terminal().read(cx).task().is_none())
+        .collect::<Vec<_>>();
+    let mut children = Vec::new();
+    let mut active_item = None;
+    for terminal in terminals {
+        let item_id = workspace.serialization_id(
+            TerminalView::serialized_item_kind(),
+            terminal.entity_id(),
+            cx,
+        )?;
+        if Some(terminal.entity_id()) == active_runtime_id {
+            active_item = Some(item_id);
+        }
+        if let Some(task) = terminal.update(cx, |terminal, cx| {
+            terminal.serialize(workspace, item_id, false, cx)
+        }) {
+            tasks.push(task);
+        }
+        children.push(item_id);
+    }
+    Ok(SerializedPane {
         active,
         children,
         active_item,
         pinned_count,
-    }
+    })
 }
 
 pub(crate) fn deserialize_terminal_panel(
@@ -174,15 +198,15 @@ pub(crate) fn deserialize_terminal_panel(
 
 fn populate_pane_items(
     pane: &mut Pane,
-    items: Vec<Entity<TerminalView>>,
+    items: Vec<(ItemId, Entity<TerminalView>)>,
     active_item: Option<u64>,
     window: &mut Window,
     cx: &mut Context<Pane>,
 ) {
     let interim_active_item = (pane.items_len() > 0).then(|| pane.active_item()).flatten();
     let mut active_item_index = None;
-    for (item_index, item) in (pane.items_len()..).zip(items) {
-        if Some(item.item_id().as_u64()) == active_item {
+    for (item_index, (item_id, item)) in (pane.items_len()..).zip(items) {
+        if Some(item_id) == active_item {
             active_item_index = Some(item_index);
         }
         pane.add_item(Box::new(item), false, false, None, window, cx);
@@ -319,19 +343,35 @@ fn deserialize_terminal_views(
     workspace: WeakEntity<Workspace>,
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
-) -> impl Future<Output = Vec<Entity<TerminalView>>> + use<> {
+) -> impl Future<Output = Vec<(ItemId, Entity<TerminalView>)>> + use<> {
     let deserialized_items = join_all(item_ids.iter().filter_map(|item_id| {
+        let item_id = *item_id;
         cx.update(|window, cx| {
-            TerminalView::deserialize(
+            let task = TerminalView::deserialize(
                 project.clone(),
                 workspace.clone(),
                 workspace_id,
-                *item_id,
+                item_id,
                 window,
                 cx,
-            )
+            );
+            window.spawn(cx, {
+                let workspace = workspace.clone();
+                async move |cx| {
+                    let item = task.await?;
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.register_serialized_item_id(
+                            TerminalView::serialized_item_kind(),
+                            item.entity_id(),
+                            item_id,
+                            cx,
+                        )
+                    })??;
+                    anyhow::Ok((item_id, item))
+                }
+            })
         })
-        .ok()
+        .log_err()
     }));
     async move {
         deserialized_items
@@ -347,6 +387,18 @@ pub(crate) struct SerializedTerminalPanel {
     pub items: SerializedItems,
     // A deprecated field, kept for backwards compatibility for the code before terminal splits were introduced.
     pub active_item_id: Option<u64>,
+}
+
+impl SerializedTerminalPanel {
+    pub(crate) fn item_ids(&self) -> Vec<ItemId> {
+        let mut item_ids = Vec::new();
+        match &self.items {
+            SerializedItems::NoSplits(items) => item_ids.extend(items),
+            SerializedItems::WithSplits(group) => group.collect_item_ids(&mut item_ids),
+        }
+        item_ids.extend(self.active_item_id);
+        item_ids
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -365,6 +417,22 @@ pub(crate) enum SerializedPaneGroup {
         flexes: Option<Vec<f32>>,
         children: Vec<SerializedPaneGroup>,
     },
+}
+
+impl SerializedPaneGroup {
+    fn collect_item_ids(&self, item_ids: &mut Vec<ItemId>) {
+        match self {
+            Self::Pane(pane) => {
+                item_ids.extend(&pane.children);
+                item_ids.extend(pane.active_item);
+            }
+            Self::Group { children, .. } => {
+                for child in children {
+                    child.collect_item_ids(item_ids);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -453,7 +521,7 @@ impl Domain for TerminalDb {
     ];
 }
 
-db::static_connection!(TerminalDb, [WorkspaceDb]);
+db::static_connection!(TerminalDb, [WorkspaceDb, KeyValueStore]);
 
 impl TerminalDb {
     query! {
@@ -462,48 +530,42 @@ impl TerminalDb {
         }
     }
 
-    query! {
-       pub async fn update_workspace_id(
-            new_id: WorkspaceId,
-            old_id: WorkspaceId,
-            item_id: ItemId
-        ) -> Result<()> {
-            UPDATE terminals
-            SET workspace_id = ?
-            WHERE workspace_id = ? AND item_id = ?
-        }
-    }
-
-    pub async fn save_working_directory(
+    pub fn save_terminal(
         &self,
         item_id: ItemId,
         workspace_id: WorkspaceId,
-        working_directory: PathBuf,
-    ) -> Result<()> {
-        log::debug!(
-            "Saving working directory {working_directory:?} for item {item_id} in workspace {workspace_id:?}"
-        );
-        let query =
-            "INSERT INTO terminals(item_id, workspace_id, working_directory, working_directory_path)
-            VALUES (?1, ?2, ?3, ?4)
-            ON CONFLICT DO UPDATE SET
-                item_id = ?1,
-                workspace_id = ?2,
-                working_directory = ?3,
-                working_directory_path = ?4"
-        ;
-        self.write(move |conn| {
-            let mut statement = Statement::prepare(conn, query)?;
+        working_directory: Option<PathBuf>,
+        custom_title: Option<String>,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        self.write(move |connection| {
+            let mut statement = Statement::prepare(
+                connection,
+                "INSERT INTO terminals (
+                    item_id, workspace_id, working_directory, working_directory_path, custom_title
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                ON CONFLICT (workspace_id, item_id) DO UPDATE SET
+                    working_directory = COALESCE(excluded.working_directory, terminals.working_directory),
+                    working_directory_path = COALESCE(excluded.working_directory_path, terminals.working_directory_path),
+                    custom_title = excluded.custom_title",
+            )?;
             let mut next_index = statement.bind(&item_id, 1)?;
             next_index = statement.bind(&workspace_id, next_index)?;
             next_index = statement.bind(&working_directory, next_index)?;
-            statement.bind(
-                &working_directory.to_string_lossy().into_owned(),
+            next_index = statement.bind(
+                &working_directory.map(|path| path.to_string_lossy().into_owned()),
                 next_index,
             )?;
+            statement.bind(&custom_title, next_index)?;
             statement.exec()
         })
-        .await
+    }
+
+    pub fn cleanup(
+        &self,
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        self.cleanup_candidates(workspace_id, alive_items, None)
     }
 
     query! {
@@ -514,37 +576,71 @@ impl TerminalDb {
         }
     }
 
-    pub async fn save_custom_title(
-        &self,
-        item_id: ItemId,
-        workspace_id: WorkspaceId,
-        custom_title: Option<String>,
-    ) -> Result<()> {
-        log::debug!(
-            "Saving custom title {:?} for item {} in workspace {:?}",
-            custom_title,
-            item_id,
-            workspace_id
-        );
-        self.write(move |conn| {
-            let query = "INSERT INTO terminals (item_id, workspace_id, custom_title)
-                VALUES (?1, ?2, ?3)
-                ON CONFLICT (workspace_id, item_id) DO UPDATE SET
-                    custom_title = excluded.custom_title";
-            let mut statement = Statement::prepare(conn, query)?;
-            let mut next_index = statement.bind(&item_id, 1)?;
-            next_index = statement.bind(&workspace_id, next_index)?;
-            statement.bind(&custom_title, next_index)?;
-            statement.exec()
-        })
-        .await
-    }
-
     query! {
         pub fn get_custom_title(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<String>> {
             SELECT custom_title
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }
+    }
+
+    pub(crate) fn prepare_cleanup(
+        &self,
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        let candidates = self.write(move |connection| {
+            connection.select_bound::<WorkspaceId, ItemId>(
+                "SELECT item_id FROM terminals WHERE workspace_id = ?",
+            )?(workspace_id)
+        });
+        let db = self.clone();
+        async move {
+            let candidates = candidates.await?;
+            db.cleanup_candidates(workspace_id, alive_items, Some(candidates))
+                .await
+        }
+    }
+
+    fn cleanup_candidates(
+        &self,
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        candidates: Option<Vec<ItemId>>,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        self.write(move |connection| {
+            connection.with_savepoint("cleanup_terminals", || {
+                let mut retained = alive_items.into_iter().collect::<HashSet<_>>();
+                retained.extend(connection.select_bound::<(WorkspaceId, &str), ItemId>(
+                    "SELECT item_id FROM items WHERE workspace_id = ? AND kind = ?",
+                )?((
+                    workspace_id,
+                    TerminalView::serialized_item_kind(),
+                ))?);
+                let panel_key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+                if let Some(panel) = connection
+                    .select_row_bound::<&str, String>("SELECT value FROM kv_store WHERE key = ?")?(
+                    &panel_key,
+                )? {
+                    let panel = serde_json::from_str::<SerializedTerminalPanel>(&panel)?;
+                    retained.extend(panel.item_ids());
+                }
+                let item_ids = match candidates {
+                    Some(candidates) => candidates,
+                    None => connection.select_bound::<WorkspaceId, ItemId>(
+                        "SELECT item_id FROM terminals WHERE workspace_id = ?",
+                    )?(workspace_id)?,
+                };
+                let mut delete = connection.exec_bound::<(WorkspaceId, ItemId)>(
+                    "DELETE FROM terminals WHERE workspace_id = ? AND item_id = ?",
+                )?;
+                for item_id in item_ids {
+                    if !retained.contains(&item_id) {
+                        delete((workspace_id, item_id))?;
+                    }
+                }
+                Ok(())
+            })
+        })
     }
 }

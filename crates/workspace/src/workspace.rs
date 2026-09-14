@@ -1634,7 +1634,7 @@ pub struct Workspace {
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize_workspace: Option<Task<()>>,
-    _serialize_workspace_task: Option<Task<()>>,
+    pending_workspace_serialization: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
@@ -2149,7 +2149,7 @@ impl Workspace {
             _observe_current_user,
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
-            _serialize_workspace_task: None,
+            pending_workspace_serialization: None,
             _schedule_serialize_ssh_paths: None,
             leader_updates_tx,
             _subscriptions: subscriptions,
@@ -7621,38 +7621,18 @@ impl Workspace {
     /// to the DB immediately. Returns a task the caller can await to ensure the
     /// writes complete before the process exits.
     pub fn flush_serialization(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
+        if self.restoring_workspace {
+            return Task::ready(());
+        }
+
         self._schedule_serialize_workspace.take();
-        self._serialize_workspace_task.take();
         self.bounds_save_task_queued.take();
 
-        let serializable_items = self
-            .panes
-            .iter()
-            .flat_map(|pane| pane.read(cx).items())
-            .filter_map(|item| item.to_serializable_item_handle(cx))
-            .fold(HashMap::default(), |mut items, item| {
-                items.entry(item.item_id()).or_insert(item);
-                items
-            });
-        let item_tasks = serializable_items
-            .into_values()
-            .filter_map(|item| {
-                let item_id = item.item_id();
-                let task = item.serialize(self, false, cx)?;
-                Some(async move {
-                    task.await
-                        .with_context(|| format!("flushing serialization of item {item_id:?}"))
-                })
-            })
-            .collect::<Vec<_>>();
         let bounds_task = self.save_window_bounds(window, cx);
         let serialize_task = self.serialize_workspace_internal(window, cx);
         cx.background_spawn(async move {
             bounds_task.await;
-            serialize_task.await;
-            for result in futures::future::join_all(item_tasks).await {
-                result.log_err();
-            }
+            serialize_task.await.log_err();
         })
     }
 
@@ -7679,7 +7659,10 @@ impl Workspace {
 
     fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self.session_id.take();
-        self.serialize_workspace_internal(window, cx)
+        let serialization = self.serialize_workspace_internal(window, cx);
+        cx.background_spawn(async move {
+            serialization.await.log_err();
+        })
     }
 
     fn force_remove_pane(
@@ -7710,6 +7693,10 @@ impl Workspace {
     }
 
     fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.restoring_workspace {
+            return;
+        }
+
         if self._schedule_serialize_workspace.is_none() {
             self._schedule_serialize_workspace =
                 Some(cx.spawn_in(window, async move |this, cx| {
@@ -7717,8 +7704,7 @@ impl Workspace {
                         .timer(SERIALIZATION_THROTTLE_TIME)
                         .await;
                     this.update_in(cx, |this, window, cx| {
-                        this._serialize_workspace_task =
-                            Some(this.serialize_workspace_internal(window, cx));
+                        drop(this.serialize_workspace_internal(window, cx));
                         this._schedule_serialize_workspace.take();
                     })
                     .log_err();
@@ -7726,17 +7712,39 @@ impl Workspace {
         }
     }
 
-    fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
+    fn serialize_workspace_internal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
+        if self.restoring_workspace {
+            return Task::ready(Ok(())).shared();
+        }
+
         let Some(database_id) = self.database_id() else {
-            return Task::ready(());
+            return Task::ready(Ok(())).shared();
         };
+        let items = self
+            .panes
+            .iter()
+            .flat_map(|pane| pane.read(cx).items())
+            .filter_map(|item| item.to_serializable_item_handle(cx))
+            .fold(HashMap::default(), |mut items, item| {
+                items.entry(item.item_id()).or_insert(item);
+                items
+            });
+        let item_tasks = items
+            .into_values()
+            .filter_map(|item| item.serialize(self, false, cx))
+            .collect::<Vec<_>>();
 
         fn build_serialized_pane_group(
+            workspace: &mut Workspace,
             pane_group: &Member,
             window: &mut Window,
             cx: &mut App,
-        ) -> SerializedPaneGroup {
-            match pane_group {
+        ) -> Result<SerializedPaneGroup> {
+            Ok(match pane_group {
                 Member::Axis(PaneAxis {
                     axis,
                     members,
@@ -7746,14 +7754,17 @@ impl Workspace {
                     axis: SerializedAxis(*axis),
                     children: members
                         .iter()
-                        .map(|member| build_serialized_pane_group(member, window, cx))
-                        .collect::<Vec<_>>(),
+                        .map(|member| build_serialized_pane_group(workspace, member, window, cx))
+                        .collect::<Result<Vec<_>>>()?,
                     flexes: Some(flexes.lock().clone()),
                 },
-                Member::Pane(pane_handle) => {
-                    SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, window, cx))
-                }
-            }
+                Member::Pane(pane_handle) => SerializedPaneGroup::Pane(serialize_pane_handle(
+                    workspace,
+                    pane_handle,
+                    window,
+                    cx,
+                )?),
+            })
         }
 
         fn build_serialized_docks(
@@ -7764,7 +7775,8 @@ impl Workspace {
             this.capture_dock_state(window, cx)
         }
 
-        match self.workspace_location(cx) {
+        let previous_serialization = self.pending_workspace_serialization.take();
+        let serialization = match self.workspace_location(cx) {
             WorkspaceLocation::Location(location, paths) => {
                 let bookmarks = self.project.update(cx, |project, cx| {
                     project
@@ -7785,7 +7797,8 @@ impl Workspace {
                     .user_toolchains(cx)
                     .unwrap_or_default();
 
-                let center_group = build_serialized_pane_group(&self.center.root, window, cx);
+                let center_root = self.center.root.clone();
+                let center_group = build_serialized_pane_group(self, &center_root, window, cx);
                 let docks = build_serialized_docks(self, window, cx);
                 let default_docks = (paths.is_empty()
                     && location == SerializedWorkspaceLocation::Local)
@@ -7794,7 +7807,7 @@ impl Workspace {
                 let identity_paths_hint = self.project_group_key(cx).path_list().clone();
                 let recent_navigation_history = self.persisted_recent_navigation_history.clone();
 
-                let serialized_workspace = SerializedWorkspace {
+                let serialized_workspace = center_group.map(|center_group| SerializedWorkspace {
                     id: database_id,
                     location,
                     paths,
@@ -7810,17 +7823,26 @@ impl Workspace {
                     window_id: self.serialized_window_id.map(|id| id.as_u64()),
                     user_toolchains,
                     recent_navigation_history,
-                };
+                });
 
                 let db = WorkspaceDb::global(cx);
                 let kvp = db::kvp::KeyValueStore::global(cx);
                 cx.background_spawn(async move {
+                    if let Some(previous_serialization) = previous_serialization {
+                        previous_serialization.await.log_err();
+                    }
                     if let Some(docks) = default_docks {
                         persistence::write_default_dock_state(&kvp, docks)
                             .await
                             .log_err();
                     }
-                    db.save_workspace(serialized_workspace).await;
+                    let result = async {
+                        futures::future::try_join_all(item_tasks).await?;
+                        db.try_save_workspace(serialized_workspace?).await
+                    }
+                    .await;
+                    result.as_ref().log_err();
+                    result.map_err(Arc::new)
                 })
             }
             WorkspaceLocation::None => {
@@ -7828,12 +7850,22 @@ impl Workspace {
                 let docks = build_serialized_docks(self, window, cx);
                 let kvp = db::kvp::KeyValueStore::global(cx);
                 cx.background_spawn(async move {
-                    persistence::write_default_dock_state(&kvp, docks)
-                        .await
-                        .log_err();
+                    if let Some(previous_serialization) = previous_serialization {
+                        previous_serialization.await.log_err();
+                    }
+                    let result = async {
+                        futures::future::try_join_all(item_tasks).await?;
+                        persistence::write_default_dock_state(&kvp, docks).await
+                    }
+                    .await;
+                    result.as_ref().log_err();
+                    result.map_err(Arc::new)
                 })
             }
         }
+        .shared();
+        self.pending_workspace_serialization = Some(serialization.clone());
+        serialization
     }
 
     fn serialized_item_id_namespace(
@@ -7959,13 +7991,17 @@ impl Workspace {
             let mut items_by_project_path = HashMap::default();
             let mut item_ids_by_kind = HashMap::default();
             let mut all_deserialized_items = Vec::default();
-            cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
                 for item in center_items.unwrap_or_default().into_iter().flatten() {
                     if let Some(serializable_item_handle) = item.to_serializable_item_handle(cx) {
                         item_ids_by_kind
                             .entry(serializable_item_handle.serialized_item_kind())
                             .or_insert(Vec::new())
-                            .push(item.item_id().as_u64() as ItemId);
+                            .push(workspace.serialization_id(
+                                serializable_item_handle.serialized_item_kind(),
+                                item.item_id(),
+                                cx,
+                            )?);
                     }
 
                     if let Some(project_path) = item.project_path(cx) {
@@ -7973,7 +8009,8 @@ impl Workspace {
                     }
                     all_deserialized_items.push(item);
                 }
-            })?;
+                anyhow::Ok(())
+            })??;
 
             let opened_items = paths_to_open
                 .into_iter()
@@ -8039,15 +8076,13 @@ impl Workspace {
                 })
                 .await;
 
-            // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
-            // after loading the items, we might have different items and in order to avoid
-            // the database filling up, we delete items that haven't been loaded now.
-            //
-            // The items that have been loaded, have been saved after they've been added to the workspace.
-            let clean_up_tasks = workspace.update_in(cx, |_, window, cx| {
+            let clean_up_tasks = workspace.update_in(cx, |workspace, window, cx| {
                 item_ids_by_kind
                     .into_iter()
-                    .map(|(item_kind, loaded_items)| {
+                    .map(|(item_kind, mut loaded_items)| {
+                        loaded_items.extend(workspace.assigned_serialized_item_ids(item_kind));
+                        loaded_items.sort_unstable();
+                        loaded_items.dedup();
                         SerializableItemRegistry::cleanup(
                             item_kind,
                             serialized_workspace.id,
@@ -8065,7 +8100,7 @@ impl Workspace {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                    workspace.serialize_workspace_internal(window, cx).detach();
+                    drop(workspace.serialize_workspace_internal(window, cx));
 
                     // Ensure that we mark the window as edited if we did load dirty items
                     workspace.update_window_edited(window, cx);
@@ -10702,10 +10737,11 @@ impl SerializedItemIds {
 }
 
 fn serialize_pane_handle(
+    workspace: &mut Workspace,
     pane_handle: &Entity<Pane>,
     window: &mut Window,
     cx: &mut App,
-) -> SerializedPane {
+) -> Result<SerializedPane> {
     let (items, active, pinned_count) = {
         let pane = pane_handle.read(cx);
         let active_item_id = pane.active_item().map(|item| item.item_id());
@@ -10726,19 +10762,23 @@ fn serialize_pane_handle(
                     return None;
                 };
 
-                Some(SerializedItem {
-                    kind: Arc::from(handle.serialized_item_kind()),
-                    item_id: handle.item_id().as_u64(),
-                    active: Some(handle.item_id()) == active_item_id,
-                    preview: pane.is_active_preview_item(handle.item_id()),
-                })
+                Some(
+                    workspace
+                        .serialization_id(handle.serialized_item_kind(), handle.item_id(), cx)
+                        .map(|item_id| SerializedItem {
+                            kind: Arc::from(handle.serialized_item_kind()),
+                            item_id,
+                            active: Some(handle.item_id()) == active_item_id,
+                            preview: pane.is_active_preview_item(handle.item_id()),
+                        }),
+                )
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()?;
 
         (items, pane.has_focus(window, cx), pinned_count)
     };
 
-    SerializedPane::new(items, active, pinned_count)
+    Ok(SerializedPane::new(items, active, pinned_count))
 }
 
 pub fn join_channel(
@@ -13436,6 +13476,10 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.expect("workspace ID");
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
+
         // When there are dirty untitled items, but they can serialize, then there is no prompt.
         let item1 = cx.new(|cx| {
             TestItem::new(cx)
@@ -13586,6 +13630,9 @@ mod tests {
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.expect("workspace ID");
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
 
         let item = cx.new(|cx| {
             TestItem::new(cx)
@@ -13662,6 +13709,9 @@ mod tests {
         let project = Project::test(fs, ["root".as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.expect("workspace ID");
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
 
         let item = cx.new(|cx| {
             TestItem::new(cx)
@@ -18270,6 +18320,10 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.expect("workspace ID");
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
+
         // A pane where the last two of four pinned tabs cannot be serialized, which is
         // what an item that failed to open turns into. Every dropped tab has to be
         // counted against the pinned region of the original pane, not against the
@@ -18324,7 +18378,7 @@ mod tests {
                 }
                 pane.set_pinned_count(pinned_count);
             });
-            serialize_pane_handle(&pane, window, cx)
+            serialize_pane_handle(workspace, &pane, window, cx).expect("serialize pane")
         })
     }
 
@@ -18333,6 +18387,24 @@ mod tests {
         serialized_pane: SerializedPane,
         cx: &mut VisualTestContext,
     ) -> Entity<Pane> {
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.expect("workspace ID");
+        let workspace = workspace.update_in(cx, |workspace, window, cx| {
+            let project = workspace.project().clone();
+            let app_state = workspace.app_state().clone();
+            cx.new(|cx| Workspace::new(Some(workspace_id), project, app_state, window, cx))
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.serialize_workspace_internal(window, cx)
+            })
+            .await
+            .expect("save workspace");
+        let mut saved = database
+            .workspace_for_id(workspace_id)
+            .expect("saved workspace");
+        saved.center_group = SerializedPaneGroup::Pane(serialized_pane.clone());
+        database.try_save_workspace(saved).await.expect("save pane");
         let (pane, task) = workspace.update_in(cx, |workspace, window, cx| {
             let pane = workspace.add_pane(window, cx);
             let weak_pane = pane.downgrade();
@@ -18340,18 +18412,12 @@ mod tests {
             let workspace = cx.entity().downgrade();
             let task = window.spawn(cx, async move |cx| {
                 serialized_pane
-                    .deserialize_to(
-                        &project,
-                        &weak_pane,
-                        WorkspaceId::from_i64(1),
-                        workspace,
-                        cx,
-                    )
+                    .deserialize_to(&project, &weak_pane, workspace_id, workspace, cx)
                     .await
             });
             (pane, task)
         });
-        task.await.unwrap();
+        task.await.expect("restore pane");
         pane
     }
 

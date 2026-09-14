@@ -385,11 +385,31 @@ impl SerializedPane {
         }
 
         let mut items = Vec::new();
-        for item_handle in futures::future::join_all(item_tasks).await {
+        for (serialized_item, item_handle) in self
+            .children
+            .iter()
+            .zip(futures::future::join_all(item_tasks).await)
+        {
             let item_handle = item_handle.log_err();
             items.push(item_handle.clone());
 
             if let Some(item_handle) = item_handle {
+                workspace.update(cx, |workspace, cx| {
+                    let serializable = item_handle
+                        .to_serializable_item_handle(cx)
+                        .context("deserialized item is not serializable")?;
+                    let kind = serializable.serialized_item_kind();
+                    anyhow::ensure!(
+                        kind == serialized_item.kind.as_ref(),
+                        "deserialized item kind does not match saved kind"
+                    );
+                    workspace.register_serialized_item_id(
+                        kind,
+                        item_handle.item_id(),
+                        serialized_item.item_id,
+                        cx,
+                    )
+                })??;
                 pane.update_in(cx, |pane, window, cx| {
                     pane.add_item(item_handle.clone(), true, true, None, window, cx);
                 })?;

@@ -1,5 +1,6 @@
 use crate::{
-    ItemId, MultiWorkspace, SerializableItemRegistry, SerializedItemIds, Workspace, WorkspaceDb,
+    ItemHandle as _, ItemId, MultiWorkspace, SerializableItemRegistry, SerializedItemIds,
+    Workspace, WorkspaceDb, WorkspaceId,
     item::test::TestItem,
     persistence::{
         SerializedAxis,
@@ -8,6 +9,7 @@ use crate::{
     register_serializable_item,
     tests::init_test,
 };
+use anyhow::anyhow;
 use collections::HashSet;
 use fs::FakeFs;
 use gpui::{AppContext, Axis, Entity, EntityId, Global, TestAppContext, VisualTestContext};
@@ -199,6 +201,118 @@ async fn test_serialization_ids_reserve_all_provider_rows_lazily(cx: &mut TestAp
             vec![orphan_id + 1]
         );
     });
+}
+
+#[gpui::test]
+async fn test_serialization_id_read_failure_blocks_payload_and_graph(cx: &mut TestAppContext) {
+    let (workspace, database, saved, cx) = restore_fixture(cx).await;
+    cx.update(|_, cx| {
+        cx.global_mut::<SerializableItemRegistry>()
+            .descriptors_by_kind
+            .get_mut("TestItem")
+            .expect("descriptor")
+            .serialized_item_ids = |_, _| Err(anyhow!("injected item ID read failure"));
+    });
+    let item = cx.new(|cx| TestItem::new(cx).with_serialize(|| panic!("payload must not start")));
+    let task = workspace.update(cx, |workspace, cx| {
+        item.to_serializable_item_handle(cx)
+            .expect("serializable item")
+            .serialize(workspace, false, cx)
+            .expect("allocation error task")
+    });
+    assert_eq!(
+        task.await.expect_err("read failure").to_string(),
+        "injected item ID read failure"
+    );
+    let publication = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+        workspace.serialize_workspace_internal(window, cx)
+    });
+    assert_eq!(
+        publication
+            .await
+            .expect_err("publication must fail")
+            .to_string(),
+        "injected item ID read failure"
+    );
+    cx.run_until_parked();
+    assert_eq!(database.workspace_for_id(saved.id), Some(saved));
+    workspace.read_with(cx, |workspace, _| {
+        assert_eq!(workspace.serialized_item_ids.len(), 0)
+    });
+}
+
+#[gpui::test]
+async fn test_cleanup_preserves_payloads_assigned_before_and_after_submission(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, database, saved, cx) = restore_fixture(cx).await;
+    let workspace_id = saved.id;
+    database
+        .write(move |connection| {
+            connection.exec(
+                "CREATE TABLE cleanup_test_payloads (workspace_id INTEGER, item_id INTEGER) STRICT",
+            )?()?;
+            let mut insert = connection.exec_bound::<(WorkspaceId, ItemId)>(
+                "INSERT INTO cleanup_test_payloads VALUES (?, ?)",
+            )?;
+            for item_id in [1, 2, 3] {
+                insert((workspace_id, item_id))?;
+            }
+            insert((WorkspaceId::from_i64(-1), 3))
+        })
+        .await
+        .expect("seed payloads");
+    let first = cx.new(TestItem::new);
+    let second = cx.new(TestItem::new);
+    let (first_id, second_id, first_write, cleanup, second_write) =
+        workspace.update(cx, |workspace, cx| {
+            let first_id = workspace
+                .serialization_id("TestItem", first.entity_id(), cx)
+                .expect("assign before cleanup");
+            let first_write = database.write(move |connection| {
+                connection.exec_bound::<(WorkspaceId, ItemId)>(
+                    "INSERT INTO cleanup_test_payloads VALUES (?, ?)",
+                )?((workspace_id, first_id))
+            });
+            let mut keep = database
+                .serialized_item_ids(workspace_id, "TestItem")
+                .expect("committed graph");
+            keep.extend(workspace.assigned_serialized_item_ids("TestItem"));
+            let cleanup = crate::delete_unloaded_items(
+                keep,
+                workspace_id,
+                "cleanup_test_payloads",
+                &database,
+                cx,
+            );
+            let second_id = workspace
+                .serialization_id("TestItem", second.entity_id(), cx)
+                .expect("assign after cleanup");
+            let second_write = database.write(move |connection| {
+                connection.exec_bound::<(WorkspaceId, ItemId)>(
+                    "INSERT INTO cleanup_test_payloads VALUES (?, ?)",
+                )?((workspace_id, second_id))
+            });
+            (first_id, second_id, first_write, cleanup, second_write)
+        });
+    first_write.await.expect("write before cleanup");
+    second_write.await.expect("write after cleanup");
+    cleanup.await.expect("cleanup payloads");
+    let remaining = database
+        .select_bound::<WorkspaceId, ItemId>(
+            "SELECT item_id FROM cleanup_test_payloads WHERE workspace_id = ? ORDER BY item_id",
+        )
+        .expect("prepare remaining payloads")(workspace_id)
+    .expect("read remaining payloads");
+    assert_eq!(remaining, vec![1, 2, first_id, second_id]);
+    let other_workspace = database
+        .select_bound::<WorkspaceId, ItemId>(
+            "SELECT item_id FROM cleanup_test_payloads WHERE workspace_id = ?",
+        )
+        .expect("prepare other workspace")(WorkspaceId::from_i64(-1))
+    .expect("read other workspace");
+    assert_eq!(other_workspace, vec![3]);
 }
 
 struct ItemIdProvider {

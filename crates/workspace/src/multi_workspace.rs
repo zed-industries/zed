@@ -1467,7 +1467,7 @@ impl MultiWorkspace {
             workspace.session_id.take();
             workspace.serialized_window_id.take();
             workspace._schedule_serialize_workspace.take();
-            workspace._serialize_workspace_task.take();
+            workspace.pending_workspace_serialization.take();
         });
 
         if let Some(workspace_id) = workspace.read(cx).database_id() {

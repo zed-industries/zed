@@ -1,7 +1,7 @@
 use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
 
 use crate::{
-    TerminalView, default_working_directory,
+    TerminalDb, TerminalView, default_working_directory,
     persistence::{
         SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
     },
@@ -28,12 +28,11 @@ use ui::{
 use util::{ResultExt, TryFutureExt, defer};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
-    ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
-    MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
-    PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
-    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
+    ActivatePaneUp, ActivatePreviousPane, DraggedTab, MoveItemToPane, MoveItemToPaneInDirection,
+    MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane, PaneGroup, SplitDirection,
+    SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft,
+    SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
-    item::SerializableItem,
     move_active_item, pane,
 };
 
@@ -226,12 +225,20 @@ impl TerminalPanel {
         });
     }
 
+    pub(crate) fn serialization_key_for_workspace_id(workspace_id: WorkspaceId) -> String {
+        let id = i64::from(workspace_id).to_string();
+        format!("{TERMINAL_PANEL_KEY:?}-{id:?}")
+    }
+
     fn serialization_key(workspace: &Workspace) -> Option<String> {
         workspace
             .database_id()
-            .map(|id| i64::from(id).to_string())
-            .or(workspace.session_id())
-            .map(|id| format!("{:?}-{:?}", TERMINAL_PANEL_KEY, id))
+            .map(Self::serialization_key_for_workspace_id)
+            .or_else(|| {
+                workspace
+                    .session_id()
+                    .map(|id| format!("{TERMINAL_PANEL_KEY:?}-{id:?}"))
+            })
     }
 
     pub async fn load(
@@ -356,51 +363,12 @@ impl TerminalPanel {
             }
         }
 
-        // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
-        let cleanup = workspace.update_in(cx, |workspace, window, cx| {
-            let alive_item_ids = terminal_panel.upgrade().map(|terminal_panel| {
-                terminal_panel
-                    .read(cx)
-                    .center
-                    .panes()
-                    .into_iter()
-                    .flat_map(|pane| pane.read(cx).items())
-                    .map(|item| item.item_id().as_u64() as ItemId)
-                    .collect::<Vec<_>>()
-            });
-            alive_item_ids
-                .zip(workspace.database_id())
-                .map(|(alive_item_ids, workspace_id)| {
-                    let cleanup_task =
-                        TerminalView::cleanup(workspace_id, alive_item_ids.clone(), window, cx);
-                    (cleanup_task, alive_item_ids)
-                })
-        })?;
-        if let Some((cleanup_task, alive_item_ids)) = cleanup {
-            cleanup_task.await.log_err();
-            terminal_panel
-                .update(cx, |terminal_panel, cx| {
-                    let terminals_to_reserialize = terminal_panel
-                        .center
-                        .panes()
-                        .into_iter()
-                        .flat_map(|pane| {
-                            pane.read(cx)
-                                .items()
-                                .filter(|item| {
-                                    !alive_item_ids.contains(&(item.item_id().as_u64() as ItemId))
-                                })
-                                .filter_map(|item| item.act_as::<TerminalView>(cx))
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
-                    for terminal_view in terminals_to_reserialize {
-                        terminal_view.update(cx, |terminal_view, cx| {
-                            terminal_view.mark_needs_serialize(cx)
-                        });
-                    }
-                })
-                .ok();
+        if let Some(workspace_id) =
+            workspace.read_with(cx, |workspace, _| workspace.database_id())?
+        {
+            let cleanup = terminal_panel
+                .update(cx, |panel, cx| panel.cleanup(workspace_id, Vec::new(), cx))??;
+            cleanup.await.log_err();
         }
 
         let should_focus = workspace
@@ -1067,15 +1035,23 @@ impl TerminalPanel {
                 .timer(Duration::from_millis(50))
                 .await;
             let terminal_panel = terminal_panel.upgrade()?;
-            let items = terminal_panel.update(cx, |terminal_panel, cx| {
-                SerializedItems::WithSplits(serialize_pane_group(
-                    &terminal_panel.center,
-                    &terminal_panel.active_pane,
-                    cx,
-                ))
-            });
+            let (group, payload_tasks) = terminal_panel
+                .update(cx, |terminal_panel, cx| {
+                    terminal_panel.workspace.update(cx, |workspace, cx| {
+                        serialize_pane_group(
+                            &terminal_panel.center,
+                            &terminal_panel.active_pane,
+                            workspace,
+                            cx,
+                        )
+                    })
+                })
+                .log_err()?
+                .log_err()?;
+            let items = SerializedItems::WithSplits(group);
             cx.background_spawn(
                 async move {
+                    futures::future::try_join_all(payload_tasks).await?;
                     kvp.write_kvp(
                         serialization_key,
                         serde_json::to_string(&SerializedTerminalPanel {
@@ -1091,6 +1067,18 @@ impl TerminalPanel {
             .await;
             Some(())
         });
+    }
+
+    fn cleanup(
+        &self,
+        workspace_id: WorkspaceId,
+        mut item_ids: Vec<workspace::ItemId>,
+        cx: &mut Context<Self>,
+    ) -> Result<impl Future<Output = Result<()>> + use<>> {
+        self.workspace.update(cx, |workspace, cx| {
+            item_ids.extend(workspace.assigned_serialized_item_ids("Terminal"));
+            TerminalDb::global(cx).prepare_cleanup(workspace_id, item_ids)
+        })
     }
 
     fn replace_terminal(
@@ -1878,11 +1866,102 @@ mod tests {
 
     use super::*;
     use crate::persistence::{SerializedPane, SerializedPaneGroup};
+    use db::AppDatabase;
     use gpui::{Modifiers, TestAppContext, UpdateGlobal as _, VisualTestContext};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
-    use workspace::{MultiWorkspace, WorkspaceId};
+    use workspace::{ItemId, MultiWorkspace, WorkspaceId};
+
+    #[gpui::test]
+    async fn test_terminal_cleanup_retains_both_committed_graphs_in_either_order(
+        cx: &mut TestAppContext,
+    ) {
+        let db = cx.update(|cx| {
+            cx.set_global(AppDatabase::test_new());
+            TerminalDb::global(cx)
+        });
+        let workspace_id = WorkspaceId::from_i64(1);
+        let other_workspace_id = WorkspaceId::from_i64(2);
+        for panel in [
+            r#"{"items":[22],"active_item_id":22}"#,
+            r#"{"items":{"Group":{"axis":"horizontal","flexes":null,"children":[{"Pane":{"active":true,"children":[22],"active_item":22,"pinned_count":0}}]}},"active_item_id":null}"#,
+        ] {
+            for cleanup_order in [[11, 22], [22, 11]] {
+                db.write(move |connection| {
+                    connection.exec(
+                        "DELETE FROM items;
+                         DELETE FROM panes;
+                         DELETE FROM terminals;
+                         DELETE FROM kv_store;
+                         INSERT OR IGNORE INTO workspaces (workspace_id) VALUES (1), (2);
+                         INSERT INTO panes (pane_id, workspace_id, active) VALUES (1, 1, 1);
+                         INSERT INTO items (item_id, workspace_id, pane_id, kind, position, active)
+                         VALUES (11, 1, 1, 'Terminal', 0, 1), (44, 1, 1, 'Editor', 1, 0);
+                         INSERT INTO terminals (workspace_id, item_id, working_directory)
+                         VALUES (1, 11, NULL), (1, 22, NULL), (1, 33, X'ff'),
+                                (1, 44, NULL), (2, 55, NULL);",
+                    )?()?;
+                    connection.exec_bound::<(String, &str)>(
+                        "INSERT INTO kv_store (key, value) VALUES (?, ?)",
+                    )?((
+                        TerminalPanel::serialization_key_for_workspace_id(workspace_id),
+                        panel,
+                    ))
+                })
+                .await
+                .unwrap();
+                assert_eq!(db.item_ids(workspace_id).unwrap(), vec![11, 22, 33, 44]);
+                for item_id in cleanup_order {
+                    db.cleanup(workspace_id, vec![item_id]).await.unwrap();
+                    assert_eq!(db.item_ids(workspace_id).unwrap(), vec![11, 22]);
+                    assert_eq!(db.item_ids(other_workspace_id).unwrap(), vec![55]);
+                }
+                db.cleanup(workspace_id, Vec::new()).await.unwrap();
+                assert_eq!(db.item_ids(workspace_id).unwrap(), vec![11, 22]);
+                db.write(|connection| {
+                    connection.exec("DELETE FROM items WHERE kind = 'Terminal'")?()
+                })
+                .await
+                .unwrap();
+                db.cleanup(workspace_id, vec![22]).await.unwrap();
+                assert_eq!(db.item_ids(workspace_id).unwrap(), vec![22]);
+                db.write(|connection| connection.exec("DELETE FROM kv_store")?())
+                    .await
+                    .unwrap();
+                db.cleanup(workspace_id, Vec::new()).await.unwrap();
+                assert_eq!(db.item_ids(workspace_id).unwrap(), Vec::<ItemId>::new());
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_terminal_cleanup_preserves_rows_when_panel_graph_is_unreadable(
+        cx: &mut TestAppContext,
+    ) {
+        let db = cx.update(|cx| {
+            cx.set_global(AppDatabase::test_new());
+            TerminalDb::global(cx)
+        });
+        let workspace_id = WorkspaceId::from_i64(1);
+        db.write(move |connection| {
+            connection.exec("INSERT INTO workspaces (workspace_id) VALUES (1)")?()?;
+            connection
+                .exec_bound::<(String, &str)>("INSERT INTO kv_store (key, value) VALUES (?, ?)")?(
+                (
+                TerminalPanel::serialization_key_for_workspace_id(workspace_id),
+                "{",
+            )
+            )
+        })
+        .await
+        .unwrap();
+        db.save_terminal(11, workspace_id, None, None)
+            .await
+            .unwrap();
+        assert!(db.cleanup(workspace_id, Vec::new()).await.is_err());
+        assert_eq!(db.item_ids(workspace_id).unwrap(), vec![11]);
+    }
 
     #[test]
     fn test_prepare_empty_task() {
@@ -2223,6 +2302,13 @@ mod tests {
         let window_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        initialize_terminal_persistence(&workspace, &[], cx).await;
+
         let serialization_key = window_handle
             .update(cx, |multi_workspace, _, cx| {
                 TerminalPanel::serialization_key(multi_workspace.workspace().read(cx)).unwrap()
@@ -2298,11 +2384,21 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let window_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[12345], cx).await;
 
         let terminal_panel = window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                    cx.new(|cx| {
+                        let mut panel = TerminalPanel::new(workspace, window, cx);
+                        panel.restoring = true;
+                        panel
+                    })
                 })
             })
             .unwrap();
@@ -2335,7 +2431,7 @@ mod tests {
                 deserialize_terminal_panel(
                     workspace.downgrade(),
                     project,
-                    WorkspaceId::default(),
+                    workspace_id,
                     SerializedTerminalPanel {
                         items: SerializedItems::NoSplits(vec![12345]),
                         active_item_id: Some(12345),
@@ -3350,6 +3446,34 @@ mod tests {
         );
     }
 
+    async fn initialize_terminal_persistence(
+        workspace: &Entity<Workspace>,
+        item_ids: &[ItemId],
+        cx: &mut TestAppContext,
+    ) -> WorkspaceId {
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let workspace_id = workspace.update(cx, |workspace, _| {
+            workspace.set_random_database_id();
+            workspace.database_id().unwrap()
+        });
+        db.write(move |connection| {
+            connection.exec_bound("INSERT INTO workspaces (workspace_id) VALUES (?)")?(workspace_id)
+        })
+        .await
+        .unwrap();
+        for item_id in item_ids {
+            db.save_terminal(
+                *item_id,
+                workspace_id,
+                None,
+                Some(format!("terminal-{item_id}")),
+            )
+            .await
+            .unwrap();
+        }
+        workspace_id
+    }
+
     fn set_max_tabs(cx: &mut TestAppContext, value: Option<usize>) {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
@@ -3360,6 +3484,7 @@ mod tests {
 
     pub fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
+            cx.set_global(AppDatabase::test_new());
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);

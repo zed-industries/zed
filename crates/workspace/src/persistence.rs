@@ -20,7 +20,7 @@ use db::{
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
 };
-use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
+use gpui::{AppContext as _, Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
@@ -1503,6 +1503,7 @@ impl WorkspaceDb {
         ret
     }
 
+    #[cfg(test)]
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
         self.try_save_workspace(workspace).await.log_err();
     }
@@ -2872,28 +2873,24 @@ pub fn delete_unloaded_items(
     db: &ThreadSafeConnection,
     cx: &mut App,
 ) -> Task<Result<()>> {
-    let db = db.clone();
-    cx.spawn(async move |_| {
-        let placeholders = alive_items
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<&str>>()
-            .join(", ");
+    let placeholders = alive_items
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<&str>>()
+        .join(", ");
 
-        let query = format!(
-            "DELETE FROM {table} WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
-        );
+    let query =
+        format!("DELETE FROM {table} WHERE workspace_id = ? AND item_id NOT IN ({placeholders})");
 
-        db.write(move |conn| {
-            let mut statement = Statement::prepare(conn, query)?;
-            let mut next_index = statement.bind(&workspace_id, 1)?;
-            for id in alive_items {
-                next_index = statement.bind(&id, next_index)?;
-            }
-            statement.exec()
-        })
-        .await
-    })
+    let write = db.write(move |conn| {
+        let mut statement = Statement::prepare(conn, query)?;
+        let mut next_index = statement.bind(&workspace_id, 1)?;
+        for id in alive_items {
+            next_index = statement.bind(&id, next_index)?;
+        }
+        statement.exec()
+    });
+    cx.background_spawn(write)
 }
 
 #[cfg(test)]
@@ -2915,7 +2912,6 @@ mod tests {
     use futures::channel::oneshot;
     use gpui::TaskExt;
 
-    use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
     use project::Project;
     use remote::SshConnectionOptions;

@@ -321,7 +321,7 @@ impl ScrollManager {
         scroll_beyond_last_line: ScrollBeyondLastLine,
         local: bool,
         autoscroll: bool,
-        workspace_id: Option<WorkspaceId>,
+        serialization_id: Option<(WorkspaceId, ItemId)>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
@@ -368,7 +368,7 @@ impl ScrollManager {
             scroll_top_buffer_point.row,
             local,
             autoscroll,
-            workspace_id,
+            serialization_id,
             window,
             cx,
         )
@@ -381,7 +381,7 @@ impl ScrollManager {
         top_row: u32,
         local: bool,
         autoscroll: bool,
-        workspace_id: Option<WorkspaceId>,
+        serialization_id: Option<(WorkspaceId, ItemId)>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
@@ -409,8 +409,7 @@ impl ScrollManager {
         });
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbars(window, cx);
-        if let Some(workspace_id) = workspace_id {
-            let item_id = cx.entity().entity_id().as_u64() as ItemId;
+        if let Some((workspace_id, item_id)) = serialization_id {
             let executor = cx.background_executor().clone();
 
             let db = EditorDb::global(cx);
@@ -724,7 +723,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> WasScrolled {
         hide_hover(self, cx);
-        let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
+        let serialization_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
 
         self.edit_prediction_preview
             .set_previous_scroll_position(None);
@@ -742,7 +741,7 @@ impl Editor {
             scroll_beyond_last_line,
             local,
             autoscroll,
-            workspace_id,
+            serialization_id,
             window,
             cx,
         )
@@ -760,7 +759,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         hide_hover(self, cx);
-        let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
+        let serialization_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let top_row = scroll_anchor
             .anchor
@@ -772,7 +771,7 @@ impl Editor {
             top_row,
             true,
             false,
-            workspace_id,
+            serialization_id,
             window,
             cx,
         );
@@ -785,7 +784,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         hide_hover(self, cx);
-        let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
+        let serialization_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         if !scroll_anchor.anchor.is_valid(&buffer_snapshot) {
             log::warn!("Invalid scroll anchor: {:?}", scroll_anchor);
@@ -799,7 +798,7 @@ impl Editor {
             top_row,
             false,
             false,
-            workspace_id,
+            serialization_id,
             window,
             cx,
         );

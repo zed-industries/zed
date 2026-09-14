@@ -1741,12 +1741,13 @@ impl Editor {
 
             if WorkspaceSettings::get(None, cx).restore_on_startup
                 != RestoreOnStartupBehavior::EmptyTab
-                && let Some(workspace_id) = self.workspace_serialization_id(cx)
+                && self.should_serialize_buffer()
+                && let Some((workspace_id, editor_id)) =
+                    self.workspace.as_ref().and_then(|workspace| workspace.1)
             {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let selections = selections.clone();
                 let background_executor = cx.background_executor().clone();
-                let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                 let db = EditorDb::global(cx);
                 self.serialize_selections = cx.background_spawn(async move {
                     background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;

@@ -465,8 +465,16 @@ where
         closing: bool,
         cx: &mut App,
     ) -> Option<Task<Result<()>>> {
+        if workspace.is_restoring() {
+            return None;
+        }
+        let item_id =
+            match workspace.serialization_id(T::serialized_item_kind(), self.entity_id(), cx) {
+                Ok(item_id) => item_id,
+                Err(error) => return Some(Task::ready(Err(error))),
+            };
         self.update(cx, |this, cx| {
-            this.serialize(workspace, cx.entity_id().as_u64(), closing, cx)
+            this.serialize(workspace, item_id, closing, cx)
         })
     }
 
@@ -1467,7 +1475,7 @@ pub mod test {
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
         pub tab_detail: Cell<Option<usize>>,
-        serialize: Option<Box<dyn Fn() -> Option<Task<anyhow::Result<()>>>>>,
+        serialize: Option<Box<dyn Fn(ItemId) -> Option<Task<anyhow::Result<()>>>>>,
         focus_handle: gpui::FocusHandle,
         pub child_focus_handles: Vec<gpui::FocusHandle>,
     }
@@ -1614,8 +1622,15 @@ pub mod test {
         }
 
         pub fn with_serialize(
-            mut self,
+            self,
             serialize: impl Fn() -> Option<Task<anyhow::Result<()>>> + 'static,
+        ) -> Self {
+            self.with_serialize_id(move |_| serialize())
+        }
+
+        pub fn with_serialize_id(
+            mut self,
+            serialize: impl Fn(ItemId) -> Option<Task<anyhow::Result<()>>> + 'static,
         ) -> Self {
             self.serialize = Some(Box::new(serialize));
             self
@@ -1875,12 +1890,12 @@ pub mod test {
         fn serialize(
             &mut self,
             _workspace: &mut Workspace,
-            _item_id: ItemId,
+            item_id: ItemId,
             _closing: bool,
             _cx: &mut Context<Self>,
         ) -> Option<Task<anyhow::Result<()>>> {
             if let Some(serialize) = self.serialize.take() {
-                let result = serialize();
+                let result = serialize(item_id);
                 self.serialize = Some(serialize);
                 result
             } else {
