@@ -12599,6 +12599,9 @@ fn test_restore_status_includes_type_changed() {
             },
         )));
     }
+}
+
+#[gpui::test]
 async fn test_file_drag_state_clears_before_window_handoff(cx: &mut TestAppContext) {
     init_test_with_editor(cx);
     let fs = FakeFs::new(cx.executor());
