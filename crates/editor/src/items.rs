@@ -1327,38 +1327,7 @@ impl SerializableItem for Editor {
             } => window.spawn(cx, {
                 let project = project.clone();
                 async move |cx| {
-                    let content_language_detection_enabled = language.is_none();
-                    let language_registry =
-                        project.read_with(cx, |project, _| project.languages().clone());
-
-                    let language = if let Some(language_name) = language {
-                        // We don't fail here, because we'd rather not set the language if the name changed
-                        // than fail to restore the buffer.
-                        language_registry
-                            .language_for_name(&language_name)
-                            .await
-                            .ok()
-                    } else {
-                        None
-                    };
-
-                    // First create the empty buffer
-                    let buffer = project
-                        .update(cx, |project, cx| project.create_buffer(language, true, cx))
-                        .await
-                        .context("Failed to create buffer while deserializing editor")?;
-
-                    // Then set the text so that the dirty bit is set correctly
-                    buffer.update(cx, |buffer, cx| {
-                        if content_language_detection_enabled {
-                            buffer.set_content_language_detection_enabled(true);
-                        }
-                        buffer.set_language_registry(language_registry);
-                        buffer.set_text(contents, cx);
-                        if let Some(entry) = buffer.peek_undo_stack() {
-                            buffer.forget_transaction(entry.transaction_id());
-                        }
-                    });
+                    let buffer = restore_unsaved_buffer(&project, contents, language, cx).await?;
 
                     cx.update(|window, cx| {
                         cx.new(|cx| {
@@ -1373,8 +1342,8 @@ impl SerializableItem for Editor {
             SerializedEditor {
                 abs_path: Some(abs_path),
                 contents,
+                language,
                 mtime,
-                ..
             } => {
                 let opened_buffer = project.update(cx, |project, cx| {
                     let (worktree, path) = project.find_worktree(&abs_path, cx)?;
@@ -1385,59 +1354,55 @@ impl SerializableItem for Editor {
                     Some(project.open_path(project_path, cx))
                 });
 
-                match opened_buffer {
-                    Some(opened_buffer) => window.spawn(cx, async move |cx| {
-                        let (_, buffer) = opened_buffer
+                window.spawn(cx, async move |cx| {
+                    let opened_buffer = match opened_buffer {
+                        Some(opened_buffer) => opened_buffer
                             .await
-                            .context("Failed to open path in project")?;
-
-                        if let Some(contents) = contents {
-                            buffer.update(cx, |buffer, cx| {
-                                restore_serialized_buffer_contents(buffer, contents, mtime, cx);
-                            });
-                        }
-
-                        cx.update(|window, cx| {
-                            cx.new(|cx| {
-                                let mut editor =
-                                    Editor::for_buffer(buffer, Some(project), window, cx);
-
-                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                editor
-                            })
-                        })
-                    }),
-                    None => {
-                        // File is not in any worktree (e.g., opened as a standalone file).
-                        // Open the buffer directly via the project rather than through
-                        // workspace.open_abs_path(), which has the side effect of adding
-                        // the item to a pane. The caller (deserialize_to) will add the
-                        // returned item to the correct pane.
-                        window.spawn(cx, async move |cx| {
-                            let buffer = project
+                            .map(|(_, buffer)| buffer)
+                            .context("Failed to open path in project"),
+                        None => {
+                            // File is not in any worktree (e.g., opened as a standalone file).
+                            // Open the buffer directly via the project rather than through
+                            // workspace.open_abs_path(), which has the side effect of adding
+                            // the item to a pane. The caller (deserialize_to) will add the
+                            // returned item to the correct pane.
+                            project
                                 .update(cx, |project, cx| project.open_local_buffer(&abs_path, cx))
                                 .await
-                                .with_context(|| {
-                                    format!("Failed to open buffer for {abs_path:?}")
-                                })?;
-
+                                .with_context(|| format!("Failed to open buffer for {abs_path:?}"))
+                        }
+                    };
+                    let mut title = None;
+                    let buffer = match (opened_buffer, contents) {
+                        (Ok(buffer), contents) => {
                             if let Some(contents) = contents {
                                 buffer.update(cx, |buffer, cx| {
                                     restore_serialized_buffer_contents(buffer, contents, mtime, cx);
                                 });
                             }
+                            buffer
+                        }
+                        (Err(error), Some(contents)) => {
+                            log::warn!(
+                                "Restoring {abs_path:?} as an unsaved buffer after open failed: {error:#}"
+                            );
+                            title = abs_path.file_name().map(|name| name.to_string_lossy().into_owned());
+                            restore_unsaved_buffer(&project, contents, language, cx).await?
+                        }
+                        (Err(error), None) => return Err(error),
+                    };
 
-                            cx.update(|window, cx| {
-                                cx.new(|cx| {
-                                    let mut editor =
-                                        Editor::for_buffer(buffer, Some(project), window, cx);
-                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                    editor
-                                })
-                            })
+                    cx.update(|window, cx| {
+                        cx.new(|cx| {
+                            let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+                            if let Some(title) = title {
+                                editor.buffer.update(cx, |buffer, cx| buffer.set_title(title, cx));
+                            }
+                            editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                            editor
                         })
-                    }
-                }
+                    })
+                })
             }
             SerializedEditor {
                 abs_path: None,
@@ -2357,6 +2322,36 @@ fn restore_serialized_buffer_contents(
     if let Some(entry) = buffer.peek_undo_stack() {
         buffer.forget_transaction(entry.transaction_id());
     }
+}
+
+async fn restore_unsaved_buffer(
+    project: &Entity<Project>,
+    contents: String,
+    language: Option<String>,
+    cx: &mut AsyncWindowContext,
+) -> Result<Entity<Buffer>> {
+    let content_language_detection_enabled = language.is_none();
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let language = if let Some(language_name) = language {
+        language_registry
+            .language_for_name(&language_name)
+            .await
+            .ok()
+    } else {
+        None
+    };
+    let buffer = project
+        .update(cx, |project, cx| project.create_buffer(language, true, cx))
+        .await
+        .context("Failed to create buffer while deserializing editor")?;
+    buffer.update(cx, |buffer, cx| {
+        if content_language_detection_enabled {
+            buffer.set_content_language_detection_enabled(true);
+        }
+        buffer.set_language_registry(language_registry);
+        restore_serialized_buffer_contents(buffer, contents, None, cx);
+    });
+    Ok(buffer)
 }
 
 fn serialize_path_key(path_key: &PathKey) -> proto::PathKey {
@@ -3787,5 +3782,236 @@ mod tests {
             persisted.mtime,
             buffer.read_with(cx, |buffer, _| buffer.saved_mtime())
         );
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_failed_worktree_paths(cx: &mut gpui::TestAppContext) {
+        assert_deserialize_failed_paths(true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_failed_standalone_paths(cx: &mut gpui::TestAppContext) {
+        assert_deserialize_failed_paths(false, cx).await;
+    }
+
+    async fn assert_deserialize_failed_paths(with_worktree: bool, cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/restore"),
+            json!({
+                "failed.rs": "disk",
+                "empty.rs": "disk",
+                "unknown.rs": "disk",
+                "detect.txt": "disk",
+                "clean.rs": "disk",
+            }),
+        )
+        .await;
+        let project = Project::test(
+            fs.clone(),
+            with_worktree.then_some(Path::new(path!("/restore"))),
+            cx,
+        )
+        .await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(languages::rust_lang());
+        });
+        let database = cx.update(|cx| EditorDb::global(cx));
+        let workspace_id = cx
+            .update(|cx| workspace::WorkspaceDb::global(cx))
+            .next_id()
+            .await
+            .expect("failed to reserve workspace");
+        let app_state = cx.update(workspace::AppState::test);
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(Some(workspace_id), project.clone(), app_state, window, cx)
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let contents = "KEEP\0λ\n  trailing space \nlast line";
+        let cases = [
+            ("failed.rs", Some(contents), Some("Rust"), true),
+            ("empty.rs", Some(""), Some("Rust"), true),
+            (
+                "unknown.rs",
+                Some(contents),
+                Some("Unavailable language"),
+                true,
+            ),
+            ("detect.txt", Some(contents), None, true),
+            ("clean.rs", None, None, true),
+            ("missing.txt", Some(contents), None, false),
+            ("missing-clean.txt", None, None, false),
+        ];
+        for (index, (name, contents, language, fails)) in cases.into_iter().enumerate() {
+            let abs_path = Path::new(path!("/restore")).join(name);
+            let mtime = fs
+                .metadata(&abs_path)
+                .await
+                .expect("failed to read metadata")
+                .map(|metadata| metadata.mtime);
+            let item_id = index as ItemId + 100;
+            database
+                .save_serialized_editor(
+                    item_id,
+                    workspace_id,
+                    SerializedEditor {
+                        abs_path: Some(abs_path.clone()),
+                        contents: contents.map(str::to_owned),
+                        language: language.map(str::to_owned),
+                        mtime,
+                    },
+                )
+                .await
+                .expect("failed to seed editor");
+            if fails {
+                fs.remove_file(&abs_path, fs::RemoveOptions::default())
+                    .await
+                    .expect("failed to remove file");
+                fs.create_dir(&abs_path)
+                    .await
+                    .expect("failed to replace file with directory");
+                assert_eq!(
+                    fs.load(&abs_path)
+                        .await
+                        .expect_err("reading directory must fail")
+                        .to_string(),
+                    format!("not a file: {abs_path:?}")
+                );
+            }
+            project.read_with(cx, |project, cx| {
+                assert_eq!(
+                    project.find_worktree(&abs_path, cx).is_some(),
+                    with_worktree
+                );
+            });
+            if fails && contents.is_none() {
+                let error = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        Editor::deserialize(
+                            project.clone(),
+                            workspace.weak_handle(),
+                            workspace_id,
+                            item_id,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .expect_err("clean editor failures must remain errors");
+                assert_eq!(
+                    error.to_string(),
+                    if with_worktree {
+                        "Failed to open path in project".to_owned()
+                    } else {
+                        format!("Failed to open buffer for {abs_path:?}")
+                    }
+                );
+                continue;
+            }
+            let mut editor = deserialize_editor(
+                item_id,
+                workspace_id,
+                workspace.clone(),
+                project.clone(),
+                cx,
+            )
+            .await;
+            for restored in [false, true] {
+                editor.read_with(cx, |editor, cx| {
+                    assert_eq!(editor.text(cx), contents.unwrap_or_default(), "{name}");
+                    assert_eq!(
+                        editor.is_dirty(cx),
+                        contents.is_some_and(|contents| !contents.is_empty()),
+                        "{name}"
+                    );
+                    assert!(!editor.has_conflict(cx), "{name}");
+                    let buffer = editor.buffer().read(cx).as_singleton().expect("singleton");
+                    let buffer = buffer.read(cx);
+                    if fails {
+                        assert!(buffer.file().is_none(), "{name}");
+                        assert!(!editor.can_save(cx));
+                        assert!(editor.can_save_as(cx));
+                        assert!(buffer.peek_undo_stack().is_none());
+                        if !restored || contents != Some("") {
+                            assert_eq!(
+                                buffer
+                                    .language()
+                                    .map(|language| language.name().to_string()),
+                                Some(if language == Some("Rust") {
+                                    "Rust".to_owned()
+                                } else {
+                                    PLAIN_TEXT.name().to_string()
+                                })
+                            );
+                        }
+                        if !restored {
+                            assert_eq!(editor.title(cx), name);
+                            assert_eq!(editor.tab_content_text(0, cx).as_ref(), name);
+                            assert_eq!(editor.suggested_filename(cx).as_ref(), name);
+                            assert_eq!(
+                                buffer.content_language_detection_enabled(),
+                                language.is_none()
+                            );
+                        }
+                    } else {
+                        assert!(buffer.file().is_some(), "{name}");
+                    }
+                });
+                if restored || !fails {
+                    break;
+                }
+                let item_id = editor.entity_id().as_u64() as ItemId;
+                workspace
+                    .update(cx, |workspace, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.set_should_serialize(true, cx);
+                            editor.serialize(workspace, item_id, true, cx)
+                        })
+                    })
+                    .expect("serialization was skipped")
+                    .await
+                    .expect("failed to persist recovered editor");
+                let persisted = database
+                    .get_serialized_editor(item_id, workspace_id)
+                    .expect("failed to read recovered editor")
+                    .expect("recovered editor was not persisted");
+                assert_eq!(persisted.abs_path, None);
+                assert_eq!(
+                    persisted.contents.as_deref(),
+                    contents.filter(|contents| !contents.is_empty())
+                );
+                editor = deserialize_editor(
+                    item_id,
+                    workspace_id,
+                    workspace.clone(),
+                    project.clone(),
+                    cx,
+                )
+                .await;
+            }
+        }
+        assert_eq!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .panes()
+                .iter()
+                .map(|pane| pane.read(cx).items_len())
+                .sum::<usize>()),
+            0
+        );
+        for (name, _, _, fails) in cases {
+            let abs_path = Path::new(path!("/restore")).join(name);
+            let metadata = fs.metadata(&abs_path).await.expect("final metadata");
+            if fails {
+                assert!(metadata.expect("directory was removed").is_dir);
+            } else {
+                assert!(metadata.is_none());
+            }
+        }
     }
 }
