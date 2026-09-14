@@ -159,6 +159,7 @@ mod tests {
         let menu_bounds = window
             .update(cx, |_, window, _| {
                 window
+                    .frame_state
                     .rendered_frame
                     .debug_bounds
                     .get("NESTED_MENU")
@@ -189,9 +190,10 @@ mod tests {
 
         window
             .update(cx, |_, window, _| {
-                assert_eq!(window.rendered_frame.deferred_draws.len(), 2);
+                assert_eq!(window.frame_state.rendered_frame.deferred_draws.len(), 2);
                 assert!(
                     window
+                        .frame_state
                         .rendered_frame
                         .debug_bounds
                         .contains_key("NESTED_MENU")

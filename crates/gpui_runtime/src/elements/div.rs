@@ -2506,6 +2506,7 @@ impl Interactivity {
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
                     window
+                        .frame_state
                         .next_frame
                         .debug_bounds
                         .insert(debug_selector.clone(), bounds);
@@ -2538,7 +2539,11 @@ impl Interactivity {
                                         // every item, and `focus_next` from a container would jump
                                         // to the first item in the whole window instead of its own.
                                         if let Some(focus_handle) = &self.tracked_focus_handle {
-                                            window.next_frame.tab_stops.insert(focus_handle);
+                                            window
+                                                .frame_state
+                                                .next_frame
+                                                .tab_stops
+                                                .insert(focus_handle);
                                         }
                                         if let Some(hitbox) = hitbox {
                                             #[cfg(debug_assertions)]
@@ -5590,7 +5595,12 @@ mod tests {
 
         let mut bounds = |selector: &'static str| {
             cx.update_window(window.into(), |_, window, _| {
-                window.rendered_frame.debug_bounds.get(selector).copied()
+                window
+                    .frame_state
+                    .rendered_frame
+                    .debug_bounds
+                    .get(selector)
+                    .copied()
             })
             .unwrap()
             .unwrap_or_else(|| panic!("{selector} was not rendered"))

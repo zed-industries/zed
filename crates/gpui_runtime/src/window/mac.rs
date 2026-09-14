@@ -25,11 +25,14 @@ impl MacWindowExt for Window {
 
         let bounds = self.snap_bounds(bounds);
         let content_mask = self.snapped_content_mask();
-        self.next_frame.scene.insert_primitive(PaintSurface {
-            order: 0,
-            bounds,
-            content_mask,
-            image_buffer,
-        });
+        self.frame_state
+            .next_frame
+            .scene
+            .insert_primitive(PaintSurface {
+                order: 0,
+                bounds,
+                content_mask,
+                image_buffer,
+            });
     }
 }

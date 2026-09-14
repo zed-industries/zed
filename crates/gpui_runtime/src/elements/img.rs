@@ -306,7 +306,7 @@ impl Element for Img {
                     match self.source.use_data(
                         self.image_cache
                             .clone()
-                            .or_else(|| window.image_cache_stack.last().cloned()),
+                            .or_else(|| window.frame_state.image_cache_stack.last().cloned()),
                         window,
                         cx,
                     ) {
@@ -474,7 +474,7 @@ impl Element for Img {
                 if let Some(Ok(data)) = source.use_data(
                     self.image_cache
                         .clone()
-                        .or_else(|| window.image_cache_stack.last().cloned()),
+                        .or_else(|| window.frame_state.image_cache_stack.last().cloned()),
                     window,
                     cx,
                 ) {
@@ -849,6 +849,7 @@ mod tests {
         });
         let full_tile_bounds = window.update(|window, _| {
             window
+                .frame_state
                 .rendered_frame
                 .scene
                 .polychrome_sprites
@@ -867,6 +868,7 @@ mod tests {
 
         let (rendered_bounds, rendered_tile_bounds, scale_factor) = window.update(|window, _| {
             let sprite = window
+                .frame_state
                 .rendered_frame
                 .scene
                 .polychrome_sprites
@@ -912,6 +914,7 @@ mod tests {
 
         let (rendered_bounds, scale_factor) = window.update(|window, _| {
             let sprite = window
+                .frame_state
                 .rendered_frame
                 .scene
                 .polychrome_sprites
@@ -944,6 +947,7 @@ mod tests {
         let (corner_radius, expected_corner_radius) = window.update(|window, _| {
             (
                 window
+                    .frame_state
                     .rendered_frame
                     .scene
                     .polychrome_sprites
