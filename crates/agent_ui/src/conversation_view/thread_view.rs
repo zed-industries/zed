@@ -3945,17 +3945,22 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let is_compacting = compaction.is_in_progress();
-        let summary = compaction.summary.clone();
+        let summary = &compaction.summary;
+        let error = compaction.error.clone();
+        let has_details = !summary.is_empty() || error.is_some();
         let is_expanded = self
             .entry_view_state
             .read(cx)
             .is_compaction_expanded(entry_ix);
+        let details = (is_expanded && has_details).then_some((summary, error));
 
         let id = format!("context-compaction-{entry_ix}");
-        let header_label = match compaction.status {
+        let header_label = match &compaction.status {
             acp_thread::ContextCompactionStatus::InProgress => "Compacting Context…",
             acp_thread::ContextCompactionStatus::Completed => "Context Compacted",
+            acp_thread::ContextCompactionStatus::Failed => "Compaction Failed",
             acp_thread::ContextCompactionStatus::Canceled => "Compaction Canceled",
+            acp_thread::ContextCompactionStatus::Other(_) => "Context Compaction",
         };
         let chevron_end = if is_expanded {
             IconName::ChevronUp
@@ -3970,13 +3975,13 @@ impl ThreadView {
                 Button::new(id, header_label)
                     .label_size(LabelSize::Small)
                     .loading(is_compacting)
-                    .disabled(is_compacting)
+                    .disabled(!has_details)
                     .start_icon(
                         Icon::new(IconName::Compact)
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .when(!is_compacting, |this| {
+                    .when(has_details, |this| {
                         this.end_icon(
                             Icon::new(chevron_end)
                                 .size(IconSize::XSmall)
@@ -4003,20 +4008,37 @@ impl ThreadView {
                     .border_color(gpui::transparent_black())
                     .rounded_sm()
                     .child(header)
-                    .when_some(summary.filter(|_| is_expanded), |this, summary| {
+                    .when_some(details, |this, (summary, error)| {
                         this.border_color(self.tool_card_border_color(cx))
                             .bg(cx.theme().colors().editor_background.opacity(0.2))
-                            .child(
-                                div()
-                                    .id(("compaction-summary", entry_ix))
-                                    .p_2()
-                                    .text_ui(cx)
-                                    .child(self.render_markdown(
-                                        summary,
-                                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                                        cx,
-                                    )),
-                            )
+                            .when(!summary.is_empty(), |this| {
+                                this.child(
+                                    v_flex()
+                                        .id(("compaction-summary", entry_ix))
+                                        .p_2()
+                                        .gap_2()
+                                        .text_ui(cx)
+                                        .children(summary.iter().enumerate().map(
+                                            |(content_ix, content)| {
+                                                self.render_output_content_block(
+                                                    entry_ix, content_ix, content, None, true,
+                                                    window, cx,
+                                                )
+                                            },
+                                        )),
+                                )
+                            })
+                            .when_some(error, |this, error| {
+                                let mut style =
+                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                                style.base_text_style.color = Color::Error.color(cx);
+                                this.child(
+                                    div()
+                                        .id(("compaction-error", entry_ix))
+                                        .p_2()
+                                        .child(self.render_markdown(error, style, cx)),
+                                )
+                            })
                             .child(
                                 h_flex()
                                     .border_t_1()
@@ -4048,7 +4070,7 @@ impl ThreadView {
             .into_any()
     }
 
-    fn toggle_compaction_expansion(
+    pub(super) fn toggle_compaction_expansion(
         &mut self,
         entry_ix: usize,
         window: &mut Window,
@@ -10208,37 +10230,15 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
-            ToolCallContent::ContentBlock(content) => {
-                if let Some((resource, markdown)) = content.embedded_resource() {
-                    self.render_embedded_resource_output(
-                        resource,
-                        markdown.cloned(),
-                        entry_ix,
-                        context_ix,
-                        tool_call,
-                        card_layout,
-                        window,
-                        cx,
-                    )
-                } else if let Some(resource_link) = content.resource_link() {
-                    self.render_resource_link(resource_link, cx)
-                } else if let Some(markdown) = content.markdown() {
-                    self.render_markdown_output(
-                        markdown.clone(),
-                        entry_ix,
-                        context_ix,
-                        tool_call,
-                        card_layout,
-                        window,
-                        cx,
-                    )
-                } else if let Some((image, _)) = content.image() {
-                    let location = tool_call.locations.first().cloned();
-                    self.render_image_output(entry_ix, image.clone(), location, card_layout, cx)
-                } else {
-                    Empty.into_any_element()
-                }
-            }
+            ToolCallContent::ContentBlock(content) => self.render_output_content_block(
+                entry_ix,
+                context_ix,
+                content,
+                Some(tool_call),
+                card_layout,
+                window,
+                cx,
+            ),
             ToolCallContent::Diff(diff) => {
                 self.render_diff_editor(entry_ix, diff, tool_call, has_failed, cx)
             }
@@ -10255,35 +10255,58 @@ impl ThreadView {
         }
     }
 
-    fn render_embedded_resource_output(
+    fn render_output_content_block(
         &self,
-        resource: &acp::EmbeddedResource,
-        markdown: Option<Entity<Markdown>>,
         entry_ix: usize,
         context_ix: usize,
-        tool_call: &ToolCall,
+        content: &acp_thread::ContentBlock,
+        tool_call: Option<&ToolCall>,
         card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        if let Some(markdown) = markdown {
-            return self.render_markdown_output(
-                markdown,
-                entry_ix,
-                context_ix,
-                tool_call,
-                card_layout,
-                window,
-                cx,
-            );
+        if let Some(markdown) = content.markdown() {
+            if let Some(tool_call) = tool_call {
+                self.render_markdown_output(
+                    markdown.clone(),
+                    entry_ix,
+                    context_ix,
+                    tool_call,
+                    card_layout,
+                    window,
+                    cx,
+                )
+            } else {
+                self.render_markdown(
+                    markdown.clone(),
+                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                    cx,
+                )
+                .into_any()
+            }
+        } else if let Some((resource, _)) = content.embedded_resource() {
+            if tool_call.is_some() {
+                self.render_embedded_resource_output(resource, context_ix, card_layout, cx)
+            } else {
+                self.render_embedded_resource_label(resource)
+            }
+        } else if let Some(resource_link) = content.resource_link() {
+            self.render_resource_link(resource_link, cx)
+        } else if let Some((image, _)) = content.image() {
+            let location = tool_call.and_then(|tool_call| tool_call.locations.first().cloned());
+            self.render_image_output(entry_ix, image.clone(), location, card_layout, cx)
+        } else {
+            Empty.into_any_element()
         }
+    }
 
-        let uri = match &resource.resource {
-            acp::EmbeddedResourceResource::BlobResourceContents(blob) => blob.uri.as_str(),
-            acp::EmbeddedResourceResource::TextResourceContents(text) => text.uri.as_str(),
-            _ => "",
-        };
-
+    fn render_embedded_resource_output(
+        &self,
+        resource: &acp::EmbeddedResource,
+        context_ix: usize,
+        card_layout: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         v_flex()
             .gap_1()
             .map(|this| {
@@ -10299,14 +10322,24 @@ impl ThreadView {
                         .border_color(self.tool_card_border_color(cx))
                 }
             })
-            .when(!uri.is_empty(), |this| {
-                this.child(
-                    Label::new(uri.to_string())
-                        .size(LabelSize::XSmall)
-                        .color(Color::Muted),
-                )
-            })
+            .child(self.render_embedded_resource_label(resource))
             .into_any_element()
+    }
+
+    fn render_embedded_resource_label(&self, resource: &acp::EmbeddedResource) -> AnyElement {
+        let uri = match &resource.resource {
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => blob.uri.as_str(),
+            acp::EmbeddedResourceResource::TextResourceContents(text) => text.uri.as_str(),
+            _ => "",
+        };
+        if uri.is_empty() {
+            Empty.into_any_element()
+        } else {
+            Label::new(uri.to_string())
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+                .into_any_element()
+        }
     }
 
     fn render_resource_link(
