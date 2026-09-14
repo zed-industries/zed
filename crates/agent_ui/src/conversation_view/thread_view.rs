@@ -7797,7 +7797,6 @@ impl ThreadView {
         group: SharedString,
         is_preview: bool,
         command: Entity<Markdown>,
-        tool_name: Option<&SharedString>,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -7823,20 +7822,9 @@ impl ThreadView {
         style.code_block_overflow_x_scroll = false;
 
         let header_bg = self.tool_card_header_bg(cx);
-        let mut tool_icon = Self::tool_call_icon_tooltip(tool_name, false).map(|tooltip| {
-            div()
-                .id(SharedString::from(format!("{group}-tool-icon")))
-                .flex_none()
-                .tooltip(Tooltip::text(tooltip))
-                .child(
-                    Icon::new(IconName::ToolTerminal)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-        });
         let run_command_label = if is_preview {
             Some(
-                h_flex().h_6().gap_1p5().children(tool_icon.take()).child(
+                h_flex().h_6().child(
                     Label::new("Run Command")
                         .buffer_font(cx)
                         .size(LabelSize::XSmall)
@@ -7867,16 +7855,7 @@ impl ThreadView {
             .p_1p5()
             .bg(header_bg)
             .when(is_preview, |this| this.pt_1().children(run_command_label))
-            .child(if let Some(tool_icon) = tool_icon {
-                h_flex()
-                    .items_start()
-                    .gap_1p5()
-                    .child(tool_icon)
-                    .child(div().min_w_0().flex_1().child(markdown_element))
-                    .into_any_element()
-            } else {
-                markdown_element.into_any_element()
-            })
+            .child(markdown_element)
             .child(div().absolute().top_1().right_1().child(copy_button))
     }
 
@@ -7940,7 +7919,6 @@ impl ThreadView {
             header_group.clone(),
             false,
             tool_call.label.clone(),
-            tool_call.tool_name.as_ref(),
             window,
             cx,
         );
@@ -8523,7 +8501,6 @@ impl ThreadView {
                         card_header_id.clone(),
                         true,
                         tool_call.label.clone(),
-                        tool_call.tool_name.as_ref(),
                         window,
                         cx,
                     ))
