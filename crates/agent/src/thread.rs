@@ -43,8 +43,8 @@ use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, ProviderErrorCategory, Role, SelectedModel, Speed,
     StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::{Project, trusted_worktrees::TrustedWorktrees};
@@ -169,16 +169,34 @@ impl std::fmt::Display for PromptId {
 pub(crate) const MAX_RETRY_ATTEMPTS: u8 = 4;
 pub(crate) const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum RetryStrategy {
-    ExponentialBackoff {
-        initial_delay: Duration,
-        max_attempts: u8,
-    },
-    Fixed {
-        delay: Duration,
-        max_attempts: u8,
-    },
+    ExponentialBackoff,
+    FixedDelay { delay: Duration, max_attempts: u8 },
+}
+
+impl RetryStrategy {
+    fn delay_after(&self, error: &LanguageModelCompletionError, attempt: u8) -> Option<Duration> {
+        if attempt == 0 {
+            return None;
+        }
+        match self {
+            RetryStrategy::ExponentialBackoff => (attempt <= MAX_RETRY_ATTEMPTS)
+                .then(|| error.retry_delay(attempt as usize))
+                .flatten(),
+            RetryStrategy::FixedDelay {
+                delay,
+                max_attempts,
+            } => (attempt <= *max_attempts).then_some(*delay),
+        }
+    }
+
+    fn max_attempts(&self) -> u8 {
+        match self {
+            RetryStrategy::ExponentialBackoff => MAX_RETRY_ATTEMPTS,
+            RetryStrategy::FixedDelay { max_attempts, .. } => *max_attempts,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -249,7 +267,12 @@ impl Message {
             Message::User(message) => message.to_markdown(),
             Message::Agent(message) => message.to_markdown(),
             Message::Resume => "[resume]\n".into(),
-            Message::Compaction(_) => "--- Context Compacted ---\n".into(),
+            Message::Compaction(CompactionInfo::Summary(summary)) => {
+                format!("## Context Compaction (Completed)\n\n{summary}\n\n")
+            }
+            Message::Compaction(CompactionInfo::ProviderNative { .. }) => {
+                "## Context Compaction (Completed)\n\n".into()
+            }
         }
     }
 
@@ -1514,7 +1537,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedReceiver<Result<ThreadEvent>> {
         let (tx, rx) = mpsc::unbounded();
-        let stream = ThreadEventStream(tx);
+        let stream = ThreadEventStream::new(tx);
         for (message_ix, message) in self.messages.iter().enumerate() {
             match &**message {
                 Message::User(user_message) => stream.send_user_message(user_message),
@@ -1619,9 +1642,10 @@ impl Thread {
             // We need to send both ToolCall and ToolCallUpdate events because the UI
             // only converts raw_output to displayable content in update_fields, not from_acp.
             stream
-                .0
+                .sender
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
                     acp::ToolCall::new(tool_call_id.clone(), tool_use.name.to_string())
+                        .name(tool_use.name.to_string())
                         .status(status)
                         .raw_input(tool_use.input.to_display_json()),
                 )))
@@ -2570,7 +2594,7 @@ impl Thread {
         cx.notify();
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
-        let event_stream = ThreadEventStream(events_tx);
+        let event_stream = ThreadEventStream::new(events_tx);
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         let task = cx.spawn({
             let event_stream = event_stream.clone();
@@ -2679,7 +2703,7 @@ impl Thread {
         self.cancel(cx).detach();
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
-        let event_stream = ThreadEventStream(events_tx);
+        let event_stream = ThreadEventStream::new(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
         self.clear_summary();
         let tools = self.enabled_tools(cx);
@@ -3157,103 +3181,119 @@ impl Thread {
         insertion: CompactionInsertion,
         cx: &mut AsyncApp,
     ) -> Result<ControlFlow<()>> {
+        if *cancellation_rx.borrow() {
+            return Ok(ControlFlow::Break(()));
+        }
+
         log::debug!("Running compaction");
         let compaction_id = acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
         event_stream.send_context_compaction(
             compaction_id.clone(),
             acp_thread::ContextCompactionStatus::InProgress,
         );
-        let stream = futures::select! {
-            result = model.stream_completion(request, cx).fuse() => result,
-            _ = cancellation_rx.changed().fuse() => {
-                if *cancellation_rx.borrow() {
-                    log::debug!("Compaction cancelled before request started");
-                    return Ok(ControlFlow::Break(()));
-                }
-                return Ok(ControlFlow::Continue(()));
-            }
-        };
-        let mut stream = stream?;
-
-        let mut summary = String::new();
-        loop {
-            let event = futures::select! {
-                event = stream.next().fuse() => event,
+        let result: Result<ControlFlow<()>> = async {
+            let stream = futures::select! {
+                result = model.stream_completion(request, cx).fuse() => result,
                 _ = cancellation_rx.changed().fuse() => {
                     if *cancellation_rx.borrow() {
-                        log::debug!("Compaction cancelled while summarizing");
+                        log::debug!("Compaction cancelled before request started");
                         return Ok(ControlFlow::Break(()));
                     }
-                    continue;
+                    return Ok(ControlFlow::Continue(()));
                 }
             };
+            let mut stream = stream?;
 
-            let Some(event) = event else {
-                break;
-            };
+            let mut summary = String::new();
+            loop {
+                let event = futures::select! {
+                    event = stream.next().fuse() => event,
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            log::debug!("Compaction cancelled while summarizing");
+                            return Ok(ControlFlow::Break(()));
+                        }
+                        continue;
+                    }
+                };
 
-            match event? {
-                LanguageModelCompletionEvent::Text(text) => {
-                    summary.push_str(&text);
-                    event_stream.send_context_compaction_update(compaction_id.clone(), &text);
+                let Some(event) = event else {
+                    break;
+                };
+
+                match event? {
+                    LanguageModelCompletionEvent::Text(text) => {
+                        summary.push_str(&text);
+                        event_stream.send_context_compaction_update(compaction_id.clone(), &text);
+                    }
+                    LanguageModelCompletionEvent::UsageUpdate(usage) => {
+                        this.update(cx, |this, _cx| {
+                            this.accumulate_token_usage(usage);
+                        })?;
+                    }
+                    LanguageModelCompletionEvent::Stop(_)
+                    | LanguageModelCompletionEvent::Started
+                    | LanguageModelCompletionEvent::Queued { .. }
+                    | LanguageModelCompletionEvent::Thinking { .. }
+                    | LanguageModelCompletionEvent::RedactedThinking { .. }
+                    | LanguageModelCompletionEvent::ReasoningDetails(_)
+                    | LanguageModelCompletionEvent::ToolUse(_)
+                    | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
+                    | LanguageModelCompletionEvent::StartMessage { .. }
+                    | LanguageModelCompletionEvent::Compaction(_) => {}
                 }
-                LanguageModelCompletionEvent::UsageUpdate(usage) => {
-                    this.update(cx, |this, _cx| {
-                        this.accumulate_token_usage(usage);
-                    })?;
-                }
-                LanguageModelCompletionEvent::Stop(_)
-                | LanguageModelCompletionEvent::Started
-                | LanguageModelCompletionEvent::Queued { .. }
-                | LanguageModelCompletionEvent::Thinking { .. }
-                | LanguageModelCompletionEvent::RedactedThinking { .. }
-                | LanguageModelCompletionEvent::ReasoningDetails(_)
-                | LanguageModelCompletionEvent::ToolUse(_)
-                | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
-                | LanguageModelCompletionEvent::StartMessage { .. }
-                | LanguageModelCompletionEvent::Compaction(_) => {}
             }
-        }
 
-        if *cancellation_rx.borrow() {
-            log::debug!("Compaction cancelled after summarizing");
-            return Ok(ControlFlow::Break(()));
-        }
+            if *cancellation_rx.borrow() {
+                log::debug!("Compaction cancelled after summarizing");
+                return Ok(ControlFlow::Break(()));
+            }
 
-        let summary = summary.trim().to_string();
-        if summary.is_empty() {
-            log::warn!("Compaction produced an empty summary");
-            return Err(anyhow::anyhow!("Compaction produced an empty summary"));
-        }
+            let summary = summary.trim().to_string();
+            if summary.is_empty() {
+                log::warn!("Compaction produced an empty summary");
+                return Err(anyhow::anyhow!("Compaction produced an empty summary"));
+            }
 
-        log::debug!("Compaction succeeded:\n{summary}");
-        event_stream.update_context_compaction_status(
-            compaction_id,
-            acp_thread::ContextCompactionStatus::Completed,
-        );
+            log::debug!("Compaction succeeded:\n{summary}");
+            event_stream.update_context_compaction_status(
+                compaction_id.clone(),
+                acp_thread::ContextCompactionStatus::Completed,
+            );
 
-        this.update(cx, |this, cx| {
-            let compaction = Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
-            match insertion {
-                CompactionInsertion::Auto { insertion_ix } => {
-                    if insertion_ix <= this.messages.len() {
-                        this.messages.insert(insertion_ix, compaction);
-                    } else {
+            this.update(cx, |this, cx| {
+                let compaction =
+                    Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
+                match insertion {
+                    CompactionInsertion::Auto { insertion_ix } => {
+                        if insertion_ix <= this.messages.len() {
+                            this.messages.insert(insertion_ix, compaction);
+                        } else {
+                            this.messages.push(compaction);
+                        }
+                    }
+                    CompactionInsertion::Manual { marker_id } => {
+                        this.messages.push(Arc::new(Message::User(UserMessage {
+                            id: marker_id,
+                            content: Arc::from([]),
+                        })));
                         this.messages.push(compaction);
                     }
                 }
-                CompactionInsertion::Manual { marker_id } => {
-                    this.messages.push(Arc::new(Message::User(UserMessage {
-                        id: marker_id,
-                        content: Arc::from([]),
-                    })));
-                    this.messages.push(compaction);
-                }
-            }
-            cx.notify();
-        })?;
+                cx.notify();
+            })?;
 
-        Ok(ControlFlow::Continue(()))
+            Ok(ControlFlow::Continue(()))
+        }
+        .await;
+
+        if result.is_err() {
+            event_stream.update_context_compaction_status(
+                compaction_id,
+                acp_thread::ContextCompactionStatus::Failed,
+            );
+        }
+        result
     }
 
     fn process_tool_result(
@@ -3291,7 +3331,11 @@ impl Thread {
         plan: Option<Plan>,
         cx: &mut Context<Self>,
     ) -> Result<acp_thread::RetryStatus> {
-        if let LanguageModelCompletionError::PromptTooLarge { tokens } = &error {
+        if let LanguageModelCompletionError::ProviderRejection {
+            category: ProviderErrorCategory::PromptTooLarge { tokens },
+            ..
+        } = &error
+        {
             self.mark_token_limit_exceeded(*tokens, cx);
         }
 
@@ -3313,28 +3357,17 @@ impl Thread {
             return Err(anyhow!(error));
         };
 
-        let max_attempts = match &strategy {
-            RetryStrategy::ExponentialBackoff { max_attempts, .. } => *max_attempts,
-            RetryStrategy::Fixed { max_attempts, .. } => *max_attempts,
-        };
-
-        if attempt > max_attempts {
+        let Some(delay) = strategy.delay_after(&error, attempt) else {
             return Err(anyhow!(error));
-        }
-
-        let delay = match &strategy {
-            RetryStrategy::ExponentialBackoff { initial_delay, .. } => {
-                let delay_secs = initial_delay.as_secs() * 2u64.pow((attempt - 1) as u32);
-                Duration::from_secs(delay_secs)
-            }
-            RetryStrategy::Fixed { delay, .. } => *delay,
         };
+        let delay = crate::jitter_retry_delay(delay);
+
         log::debug!("Retry attempt {attempt} with delay {delay:?}");
 
         Ok(acp_thread::RetryStatus {
             last_error: error.to_string().into(),
             attempt: attempt as usize,
-            max_attempts: max_attempts as usize,
+            max_attempts: strategy.max_attempts() as usize,
             started_at: Instant::now(),
             duration: delay,
             meta: None,
@@ -3837,6 +3870,7 @@ impl Thread {
             return Task::ready(None).shared();
         };
         let mut request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             ..Default::default()
@@ -3925,7 +3959,7 @@ impl Thread {
         log::debug!("Generating title with model: {:?}", model.name());
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
-        let request = build_thread_title_request(&self.messages, temperature);
+        let request = build_thread_title_request(&self.id, &self.messages, temperature);
 
         let title_generation = cx.spawn(async move |_this, cx| {
             stream_thread_title(model, request, cx)
@@ -4042,10 +4076,10 @@ impl Thread {
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             turn.tools
                 .iter()
-                .filter_map(|(tool_name, tool)| {
+                .map(|(tool_name, tool)| {
                     log::trace!("Including tool: {}", tool_name);
                     let mut description = tool.description().to_string();
-                    let mut schema = tool.input_schema(model.tool_input_format()).log_err()?;
+                    let mut schema = tool.input_schema();
                     // TEMPORARY (sandboxing feature flag): with the flag off,
                     // the fetch and create_directory descriptions/schemas must
                     // not advertise sandbox-dependent behavior (host grants,
@@ -4075,12 +4109,12 @@ impl Thread {
                             }
                         }
                     }
-                    Some(LanguageModelRequestTool::function(
+                    LanguageModelRequestTool::function(
                         tool_name.to_string(),
                         description,
                         schema,
                         tool.supports_input_streaming(),
-                    ))
+                    )
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -4509,104 +4543,48 @@ impl Thread {
 
     fn retry_strategy_for(error: &LanguageModelCompletionError) -> Option<RetryStrategy> {
         use LanguageModelCompletionError::*;
-        use http_client::StatusCode;
 
-        // General strategy here:
-        // - If retrying won't help (e.g. invalid API key or payload too large), return None so we don't retry at all.
-        // - If it's a time-based issue (e.g. server overloaded, rate limit exceeded), retry up to 4 times with exponential backoff.
-        // - If it's an issue that *might* be fixed by retrying (e.g. internal server error), retry up to 3 times.
         match error {
-            HttpResponseError {
-                status_code: StatusCode::TOO_MANY_REQUESTS,
-                ..
-            } => Some(RetryStrategy::ExponentialBackoff {
-                initial_delay: BASE_RETRY_DELAY,
-                max_attempts: MAX_RETRY_ATTEMPTS,
-            }),
-            ServerOverloaded { retry_after, .. } | RateLimitExceeded { retry_after, .. } => {
-                Some(RetryStrategy::Fixed {
-                    delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                    max_attempts: MAX_RETRY_ATTEMPTS,
+            // A rejection with no status (e.g. a content-policy rejection
+            // like `cyber_policy`) is permanent: retrying sends the same
+            // request and gets the same answer. A rejection with a
+            // non-retryable status (auth, payload too large, ...) is
+            // permanent for the same reason. Otherwise, honor the
+            // provider's requested delay when it gave one, and fall back to
+            // exponential backoff when it didn't.
+            ProviderRejection { retry_after, .. } => {
+                if !error.is_transient() {
+                    return None;
+                }
+                Some(match retry_after {
+                    Some(delay) => RetryStrategy::FixedDelay {
+                        delay: *delay,
+                        max_attempts: MAX_RETRY_ATTEMPTS,
+                    },
+                    None => RetryStrategy::ExponentialBackoff,
                 })
             }
-            UpstreamProviderError {
-                status,
-                retry_after,
-                ..
-            } => match *status {
-                StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
-                    Some(RetryStrategy::Fixed {
-                        delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                        max_attempts: MAX_RETRY_ATTEMPTS,
-                    })
-                }
-                StatusCode::INTERNAL_SERVER_ERROR => Some(RetryStrategy::Fixed {
-                    delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                    // Internal Server Error could be anything, retry up to 3 times.
+            ApiReadResponseError { .. } | HttpSend { .. } | DeserializeResponse { .. } => {
+                Some(RetryStrategy::FixedDelay {
+                    delay: BASE_RETRY_DELAY,
                     max_attempts: 3,
-                }),
-                status => {
-                    // There is no StatusCode variant for the unofficial HTTP 529 ("The service is overloaded"),
-                    // but we frequently get them in practice. See https://http.dev/529
-                    if status.as_u16() == 529 {
-                        Some(RetryStrategy::Fixed {
-                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                            max_attempts: MAX_RETRY_ATTEMPTS,
-                        })
-                    } else {
-                        Some(RetryStrategy::Fixed {
-                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                            max_attempts: 2,
-                        })
-                    }
-                }
-            },
-            ApiInternalServerError { .. } => Some(RetryStrategy::Fixed {
-                delay: BASE_RETRY_DELAY,
-                max_attempts: 3,
-            }),
-            ApiReadResponseError { .. }
-            | HttpSend { .. }
-            | DeserializeResponse { .. }
-            | BadRequestFormat { .. } => Some(RetryStrategy::Fixed {
-                delay: BASE_RETRY_DELAY,
-                max_attempts: 3,
-            }),
-            // Retrying these errors definitely shouldn't help.
-            HttpResponseError {
-                status_code:
-                    StatusCode::PAYLOAD_TOO_LARGE | StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED,
-                ..
+                })
             }
-            | AuthenticationError { .. }
-            | PermissionError { .. }
-            | NoApiKey { .. }
-            | ApiEndpointNotFound { .. }
-            | PromptTooLarge { .. }
-            | InvalidEncryptedContent { .. } => None,
+            // Retrying these errors definitely shouldn't help.
+            NoApiKey { .. } => None,
             // These errors might be transient, so retry them
             SerializeRequest { .. } | BuildRequestBody { .. } | StreamEndedUnexpectedly { .. } => {
-                Some(RetryStrategy::Fixed {
+                Some(RetryStrategy::FixedDelay {
                     delay: BASE_RETRY_DELAY,
                     max_attempts: 1,
                 })
             }
-            // Retry all other 4xx and 5xx errors once.
-            HttpResponseError { status_code, .. }
-                if status_code.is_client_error() || status_code.is_server_error() =>
-            {
-                Some(RetryStrategy::Fixed {
-                    delay: BASE_RETRY_DELAY,
-                    max_attempts: 3,
-                })
-            }
-            // Retrying won't help for Payment Required errors.
-            PaymentRequired => None,
             // Retrying won't help until the user consents to data retention
             // or switches models.
             DataRetentionConsentRequired { .. } => None,
-            // Conservatively assume that any other errors are non-retryable
-            HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
+            // `Other` includes mid-stream mapping failures that can be caused by
+            // a transient malformed or interrupted provider event.
+            Other(..) => Some(RetryStrategy::FixedDelay {
                 delay: BASE_RETRY_DELAY,
                 max_attempts: 2,
             }),
@@ -4900,10 +4878,12 @@ fn retained_user_request_messages_before(
 }
 
 pub fn build_thread_title_request(
+    thread_id: &acp::SessionId,
     messages: &[Arc<Message>],
     temperature: Option<f32>,
 ) -> LanguageModelRequest {
     let mut request = LanguageModelRequest {
+        thread_id: Some(thread_id.to_string()),
         intent: Some(CompletionIntent::ThreadSummarization),
         temperature,
         ..Default::default()
@@ -5110,8 +5090,8 @@ where
     ) -> SharedString;
 
     /// Returns the JSON schema that describes the tool's input.
-    fn input_schema(format: LanguageModelToolSchemaFormat) -> Schema {
-        language_model::tool_schema::root_schema_for::<Self::Input>(format)
+    fn input_schema() -> Schema {
+        language_model::tool_schema::root_schema_for::<Self::Input>()
     }
 
     /// Returns whether the tool supports streaming of tool use parameters.
@@ -5189,7 +5169,7 @@ pub trait AnyAgentTool {
     fn description(&self) -> SharedString;
     fn kind(&self) -> acp::ToolKind;
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
+    fn input_schema(&self) -> serde_json::Value;
     fn supports_input_streaming(&self) -> bool {
         false
     }
@@ -5240,10 +5220,10 @@ where
         self.0.initial_title(parsed_input, _cx)
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        let mut json = serde_json::to_value(T::input_schema(format))?;
-        language_model::tool_schema::adapt_schema_to_format(&mut json, format)?;
-        Ok(json)
+    fn input_schema(&self) -> serde_json::Value {
+        let mut schema = T::input_schema().to_value();
+        language_model::tool_schema::normalize_tool_schema(&mut schema);
+        schema
     }
 
     fn supports_provider(&self, provider: &LanguageModelProviderId) -> bool {
@@ -5317,23 +5297,33 @@ pub(crate) fn scoped_tool_call_id(
 }
 
 #[derive(Clone)]
-struct ThreadEventStream(mpsc::UnboundedSender<Result<ThreadEvent>>);
+struct ThreadEventStream {
+    sender: mpsc::UnboundedSender<Result<ThreadEvent>>,
+    active_compaction: Rc<RefCell<Option<acp_thread::ContextCompactionId>>>,
+}
 
 impl ThreadEventStream {
+    fn new(sender: mpsc::UnboundedSender<Result<ThreadEvent>>) -> Self {
+        Self {
+            sender,
+            active_compaction: Rc::default(),
+        }
+    }
+
     fn send_user_message(&self, message: &UserMessage) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::UserMessage(message.clone())))
             .ok();
     }
 
     fn send_text(&self, text: &str) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::AgentText(text.to_string())))
             .ok();
     }
 
     fn send_thinking(&self, text: &str) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::AgentThinking(text.to_string())))
             .ok();
     }
@@ -5346,7 +5336,7 @@ impl ThreadEventStream {
         kind: acp::ToolKind,
         input: serde_json::Value,
     ) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ToolCall(Self::initial_tool_call(
                 id,
                 tool_name,
@@ -5365,9 +5355,9 @@ impl ThreadEventStream {
         input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall::new(id.clone(), title)
+            .name(tool_name)
             .kind(kind)
             .raw_input(input)
-            .meta(acp_thread::meta_with_tool_name(tool_name))
     }
 
     fn update_tool_call_fields(
@@ -5376,7 +5366,7 @@ impl ThreadEventStream {
         fields: acp::ToolCallUpdateFields,
         meta: Option<acp::Meta>,
     ) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
                 acp::ToolCallUpdate::new(tool_call_id.clone(), fields)
                     .meta(meta)
@@ -5390,7 +5380,7 @@ impl ThreadEventStream {
         tool_call_id: &acp::ToolCallId,
         outcome: acp_thread::SelectedPermissionOutcome,
     ) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorizationResolved {
                 tool_call_id: tool_call_id.clone(),
                 outcome,
@@ -5399,7 +5389,9 @@ impl ThreadEventStream {
     }
 
     fn send_retry(&self, status: acp_thread::RetryStatus) {
-        self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
+        self.sender
+            .unbounded_send(Ok(ThreadEvent::Retry(status)))
+            .ok();
     }
 
     fn send_context_compaction(
@@ -5407,12 +5399,16 @@ impl ThreadEventStream {
         id: acp_thread::ContextCompactionId,
         status: acp_thread::ContextCompactionStatus,
     ) {
-        self.0
+        if status == acp_thread::ContextCompactionStatus::InProgress {
+            self.active_compaction.replace(Some(id.clone()));
+        }
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ContextCompaction(
                 acp_thread::ContextCompaction {
                     id,
                     status,
-                    summary: None,
+                    error: None,
+                    summary: Vec::new(),
                 },
             )))
             .ok();
@@ -5423,7 +5419,7 @@ impl ThreadEventStream {
         id: acp_thread::ContextCompactionId,
         summary_delta: &str,
     ) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ContextCompactionUpdate(
                 acp_thread::ContextCompactionUpdate {
                     id,
@@ -5439,7 +5435,12 @@ impl ThreadEventStream {
         id: acp_thread::ContextCompactionId,
         status: acp_thread::ContextCompactionStatus,
     ) {
-        self.0
+        if status != acp_thread::ContextCompactionStatus::InProgress
+            && self.active_compaction.borrow().as_ref() == Some(&id)
+        {
+            self.active_compaction.replace(None);
+        }
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ContextCompactionUpdate(
                 acp_thread::ContextCompactionUpdate {
                     id,
@@ -5451,17 +5452,26 @@ impl ThreadEventStream {
     }
 
     fn send_stop(&self, reason: acp::StopReason) {
-        self.0.unbounded_send(Ok(ThreadEvent::Stop(reason))).ok();
-    }
-
-    fn send_canceled(&self) {
-        self.0
-            .unbounded_send(Ok(ThreadEvent::Stop(acp::StopReason::Cancelled)))
+        self.sender
+            .unbounded_send(Ok(ThreadEvent::Stop(reason)))
             .ok();
     }
 
+    fn send_canceled(&self) {
+        // The bridge stops consuming at Stop, and its entry cancellation scan
+        // may have run before the queued compaction-start event was applied.
+        let compaction_id = self.active_compaction.replace(None);
+        if let Some(compaction_id) = compaction_id {
+            self.update_context_compaction_status(
+                compaction_id,
+                acp_thread::ContextCompactionStatus::Canceled,
+            );
+        }
+        self.send_stop(acp::StopReason::Cancelled);
+    }
+
     fn send_error(&self, error: impl Into<anyhow::Error>) {
-        self.0.unbounded_send(Err(error.into())).ok();
+        self.sender.unbounded_send(Err(error.into())).ok();
     }
 }
 
@@ -5521,7 +5531,7 @@ impl ToolCallEventStream {
         let stream = ToolCallEventStream::new(
             "test_id".into(),
             acp::ToolCallId::new("0:test_id"),
-            ThreadEventStream(events_tx),
+            ThreadEventStream::new(events_tx),
             None,
             cancellation_rx,
             sandbox_grants,
@@ -5542,7 +5552,7 @@ impl ToolCallEventStream {
         let stream = ToolCallEventStream::new(
             "test_id".into(),
             acp::ToolCallId::new("0:test_id"),
-            ThreadEventStream(events_tx),
+            ThreadEventStream::new(events_tx),
             None,
             cancellation_rx,
             Rc::new(RefCell::new(ThreadSandboxGrants::default())),
@@ -5655,7 +5665,7 @@ impl ToolCallEventStream {
 
     pub fn update_diff(&self, diff: Entity<acp_thread::Diff>) {
         self.stream
-            .0
+            .sender
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
                 acp_thread::ToolCallUpdateDiff {
                     id: self.tool_call_id.clone(),
@@ -5668,7 +5678,7 @@ impl ToolCallEventStream {
 
     pub fn subagent_spawned(&self, id: acp::SessionId) {
         self.stream
-            .0
+            .sender
             .unbounded_send(Ok(ThreadEvent::SubagentSpawned(id)))
             .ok();
     }
@@ -5866,25 +5876,28 @@ impl ToolCallEventStream {
         };
         cx.spawn(async move |cx| {
             let (response_tx, mut response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        tool_call: acp::ToolCallUpdate::new(
-                            tool_call_id.clone(),
-                            // Leave the title untouched so the card keeps
-                            // showing the command (matching the fallback flow).
-                            acp::ToolCallUpdateFields::new(),
-                        )
-                        .meta(acp_thread::meta_with_sandbox_authorization(
-                            sandbox_authorization_details,
-                        )),
-                        options,
-                        response: response_tx,
-                        context: None,
-                        kind: acp_thread::AuthorizationKind::PermissionGrant,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            tool_call: acp::ToolCallUpdate::new(
+                                tool_call_id.clone(),
+                                // Leave the title untouched so the card keeps
+                                // showing the command (matching the fallback flow).
+                                acp::ToolCallUpdateFields::new(),
+                            )
+                            .meta(
+                                acp_thread::meta_with_sandbox_authorization(
+                                    sandbox_authorization_details,
+                                ),
+                            ),
+                            options,
+                            response: response_tx,
+                            context: None,
+                            kind: acp_thread::AuthorizationKind::PermissionGrant,
+                        },
+                    )))
             {
                 log::error!("Failed to send sandbox authorization: {error}");
                 return Err(anyhow!("Failed to send sandbox authorization: {error}"));
@@ -5983,24 +5996,25 @@ impl ToolCallEventStream {
         let tool_call_id = self.tool_call_id.clone();
         cx.spawn(async move |_cx| {
             let (response_tx, response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        tool_call: acp::ToolCallUpdate::new(
-                            tool_call_id,
-                            // Leave the title untouched so the card keeps
-                            // showing the command (matching the escalation
-                            // flow).
-                            acp::ToolCallUpdateFields::new(),
-                        )
-                        .meta(acp_thread::meta_with_sandbox_authorization(details)),
-                        options,
-                        response: response_tx,
-                        context: None,
-                        kind: acp_thread::AuthorizationKind::PermissionGrant,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            tool_call: acp::ToolCallUpdate::new(
+                                tool_call_id,
+                                // Leave the title untouched so the card keeps
+                                // showing the command (matching the escalation
+                                // flow).
+                                acp::ToolCallUpdateFields::new(),
+                            )
+                            .meta(acp_thread::meta_with_sandbox_authorization(details)),
+                            options,
+                            response: response_tx,
+                            context: None,
+                            kind: acp_thread::AuthorizationKind::PermissionGrant,
+                        },
+                    )))
             {
                 log::error!("Failed to send Windows-drive sandbox warning: {error}");
                 return Err(anyhow!(
@@ -6255,28 +6269,29 @@ impl ToolCallEventStream {
         let thread = self.thread.clone();
         cx.spawn(async move |cx| {
             let (response_tx, response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        // Deliberately leave the tool-call title untouched so
-                        // the card keeps showing the *command* (not the
-                        // failure reason): it's critical the user can see what
-                        // they're approving to run unsandboxed. The reason is
-                        // surfaced separately by the fallback details / warning.
-                        tool_call: acp::ToolCallUpdate::new(
-                            tool_call_id.clone(),
-                            acp::ToolCallUpdateFields::new(),
-                        )
-                        .meta(
-                            acp_thread::meta_with_sandbox_fallback_authorization(details),
-                        ),
-                        options,
-                        response: response_tx,
-                        context: None,
-                        kind: acp_thread::AuthorizationKind::ActionChoice,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            // Deliberately leave the tool-call title untouched so
+                            // the card keeps showing the *command* (not the
+                            // failure reason): it's critical the user can see what
+                            // they're approving to run unsandboxed. The reason is
+                            // surfaced separately by the fallback details / warning.
+                            tool_call: acp::ToolCallUpdate::new(
+                                tool_call_id.clone(),
+                                acp::ToolCallUpdateFields::new(),
+                            )
+                            .meta(
+                                acp_thread::meta_with_sandbox_fallback_authorization(details),
+                            ),
+                            options,
+                            response: response_tx,
+                            context: None,
+                            kind: acp_thread::AuthorizationKind::ActionChoice,
+                        },
+                    )))
             {
                 log::error!("Failed to send sandbox fallback authorization: {error}");
                 return Err(anyhow!(
@@ -6368,17 +6383,18 @@ impl ToolCallEventStream {
             }
 
             let (response_tx, response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        tool_call: acp::ToolCallUpdate::new(tool_call_id.clone(), fields),
-                        options,
-                        response: response_tx,
-                        context: None,
-                        kind: acp_thread::AuthorizationKind::ActionChoice,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            tool_call: acp::ToolCallUpdate::new(tool_call_id.clone(), fields),
+                            options,
+                            response: response_tx,
+                            context: None,
+                            kind: acp_thread::AuthorizationKind::ActionChoice,
+                        },
+                    )))
             {
                 log::error!("Failed to send tool call decision prompt: {error}");
                 return Err(anyhow!("Failed to send tool call decision prompt: {error}"));
@@ -6406,14 +6422,14 @@ impl ToolCallEventStream {
         cx: &mut App,
     ) -> Task<Result<acp::CreateElicitationResponse>> {
         let stream = self.stream.clone();
-        let tool_use_id = self.tool_use_id.clone();
+        let tool_call_id = self.tool_call_id.clone();
         cx.spawn(async move |_cx| {
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) =
                 stream
-                    .0
+                    .sender
                     .unbounded_send(Ok(ThreadEvent::Elicitation(ElicitationRequest {
-                        tool_call_id: acp::ToolCallId::new(tool_use_id.to_string()),
+                        tool_call_id,
                         message,
                         schema,
                         response: response_tx,
@@ -6476,20 +6492,21 @@ impl ToolCallEventStream {
         };
         cx.spawn(async move |cx| {
             let (response_tx, mut response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        tool_call: acp::ToolCallUpdate::new(
-                            tool_call_id.clone(),
-                            acp::ToolCallUpdateFields::new().title(title),
-                        ),
-                        options,
-                        response: response_tx,
-                        context,
-                        kind: acp_thread::AuthorizationKind::PermissionGrant,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            tool_call: acp::ToolCallUpdate::new(
+                                tool_call_id.clone(),
+                                acp::ToolCallUpdateFields::new().title(title),
+                            ),
+                            options,
+                            response: response_tx,
+                            context,
+                            kind: acp_thread::AuthorizationKind::PermissionGrant,
+                        },
+                    )))
             {
                 log::error!("Failed to send tool call authorization: {error}");
                 return Err(anyhow!("Failed to send tool call authorization: {error}"));
@@ -6895,7 +6912,7 @@ mod tests {
             });
 
             let (event_tx, _event_rx) = mpsc::unbounded();
-            let event_stream = ThreadEventStream(event_tx);
+            let event_stream = ThreadEventStream::new(event_tx);
 
             (thread, event_stream)
         })
@@ -6925,7 +6942,10 @@ mod tests {
         let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));
 
         assert_eq!(message.role(), Role::User);
-        assert_eq!(message.to_markdown(), "--- Context Compacted ---\n");
+        assert_eq!(
+            message.to_markdown(),
+            "## Context Compaction (Completed)\n\nOlder context\n\n"
+        );
 
         let request_messages = message.to_request();
         assert_eq!(request_messages.len(), 1);
@@ -6984,6 +7004,7 @@ mod tests {
     #[gpui::test]
     async fn test_thread_summary_request_uses_compacted_history(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let thread_id = thread.read_with(cx, |thread, _| thread.id().to_string());
         let summary_model = Arc::new(FakeLanguageModel::default());
 
         let summary_task = cx.update(|cx| {
@@ -7013,6 +7034,10 @@ mod tests {
         cx.run_until_parked();
 
         let summary_request = summary_model.pending_completions().pop().unwrap();
+        assert_eq!(
+            summary_request.thread_id.as_deref(),
+            Some(thread_id.as_str())
+        );
         assert_eq!(
             summary_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
@@ -7047,8 +7072,10 @@ mod tests {
             agent_text_message("after assistant"),
         ];
 
-        let request = build_thread_title_request(&messages, Some(0.2));
+        let request =
+            build_thread_title_request(&acp::SessionId::new("thread-id"), &messages, Some(0.2));
 
+        assert_eq!(request.thread_id.as_deref(), Some("thread-id"));
         assert_eq!(request.intent, Some(CompletionIntent::ThreadSummarization));
         assert_eq!(request.temperature, Some(0.2));
         assert_eq!(
@@ -8431,6 +8458,135 @@ mod tests {
         assert_eq!(deny.option_kind, acp::PermissionOptionKind::RejectOnce);
     }
 
+    #[test]
+    fn test_retry_strategy_does_not_retry_status_less_provider_rejection() {
+        // A rejection like OpenAI's `cyber_policy` content-policy error has
+        // no HTTP status of its own (it arrives as a Zed cloud upstream
+        // error code); retrying sends the identical request and gets the
+        // identical rejection, so it must not retry.
+        let error = LanguageModelCompletionError::from_provider_response(
+            language_model::OPEN_AI_PROVIDER_NAME,
+            None,
+            Some("cyber_policy".to_string()),
+            "This content was flagged as potentially violating our terms of use.".to_string(),
+            None,
+            language_model::ProviderErrorCategory::Other,
+        );
+        let LanguageModelCompletionError::ProviderRejection {
+            category,
+            code,
+            message,
+            ..
+        } = &error
+        else {
+            panic!("expected a ProviderRejection, got {error:?}");
+        };
+        assert_eq!(*category, language_model::ProviderErrorCategory::Other);
+        assert_eq!(code.as_deref(), Some("cyber_policy"));
+        assert_eq!(
+            message,
+            "This content was flagged as potentially violating our terms of use."
+        );
+
+        assert!(Thread::retry_strategy_for(&error).is_none());
+    }
+
+    #[test]
+    fn test_retry_strategy_does_not_retry_non_retryable_status() {
+        // 401 Unauthorized is permanent: retrying with the same credentials
+        // fails the same way.
+        let error = LanguageModelCompletionError::from_http_status(
+            language_model::LanguageModelProviderName::new("Anthropic"),
+            http_client::StatusCode::UNAUTHORIZED,
+            "invalid x-api-key".to_string(),
+            None,
+        );
+        assert!(Thread::retry_strategy_for(&error).is_none());
+    }
+
+    #[test]
+    fn test_retry_strategy_retries_status_less_transient_category() {
+        let error = LanguageModelCompletionError::from_provider_response(
+            language_model::ANTHROPIC_PROVIDER_NAME,
+            None,
+            Some("rate_limit_error".to_string()),
+            "Rate limit exceeded".to_string(),
+            None,
+            language_model::ProviderErrorCategory::RateLimit,
+        );
+
+        assert_eq!(
+            Thread::retry_strategy_for(&error),
+            Some(RetryStrategy::ExponentialBackoff)
+        );
+    }
+
+    #[test]
+    fn test_retry_strategy_uses_exponential_backoff_without_retry_after() {
+        for status in [
+            http_client::StatusCode::TOO_MANY_REQUESTS,
+            http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            http_client::StatusCode::SERVICE_UNAVAILABLE,
+            http_client::StatusCode::from_u16(529).unwrap(),
+        ] {
+            let error = LanguageModelCompletionError::from_http_status(
+                language_model::LanguageModelProviderName::new("Anthropic"),
+                status,
+                "upstream failure".to_string(),
+                None,
+            );
+            let strategy = Thread::retry_strategy_for(&error)
+                .unwrap_or_else(|| panic!("expected a retry strategy for status {status}"));
+            assert_eq!(
+                strategy,
+                RetryStrategy::ExponentialBackoff,
+                "status {status} should use exponential backoff when no retry_after is given"
+            );
+            assert_eq!(strategy.delay_after(&error, 0), None);
+            assert_eq!(
+                strategy.delay_after(&error, 1),
+                Some(BASE_RETRY_DELAY),
+                "first retry should use the base delay"
+            );
+            assert_eq!(
+                strategy.delay_after(&error, 2),
+                Some(BASE_RETRY_DELAY * 2),
+                "second retry should double the delay"
+            );
+            assert_eq!(
+                strategy.delay_after(&error, MAX_RETRY_ATTEMPTS + 1),
+                None,
+                "retrying should stop once attempts are exhausted"
+            );
+        }
+    }
+
+    #[test]
+    fn test_retry_strategy_honors_retry_after_with_a_fixed_delay() {
+        let retry_after = Duration::from_secs(3);
+        let error = LanguageModelCompletionError::from_http_status(
+            language_model::LanguageModelProviderName::new("Anthropic"),
+            http_client::StatusCode::TOO_MANY_REQUESTS,
+            "rate limited".to_string(),
+            Some(retry_after),
+        );
+        let strategy = Thread::retry_strategy_for(&error).expect("429 should retry");
+        assert_eq!(
+            strategy,
+            RetryStrategy::FixedDelay {
+                delay: retry_after,
+                max_attempts: MAX_RETRY_ATTEMPTS,
+            }
+        );
+        // The delay stays fixed across attempts, unlike exponential backoff.
+        assert_eq!(strategy.delay_after(&error, 1), Some(retry_after));
+        assert_eq!(
+            strategy.delay_after(&error, MAX_RETRY_ATTEMPTS),
+            Some(retry_after)
+        );
+        assert_eq!(strategy.delay_after(&error, MAX_RETRY_ATTEMPTS + 1), None);
+    }
+
     #[gpui::test]
     async fn test_replay_tool_call_replays_image_content(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
@@ -8502,35 +8658,50 @@ mod tests {
             })
         });
 
+        let registered_tool_call_id = scoped_tool_call_id(0, &registered_tool_use_id).to_string();
+        let missing_tool_call_id = scoped_tool_call_id(0, &missing_tool_use_id).to_string();
+        let mut tool_names_by_id = HashMap::default();
         let mut tool_use_ids_with_image_content = HashSet::default();
         while let Some(event) = replay_events.next().await {
             let event = event.unwrap();
-            if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
-                event
-                && let Some(content) = &update.fields.content
-                && content.iter().any(|content| {
-                    matches!(
-                        content,
-                        acp::ToolCallContent::Content(acp::Content {
-                            content: acp::ContentBlock::Image(_),
-                            ..
+            match event {
+                ThreadEvent::ToolCall(tool_call) => {
+                    tool_names_by_id.insert(tool_call.tool_call_id.to_string(), tool_call.name);
+                }
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
+                    if update.fields.content.as_ref().is_some_and(|content| {
+                        content.iter().any(|content| {
+                            matches!(
+                                content,
+                                acp::ToolCallContent::Content(acp::Content {
+                                    content: acp::ContentBlock::Image(_),
+                                    ..
+                                })
+                            )
                         })
-                    )
-                })
-            {
-                tool_use_ids_with_image_content.insert(update.tool_call_id.to_string());
+                    }) =>
+                {
+                    tool_use_ids_with_image_content.insert(update.tool_call_id.to_string());
+                }
+                _ => {}
             }
         }
 
         // Both tool uses live in the message pushed above, at index 0 (see
         // `scoped_tool_call_id`).
-        assert!(
-            tool_use_ids_with_image_content
-                .contains(&scoped_tool_call_id(0, &registered_tool_use_id).to_string())
+        assert!(tool_use_ids_with_image_content.contains(&registered_tool_call_id));
+        assert!(tool_use_ids_with_image_content.contains(&missing_tool_call_id));
+        assert_eq!(
+            tool_names_by_id
+                .get(&registered_tool_call_id)
+                .and_then(Option::as_deref),
+            Some(ReplayImageTool::NAME)
         );
-        assert!(
-            tool_use_ids_with_image_content
-                .contains(&scoped_tool_call_id(0, &missing_tool_use_id).to_string())
+        assert_eq!(
+            tool_names_by_id
+                .get(&missing_tool_call_id)
+                .and_then(Option::as_deref),
+            Some("missing_image_tool")
         );
     }
 

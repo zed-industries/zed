@@ -436,6 +436,24 @@ struct ZedAiConfiguration {
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
+    use super::*;
+
+    pub fn young_account_configuration() -> AnyElement {
+        ZedAiConfiguration {
+            is_connected: true,
+            plan: Some(Plan::ZedBusiness),
+            is_zed_model_provider_enabled: true,
+            eligible_for_trial: false,
+            account_too_young: true,
+            compact: true,
+            sign_in_callback: Arc::new(|_, _| {}),
+        }
+        .into_any_element()
+    }
+}
+
 fn zed_ai_description(
     is_connected: bool,
     plan: Option<Plan>,
@@ -450,7 +468,9 @@ fn zed_ai_description(
         Some(Plan::ZedPro) => {
             "You have access to Zed's hosted models through your Pro subscription."
         }
-        Some(Plan::ZedProTrial) => "You have access to Zed's hosted models through your Pro trial.",
+        Some(Plan::ZedProTrial) => {
+            "Your Pro trial includes $5 of GPT Luna and unlimited edit predictions for 14 days from trial start."
+        }
         Some(Plan::ZedStudent) => {
             "You have access to Zed's hosted models through your Student subscription."
         }
@@ -466,7 +486,7 @@ fn zed_ai_description(
         }
         Some(Plan::ZedFree) | None => {
             if eligible_for_trial {
-                "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
+                "Start a free trial with $5 of GPT Luna and unlimited edit predictions for 14 days from trial start."
             } else {
                 "Subscribe for access to Zed's hosted models."
             }
@@ -498,7 +518,7 @@ impl RenderOnce for ZedAiConfiguration {
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
                 .into_any_element()
         } else if self.plan.is_none() || self.eligible_for_trial {
-            Button::new("start_trial", "Start 14-day Free Pro Trial")
+            Button::new("start_trial", "Start Free Trial")
                 .when(!self.compact, |this| {
                     this.full_width().label_size(LabelSize::Small)
                 })
@@ -538,7 +558,10 @@ impl RenderOnce for ZedAiConfiguration {
 
         v_flex()
             .gap_2()
-            .when(!self.compact, |this| this.w_full())
+            .debug_selector(|| "zed-ai-configuration".into())
+            .when(!self.compact || self.account_too_young, |this| {
+                this.w_full()
+            })
             .map(|this| {
                 if self.account_too_young {
                     this.child(YoungAccountBanner).child(

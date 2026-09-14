@@ -65,6 +65,7 @@ language = { workspace = true, features = ["test-support"] }
 language_extension.workspace = true
 parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
+remote = { workspace = true, features = ["test-support"] }
 reqwest_client.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 theme_settings.workspace = true
@@ -75,5 +76,5 @@ zlog.workspace = true
 name = "extension_compilation_benchmark"
 harness = false
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

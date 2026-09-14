@@ -26,6 +26,21 @@ pub fn is_light(cx: &mut App) -> bool {
     cx.theme().appearance.is_light()
 }
 
+pub fn buffer_text_style(cx: &App) -> gpui::TextStyle {
+    let settings = theme::theme_settings(cx);
+    let buffer_font = settings.buffer_font(cx);
+    gpui::TextStyle {
+        color: cx.theme().colors().text,
+        font_family: buffer_font.family.clone(),
+        font_features: buffer_font.features.clone(),
+        font_fallbacks: buffer_font.fallbacks.clone(),
+        font_size: gpui::AbsoluteLength::from(settings.buffer_font_size(cx)),
+        font_weight: buffer_font.weight,
+        line_height: gpui::relative(1.),
+        ..gpui::TextStyle::default()
+    }
+}
+
 /// Returns the platform-appropriate label for the "reveal in file manager" action.
 pub fn reveal_in_file_manager_label(is_remote: bool) -> &'static str {
     if cfg!(target_os = "macos") && !is_remote {

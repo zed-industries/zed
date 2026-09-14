@@ -43,7 +43,6 @@ markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 notifications.workspace = true
-panel.workspace = true
 picker.workspace = true
 project.workspace = true
 prompt_store.workspace = true
@@ -74,9 +73,6 @@ git_ui_core.workspace = true
 zed_actions.workspace = true
 ztracing.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
-
 [dev-dependencies]
 ctor.workspace = true
 db = { workspace = true, features = ["test-support"] }
@@ -96,5 +92,5 @@ unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 
-[package.metadata.cargo-machete]
-ignored = ["remote_connection", "tracing"]
+[package.metadata.cargo-shear]
+ignored = ["component", "remote_connection", "tracing"]

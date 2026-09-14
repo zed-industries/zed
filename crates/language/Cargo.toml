@@ -115,5 +115,5 @@ theme_settings.workspace = true
 name = "highlight_map"
 harness = false
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]
