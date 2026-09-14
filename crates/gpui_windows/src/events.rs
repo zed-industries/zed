@@ -1,4 +1,9 @@
-use std::{cell::Cell, rc::Rc, sync::atomic::Ordering};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    sync::atomic::Ordering,
+};
 
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -10,7 +15,7 @@ use windows::{
         UI::{
             Controls::*,
             HiDpi::*,
-            Input::{Ime::*, KeyboardAndMouse::*},
+            Input::{Ime::*, KeyboardAndMouse::*, Pointer::*},
             WindowsAndMessaging::*,
         },
     },
@@ -70,6 +75,60 @@ impl DrawCoordinator {
 
 struct DrawWindowGuard<'a> {
     coordinator: &'a DrawCoordinator,
+}
+
+#[derive(Clone, Copy)]
+struct ActiveTouch {
+    id: TouchId,
+    position: Point<Pixels>,
+}
+
+#[derive(Default)]
+pub(crate) struct WindowsTouchState {
+    active: HashMap<u32, ActiveTouch>,
+    claimed: HashSet<u32>,
+    next_id: u64,
+}
+
+impl WindowsTouchState {
+    fn begin(
+        &mut self,
+        pointer_id: u32,
+        position: Point<Pixels>,
+    ) -> Option<(ActiveTouch, Option<ActiveTouch>)> {
+        let next_id = self.next_id.checked_add(1)?;
+        self.next_id = next_id;
+        let touch = ActiveTouch {
+            id: TouchId(next_id),
+            position,
+        };
+        self.claimed.insert(pointer_id);
+        let replaced = self.active.insert(pointer_id, touch);
+        Some((touch, replaced))
+    }
+
+    fn update(&mut self, pointer_id: u32, position: Point<Pixels>) -> Option<ActiveTouch> {
+        let touch = self.active.get_mut(&pointer_id)?;
+        touch.position = position;
+        Some(*touch)
+    }
+
+    fn finish(&mut self, pointer_id: u32) -> Option<ActiveTouch> {
+        self.claimed.remove(&pointer_id);
+        self.active.remove(&pointer_id)
+    }
+
+    fn cancel(&mut self, pointer_id: u32, terminal: bool) -> (Option<ActiveTouch>, bool) {
+        let claimed = self.claimed.contains(&pointer_id);
+        if terminal {
+            self.claimed.remove(&pointer_id);
+        }
+        (self.active.remove(&pointer_id), claimed)
+    }
+
+    fn is_claimed(&self, pointer_id: u32) -> bool {
+        self.claimed.contains(&pointer_id)
+    }
 }
 
 impl Drop for DrawWindowGuard<'_> {
@@ -149,6 +208,12 @@ impl WindowsWindowInner {
             }
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(handle, wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(handle, wparam, lparam),
+            WM_POINTERDOWN => self.handle_pointer_msg(handle, wparam, TouchPhase::Started),
+            WM_POINTERUPDATE => self.handle_pointer_msg(handle, wparam, TouchPhase::Moved),
+            WM_POINTERUP => self.handle_pointer_msg(handle, wparam, TouchPhase::Ended),
+            WM_POINTERCAPTURECHANGED => {
+                self.handle_pointer_msg(handle, wparam, TouchPhase::Cancelled)
+            }
             WM_SYSKEYUP => self.handle_syskeyup_msg(wparam, lparam),
             WM_KEYUP => self.handle_keyup_msg(wparam, lparam),
             WM_GPUI_KEYDOWN => self.handle_keydown_msg(wparam, lparam),
@@ -413,6 +478,118 @@ impl WindowsWindowInner {
         }
 
         Some(0)
+    }
+
+    fn handle_pointer_msg(&self, handle: HWND, wparam: WPARAM, phase: TouchPhase) -> Option<isize> {
+        let pointer_id = wparam.loword() as u32;
+        let mut pointer_info = POINTER_INFO::default();
+        if let Err(error) = unsafe { GetPointerInfo(pointer_id, &mut pointer_info) } {
+            log::error!("failed to get pointer information: {error}");
+            return self.cancel_active_touch(pointer_id, touch_phase_is_terminal(phase));
+        }
+
+        if pointer_info.pointerType != PT_TOUCH {
+            if self.state.touch_state.borrow().is_claimed(pointer_id) {
+                return self.cancel_active_touch(pointer_id, touch_phase_is_terminal(phase));
+            }
+            return None;
+        }
+
+        // Windows adjusts ptPixelLocation with its input prediction. Gesture
+        // classification and hit testing must use the unadjusted digitizer point.
+        let Some(position) = self.pointer_position(handle, pointer_info.ptPixelLocationRaw) else {
+            return self.cancel_active_touch(pointer_id, touch_phase_is_terminal(phase));
+        };
+        let predicted_position = if phase == TouchPhase::Moved {
+            self.pointer_position(handle, pointer_info.ptPixelLocation)
+        } else {
+            None
+        };
+
+        let phase = if pointer_info.pointerFlags.contains(POINTER_FLAG_CANCELED) {
+            TouchPhase::Cancelled
+        } else {
+            phase
+        };
+        let touch = match phase {
+            TouchPhase::Started => {
+                let (touch, replaced) = self
+                    .state
+                    .touch_state
+                    .borrow_mut()
+                    .begin(pointer_id, position)?;
+                if let Some(replaced) = replaced {
+                    self.dispatch_touch(TouchEvent {
+                        id: replaced.id,
+                        phase: TouchPhase::Cancelled,
+                        position: replaced.position,
+                        predicted_position: None,
+                        force: None,
+                    });
+                }
+                Some(touch)
+            }
+            TouchPhase::Moved => self
+                .state
+                .touch_state
+                .borrow_mut()
+                .update(pointer_id, position),
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.state.touch_state.borrow_mut().finish(pointer_id)
+            }
+        };
+        let Some(touch) = touch else {
+            return Some(0);
+        };
+
+        self.dispatch_touch(TouchEvent {
+            id: touch.id,
+            phase,
+            position,
+            predicted_position,
+            force: None,
+        });
+
+        // Consuming every message in a claimed touch sequence prevents Windows
+        // from promoting the same contact to compatibility mouse events.
+        Some(0)
+    }
+
+    fn pointer_position(&self, handle: HWND, mut position: POINT) -> Option<Point<Pixels>> {
+        if let Err(error) = unsafe { ScreenToClient(handle, &mut position).ok() } {
+            log::error!("failed to convert pointer position to client coordinates: {error}");
+            return None;
+        }
+        Some(logical_point(
+            position.x as f32,
+            position.y as f32,
+            self.state.scale_factor.get(),
+        ))
+    }
+
+    fn cancel_active_touch(&self, pointer_id: u32, terminal: bool) -> Option<isize> {
+        let (touch, claimed) = self
+            .state
+            .touch_state
+            .borrow_mut()
+            .cancel(pointer_id, terminal);
+        if let Some(touch) = touch {
+            self.dispatch_touch(TouchEvent {
+                id: touch.id,
+                phase: TouchPhase::Cancelled,
+                position: touch.position,
+                predicted_position: None,
+                force: None,
+            });
+        }
+        claimed.then_some(0)
+    }
+
+    fn dispatch_touch(&self, event: TouchEvent) {
+        if let Some(mut callback) = self.state.callbacks.input.take() {
+            callback(PlatformInput::Touch(event));
+            self.state.callbacks.input.set(Some(callback));
+        }
     }
 
     fn handle_syskeyup_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
@@ -1802,5 +1979,51 @@ fn notify_frame_changed(handle: HWND) {
                 | SWP_NOZORDER,
         )
         .log_err();
+    }
+}
+
+fn touch_phase_is_terminal(phase: TouchPhase) -> bool {
+    matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled)
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{point, px};
+
+    use super::WindowsTouchState;
+
+    #[test]
+    fn windows_pointer_ids_do_not_reuse_touch_ids() {
+        let mut state = WindowsTouchState::default();
+        let first = state.begin(7, point(px(1.), px(2.))).unwrap().0;
+        assert_eq!(state.finish(7).unwrap().id, first.id);
+
+        let second = state.begin(7, point(px(3.), px(4.))).unwrap().0;
+        assert_ne!(second.id, first.id);
+    }
+
+    #[test]
+    fn active_touch_keeps_its_last_position_for_cancellation() {
+        let mut state = WindowsTouchState::default();
+        state.begin(9, point(px(1.), px(2.))).unwrap();
+        let updated = state.update(9, point(px(5.), px(8.))).unwrap();
+        assert_eq!(state.finish(9).unwrap().position, updated.position);
+        assert!(!state.is_claimed(9));
+    }
+
+    #[test]
+    fn locally_cancelled_touch_remains_claimed_until_os_terminal_message() {
+        let mut state = WindowsTouchState::default();
+        state.begin(11, point(px(1.), px(2.))).unwrap();
+
+        let (cancelled, claimed) = state.cancel(11, false);
+        assert!(cancelled.is_some());
+        assert!(claimed);
+        assert!(state.is_claimed(11));
+
+        let (cancelled, claimed) = state.cancel(11, true);
+        assert!(cancelled.is_none());
+        assert!(claimed);
+        assert!(!state.is_claimed(11));
     }
 }
