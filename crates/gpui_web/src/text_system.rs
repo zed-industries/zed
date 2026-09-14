@@ -5,8 +5,8 @@ use crate::run_replacements::{Replacement, apply_replacements, collect_candidate
 use anyhow::{Context as _, Result, ensure};
 use gpui::{
     Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, FontStyle, GlyphId, Hsla, LineLayout,
-    Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ShapedGlyph, Size, TextRenderingMode, point, px, size,
+    MissingGlyphSink, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ShapedGlyph, Size, TextRenderingMode, point, px, size,
 };
 use gpui_wgpu::CosmicTextSystem;
 use parking_lot::RwLock;
@@ -24,6 +24,7 @@ pub(crate) struct WebTextSystem {
 
 #[derive(Default)]
 struct State {
+    missing_glyph_sink: Option<Arc<dyn MissingGlyphSink>>,
     descriptors: HashMap<FontId, Font>,
     canvas_fonts: Vec<Arc<CanvasFont>>,
     canvas_font_ids: HashMap<FontId, FontId>,
@@ -246,6 +247,11 @@ impl WebTextSystem {
 }
 
 impl PlatformTextSystem for WebTextSystem {
+    fn set_missing_glyph_sink(&self, sink: Option<Arc<dyn MissingGlyphSink>>) {
+        // Cosmic must not report missing glyphs before Canvas has a chance to replace them.
+        self.state.write().missing_glyph_sink = sink;
+    }
+
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.native.add_fonts(fonts)?;
         self.state.write().measurements.clear();
@@ -407,6 +413,20 @@ impl PlatformTextSystem for WebTextSystem {
             };
         let mut layout = self.native.layout_line(text, font_size, &native_runs);
         self.apply_fallback(text, &native_runs, &mut layout);
+        let sink = self.state.read().missing_glyph_sink.clone();
+        if let Some(sink) = sink {
+            let missing_indices = layout
+                .runs
+                .iter()
+                .filter(|run| run.font_id.0 & CANVAS_FONT_BIT == 0)
+                .flat_map(|run| &run.glyphs)
+                .filter(|glyph| glyph.id.0 == 0)
+                .map(|glyph| glyph.index);
+            sink.report(
+                self.native
+                    .missing_glyphs(text, &native_runs, missing_indices),
+            );
+        }
         layout
     }
 
