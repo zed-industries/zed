@@ -24,7 +24,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, path_list::SerializedPathList};
+use util::path_list::SerializedPathList;
 use uuid::Uuid;
 
 #[derive(
@@ -260,11 +260,13 @@ impl SerializedPaneGroup {
         workspace_id: WorkspaceId,
         workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
-    ) -> Option<(
-        Member,
-        Option<Entity<Pane>>,
-        Vec<Option<Box<dyn ItemHandle>>>,
-    )> {
+    ) -> Result<
+        Option<(
+            Member,
+            Option<Entity<Pane>>,
+            Vec<Option<Box<dyn ItemHandle>>>,
+        )>,
+    > {
         match self {
             SerializedPaneGroup::Group {
                 axis,
@@ -277,7 +279,7 @@ impl SerializedPaneGroup {
                 for child in children {
                     if let Some((new_member, active_pane, new_items)) = child
                         .deserialize(project, workspace_id, workspace.clone(), cx)
-                        .await
+                        .await?
                     {
                         members.push(new_member);
                         items.extend(new_items);
@@ -286,50 +288,42 @@ impl SerializedPaneGroup {
                 }
 
                 if members.is_empty() {
-                    return None;
+                    return Ok(None);
                 }
 
                 if members.len() == 1 {
-                    return Some((members.remove(0), current_active_pane, items));
+                    return Ok(Some((members.remove(0), current_active_pane, items)));
                 }
 
-                Some((
+                Ok(Some((
                     Member::Axis(PaneAxis::load(axis.0, members, flexes)),
                     current_active_pane,
                     items,
-                ))
+                )))
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
-                let pane = workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        workspace.add_pane(window, cx).downgrade()
-                    })
-                    .log_err()?;
+                let pane = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.add_pane(window, cx).downgrade()
+                })?;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
                     .deserialize_to(project, &pane, workspace_id, workspace.clone(), cx)
                     .await
-                    .context("Could not deserialize pane)")
-                    .log_err()?;
+                    .context("Could not deserialize pane")?;
 
-                if pane
-                    .read_with(cx, |pane, _| pane.items_len() != 0)
-                    .log_err()?
-                {
-                    let pane = pane.upgrade()?;
-                    Some((
+                if pane.read_with(cx, |pane, _| pane.items_len() != 0)? {
+                    let pane = pane.upgrade().context("restored pane was released")?;
+                    Ok(Some((
                         Member::Pane(pane.clone()),
                         active.then_some(pane),
                         new_items,
-                    ))
+                    )))
                 } else {
-                    let pane = pane.upgrade()?;
-                    workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            workspace.force_remove_pane(&pane, &None, window, cx)
-                        })
-                        .log_err()?;
-                    None
+                    let pane = pane.upgrade().context("restored pane was released")?;
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        workspace.force_remove_pane(&pane, &None, window, cx)
+                    })?;
+                    Ok(None)
                 }
             }
         }
@@ -360,6 +354,10 @@ impl SerializedPane {
         workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
+        anyhow::ensure!(
+            workspace.read_with(cx, |workspace, _| workspace.database_id())? == Some(workspace_id),
+            "restored pane workspace ID does not match its owner"
+        );
         let mut item_tasks = Vec::new();
         let mut active_item_index = None;
         let mut preview_item_index = None;
@@ -385,12 +383,24 @@ impl SerializedPane {
         }
 
         let mut items = Vec::new();
+        let mut first_error = None;
         for (serialized_item, item_handle) in self
             .children
             .iter()
             .zip(futures::future::join_all(item_tasks).await)
         {
-            let item_handle = item_handle.log_err();
+            let item_handle = match item_handle {
+                Ok(item_handle) => Some(item_handle),
+                Err(error) => {
+                    first_error.get_or_insert_with(|| {
+                        error.context(format!(
+                            "Could not deserialize {} item {}",
+                            serialized_item.kind, serialized_item.item_id
+                        ))
+                    });
+                    None
+                }
+            };
             items.push(item_handle.clone());
 
             if let Some(item_handle) = item_handle {
@@ -442,7 +452,10 @@ impl SerializedPane {
             pane.set_pinned_count(pinned_count);
         })?;
 
-        anyhow::Ok(items)
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(items),
+        }
     }
 }
 
