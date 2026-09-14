@@ -21,6 +21,7 @@ use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsSto
 use sha2::{Digest as _, Sha256};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
+use util::ResultExt;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -46,7 +47,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
-    fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
+    fetch_models_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
 }
 
 impl State {
@@ -122,10 +124,20 @@ impl State {
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
         if self.is_authenticated() {
-            let task = self.fetch_models(cx);
+            let fetch_task = self.fetch_models(cx);
+            let task = cx.spawn(async move |this, cx| {
+                let result = fetch_task.await;
+                this.update(cx, |this, _cx| {
+                    this.last_fetch_models_error =
+                        result.as_ref().err().map(|error| format!("{error:#}"));
+                })
+                .ok();
+                result.log_err();
+            });
             self.fetch_models_task.replace(task);
         } else {
             self.available_models.clear();
+            self.last_fetch_models_error = None;
         }
     }
 }
@@ -156,6 +168,7 @@ impl OpenRouterLanguageModelProvider {
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
+                last_fetch_models_error: None,
             }
         });
 
@@ -1177,5 +1190,66 @@ mod tests {
             "effort should not be sent when reasoning is disabled"
         );
         assert_eq!(reasoning.max_tokens, None);
+    }
+
+    struct TestCredentialsProvider;
+
+    impl CredentialsProvider for TestCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let http_client =
+            http_client::FakeHttpClient::create(|_request| async move {
+                Ok(http_client::Response::builder().status(401).body(
+                    http_client::AsyncBody::from(r#"{"error":{"message":"invalid key"}}"#),
+                )?)
+            });
+        let provider = cx.update(|cx| {
+            OpenRouterLanguageModelProvider::new(http_client, Arc::new(TestCredentialsProvider), cx)
+        });
+
+        cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
+        );
     }
 }

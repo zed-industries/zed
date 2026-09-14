@@ -22,6 +22,7 @@ use std::sync::LazyLock;
 use std::{collections::BTreeMap, sync::Arc};
 use ui::{ButtonLike, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*};
 use ui_input::InputField;
+use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 use language_model::chat_completion::ChatCompletionEventMapper;
@@ -53,7 +54,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<lmstudio::Model>,
-    fetch_model_task: Option<Task<Result<()>>>,
+    fetch_model_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
     _subscription: Subscription,
 }
 
@@ -120,7 +122,16 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
+        let fetch_task = self.fetch_models(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_task.await;
+            this.update(cx, |this, _cx| {
+                this.last_fetch_models_error =
+                    result.as_ref().err().map(|error| format!("{error:#}"));
+            })
+            .ok();
+            result.log_err();
+        });
         self.fetch_model_task.replace(task);
     }
 
@@ -205,6 +216,7 @@ impl LmStudioLanguageModelProvider {
                     http_client,
                     available_models: Default::default(),
                     fetch_model_task: None,
+                    last_fetch_models_error: None,
                     _subscription: subscription,
                 }
             }),
@@ -902,5 +914,68 @@ impl Render for ConfigurationView {
                         }
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+
+    struct TestCredentialsProvider;
+
+    impl CredentialsProvider for TestCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(500)
+                .body(http_client::AsyncBody::from("server error"))?)
+        });
+        let provider = cx.update(|cx| {
+            LmStudioLanguageModelProvider::new(http_client, Arc::new(TestCredentialsProvider), cx)
+        });
+        cx.run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
+        );
     }
 }

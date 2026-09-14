@@ -71,7 +71,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<llama_cpp::Model>,
-    fetch_model_task: Option<Task<Result<()>>>,
+    fetch_model_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
     /// Router-mode task on `/models/sse`; re-runs discovery as models load/unload.
     model_event_task: Option<Task<()>>,
     /// Same `Arc` as the provider's; re-discovery keeps these cells in sync.
@@ -332,7 +333,16 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
+        let fetch_task = self.fetch_models(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_task.await;
+            this.update(cx, |this, _cx| {
+                this.last_fetch_models_error =
+                    result.as_ref().err().map(|error| format!("{error:#}"));
+            })
+            .ok();
+            result.log_err();
+        });
         self.fetch_model_task.replace(task);
     }
 }
@@ -496,6 +506,7 @@ impl LlamaCppLanguageModelProvider {
                     http_client,
                     fetched_models: Default::default(),
                     fetch_model_task: None,
+                    last_fetch_models_error: None,
                     model_event_task: None,
                     capability_cells,
                     loading_progress,
@@ -1896,6 +1907,39 @@ mod tests {
         assert_eq!(
             &*model_request_authorizations.lock(),
             &[None, Some("Bearer loaded-key".to_string())]
+        );
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(500)
+                .body(http_client::AsyncBody::from("server error"))?)
+        });
+        let credentials_provider = Arc::new(FakeCredentialsProvider {
+            api_key: b"test-key".to_vec(),
+        });
+        let provider = cx
+            .update(|cx| LlamaCppLanguageModelProvider::new(http_client, credentials_provider, cx));
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            provider
+                .state
+                .update(cx, |state, cx| state.restart_fetch_models_task(cx))
+        });
+        cx.run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
         );
     }
 }
