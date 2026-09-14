@@ -11,11 +11,6 @@ extern crate self as gpui;
 #[cfg(feature = "platform")]
 mod platform_entry;
 
-#[cfg(doc)]
-pub mod _accessibility;
-#[cfg(doc)]
-pub mod _ownership_and_data_flow;
-
 /// Do not touch, here be dragons for use by gpui_macros and such.
 #[doc(hidden)]
 pub use gpui_api::private;

@@ -372,7 +372,7 @@ pub trait InputHandler: 'static {
 
     /// Get the bounds of the focused text element in window coordinates, if known.
     ///
-    /// This is the pull counterpart to the [`PlatformWindow::update_ime_position`]
+    /// This is the pull counterpart to the [`crate::PlatformWindow::update_ime_position`]
     /// push: mobile platforms ask for the focused element's geometry when they
     /// need it (e.g. to frame system text-interaction UI overlaid on the focused
     /// element).

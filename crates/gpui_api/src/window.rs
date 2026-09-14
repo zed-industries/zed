@@ -1141,6 +1141,20 @@ enum InputModality {
 }
 
 /// Holds the state for a specific window.
+///
+/// # Authoring API
+///
+/// An [`Element`] drives a frame through the calls below. Together they are the
+/// stable authoring surface; everything else on this type is runtime machinery
+/// that elements and components should not depend on. See the
+/// [authoring guide](crate::_authoring).
+///
+/// - Layout: [`Window::request_layout`], [`Window::request_measured_layout`]
+///   and [`Window::layout_bounds`].
+/// - Hit testing: [`Window::insert_hitbox`].
+/// - Drawing: [`Window::paint_quad`], [`Window::paint_path`],
+///   [`Window::paint_image`], [`Window::paint_drop_shadows`] and
+///   [`Window::paint_inset_shadows`].
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
@@ -3063,6 +3077,11 @@ impl Window {
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [`Scene`], use [`Self::present`].
+    ///
+    /// Runtime API: the visual test harnesses render frames with this, but
+    /// elements and components should not call it. See the
+    /// [authoring guide](crate::_authoring).
+    #[doc(hidden)]
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         // Drain every draw in profiler builds so a previous frame's
@@ -3267,7 +3286,7 @@ impl Window {
     /// frame-request loop, so they call this after each measured update to
     /// submit the frame like production presentation would.
     #[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
-    pub fn present_if_needed(&mut self) {
+    pub(crate) fn present_if_needed(&mut self) {
         if self.needs_present.get() {
             self.present();
         }
@@ -4185,6 +4204,7 @@ impl Window {
     /// after the element's background so they layer on top of the fill.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
+    /// Part of the [authoring surface](crate::_authoring) for custom elements.
     pub fn paint_drop_shadows(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -4221,6 +4241,7 @@ impl Window {
     /// Paint the inset shadows from `shadows` into the scene at the current z-index. Should
     /// be called after the element's background so the shadow layers on top of the fill.
     /// Drop shadows are skipped; paint those with [`Self::paint_drop_shadows`] before the background.
+    /// Part of the [authoring surface](crate::_authoring) for custom elements.
     pub fn paint_inset_shadows(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -4311,6 +4332,7 @@ impl Window {
     /// Note that the `quad.corner_radii` are allowed to exceed the bounds, creating sharp corners
     /// where the circular arcs meet. This will not display well when combined with dashed borders.
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
+    /// Part of the [authoring surface](crate::_authoring) for custom elements.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
@@ -4382,6 +4404,7 @@ impl Window {
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
+    /// Part of the [authoring surface](crate::_authoring) for custom elements.
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
         self.invalidator.debug_assert_paint();
 
@@ -4701,6 +4724,7 @@ impl Window {
     ///
     /// The visible region rendered is `bounds.intersect(&image_bounds)`, with `corner_radii`
     /// applied to `bounds`.
+    /// Part of the [authoring surface](crate::_authoring) for custom elements.
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -4852,6 +4876,7 @@ impl Window {
     /// calls to the [`Element::request_layout`] trait method and enables any element to participate in layout.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
+    /// Part of the [authoring surface](crate::_authoring) for custom elements.
     #[must_use]
     pub fn request_layout(
         &mut self,
@@ -4883,6 +4908,7 @@ impl Window {
     /// returns a `Size`.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
+    /// Part of the [authoring surface](crate::_authoring) for custom elements.
     pub fn request_measured_layout<F>(&mut self, style: Style, measure: F) -> LayoutId
     where
         F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
@@ -4916,7 +4942,7 @@ impl Window {
     /// After calling it, you can request the bounds of the given layout node id or any descendant.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn compute_layout(
+    pub(crate) fn compute_layout(
         &mut self,
         layout_id: LayoutId,
         available_space: Size<AvailableSpace>,
@@ -4938,6 +4964,7 @@ impl Window {
     /// GPUI itself automatically in order to pass your element its `Bounds` automatically.
     ///
     /// This method should only be called as part of element drawing.
+    /// Part of the [authoring surface](crate::_authoring) for custom elements.
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
         self.invalidator.debug_assert_prepaint();
 
@@ -4956,6 +4983,7 @@ impl Window {
     /// to determine whether the inserted hitbox was the topmost.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
+    /// Part of the [authoring surface](crate::_authoring) for custom elements.
     pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 

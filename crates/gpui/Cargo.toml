@@ -130,7 +130,6 @@ ignored = [
     "bindgen",
     "font-kit",
 ]
-ignored-paths = ["src/_ownership_and_data_flow.rs"]
 
 [[example]]
 name = "hello_world"

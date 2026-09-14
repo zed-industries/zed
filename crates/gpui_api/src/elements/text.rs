@@ -20,7 +20,7 @@ use std::{
 
 /// An [`Element`] that renders text.
 ///
-/// In general, [`Text`] objects should be created via the [`text`] macro:
+/// In general, [`Text`] objects should be created via the [`text!`](crate::text) macro:
 /// ```rust
 /// # use gpui::*;
 /// # fn render() -> impl IntoElement {
@@ -40,7 +40,7 @@ use std::{
 /// if the ID changes, then the screen reader will be notified that a node has
 /// been removed, and a new node has been added.
 ///
-/// When using the [`text`] macro, each invocation of the macro will get a
+/// When using the [`text!`](crate::text) macro, each invocation of the macro will get a
 /// unique ID, derived from its position in the source code (filename, line, and
 /// column). For example:
 /// ```rust
@@ -56,11 +56,11 @@ use std::{
 /// // equal, because the same `text!` invocation produced them
 /// assert_eq!(x.id(), y.id());
 /// ```
-/// When the contents of an invocation of [`text`] do not change, this
+/// When the contents of an invocation of [`text!`](crate::text) do not change, this
 /// distinction is less relevant (with the caveat that you still need to take
 /// care to ensure that duplicate IDs do not appear).
 ///
-/// However, when a [`text`] invocation's argument *does* change, you should
+/// However, when a [`text!`](crate::text) invocation's argument *does* change, you should
 /// consider whether this change should be reported as a node "updating its
 /// contents", or an old node being destroyed and a new node being created.
 #[derive(Debug, Clone)]
@@ -72,8 +72,9 @@ pub struct Text {
 impl Text {
     /// Create a new [`Text`] element with a specific ID.
     ///
-    /// If you want a unique ID to be assigned automatically, use the [`text`]
-    /// macro. The docs for [`Text`] have more detail about choosing IDs.
+    /// If you want a unique ID to be assigned automatically, use the
+    /// [`text!`](crate::text) macro. The docs for [`Text`] have more detail about
+    /// choosing IDs.
     #[inline]
     pub const fn new(id: ElementId, text: SharedString) -> Self {
         Self { id: Some(id), text }
@@ -82,7 +83,7 @@ impl Text {
     /// Create a new [`Text`] element that is inaccessible to screen readers.
     ///
     /// In order for text to be accessible to screen readers, it must have an ID
-    /// provided. If you want text to be accessible, either use [`text`] to have
+    /// provided. If you want text to be accessible, either use [`text!`](crate::text) to have
     /// an ID automatically assigned, or use [`Text::new`] to manually assign an
     /// ID.
     ///
@@ -125,7 +126,7 @@ impl DerefMut for Text {
     }
 }
 
-/// Trivial hash function for the location information produced by the [`text`]
+/// Trivial hash function for the location information produced by the [`text!`](crate::text)
 /// macro. Not covered by semver guarantees. Performance is not particularly
 /// significant because it's only used on small strings in const contexts.
 #[doc(hidden)]

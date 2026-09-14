@@ -154,3 +154,4 @@ ignored = [
     "getrandom",
     "tracing",
 ]
+ignored-paths = ["src/_ownership_and_data_flow.rs"]

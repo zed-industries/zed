@@ -61,6 +61,13 @@ mod window;
 #[cfg(any(test, feature = "test-support"))]
 pub use proptest;
 
+/// Accessibility guide: exposing UI state to assistive technology.
+pub mod _accessibility;
+/// Authoring guide: the two public tiers of the UI API.
+pub mod _authoring;
+/// How GPUI's ownership and data-flow model works.
+pub mod _ownership_and_data_flow;
+
 /// Do not touch, here be dragons for use by gpui_macros and such.
 #[doc(hidden)]
 pub mod private {

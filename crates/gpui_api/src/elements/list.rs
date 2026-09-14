@@ -596,7 +596,7 @@ impl ListState {
 
     /// Scroll the list to the very end (past the last item).
     ///
-    /// Unlike [`scroll_to_reveal_item`], this uses the total item count as the
+    /// Unlike [`Self::scroll_to_reveal_item`], this uses the total item count as the
     /// anchor, so the list's layout pass will walk backwards from the end and
     /// always show the bottom of the last item — even when that item is still
     /// growing (e.g. during streaming).

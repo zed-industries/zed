@@ -204,7 +204,7 @@
 //! [`AccessibleAction`].
 //!
 //! To respond to an accessible action, use
-//! [`div().on_a11y_action()`][InteractiveElement::on_a11y_action]:
+//! [`div().on_a11y_action()`][crate::StatefulInteractiveElement::on_a11y_action]:
 //! ```rust,ignore
 //! div()
 //!     .id("my-slider")
@@ -233,11 +233,11 @@
 //! impl Element for MyCustomTextField {
 //!
 //!     // ...
-//!     
+//!
 //!     fn a11y_role(&self) -> Option<Role> {
 //!         Some(Role::TextInput)
 //!     }
-//!     
+//!
 //!     fn a11y_synthetic_children(
 //!         &mut self,
 //!         _prepaint: &mut Self::PrepaintState,

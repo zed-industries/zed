@@ -46,8 +46,10 @@ use std::{
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
-/// You can create custom elements by implementing this trait, see the module-level documentation
-/// for more details.
+///
+/// You can create custom elements by implementing this trait. See the
+/// [authoring guide](crate::_authoring) for the three-phase lifecycle and for the
+/// methods an element may call while laying out and painting.
 pub trait Element: 'static + IntoElement {
     /// The type of state returned from [`Element::request_layout`]. A mutable reference to this state is subsequently
     /// provided to [`Element::prepaint`] and [`Element::paint`].
