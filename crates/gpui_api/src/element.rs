@@ -72,6 +72,10 @@ pub trait Element: 'static + IntoElement {
 
     /// Before an element can be painted, we need to know where it's going to be and how big it is.
     /// Use this method to request a layout from Taffy and initialize the element's state.
+    ///
+    /// `inspector_id` addresses this element in the debug inspector. Treat it as
+    /// an opaque token: pass it to whatever drives this element's children, and
+    /// otherwise ignore it.
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
@@ -82,6 +86,9 @@ pub trait Element: 'static + IntoElement {
 
     /// After laying out an element, we need to commit its bounds to the current frame for hitbox
     /// purposes. The state argument is the same state that was returned from [`Element::request_layout()`].
+    ///
+    /// `inspector_id` addresses this element in the debug inspector; treat it as
+    /// an opaque token, as in [`Element::request_layout`].
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
@@ -94,6 +101,9 @@ pub trait Element: 'static + IntoElement {
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
+    ///
+    /// `inspector_id` addresses this element in the debug inspector; treat it as
+    /// an opaque token, as in [`Element::request_layout`].
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,

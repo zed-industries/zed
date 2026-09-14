@@ -1,4 +1,10 @@
 /// A unique identifier for an element that can be inspected.
+///
+/// This is an internal token threaded through [`Element`](crate::Element)'s
+/// lifecycle so the debug inspector can address an element's node. Element
+/// authors pass it through to whatever drives their children and otherwise
+/// ignore it; see the [authoring guide](crate::_authoring).
+#[doc(hidden)]
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub struct InspectorElementId {
     /// Stable part of the ID.
