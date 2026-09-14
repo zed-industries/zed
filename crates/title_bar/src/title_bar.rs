@@ -14,7 +14,7 @@ pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
-use project::{linked_worktree_short_name, repo_identity_path};
+use project::{linked_worktree_short_name, repo_identity_path, repo_identity_path_if_local};
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -41,6 +41,7 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings as _, SettingsStore};
 
 use std::any::TypeId;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;
@@ -63,6 +64,18 @@ pub use onboarding_banner::restore_banner;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
+
+fn linked_worktree_name_anchor<'a>(
+    main_worktree_path: Option<&'a Path>,
+    repository_identity_path: Option<&'a Path>,
+    is_linked_worktree: bool,
+) -> Option<&'a Path> {
+    main_worktree_path.or_else(|| {
+        is_linked_worktree
+            .then_some(repository_identity_path)
+            .flatten()
+    })
+}
 
 actions!(
     collab,
@@ -245,29 +258,33 @@ impl Render for TitleBar {
                 .map(|name| SharedString::from(name.to_string()));
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                linked_worktree_name = repo
-                    .main_worktree_abs_path()
-                    .and_then(|main_worktree_path| {
-                        linked_worktree_short_name(
-                            main_worktree_path,
-                            repo.work_directory_abs_path.as_ref(),
-                        )
-                    })
-                    .or_else(|| {
-                        repo.is_linked_worktree()
-                            .then_some(project_name.clone())
-                            .flatten()
-                    });
-
-                let identity = repo_identity_path(&repo.common_dir_abs_path);
+                let identity = repo_identity_path(&repo.common_dir_abs_path, repo.path_style);
+                let identity_fallback =
+                    repo_identity_path_if_local(&repo.common_dir_abs_path, repo.path_style);
+                linked_worktree_name = linked_worktree_name_anchor(
+                    repo.main_worktree_abs_path(),
+                    identity_fallback,
+                    repo.is_linked_worktree(),
+                )
+                .and_then(|name_anchor_path| {
+                    linked_worktree_short_name(
+                        name_anchor_path,
+                        repo.work_directory_abs_path.as_ref(),
+                    )
+                })
+                .or_else(|| {
+                    repo.is_linked_worktree()
+                        .then_some(project_name.clone())
+                        .flatten()
+                });
 
                 let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
-                    identity.file_stem()
+                    identity.file_stem().and_then(|n| n.to_str())
                 } else {
-                    identity.file_name()
+                    repo.path_style.file_name(identity)
                 };
 
-                if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
+                if let Some(repo_name) = display_name {
                     let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
                     let name = if visible_worktrees_in_repo == 1 {
                         if let Ok(relative) =
@@ -1314,7 +1331,7 @@ impl TitleBar {
                         )
                         .separator()
                     })
-                    .map(|this| {
+                    .when(is_signed_in, |this| {
                         let mut this = this.header("Organization");
 
                         for (organization, plan) in &organizations {
@@ -1420,5 +1437,50 @@ impl TitleBar {
                 .into()
             })
             .anchor(Anchor::TopRight)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use util::paths::PathStyle;
+
+    #[test]
+    fn test_foreign_path_style_does_not_use_repository_identity_as_name_anchor() {
+        let (common_dir, foreign_path_style) = match PathStyle::local() {
+            PathStyle::Unix => (Path::new(r"C:\repos\zed"), PathStyle::Windows),
+            PathStyle::Windows => (Path::new("/repos/zed"), PathStyle::Unix),
+        };
+        let repository_identity_path = repo_identity_path_if_local(common_dir, foreign_path_style);
+
+        assert_eq!(
+            linked_worktree_name_anchor(None, repository_identity_path, true),
+            None
+        );
+    }
+
+    #[test]
+    fn test_local_path_style_uses_bare_repository_worktree_name() {
+        let (repository_identity_path, work_directory_path) = match PathStyle::local() {
+            PathStyle::Unix => (
+                Path::new("/repos/zed"),
+                Path::new("/worktrees/zed/plum-warbler/zed"),
+            ),
+            PathStyle::Windows => (
+                Path::new(r"C:\repos\zed"),
+                Path::new(r"C:\worktrees\zed\plum-warbler\zed"),
+            ),
+        };
+
+        let repository_identity_path =
+            repo_identity_path_if_local(repository_identity_path, PathStyle::local());
+        let name_anchor_path = linked_worktree_name_anchor(None, repository_identity_path, true);
+
+        assert_eq!(
+            name_anchor_path.and_then(|name_anchor_path| {
+                linked_worktree_short_name(name_anchor_path, work_directory_path)
+            }),
+            Some("plum-warbler".into())
+        );
     }
 }

@@ -40,3 +40,6 @@ client = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-shear]
+ignored = ["component"]

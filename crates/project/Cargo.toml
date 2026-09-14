@@ -129,5 +129,5 @@ util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

@@ -19,7 +19,7 @@ pub enum VerticalAlignment {
 
 #[derive(Default, Clone, Copy)]
 pub enum RowIdentifiers {
-    /// Show original line numbers from CSV file
+    /// Show original line numbers from the source file
     #[default]
     SrcLines,
     /// Show sequential row numbers starting from 1
@@ -36,7 +36,7 @@ pub enum FilterSortOrder {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct CsvPreviewSettings {
+pub(crate) struct TabularDataPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
     pub(crate) numbering_type: RowIdentifiers,
@@ -47,7 +47,7 @@ pub(crate) struct CsvPreviewSettings {
     pub(crate) multiline_cells_enabled: bool,
 }
 
-impl CsvPreviewSettings {
+impl TabularDataPreviewSettings {
     /// `multiline_cells_enabled` only makes sense with `VariableList`, which
     /// supports per-row heights; `UniformList` requires every row to share one
     /// height, so multiline is never honored there regardless of the setting.

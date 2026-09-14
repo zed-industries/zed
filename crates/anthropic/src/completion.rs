@@ -17,9 +17,9 @@ use std::sync::Arc;
 use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
     CacheTtl, CompactionTrigger, ContentDelta, ContextManagement, ContextManagementEdit, Event,
-    ImageSource, Message, RequestContent, ResponseContent, StringOrContents, Thinking, Tool,
-    ToolChoice, ToolResultContent, ToolResultPart, Usage, completion_error_from_anthropic,
-    completion_error_from_anthropic_api,
+    ImageSource, Message, PrefixMismatchBehavior, RequestContent, ResponseContent,
+    StringOrContents, Thinking, ThinkingBlockBinding, Tool, ToolChoice, ToolResultContent,
+    ToolResultPart, Usage, completion_error_from_anthropic, completion_error_from_anthropic_api,
 };
 
 pub const COMPACTION_STATE_FORMAT: &str = "anthropic.messages.encrypted-content.v1";
@@ -405,6 +405,11 @@ pub fn into_anthropic(
             }
             AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive {
                 display: Some(AdaptiveThinkingDisplay::Summarized),
+                block_binding: crate::binds_thinking_blocks_to_prefix(&model).then_some(
+                    ThinkingBlockBinding {
+                        prefix_mismatch_behavior: PrefixMismatchBehavior::DropBlock,
+                    },
+                ),
             }),
             AnthropicModelMode::Default => None,
         }
@@ -1089,6 +1094,75 @@ mod tests {
                 .and_then(|config| config.effort),
             Some(crate::Effort::XHigh)
         );
+    }
+
+    #[test]
+    fn test_block_binding_sent_only_for_prefix_binding_models() {
+        // (model, expects_block_binding): Claude Fable 5.1 rejects a replayed
+        // thinking block with a 400 when the conversation prefix changed, so
+        // its requests opt into dropping invalidated blocks instead. Models
+        // without the prefix-binding check must not receive the beta field.
+        for (model, expects_block_binding) in [
+            ("claude-fable-5-1", true),
+            ("claude-fable-5", false),
+            ("claude-mythos-5-1", false),
+            ("claude-opus-5", false),
+        ] {
+            let request = LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hi".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                thread_id: None,
+                prompt_id: None,
+                intent: None,
+                stop: vec![],
+                temperature: None,
+                tools: vec![],
+                tool_choice: None,
+                thinking_allowed: true,
+                thinking_effort: None,
+                speed: None,
+                compact_at_tokens: None,
+            };
+
+            let anthropic_request = into_anthropic(
+                request,
+                model.to_string(),
+                1.0,
+                128_000,
+                AnthropicModelMode::AdaptiveThinking,
+                AnthropicPromptCacheMode::Automatic,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap();
+
+            let thinking_json =
+                serde_json::to_value(anthropic_request.thinking.as_ref().unwrap()).unwrap();
+            let Some(Thinking::Adaptive { block_binding, .. }) = anthropic_request.thinking else {
+                panic!("{model} should send adaptive thinking");
+            };
+            if expects_block_binding {
+                assert_eq!(
+                    thinking_json,
+                    serde_json::json!({
+                        "type": "adaptive",
+                        "display": "summarized",
+                        "block_binding": {
+                            "prefix_mismatch_behavior": "drop_block",
+                        },
+                    }),
+                    "{model} should opt into dropping invalidated thinking blocks"
+                );
+            } else {
+                assert_eq!(
+                    block_binding, None,
+                    "{model} must not send the block_binding beta field"
+                );
+            }
+        }
     }
 
     #[test]

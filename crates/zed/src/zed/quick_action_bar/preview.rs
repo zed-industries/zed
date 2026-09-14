@@ -1,9 +1,8 @@
 use editor::{Editor, MultiBuffer};
-use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AnyElement, Entity, Modifiers};
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use svg_preview::svg_preview_view::SvgPreviewView;
-use tabular_data_preview::{CsvPreviewView, TabularDataPreviewFeatureFlag};
+use tabular_data_preview::TabularDataPreviewPane;
 use ui::{Tooltip, prelude::*, text_for_keystroke};
 
 use super::QuickActionBar;
@@ -31,8 +30,7 @@ impl QuickActionBar {
         {
             PreviewTarget::Svg(buffer)
         } else if let Some(editor) = editor
-            && cx.has_flag::<TabularDataPreviewFeatureFlag>()
-            && CsvPreviewView::is_csv_file(&editor, cx)
+            && TabularDataPreviewPane::is_tabular_data_file(&editor, cx)
         {
             PreviewTarget::TabularData(editor)
         } else {
@@ -117,11 +115,13 @@ impl QuickActionBar {
                             PreviewTarget::TabularData(editor) => {
                                 let editor = editor.clone();
                                 if open_to_the_side {
-                                    CsvPreviewView::open_preview_to_the_side_of_pane(
+                                    TabularDataPreviewPane::open_preview_to_the_side_of_pane(
                                         workspace, editor, pane, window, cx,
                                     );
                                 } else {
-                                    CsvPreviewView::open_preview_in_pane(editor, pane, window, cx);
+                                    TabularDataPreviewPane::open_preview_in_pane(
+                                        editor, pane, window, cx,
+                                    );
                                 }
                             }
                         }

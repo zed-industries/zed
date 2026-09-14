@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use crate::{
-    CsvPreviewView,
+    TabularDataPreviewPane,
     types::TableLikeContent,
     types::{LineNumber, TableCell},
 };
 use editor::Editor;
-use gpui::{AppContext, Context, Entity, Subscription, Task};
+use gpui::{App, AppContext, Context, Entity, Subscription, Task};
+use std::path::Path;
 use std::time::{Duration, Instant};
 use text::BufferSnapshot;
 use ui::{SharedString, table_row::TableRow};
@@ -34,11 +35,14 @@ const TABULAR_FORMATS: &[(&str, TabularFormat)] = &[
 ];
 
 impl TabularFormat {
+    pub(crate) fn from_editor(editor: &Entity<Editor>, cx: &App) -> Option<Self> {
+        Self::from_extension(editor_file_extension(editor, cx)?)
+    }
+
     pub(crate) fn from_extension(ext: &str) -> Option<Self> {
-        let lower = ext.to_lowercase();
         TABULAR_FORMATS
             .iter()
-            .find(|(name, _)| *name == lower)
+            .find(|(name, _)| name.eq_ignore_ascii_case(ext))
             .map(|(_, format)| *format)
     }
 
@@ -52,18 +56,24 @@ impl TabularFormat {
     }
 }
 
-impl CsvPreviewView {
-    pub(crate) fn parse_csv_from_active_editor(
+pub(crate) fn editor_file_extension<'a>(editor: &Entity<Editor>, cx: &'a App) -> Option<&'a str> {
+    let buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
+    let file = buffer.read(cx).file()?;
+    Path::new(file.file_name(cx)).extension()?.to_str()
+}
+
+impl TabularDataPreviewPane {
+    pub(crate) fn parse_from_active_editor(
         &mut self,
         wait_for_debounce: bool,
         cx: &mut Context<Self>,
     ) {
         let editor = self.active_editor_state.editor.clone();
         self.is_parsing = true;
-        self.parsing_task = Some(self.parse_csv_in_background(wait_for_debounce, editor, cx));
+        self.parsing_task = Some(self.parse_in_background(wait_for_debounce, editor, cx));
     }
 
-    fn parse_csv_in_background(
+    fn parse_in_background(
         &mut self,
         wait_for_debounce: bool,
         editor: Entity<Editor>,
@@ -99,22 +109,14 @@ impl CsvPreviewView {
                     .as_singleton()
                     .map(|b| b.read(cx).text_snapshot());
 
-                let extension = editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .as_singleton()
-                    .and_then(|buffer| buffer.read(cx).file())
-                    .and_then(|file| file.path().extension().map(ToOwned::to_owned));
+                let extension = editor_file_extension(&editor, cx);
 
                 let delimiter = extension
-                    .as_deref()
                     .and_then(TabularFormat::from_extension)
                     .map(TabularFormat::delimiter)
                     .unwrap_or_else(|| {
                         log::warn!(
-                            "unrecognized tabular data extension {:?}, defaulting to comma delimiter",
-                            extension
+                            "unrecognized tabular data extension {extension:?}, defaulting to comma delimiter"
                         );
                         ','
                     });
@@ -127,19 +129,19 @@ impl CsvPreviewView {
             };
 
             let instant = Instant::now();
-            let parsed_csv = cx
+            let parsed_contents = cx
                 .background_spawn(async move { from_buffer_with_delimiter(&buffer_snapshot, delimiter) })
                 .await;
             let parse_duration = instant.elapsed();
             let parse_end_time: Instant = Instant::now();
-            log::debug!("Parsed CSV in {}ms", parse_duration.as_millis());
+            log::debug!("Parsed data in {}ms", parse_duration.as_millis());
             view.update(cx, move |view, cx| {
                 view.performance_metrics
                     .timings
                     .insert("Parsing", (parse_duration, Instant::now()));
 
-                log::debug!("Parsed {} rows", parsed_csv.rows.len());
-                view.engine.contents = Arc::new(parsed_csv);
+                log::debug!("Parsed {} rows", parsed_contents.rows.len());
+                view.engine.contents = Arc::new(parsed_contents);
                 view.engine.calculate_available_filters();
                 view.sync_column_widths(cx);
                 view.last_parse_end_time = Some(parse_end_time);
@@ -162,13 +164,14 @@ pub fn from_buffer_with_delimiter(
         return TableLikeContent::default();
     }
 
-    let (parsed_cells_with_positions, line_numbers) = parse_csv_with_positions(&text, delimiter);
+    let (parsed_cells_with_positions, line_numbers) =
+        parse_delimited_text_with_positions(&text, delimiter);
     if parsed_cells_with_positions.is_empty() {
         return TableLikeContent::default();
     }
     let raw_headers = parsed_cells_with_positions[0].clone();
 
-    // Calculating the longest row, as CSV might have less headers than max row width
+    // Calculating the longest row, as the data might have fewer headers than max row width
     let Some(max_number_of_cols) = parsed_cells_with_positions.iter().map(|r| r.len()).max() else {
         return TableLikeContent::default();
     };
@@ -192,8 +195,8 @@ pub fn from_buffer_with_delimiter(
     }
 }
 
-/// Parse CSV and track byte positions for each cell
-fn parse_csv_with_positions(
+/// Parse delimited text and track byte positions for each cell
+fn parse_delimited_text_with_positions(
     text: &str,
     delimiter: char,
 ) -> (
@@ -477,7 +480,7 @@ Jane,"Simple name""#;
     }
 
     #[test]
-    fn test_empty_csv() {
+    fn test_empty_input() {
         let parsed = TableLikeContent::from_str("".to_string());
         assert_eq!(parsed.headers.cols(), 0);
         assert!(parsed.rows.is_empty());
@@ -486,7 +489,7 @@ Jane,"Simple name""#;
     #[test]
     fn test_tsv_parsing() {
         let tsv_data = "Name\tAge\tCity\nJohn\t30\tNew York\nJane\t25\tLos Angeles";
-        let (parsed_cells, _) = parse_csv_with_positions(tsv_data, '\t');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(tsv_data, '\t');
 
         assert_eq!(parsed_cells.len(), 3);
         assert_eq!(parsed_cells[0].len(), 3);
@@ -500,7 +503,7 @@ Jane,"Simple name""#;
     #[test]
     fn test_psv_parsing() {
         let psv_data = "Name|Age|City\nJohn|30|New York\nJane|25|Los Angeles";
-        let (parsed_cells, _) = parse_csv_with_positions(psv_data, '|');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(psv_data, '|');
 
         assert_eq!(parsed_cells.len(), 3);
         assert_eq!(parsed_cells[0].len(), 3);
@@ -514,7 +517,7 @@ Jane,"Simple name""#;
     #[test]
     fn test_ssv_parsing() {
         let ssv_data = "Name;Age;City\nJohn;30;New York\nJane;25;Los Angeles";
-        let (parsed_cells, _) = parse_csv_with_positions(ssv_data, ';');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(ssv_data, ';');
 
         assert_eq!(parsed_cells.len(), 3);
         assert_eq!(parsed_cells[0].len(), 3);
@@ -528,7 +531,7 @@ Jane,"Simple name""#;
     #[test]
     fn test_csv_parsing_quote_offset_handling() {
         let csv_data = r#"first,"se,cond",third"#;
-        let (parsed_cells, _) = parse_csv_with_positions(csv_data, ',');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(csv_data, ',');
 
         assert_eq!(parsed_cells.len(), 1); // One row
         assert_eq!(parsed_cells[0].len(), 3); // Three cells
@@ -554,7 +557,7 @@ Jane,"Simple name""#;
         let csv_data = r#"id,"name with spaces","description, with commas",status
 1,"John Doe","A person with ""quotes"" and, commas",active
 2,"Jane Smith","Simple description",inactive"#;
-        let (parsed_cells, _) = parse_csv_with_positions(csv_data, ',');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(csv_data, ',');
 
         assert_eq!(parsed_cells.len(), 3); // header + 2 rows
 
