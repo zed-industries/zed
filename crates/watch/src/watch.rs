@@ -1,4 +1,38 @@
+//! Provides single-producer, multiple-consumer channels that retain the latest value.
+//!
+//! Both [`channel`] and [`snapshot::channel`] coalesce publications: receivers
+//! observe the latest value, not a queue of every value sent. Each receiver tracks
+//! changes independently. The initial value is considered seen, every send counts
+//! as a change even if the value is equal, and an unseen final publication is
+//! delivered before reporting that the sender was dropped.
+//!
+//! # Choosing an implementation
+//!
+//! Use [`channel`] for short-lived reads, low contention, bursty updates, or
+//! frequent receiver creation and destruction. It stores the value behind a
+//! reader/writer lock. [`Receiver::borrow`] returns a read guard and marks the
+//! current version as seen. Holding that guard prevents publication, so release
+//! it promptly and do not hold it across an await.
+//!
+//! Use [`snapshot::channel`] when readers need to retain values without delaying
+//! publication, or channel synchronization must not block a thread. It atomically publishes
+//! immutable snapshots. [`snapshot::Receiver::snapshot`] marks the captured
+//! version as seen and returns an owned handle that can outlive the receiver.
+//! Stable subscriptions suit this implementation better than frequent receiver
+//! creation and destruction.
+//!
+//! # Performance tradeoffs
+//!
+//! | Operation | Lock-based channel | Snapshot channel |
+//! | --- | --- | --- |
+//! | Read | Acquires a read lock | Acquires a reference-counted snapshot |
+//! | Send | Replaces the value in place; visits pending waiters | Allocates a snapshot; visits all registered receivers |
+//! | Pending wait or cancellation | Updates a shared waiter tree under a lock | Updates a per-receiver atomic waker |
+//! | Create or drop a receiver | Constant-time bookkeeping, excluding final destruction | Copies the receiver registry; retries under contention |
+//! | Retain a value | Delays writers | Keeps that version alive without delaying writers |
+
 mod error;
+pub mod snapshot;
 
 pub use error::*;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockUpgradableReadGuard};

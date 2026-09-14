@@ -626,16 +626,19 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
             .when(platform == Platform::Linux, |this| {
                 use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
             })
-            .when(
-                platform == Platform::Linux,
-                steps::install_linux_dependencies,
-            )
+            .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::setup_linux())
+            })
             .add_step(steps::setup_node())
             .when(
                 platform == Platform::Linux || platform == Platform::Mac,
                 |job| job.add_step(steps::cargo_install_nextest()),
             )
             .add_step(steps::clear_target_dir_if_large(platform))
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |job| job.add_step(steps::download_wasi_sdk()),
+            )
             .add_step(steps::setup_sccache(platform))
             .when(filter_packages, |job| {
                 job.add_step(
@@ -727,13 +730,19 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
 
 fn miri_scheduler() -> NamedJob {
     fn install_miri() -> Step<Run> {
+        // TODO: Unpin Miri after updating parking_lot_core to fix its futex argument types.
+        // Nightly 2026-09-10 added stricter checks in rust-lang/rust#161734.
         named::bash(
-            "rustup toolchain install nightly --profile minimal --component miri --component rust-src",
+            "rustup toolchain install nightly-2026-09-09 --profile minimal --component miri --component rust-src",
         )
     }
 
+    fn clean_miri() -> Step<Run> {
+        named::bash("cargo +nightly-2026-09-09 miri clean")
+    }
+
     fn run_scheduler_tests_under_miri() -> Step<Run> {
-        named::bash("cargo +nightly -q miri test -p scheduler")
+        named::bash("cargo +nightly-2026-09-09 -q miri test -p scheduler")
     }
 
     named::job(
@@ -744,6 +753,7 @@ fn miri_scheduler() -> NamedJob {
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(install_miri())
+            .add_step(clean_miri())
             .add_step(run_scheduler_tests_under_miri())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )

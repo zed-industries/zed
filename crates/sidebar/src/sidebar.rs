@@ -3847,7 +3847,11 @@ impl Sidebar {
                     anyhow::bail!("Thread not found in database");
                 };
 
-                let request = agent::build_thread_title_request(&db_thread.messages, temperature);
+                let request = agent::build_thread_title_request(
+                    &session_id,
+                    &db_thread.messages,
+                    temperature,
+                );
                 let title =
                     SharedString::from(agent::stream_thread_title(model, request, cx).await?);
 

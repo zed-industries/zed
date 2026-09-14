@@ -865,15 +865,12 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_namespace("multi_workspace");
         }
 
-        // Hide `agent: manage skills` — skills are surfaced through the
-        // settings UI now. Applied after the disable-ai / agent-enabled
-        // branches so it overrides the `show_namespace("assistant")` call
-        // above without affecting the rest of that namespace's actions.
+        // Skills are surfaced through the settings UI now, so this command
+        // should never appear in the palette.
+        filter.hide_action_types(&manage_skills_action);
         if !disable_ai {
-            filter.hide_action_types(&manage_skills_action);
             filter.show_action_types(skill_creator_actions.iter());
         } else {
-            filter.show_action_types(manage_skills_action.iter());
             filter.hide_action_types(&skill_creator_actions);
         }
     });
@@ -995,6 +992,7 @@ mod tests {
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
             play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
+            prevent_idle_sleep: true,
             single_file_review: false,
             model_parameters: vec![],
             auto_compact: agent_settings::AutoCompactSettings {
@@ -1050,6 +1048,10 @@ mod tests {
             assert!(
                 !filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
                 "OpenProjectAgentsMdRules should be visible by default"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::ManageSkills),
+                "ManageSkills should be hidden even when AI is enabled"
             );
         });
 
@@ -1126,6 +1128,29 @@ mod tests {
             assert!(
                 filter.is_hidden(&AcceptEditPrediction),
                 "EditPrediction should be hidden when provider is None"
+            );
+        });
+
+        // Disable AI entirely
+        cx.update(|cx| {
+            AgentSettings::override_global(agent_settings.clone(), cx);
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::ManageSkills),
+                "ManageSkills should be hidden when AI is disabled"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::OpenSkillCreator),
+                "OpenSkillCreator should be hidden when AI is disabled"
+            );
+            assert!(
+                filter.is_hidden(&NewThread),
+                "NewThread should be hidden when AI is disabled"
             );
         });
     }

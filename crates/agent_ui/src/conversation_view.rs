@@ -34,7 +34,9 @@ use gpui::{
     linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
-use language_model::{LanguageModelCompletionError, ProviderErrorCategory};
+use language_model::{
+    LanguageModelCompletionError, ProviderErrorCategory, ZED_CLOUD_PROVIDER_NAME,
+};
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
 };
@@ -122,7 +124,7 @@ enum ThreadFeedback {
 
 #[derive(Debug)]
 pub(crate) enum ThreadError {
-    PaymentRequired,
+    ZedPaymentRequired,
     DataRetentionConsentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
@@ -186,7 +188,11 @@ impl From<anyhow::Error> for ThreadError {
                         provider: provider.to_string().into(),
                     },
                     ProviderErrorCategory::PromptTooLarge { .. } => Self::PromptTooLarge,
-                    ProviderErrorCategory::PaymentRequired => Self::PaymentRequired,
+                    ProviderErrorCategory::PaymentRequired
+                        if provider == &ZED_CLOUD_PROVIDER_NAME =>
+                    {
+                        Self::ZedPaymentRequired
+                    }
                     ProviderErrorCategory::Authentication => Self::AuthenticationFailed {
                         provider: provider.to_string().into(),
                     },
@@ -199,6 +205,7 @@ impl From<anyhow::Error> for ThreadError {
                     },
                     ProviderErrorCategory::InvalidEncryptedContent
                     | ProviderErrorCategory::ContentPolicy
+                    | ProviderErrorCategory::PaymentRequired
                     | ProviderErrorCategory::InvalidRequest
                     | ProviderErrorCategory::Conflict
                     | ProviderErrorCategory::Timeout
@@ -3750,6 +3757,56 @@ pub(crate) mod tests {
         ));
     }
 
+    #[test]
+    fn test_payment_required_preserves_non_zed_provider_message() {
+        for provider in [
+            language_model::LanguageModelProviderName::new("OpenRouter"),
+            language_model::OPEN_AI_PROVIDER_NAME,
+            language_model::ANTHROPIC_PROVIDER_NAME,
+        ] {
+            for status in [None, Some(http_client::StatusCode::PAYMENT_REQUIRED)] {
+                let provider_error = LanguageModelCompletionError::from_provider_response(
+                    provider.clone(),
+                    status,
+                    Some("402".to_string()),
+                    "Insufficient credits. Add credits to your account.".to_string(),
+                    None,
+                    ProviderErrorCategory::PaymentRequired,
+                );
+
+                let error = ThreadError::from(anyhow!(provider_error));
+
+                assert!(
+                    matches!(
+                        &error,
+                        ThreadError::ProviderRejection { message }
+                            if message == "Insufficient credits. Add credits to your account."
+                    ),
+                    "expected provider billing message for {provider}, got: {error:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_payment_required_from_zed_uses_upgrade_prompt() {
+        let provider_error = LanguageModelCompletionError::from_provider_response(
+            ZED_CLOUD_PROVIDER_NAME,
+            Some(http_client::StatusCode::PAYMENT_REQUIRED),
+            None,
+            "Payment required".to_string(),
+            None,
+            ProviderErrorCategory::PaymentRequired,
+        );
+
+        let error = ThreadError::from(anyhow!(provider_error));
+
+        assert!(
+            matches!(error, ThreadError::ZedPaymentRequired),
+            "expected Zed upgrade prompt, got: {error:?}"
+        );
+    }
+
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
         init_test(cx);
@@ -4323,10 +4380,12 @@ pub(crate) mod tests {
                 "Conversation should transition to LoadError when an ACP thread exits"
             );
         });
+
+        release_dropped_entities(cx);
         assert_eq!(
             close_session_count.load(std::sync::atomic::Ordering::SeqCst),
             1,
-            "ConversationView should close the ACP session after a thread exit"
+            "dropping the thread views after a thread exit should close the ACP session"
         );
     }
 
@@ -6669,6 +6728,11 @@ pub(crate) mod tests {
     ) -> Entity<MessageEditor> {
         let thread = active_thread(conversation_view, cx);
         cx.read(|cx| thread.read(cx).message_editor.clone())
+    }
+
+    fn release_dropped_entities(cx: &mut VisualTestContext) {
+        cx.update(|_, _| ());
+        cx.run_until_parked();
     }
 
     #[gpui::test]
