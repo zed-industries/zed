@@ -27,7 +27,6 @@ use gpui::{
     PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
     linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
-
 };
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
