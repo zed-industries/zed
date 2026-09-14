@@ -1141,7 +1141,6 @@ impl Element for TerminalElement {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -1171,25 +1170,20 @@ impl Element for TerminalElement {
             }
         };
 
-        let layout_id = self.interactivity.request_layout(
-            global_id,
-            inspector_id,
-            window,
-            cx,
-            |mut style, window, cx| {
-                style.size.width = relative(1.).into();
-                style.size.height = height;
+        let layout_id =
+            self.interactivity
+                .request_layout(global_id, window, cx, |mut style, window, cx| {
+                    style.size.width = relative(1.).into();
+                    style.size.height = height;
 
-                window.request_layout(style, None, cx)
-            },
-        );
+                    window.request_layout(style, None, cx)
+                });
         (layout_id, ())
     }
 
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -1198,7 +1192,6 @@ impl Element for TerminalElement {
         let rem_size = self.rem_size(cx);
         self.interactivity.prepaint(
             global_id,
-            inspector_id,
             bounds,
             bounds.size,
             window,
@@ -1603,7 +1596,6 @@ impl Element for TerminalElement {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
@@ -1653,7 +1645,6 @@ impl Element for TerminalElement {
             let block_below_cursor_element = layout.block_below_cursor_element.take();
             self.interactivity.paint(
                 global_id,
-                inspector_id,
                 bounds,
                 Some(&layout.hitbox),
                 window,

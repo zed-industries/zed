@@ -3,9 +3,9 @@ use std::cmp;
 use collections::{HashMap, HashSet};
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, Context, DragMoveEvent, Element,
-    Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Length,
-    ParentElement, Pixels, StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div,
-    linear_color_stop, linear_gradient, point, px, size,
+    Entity, GlobalElementId, Hsla, IntoElement, LayoutId, Length, ParentElement, Pixels,
+    StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div, linear_color_stop,
+    linear_gradient, point, px, size,
 };
 use multi_buffer::{Anchor, ExcerptBoundaryInfo};
 use smallvec::smallvec;
@@ -284,7 +284,6 @@ impl Element for SplitBufferHeadersElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         _cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -301,7 +300,6 @@ impl Element for SplitBufferHeadersElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -332,7 +330,6 @@ impl Element for SplitBufferHeadersElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,

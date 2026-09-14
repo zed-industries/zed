@@ -68,9 +68,9 @@
 //!   frames with it, and is hidden from these docs.
 //! - Element storage: the erased `ElementObject`, the element arena, and the
 //!   stack-safety wrapper around it.
-//! - The inspector token threaded through [`Element`](crate::Element)'s
-//!   lifecycle: pass it through, but do not inspect or construct it.
 //! - Frame double-buffering and the retained hit-test tree.
+//! - The inspector: the runtime publishes the identity of the element it is
+//!   laying out or painting, so elements never handle it themselves.
 //!
 //! Depend on the authoring surface instead. If something in that list is the
 //! only way to express what you need, that is a gap worth reporting.

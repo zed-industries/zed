@@ -5,9 +5,8 @@
 use refineable::Refineable as _;
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, Pixels, Size, Style, StyleRefinement, Styled,
-    Window, relative,
+    AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, IntoElement,
+    LayoutId, Pixels, Size, Style, StyleRefinement, Styled, Window, relative,
 };
 
 /// Construct a container query element with the given render callback.
@@ -69,7 +68,6 @@ impl Element for ContainerQuery {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -82,7 +80,6 @@ impl Element for ContainerQuery {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -98,7 +95,6 @@ impl Element for ContainerQuery {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,

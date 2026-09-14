@@ -1159,6 +1159,11 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
+    /// The inspector identity of the element the runtime is currently laying
+    /// out or painting. `Drawable` publishes this around each lifecycle call so
+    /// that inspector state and hitboxes attribute to the right element without
+    /// every [`Element`] having to thread the token through its signature.
+    pub(crate) inspector_element_id: Option<crate::InspectorElementId>,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
     is_resizable: bool,
@@ -2023,6 +2028,7 @@ impl Window {
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_session: Rc::new(FrameSession::new(cx.new_layout_engine())),
+            inspector_element_id: None,
             root: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
@@ -6758,15 +6764,28 @@ impl Window {
         false
     }
 
-    /// Executes the provided function with mutable access to an inspector state.
+    /// Publishes `inspector_element_id` as the identity of the element being
+    /// laid out or painted, returning the previous value so the caller can put
+    /// it back once the element returns.
+    pub(crate) fn set_inspector_element_id(
+        &mut self,
+        inspector_element_id: Option<crate::InspectorElementId>,
+    ) -> Option<crate::InspectorElementId> {
+        std::mem::replace(&mut self.inspector_element_id, inspector_element_id)
+    }
+
+    /// Executes the provided function with mutable access to the inspector state
+    /// of the element with `inspector_id`, if that element is the one the
+    /// inspector has active. The inspector UI itself uses this to read and edit
+    /// a selected element's state.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn with_inspector_state<T: 'static, R>(
         &mut self,
-        _inspector_id: Option<&crate::InspectorElementId>,
+        inspector_id: Option<&crate::InspectorElementId>,
         cx: &mut App,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
     ) -> R {
-        if let Some(inspector_id) = _inspector_id
+        if let Some(inspector_id) = inspector_id
             && let Some(inspector) = &self.inspector
         {
             let inspector = inspector.clone();
@@ -6778,6 +6797,21 @@ impl Window {
             }
         }
         f(&mut None, self)
+    }
+
+    /// Executes the provided function with mutable access to the inspector state
+    /// of the element the runtime is currently laying out or painting.
+    ///
+    /// This is the form elements use: the runtime publishes their identity
+    /// around each lifecycle call, so they never handle the token themselves.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn with_current_inspector_state<T: 'static, R>(
+        &mut self,
+        cx: &mut App,
+        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
+    ) -> R {
+        let inspector_id = self.inspector_element_id.clone();
+        self.with_inspector_state(inspector_id.as_ref(), cx, f)
     }
 
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -6824,20 +6858,15 @@ impl Window {
     /// Registers a hitbox that can be used for inspector picking mode, allowing users to select and
     /// inspect UI elements by clicking on them.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn insert_inspector_hitbox(
-        &mut self,
-        hitbox_id: HitboxId,
-        inspector_id: Option<&crate::InspectorElementId>,
-        cx: &App,
-    ) {
+    pub fn insert_inspector_hitbox(&mut self, hitbox_id: HitboxId, cx: &App) {
         self.invalidator.debug_assert_paint_or_prepaint();
         if !self.is_inspector_picking(cx) {
             return;
         }
-        if let Some(inspector_id) = inspector_id {
+        if let Some(inspector_id) = self.inspector_element_id.clone() {
             self.next_frame
                 .inspector_hitboxes
-                .insert(hitbox_id, inspector_id.clone());
+                .insert(hitbox_id, inspector_id);
         }
     }
 

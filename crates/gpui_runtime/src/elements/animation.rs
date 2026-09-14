@@ -2,9 +2,8 @@ use scheduler::Instant;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
 use crate::{
-    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
-    ParentElement, SpringAnimation, SpringConfig, SpringPlayback, SpringState, SpringTarget,
-    Window,
+    AnyElement, App, Element, ElementId, GlobalElementId, IntoElement, ParentElement,
+    SpringAnimation, SpringConfig, SpringPlayback, SpringState, SpringTarget, Window,
 };
 
 pub use easing::*;
@@ -263,7 +262,6 @@ impl<E: IntoElement + 'static> Element for SpringAnimationElement<E> {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
@@ -356,7 +354,6 @@ impl<E: IntoElement + 'static> Element for SpringAnimationElement<E> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -368,7 +365,6 @@ impl<E: IntoElement + 'static> Element for SpringAnimationElement<E> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
@@ -394,7 +390,6 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
@@ -476,7 +471,6 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -488,7 +482,6 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,

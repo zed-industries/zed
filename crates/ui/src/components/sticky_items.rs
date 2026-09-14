@@ -2,8 +2,8 @@ use std::{ops::Range, rc::Rc};
 
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Context, Element, ElementId, Entity, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, Pixels, Point, Render, Style, UniformListDecoration,
-    Window, point, px, size,
+    IntoElement, LayoutId, Pixels, Point, Render, Style, UniformListDecoration, Window, point, px,
+    size,
 };
 use smallvec::SmallVec;
 
@@ -89,7 +89,6 @@ impl Element for StickyItemsElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -99,7 +98,6 @@ impl Element for StickyItemsElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _window: &mut Window,
@@ -110,7 +108,6 @@ impl Element for StickyItemsElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,

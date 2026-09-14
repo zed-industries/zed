@@ -72,27 +72,18 @@ pub trait Element: 'static + IntoElement {
 
     /// Before an element can be painted, we need to know where it's going to be and how big it is.
     /// Use this method to request a layout from Taffy and initialize the element's state.
-    ///
-    /// `inspector_id` addresses this element in the debug inspector. Treat it as
-    /// an opaque token: pass it to whatever drives this element's children, and
-    /// otherwise ignore it.
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState);
 
     /// After laying out an element, we need to commit its bounds to the current frame for hitbox
     /// purposes. The state argument is the same state that was returned from [`Element::request_layout()`].
-    ///
-    /// `inspector_id` addresses this element in the debug inspector; treat it as
-    /// an opaque token, as in [`Element::request_layout`].
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -101,13 +92,9 @@ pub trait Element: 'static + IntoElement {
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
-    ///
-    /// `inspector_id` addresses this element in the debug inspector; treat it as
-    /// an opaque token, as in [`Element::request_layout`].
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
@@ -330,12 +317,10 @@ impl<E: Element> Drawable<E> {
                     inspector_id = None;
                 }
 
-                let (layout_id, request_layout) = self.element.request_layout(
-                    global_id.as_ref(),
-                    inspector_id.as_ref(),
-                    window,
-                    cx,
-                );
+                let previous_inspector_id = window.set_inspector_element_id(inspector_id.clone());
+                let (layout_id, request_layout) =
+                    self.element.request_layout(global_id.as_ref(), window, cx);
+                window.set_inspector_element_id(previous_inspector_id);
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -413,14 +398,15 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let node_id = window.next_frame.dispatch_tree.push_node();
+                let previous_inspector_id = window.set_inspector_element_id(inspector_id.clone());
                 let mut prepaint = self.element.prepaint(
                     global_id.as_ref(),
-                    inspector_id.as_ref(),
                     bounds,
                     &mut request_layout,
                     window,
                     cx,
                 );
+                window.set_inspector_element_id(previous_inspector_id);
                 window.next_frame.dispatch_tree.pop_node();
 
                 if pushed_a11y_node {
@@ -487,15 +473,16 @@ impl<E: Element> Drawable<E> {
                 }
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);
+                let previous_inspector_id = window.set_inspector_element_id(inspector_id.clone());
                 self.element.paint(
                     global_id.as_ref(),
-                    inspector_id.as_ref(),
                     bounds,
                     &mut request_layout,
                     &mut prepaint,
                     window,
                     cx,
                 );
+                window.set_inspector_element_id(previous_inspector_id);
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -690,7 +677,6 @@ impl Element for AnyElement {
     fn request_layout(
         &mut self,
         _: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -701,7 +687,6 @@ impl Element for AnyElement {
     fn prepaint(
         &mut self,
         _: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -713,7 +698,6 @@ impl Element for AnyElement {
     fn paint(
         &mut self,
         _: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
@@ -762,7 +746,6 @@ impl Element for Empty {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -782,7 +765,6 @@ impl Element for Empty {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _state: &mut Self::RequestLayoutState,
         _window: &mut Window,
@@ -793,7 +775,6 @@ impl Element for Empty {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
