@@ -10,12 +10,14 @@
 
 mod engine;
 mod layout;
+mod layout_style;
 mod line_layout;
 mod line_wrapper;
 mod text_system;
 
 pub use gpui_engine::*;
 pub use layout::*;
+pub use layout_style::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
 pub use text_system::*;

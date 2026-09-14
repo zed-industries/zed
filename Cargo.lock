@@ -7622,6 +7622,7 @@ dependencies = [
  "image",
  "log",
  "rand 0.9.4",
+ "refineable",
  "schemars 1.0.4",
  "serde",
  "serde_json",

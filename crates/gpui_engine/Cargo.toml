@@ -25,6 +25,7 @@ gpui_shared_string.workspace = true
 gpui_types.workspace = true
 image.workspace = true
 log.workspace = true
+refineable.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

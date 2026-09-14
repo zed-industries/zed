@@ -17,6 +17,7 @@ mod layout;
 mod render;
 mod renderer;
 mod scene;
+mod style;
 mod text;
 
 pub use atlas::*;
@@ -26,4 +27,5 @@ pub use layout::*;
 pub use render::*;
 pub use renderer::*;
 pub use scene::*;
+pub use style::*;
 pub use text::*;

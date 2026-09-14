@@ -7,6 +7,10 @@ use crate::{
     AbsoluteLength, DefiniteLength, Edges, GridTemplate, Length, Pixels, Size, Style,
     util::{round_stroke_to_device_pixel, round_to_device_pixel},
 };
+use gpui_backend::{
+    to_taffy_align_content, to_taffy_align_items, to_taffy_display, to_taffy_flex_direction,
+    to_taffy_flex_wrap, to_taffy_overflow, to_taffy_position,
+};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
     geometry::{Rect as TaffyRect, Size as TaffySize},
@@ -90,10 +94,13 @@ impl ToTaffy<taffy::style::Style> for Style {
         }
 
         taffy::style::Style {
-            display: self.display.into(),
-            overflow: self.overflow.into(),
+            display: to_taffy_display(self.display),
+            overflow: taffy::geometry::Point {
+                x: to_taffy_overflow(self.overflow.x),
+                y: to_taffy_overflow(self.overflow.y),
+            },
             scrollbar_width: self.scrollbar_width.to_taffy(rem_size, scale_factor),
-            position: self.position.into(),
+            position: to_taffy_position(self.position),
             inset: self.inset.to_taffy(rem_size, scale_factor),
             size: self.size.to_taffy(rem_size, scale_factor),
             min_size: self.min_size.to_taffy(rem_size, scale_factor),
@@ -102,13 +109,13 @@ impl ToTaffy<taffy::style::Style> for Style {
             margin: self.margin.to_taffy(rem_size, scale_factor),
             padding: self.padding.to_taffy(rem_size, scale_factor),
             border: border_widths_to_taffy(&self.border_widths, rem_size, scale_factor),
-            align_items: self.align_items.map(|x| x.into()),
-            align_self: self.align_self.map(|x| x.into()),
-            align_content: self.align_content.map(|x| x.into()),
-            justify_content: self.justify_content.map(|x| x.into()),
+            align_items: self.align_items.map(to_taffy_align_items),
+            align_self: self.align_self.map(to_taffy_align_items),
+            align_content: self.align_content.map(to_taffy_align_content),
+            justify_content: self.justify_content.map(to_taffy_align_content),
             gap: self.gap.to_taffy(rem_size, scale_factor),
-            flex_direction: self.flex_direction.into(),
-            flex_wrap: self.flex_wrap.into(),
+            flex_direction: to_taffy_flex_direction(self.flex_direction),
+            flex_wrap: to_taffy_flex_wrap(self.flex_wrap),
             flex_basis: self.flex_basis.to_taffy(rem_size, scale_factor),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
