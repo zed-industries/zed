@@ -349,13 +349,15 @@ fn get_tests(t_bin: &str) -> impl ExactSizeIterator<Item = (String, String)> {
     );
 
     let out = test_list
-        .chunks_exact_mut(2)
-        .map(|pair| {
+        .as_chunks_mut::<2>()
+        .0
+        .iter()
+        .map(|&[first, second]| {
             // Be resilient against changes to these constants.
             if consts::SUF_NORMAL < consts::SUF_MDATA {
-                (pair[0].to_owned(), pair[1].to_owned())
+                (first.to_owned(), second.to_owned())
             } else {
-                (pair[1].to_owned(), pair[0].to_owned())
+                (second.to_owned(), first.to_owned())
             }
         })
         .collect::<Vec<_>>();
