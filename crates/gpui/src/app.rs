@@ -2123,13 +2123,17 @@ impl App {
     /// detection. The callback runs on the foreground executor after shaping has
     /// released its internal locks. Dropping its subscription disables detection until
     /// another callback is registered.
+    ///
+    /// Reports are queued without blocking shaping, then deduplicated before delivery.
+    /// The bounded queue can drop reports on overflow. Dropped reports may be reported
+    /// again when the text is reshaped; no retry is scheduled automatically.
     pub fn on_missing_glyphs(
         &self,
         callback: impl FnMut(&[MissingGlyph], &mut App) + 'static,
     ) -> Subscription {
         let registration = self.missing_glyph_callback.replace(Box::new(callback));
 
-        if let Some(receiver) = self.text_system.take_missing_glyph_receiver() {
+        if let Some(mut receiver) = self.text_system.take_missing_glyph_receiver() {
             let callback = self.missing_glyph_callback.clone();
             self.spawn(async move |cx| {
                 while let Ok(missing_glyphs) = receiver.recv().await {
