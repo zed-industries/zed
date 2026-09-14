@@ -18,6 +18,56 @@ use tempfile::TempDir;
 use util::path;
 
 #[gpui::test]
+async fn test_watcher_diagnostics_do_not_change_event_delivery(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    let root = Path::new(path!("/root"));
+    let file = root.join("file");
+    fs.create_dir(root).await.unwrap();
+    let (mut events, watcher) = fs.watch(root, Duration::ZERO).await;
+    let recording = fs.record_watcher_diagnostics().unwrap();
+    assert_eq!(
+        recording.snapshot().watchers[0].roots[0].path,
+        root.to_string_lossy()
+    );
+    assert!(recording.snapshot().events.is_empty());
+
+    fs.write(&file, b"first").await.unwrap();
+    let batch = events.next().await.unwrap();
+    assert!(batch.iter().any(|event| event.path == file));
+    assert!(recording.snapshot().events.iter().any(|event| {
+        event.operation == "event" && event.paths.contains(&file.to_string_lossy().into_owned())
+    }));
+
+    fs.simulate_watcher_overflow(root);
+    let batch = events.next().await.unwrap();
+    assert!(
+        batch
+            .iter()
+            .any(|event| event.kind == Some(PathEventKind::Rescan))
+    );
+    assert!(recording.snapshot().events.iter().any(|event| event.rescan));
+
+    drop(recording);
+    fs.write(&file, b"second").await.unwrap();
+    let batch = events.next().await.unwrap();
+    assert!(batch.iter().any(|event| event.path == file));
+    assert!(
+        fs.record_watcher_diagnostics()
+            .unwrap()
+            .snapshot()
+            .events
+            .is_empty()
+    );
+    drop(events);
+    drop(watcher);
+    assert!(
+        fs.record_watcher_diagnostics().unwrap().snapshot().watchers[0]
+            .roots
+            .is_empty()
+    );
+}
+
+#[gpui::test]
 async fn test_fake_fs(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor.clone());
     fs.insert_tree(
@@ -959,6 +1009,59 @@ async fn watcher_delivered_event(
             _ = timeout => return false,
         }
     }
+}
+
+#[gpui::test]
+async fn test_realfs_watcher_diagnostics(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let fs = RealFs::new(None, executor.clone());
+    let directory = TempDir::new().unwrap();
+    let root = std::fs::canonicalize(directory.path()).unwrap();
+    // Windows canonicalization adds a verbatim prefix that watcher paths omit.
+    let root = util::paths::SanitizedPath::new(&root)
+        .as_path()
+        .to_path_buf();
+    let recording = fs.record_watcher_diagnostics().unwrap();
+    let (mut events, watcher) = fs.watch(&root, Duration::from_millis(10)).await;
+    let file = root.join("watcher-diagnostics.txt");
+    fs.write(&file, b"first").await.unwrap();
+    assert!(
+        watcher_delivered_event(&mut events, &executor, Duration::from_secs(5), &|path| {
+            path == file
+        })
+        .await,
+        "no watcher event matched {file:?}: {:#?}",
+        recording.snapshot()
+    );
+    let snapshot = recording.snapshot();
+    assert!(
+        snapshot
+            .events
+            .iter()
+            .any(|event| event.operation == "watch")
+    );
+    assert!(snapshot.events.iter().any(|event| {
+        event.operation == "event"
+            && (event.rescan || event.paths.contains(&file.to_string_lossy().into_owned()))
+    }));
+    assert!(snapshot.watchers.iter().any(|watcher| {
+        watcher
+            .roots
+            .iter()
+            .any(|entry| entry.path == root.to_string_lossy())
+    }));
+    serde_json::to_string_pretty(&snapshot).unwrap();
+
+    drop(recording);
+    fs.write(&file, b"second").await.unwrap();
+    assert!(
+        watcher_delivered_event(&mut events, &executor, Duration::from_secs(5), &|path| {
+            path == file
+        })
+        .await
+    );
+    drop(events);
+    drop(watcher);
 }
 
 /// Exercises a spread of real watchers whose registered watch path is spelled
