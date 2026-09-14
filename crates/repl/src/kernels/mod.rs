@@ -213,6 +213,8 @@ pub struct PythonEnvKernelSpecification {
     pub path: PathBuf,
     pub kernelspec: JupyterKernelspec,
     pub has_ipykernel: bool,
+    /// Whether the interpreter lives inside the worktree, like a project's own `.venv`.
+    pub in_worktree: bool,
     /// Display label for the environment type: "venv", "Conda", "Pyenv", etc.
     pub environment_kind: Option<String>,
 }
@@ -349,6 +351,15 @@ impl KernelSpecification {
         }
     }
 
+    pub fn in_worktree(&self) -> bool {
+        match self {
+            Self::PythonEnv(spec) => spec.in_worktree,
+            Self::Jupyter(_) | Self::JupyterServer(_) | Self::SshRemote(_) | Self::WslRemote(_) => {
+                false
+            }
+        }
+    }
+
     pub fn environment_kind_label(&self) -> Option<SharedString> {
         match self {
             Self::PythonEnv(spec) => spec
@@ -431,7 +442,6 @@ pub fn python_env_kernel_specifications(
         python_language,
         cx,
     );
-    #[allow(unused)]
     let worktree_root_path: Option<std::sync::Arc<std::path::Path>> = project
         .read(cx)
         .worktree_for_id(worktree_id, cx)
@@ -457,6 +467,7 @@ pub fn python_env_kernel_specifications(
             .chain(toolchains.toolchains)
             .map(|toolchain| {
                 let wsl_distro = wsl_distro.clone();
+                let worktree_root_path = worktree_root_path.clone();
                 background_executor.spawn(async move {
                     // For remote projects, we assume python is available assuming toolchain is reported.
                     // We can skip the `ipykernel` check or run it remotely.
@@ -555,11 +566,16 @@ pub fn python_env_kernel_specifications(
                         env: Some(env),
                     };
 
+                    let path = PathBuf::from(&python_path);
+                    let in_worktree = worktree_root_path
+                        .as_deref()
+                        .is_some_and(|root| path.starts_with(root));
                     Some(KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
                         name: toolchain.name.to_string(),
-                        path: PathBuf::from(&python_path),
+                        path,
                         kernelspec,
                         has_ipykernel,
+                        in_worktree,
                         environment_kind,
                     }))
                 })

@@ -5,10 +5,21 @@ use crate::repl_store::ReplStore;
 use gpui::{AnyView, DismissEvent, FontWeight, SharedString, Task};
 use picker::{Picker, PickerDelegate};
 use project::WorktreeId;
+use std::cmp::Ordering;
 use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 
 type OnSelect = Box<dyn Fn(KernelSpecification, &mut Window, &mut App)>;
+
+/// The worktree's own environments come first even before ipykernel is installed
+/// in them: a fresh `.venv` is almost always the one the user wants, and picking it
+/// is how ipykernel gets installed. After that, environments ready to run, then name.
+fn python_env_order(a: &KernelSpecification, b: &KernelSpecification) -> Ordering {
+    b.in_worktree()
+        .cmp(&a.in_worktree())
+        .then_with(|| b.has_ipykernel().cmp(&a.has_ipykernel()))
+        .then_with(|| a.name().cmp(&b.name()))
+}
 
 #[derive(Clone)]
 pub enum KernelPickerEntry {
@@ -75,19 +86,12 @@ fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<Kern
         }
     }
 
-    // Sort Python envs: has_ipykernel first, then by name
-    python_envs.sort_by(|a, b| {
-        let (spec_a, spec_b) = match (a, b) {
-            (
-                KernelPickerEntry::Kernel { spec: sa, .. },
-                KernelPickerEntry::Kernel { spec: sb, .. },
-            ) => (sa, sb),
-            _ => return std::cmp::Ordering::Equal,
-        };
-        spec_b
-            .has_ipykernel()
-            .cmp(&spec_a.has_ipykernel())
-            .then_with(|| spec_a.name().cmp(&spec_b.name()))
+    python_envs.sort_by(|a, b| match (a, b) {
+        (
+            KernelPickerEntry::Kernel { spec: spec_a, .. },
+            KernelPickerEntry::Kernel { spec: spec_b, .. },
+        ) => python_env_order(spec_a, spec_b),
+        _ => Ordering::Equal,
     });
 
     // Recommended section
@@ -489,5 +493,53 @@ where
             .trigger_with_tooltip(self.trigger, self.tooltip)
             .attach(gpui::Anchor::BottomLeft)
             .when_some(self.handle, |menu, handle| menu.with_handle(handle))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::PythonEnvKernelSpecification;
+    use jupyter_protocol::JupyterKernelspec;
+    use std::path::PathBuf;
+
+    fn python_env(name: &str, in_worktree: bool, has_ipykernel: bool) -> KernelSpecification {
+        KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
+            name: name.to_string(),
+            path: PathBuf::from(format!("/{name}/bin/python")),
+            kernelspec: JupyterKernelspec {
+                argv: Vec::new(),
+                display_name: name.to_string(),
+                language: "python".to_string(),
+                interrupt_mode: None,
+                metadata: None,
+                env: None,
+            },
+            has_ipykernel,
+            in_worktree,
+            environment_kind: None,
+        })
+    }
+
+    #[test]
+    fn worktree_environments_sort_first_even_without_ipykernel() {
+        let mut specs = [
+            python_env("Python 3.14.5 (Homebrew)", false, true),
+            python_env("Python 3.11.15 (uv)", false, false),
+            python_env("Python 3.14 (kp-proj; uv)", true, false),
+            python_env("Python 3.9.6 (global)", false, true),
+        ];
+        specs.sort_by(python_env_order);
+
+        let names: Vec<_> = specs.iter().map(|spec| spec.name().to_string()).collect();
+        assert_eq!(
+            names,
+            [
+                "Python 3.14 (kp-proj; uv)",
+                "Python 3.14.5 (Homebrew)",
+                "Python 3.9.6 (global)",
+                "Python 3.11.15 (uv)",
+            ]
+        );
     }
 }
