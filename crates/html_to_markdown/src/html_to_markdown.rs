@@ -18,8 +18,11 @@ pub use crate::html_element::*;
 pub use crate::markdown_writer::*;
 
 /// Converts the provided HTML to Markdown.
-pub fn convert_html_to_markdown(html: impl Read, handlers: &mut [TagHandler]) -> Result<String> {
-    let dom = parse_html(html).context("failed to parse HTML")?;
+pub fn convert_html_to_markdown(
+    mut html: impl Read,
+    handlers: &mut [TagHandler],
+) -> Result<String> {
+    let dom = parse_html(&mut html).context("failed to parse HTML")?;
 
     let markdown_writer = MarkdownWriter::new();
     let markdown = markdown_writer
@@ -29,7 +32,8 @@ pub fn convert_html_to_markdown(html: impl Read, handlers: &mut [TagHandler]) ->
     Ok(markdown)
 }
 
-fn parse_html(mut html: impl Read) -> Result<RcDom> {
+#[inline(never)]
+fn parse_html(mut html: &mut dyn Read) -> Result<RcDom> {
     let parse_options = ParseOpts {
         tree_builder: TreeBuilderOpts {
             drop_doctype: true,

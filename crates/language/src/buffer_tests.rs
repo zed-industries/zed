@@ -76,6 +76,7 @@ fn test_set_line_ending(cx: &mut TestAppContext) {
             Capability::ReadWrite,
             base.read(cx).to_proto(cx),
             None,
+            cx,
         )
         .unwrap()
     });
@@ -397,6 +398,162 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     assert_eq!(language_name(language), "Dockerfile");
 }
 
+#[gpui::test]
+async fn test_reregistering_language_during_load_yields_current_language(cx: &mut TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let (unblock_stale_load_tx, unblock_stale_load_rx) = futures::channel::oneshot::channel::<()>();
+    let unblock_stale_load_rx = std::sync::Mutex::new(Some(unblock_stale_load_rx));
+
+    let stale_config = LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["stale".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    };
+    registry.register_language(
+        stale_config.name.clone(),
+        None,
+        stale_config.matcher.clone(),
+        false,
+        None,
+        Arc::new(move || {
+            let unblock_stale_load_rx = unblock_stale_load_rx
+                .lock()
+                .expect("the stale loader mutex should not be poisoned")
+                .take();
+            let stale_config = stale_config.clone();
+            async move {
+                if let Some(unblock_stale_load_rx) = unblock_stale_load_rx {
+                    unblock_stale_load_rx.await.ok();
+                }
+                Ok(LoadedLanguage {
+                    config: stale_config,
+                    queries: LanguageQueries::default(),
+                    context_provider: None,
+                    toolchain_provider: None,
+                    manifest_name: None,
+                })
+            }
+            .boxed()
+        }),
+    );
+
+    let pending_language = registry.language_for_name("TheLanguage");
+    cx.executor().run_until_parked();
+
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["fresh".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+
+    unblock_stale_load_tx.send(()).unwrap();
+    let language = pending_language.await.unwrap();
+    assert_eq!(
+        language.config.matcher.path_suffixes,
+        vec!["fresh".to_string()],
+        "a load that races with a re-registration should resolve to the re-registered language"
+    );
+}
+
+#[gpui::test]
+async fn test_reregistering_language_during_failed_load_yields_current_language(
+    cx: &mut TestAppContext,
+) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let (unblock_stale_load_tx, unblock_stale_load_rx) = futures::channel::oneshot::channel::<()>();
+    let unblock_stale_load_rx = std::sync::Mutex::new(Some(unblock_stale_load_rx));
+
+    registry.register_language(
+        LanguageName::new_static("TheLanguage"),
+        None,
+        Arc::new(LanguageMatcher {
+            path_suffixes: vec!["stale".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        false,
+        None,
+        Arc::new(move || {
+            let unblock_stale_load_rx = unblock_stale_load_rx
+                .lock()
+                .expect("the stale loader mutex should not be poisoned")
+                .take();
+            async move {
+                if let Some(unblock_stale_load_rx) = unblock_stale_load_rx {
+                    unblock_stale_load_rx.await.ok();
+                }
+                Err(anyhow::anyhow!("simulated load failure"))
+            }
+            .boxed()
+        }),
+    );
+
+    let pending_language = registry.language_for_name("TheLanguage");
+    cx.executor().run_until_parked();
+
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["fresh".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+
+    unblock_stale_load_tx.send(()).unwrap();
+    let language = pending_language.await.unwrap();
+    assert_eq!(
+        language.config.matcher.path_suffixes,
+        vec!["fresh".to_string()],
+        "a failed load that races with a re-registration should resolve to the re-registered language"
+    );
+}
+
+#[gpui::test]
+async fn test_extension_grammar_cannot_shadow_native_grammar(cx: &mut TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    registry.register_native_grammars([("rust", tree_sitter_rust::LANGUAGE)]);
+    registry.register_wasm_grammars(vec![(
+        Arc::from("rust"),
+        PathBuf::from("/extensions/bogus/grammars/rust.wasm"),
+    )]);
+
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        grammar: Some(Arc::from("rust")),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["the".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+    let language = registry.language_for_name("TheLanguage").await.unwrap();
+    assert!(
+        language.grammar().is_some(),
+        "an extension grammar must not replace a native grammar with the same name"
+    );
+
+    registry.remove_languages(&[], &[Arc::from("rust")]);
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheOtherLanguage"),
+        grammar: Some(Arc::from("rust")),
+        ..LanguageConfig::default()
+    });
+    let language = registry
+        .language_for_name("TheOtherLanguage")
+        .await
+        .unwrap();
+    assert!(
+        language.grammar().is_some(),
+        "removing an extension grammar must not remove the native grammar it failed to shadow"
+    );
+}
+
 fn file(path: &str) -> Arc<dyn File> {
     Arc::new(TestFile {
         path: Arc::from(rel_path(path)),
@@ -418,6 +575,7 @@ fn test_edit_events(cx: &mut gpui::App) {
             ReplicaId::new(1),
             Capability::ReadWrite,
             "abcdef",
+            cx,
         )
     });
     let buffer1_ops = Arc::new(Mutex::new(Vec::new()));
@@ -3688,7 +3846,7 @@ fn test_serialization(cx: &mut gpui::App) {
         .block_on(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new(|cx| {
         let mut buffer =
-            Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap();
+            Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None, cx).unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -3712,6 +3870,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
             Capability::ReadWrite,
             base.read(cx).to_proto(cx),
             None,
+            cx,
         )
         .unwrap()
     });
@@ -4024,9 +4183,14 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             let ops = cx
                 .foreground_executor()
                 .block_on(base_buffer.read(cx).serialize_ops(None, cx));
-            let mut buffer =
-                Buffer::from_proto(ReplicaId::new(i as u16), Capability::ReadWrite, state, None)
-                    .unwrap();
+            let mut buffer = Buffer::from_proto(
+                ReplicaId::new(i as u16),
+                Capability::ReadWrite,
+                state,
+                None,
+                cx,
+            )
+            .unwrap();
             buffer.apply_ops(
                 ops.into_iter()
                     .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -4118,7 +4282,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                             DiagnosticEntry::new(
                                 range,
                                 Diagnostic {
-                                    message: post_inc(&mut next_diagnostic_id).to_string(),
+                                    message: post_inc(&mut next_diagnostic_id).to_string().into(),
                                     ..Default::default()
                                 },
                             )
@@ -4155,6 +4319,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                         Capability::ReadWrite,
                         old_buffer_state,
                         None,
+                        cx,
                     )
                     .unwrap();
                     new_buffer.apply_ops(
@@ -5038,6 +5203,7 @@ fn test_completion_triggers_across_language_servers(cx: &mut TestAppContext) {
             Capability::ReadWrite,
             buffer.read(cx).to_proto(cx),
             None,
+            cx,
         )
         .unwrap()
     });
@@ -5159,6 +5325,329 @@ fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     cx.update_global::<SettingsStore, _>(|settings, cx| {
         settings.update_user_settings(cx, |content| f(&mut content.project.all_languages));
     });
+}
+
+#[gpui::test]
+fn test_settings_changed_event(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let buffer = cx.new(|cx| Buffer::local("one\ntwo\nthree\n", cx));
+    let settings_change_count = std::rc::Rc::new(std::cell::Cell::new(0));
+    let subscription = cx.update(|cx| {
+        cx.subscribe(&buffer, {
+            let settings_change_count = settings_change_count.clone();
+            move |_, event, _| {
+                if let BufferEvent::SettingsChanged = event {
+                    settings_change_count.set(settings_change_count.get() + 1);
+                }
+            }
+        })
+    });
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, cx| {
+            crate::language_settings::LanguageSettings::for_buffer(buffer, cx)
+                .tab_size
+                .get()
+        }),
+        4
+    );
+    assert_eq!(settings_change_count.get(), 0);
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |content| {
+                content.project.all_languages.defaults.tab_size = Some(3.try_into().unwrap());
+            });
+        });
+    });
+    assert_eq!(settings_change_count.get(), 1);
+    assert_eq!(
+        buffer.read_with(cx, |buffer, cx| {
+            crate::language_settings::LanguageSettings::for_buffer(buffer, cx)
+                .tab_size
+                .get()
+        }),
+        3
+    );
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |content| {
+                content.project.all_languages.defaults.tab_size = Some(3.try_into().unwrap());
+            });
+        });
+    });
+    assert_eq!(
+        settings_change_count.get(),
+        1,
+        "a no-op settings update should not emit SettingsChanged"
+    );
+
+    drop(subscription);
+}
+
+#[gpui::test]
+fn test_chunk_highlights_follow_edits_and_theme_changes(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let language = keyword_and_function_lang();
+    let theme_with_keyword = keyword_and_function_theme();
+    let theme_without_keyword =
+        SyntaxTheme::new([("function".to_string(), gpui::rgba(0x0000ffff).into())]);
+    language.set_theme(&theme_with_keyword);
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local("fn main() {}", cx);
+        buffer.set_language(Some(language.clone()), cx);
+        buffer
+    });
+    cx.run_until_parked();
+
+    let highlighted_chunks = |snapshot: &BufferSnapshot| {
+        snapshot
+            .chunks(
+                0..snapshot.len(),
+                LanguageAwareStyling {
+                    tree_sitter: true,
+                    diagnostics: false,
+                },
+            )
+            .filter_map(|chunk| Some((chunk.text.to_string(), chunk.syntax_highlight_id?)))
+            .collect::<Vec<_>>()
+    };
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let expected_with_keyword = vec![
+        (
+            "fn".to_string(),
+            theme_highlight_id(&theme_with_keyword, "keyword"),
+        ),
+        (
+            "main".to_string(),
+            theme_highlight_id(&theme_with_keyword, "function"),
+        ),
+    ];
+    assert_eq!(highlighted_chunks(&snapshot), expected_with_keyword);
+    assert_eq!(
+        highlighted_chunks(&snapshot),
+        expected_with_keyword,
+        "repeated chunking of the same snapshot must return the same highlights"
+    );
+
+    language.set_theme(&theme_without_keyword);
+    assert_eq!(
+        highlighted_chunks(&snapshot),
+        vec![(
+            "main".to_string(),
+            theme_highlight_id(&theme_without_keyword, "function")
+        )],
+        "a theme change must invalidate highlights of an existing snapshot"
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(3..7, "launch")], None, cx);
+    });
+    cx.run_until_parked();
+    let edited_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(
+        highlighted_chunks(&edited_snapshot),
+        vec![(
+            "launch".to_string(),
+            theme_highlight_id(&theme_without_keyword, "function")
+        )],
+        "an edit must invalidate the cached highlights"
+    );
+}
+
+#[gpui::test]
+fn test_chunk_highlights_across_row_chunk_seeks(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let language = keyword_and_function_lang();
+    let theme = keyword_and_function_theme();
+    language.set_theme(&theme);
+
+    let short_row = "fn short() {}\n";
+    let last_row = "fn omega() {}";
+    let text = format!(
+        "{}{last_row}",
+        short_row.repeat(MAX_ROWS_IN_A_CHUNK as usize)
+    );
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language(Some(language.clone()), cx);
+        buffer
+    });
+    cx.run_until_parked();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let keyword = theme_highlight_id(&theme, "keyword");
+    let function = theme_highlight_id(&theme, "function");
+
+    assert_eq!(
+        merged_highlight_runs(&snapshot, 0..short_row.len()),
+        vec![("fn".to_string(), keyword), ("short".to_string(), function)],
+    );
+
+    let last_row_start = short_row.len() * MAX_ROWS_IN_A_CHUNK as usize;
+    let expected_last_row_runs = vec![("fn".to_string(), keyword), ("omega".to_string(), function)];
+    assert_eq!(
+        merged_highlight_runs(&snapshot, last_row_start..snapshot.len()),
+        expected_last_row_runs,
+    );
+
+    let mut chunks = snapshot.chunks(
+        0..short_row.len(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    );
+    chunks.seek(last_row_start..snapshot.len());
+    let mut runs_after_seek = Vec::new();
+    for chunk in chunks {
+        merge_highlighted_chunk(&mut runs_after_seek, &chunk);
+    }
+    assert_eq!(
+        runs_after_seek, expected_last_row_runs,
+        "seeking into another row chunk must refetch that chunk's highlights"
+    );
+}
+
+#[gpui::test]
+fn test_oversized_chunks_bypass_the_highlight_cache(cx: &mut TestAppContext) {
+    if std::env::var_os("ZED_DISABLE_HIGHLIGHT_CACHE").is_some() {
+        return;
+    }
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let language = keyword_and_function_lang();
+    let theme = keyword_and_function_theme();
+    language.set_theme(&theme);
+
+    let short_row = "fn short() {}\n";
+    let giant_row = format!(
+        "fn omega() {{}}{}",
+        " ".repeat(MAX_BYTES_TO_HIGHLIGHT_IN_A_CHUNK)
+    );
+    let text = format!(
+        "{}{giant_row}",
+        short_row.repeat(MAX_ROWS_IN_A_CHUNK as usize)
+    );
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language(Some(language.clone()), cx);
+        buffer
+    });
+    cx.run_until_parked();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let keyword = theme_highlight_id(&theme, "keyword");
+    let function = theme_highlight_id(&theme, "function");
+    let expected_giant_row_runs =
+        vec![("fn".to_string(), keyword), ("omega".to_string(), function)];
+
+    let last_row_start = short_row.len() * MAX_ROWS_IN_A_CHUNK as usize;
+    assert_eq!(
+        snapshot.cached_highlight_runs(last_row_start..snapshot.len()),
+        None,
+        "chunks larger than the byte cap must not be cached"
+    );
+    assert!(
+        snapshot.cached_highlight_runs(0..short_row.len()).is_some(),
+        "chunks within the byte cap must still be cached"
+    );
+    assert_eq!(
+        snapshot.cached_highlight_runs(last_row_start + 1..last_row_start + 1),
+        Some(Vec::new()),
+        "an empty range must not compute captures for its oversized chunk"
+    );
+
+    assert_eq!(
+        merged_highlight_runs(&snapshot, last_row_start..snapshot.len()),
+        expected_giant_row_runs,
+        "oversized chunks must fall back to direct highlighting"
+    );
+
+    let mut chunks = snapshot.chunks(
+        0..short_row.len(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    );
+    chunks.seek(last_row_start..snapshot.len());
+    let mut runs_after_seek = Vec::new();
+    for chunk in chunks {
+        merge_highlighted_chunk(&mut runs_after_seek, &chunk);
+    }
+    assert_eq!(
+        runs_after_seek, expected_giant_row_runs,
+        "seeking into an oversized chunk must fall back to direct highlighting"
+    );
+}
+
+#[gpui::test]
+fn test_language_change_invalidates_cached_chunk_highlights(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let rust = keyword_and_function_lang();
+    let identifiers_only = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Identifiers".into(),
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query("(identifier) @variable")
+        .unwrap(),
+    );
+    let theme = SyntaxTheme::new([
+        ("keyword".to_string(), gpui::rgba(0xff0000ff).into()),
+        ("function".to_string(), gpui::rgba(0x00ff00ff).into()),
+        ("variable".to_string(), gpui::rgba(0x0000ffff).into()),
+    ]);
+    rust.set_theme(&theme);
+    identifiers_only.set_theme(&theme);
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local("fn main() {}", cx);
+        buffer.set_language(Some(rust), cx);
+        buffer
+    });
+    cx.run_until_parked();
+
+    let keyword = theme_highlight_id(&theme, "keyword");
+    let function = theme_highlight_id(&theme, "function");
+    let variable = theme_highlight_id(&theme, "variable");
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(
+        merged_highlight_runs(&snapshot, 0..snapshot.len()),
+        vec![("fn".to_string(), keyword), ("main".to_string(), function)],
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_sync_parse_timeout(None);
+        buffer.set_language(Some(identifiers_only), cx);
+    });
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(
+        merged_highlight_runs(&snapshot, 0..snapshot.len()),
+        Vec::new(),
+        "a language change must not serve the old language's cached highlights while the new parse is pending"
+    );
+
+    cx.run_until_parked();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    assert_eq!(
+        merged_highlight_runs(&snapshot, 0..snapshot.len()),
+        vec![("main".to_string(), variable)],
+    );
 }
 
 #[gpui::test(iterations = 100)]
@@ -5287,4 +5776,64 @@ fn test_formatted_chunks(cx: &mut gpui::App) {
             );
         }
     }
+}
+
+fn merged_highlight_runs(
+    snapshot: &BufferSnapshot,
+    range: Range<usize>,
+) -> Vec<(String, HighlightId)> {
+    let chunks = snapshot.chunks(
+        range,
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    );
+    let mut runs = Vec::new();
+    for chunk in chunks {
+        merge_highlighted_chunk(&mut runs, &chunk);
+    }
+    runs
+}
+
+fn merge_highlighted_chunk(runs: &mut Vec<(String, HighlightId)>, chunk: &Chunk<'_>) {
+    let Some(highlight_id) = chunk.syntax_highlight_id else {
+        return;
+    };
+    match runs.last_mut() {
+        Some((last_text, last_highlight_id)) if *last_highlight_id == highlight_id => {
+            last_text.push_str(chunk.text);
+        }
+        _ => runs.push((chunk.text.to_string(), highlight_id)),
+    }
+}
+
+fn keyword_and_function_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query(
+            r#"
+            "fn" @keyword
+            (identifier) @function
+            "#,
+        )
+        .unwrap(),
+    )
+}
+
+fn keyword_and_function_theme() -> SyntaxTheme {
+    SyntaxTheme::new([
+        ("keyword".to_string(), gpui::rgba(0xff0000ff).into()),
+        ("function".to_string(), gpui::rgba(0x00ff00ff).into()),
+    ])
+}
+
+fn theme_highlight_id(theme: &SyntaxTheme, capture_name: &str) -> HighlightId {
+    HighlightId::new(theme.highlight_id(capture_name).unwrap())
 }

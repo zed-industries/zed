@@ -2,6 +2,7 @@
 // language configuration, and highlight mapping.
 
 pub mod grammar;
+pub mod highlight_cache;
 pub mod highlight_map;
 pub mod language_config;
 
@@ -11,7 +12,7 @@ pub use grammar::{
     NEXT_GRAMMAR_ID, OutlineConfig, OverrideConfig, OverrideEntry, ParseableLanguage,
     RedactionConfig, RunnableCapture, RunnableConfig, TextObject, TextObjectConfig,
 };
-pub use highlight_map::{HighlightId, HighlightMap};
+pub use highlight_map::{CaptureId, HighlightId, HighlightMap};
 pub use language_config::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, DecreaseIndentConfig,
     JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride, LanguageMatcher,

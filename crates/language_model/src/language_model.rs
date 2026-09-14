@@ -8,9 +8,9 @@ pub mod fake_provider;
 pub use language_model_core::*;
 
 use anyhow::Result;
-use futures::FutureExt;
-use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Task, Window};
+use futures::{FutureExt, SinkExt};
+use futures::{StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
+use gpui::{AnyView, App, AsyncApp, BackgroundExecutor, Task, Window};
 use icons::IconName;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -22,8 +22,34 @@ pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
 pub use env_var::{EnvVar, env_var};
 
+const BACKGROUND_STREAM_BUFFER_SIZE: usize = 32;
+
 pub fn init(cx: &mut App) {
     registry::init(cx);
+}
+
+pub fn stream_in_background<Output>(
+    mut events: BoxStream<'static, Output>,
+    executor: BackgroundExecutor,
+) -> BoxStream<'static, Output>
+where
+    Output: Send + 'static,
+{
+    let (mut sender, receiver) = mpsc::channel(BACKGROUND_STREAM_BUFFER_SIZE);
+    let task = executor.spawn(async move {
+        while let Some(event) = events.next().await {
+            if sender.send(event).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    receiver
+        .map(move |event| {
+            let _task = &task;
+            event
+        })
+        .boxed()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,10 +208,6 @@ pub trait LanguageModel: Send + Sync {
     /// When true, the UI may show separate input/output token indicators.
     fn supports_split_token_display(&self) -> bool {
         false
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchema
     }
 
     fn max_token_count(&self) -> u64;
