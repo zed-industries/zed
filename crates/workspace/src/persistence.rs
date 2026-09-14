@@ -3,6 +3,7 @@ pub mod model;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
+    future::Future,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -2153,49 +2154,12 @@ impl WorkspaceDb {
         current_session_id: &str,
         last_session_id: Option<&str>,
     ) -> Result<()> {
-        let remote_connections = self.remote_connections()?;
-        let now = Utc::now();
-        let mut workspaces_to_delete = Vec::new();
-        for (id, paths, _identity_paths_hint, remote_connection_id, session_id, timestamp) in
-            self.recent_workspaces()?
-        {
-            if let Some(session_id) = session_id.as_deref() {
-                if session_id == current_session_id || Some(session_id) == last_session_id {
-                    continue;
-                }
-            }
-
-            if let Some(remote_connection_id) = remote_connection_id {
-                if !remote_connections.contains_key(&remote_connection_id) {
-                    workspaces_to_delete.push(id);
-                }
-                continue;
-            }
-
-            // Delete the workspace if any of the paths are WSL paths. If a
-            // local workspace points to WSL, attempting to read its metadata
-            // will wait for the WSL VM and file server to boot up. This can
-            // block for many seconds. Supported scenarios use remote
-            // workspaces.
-            if contains_wsl_path(&paths) {
-                workspaces_to_delete.push(id);
-                continue;
-            }
-
-            if !Self::all_paths_exist_with_a_directory(paths.paths(), fs).await
-                && now - timestamp >= chrono::Duration::days(7)
-            {
-                workspaces_to_delete.push(id);
-            }
-        }
-
-        futures::future::join_all(
-            workspaces_to_delete
-                .into_iter()
-                .map(|id| self.delete_workspace_by_id(id)),
+        self.garbage_collect_workspaces_with_metadata(
+            current_session_id,
+            last_session_id,
+            |path| async move { fs.metadata(&path).await },
         )
-        .await;
-        Ok(())
+        .await
     }
 
     pub async fn last_workspace(&self, fs: &dyn Fs) -> Result<Option<RecentWorkspace>> {
@@ -2685,6 +2649,118 @@ VALUES {placeholders};"#
             DELETE FROM trusted_worktrees
         }
     }
+    async fn garbage_collect_workspaces_with_metadata<F>(
+        &self,
+        current_session_id: &str,
+        last_session_id: Option<&str>,
+        mut metadata: impl FnMut(PathBuf) -> F,
+    ) -> Result<()>
+    where
+        F: Future<Output = Result<Option<fs::Metadata>>>,
+    {
+        let remote_connections = self.remote_connections()?;
+        let now = Utc::now();
+        let mut workspaces_to_delete = Vec::new();
+        for candidate in self.workspaces_for_gc()? {
+            let (_, paths, paths_order, _, _, remote_connection_id, session_id, timestamp, _) =
+                &candidate;
+            if let Some(session_id) = session_id.as_deref()
+                && (session_id == current_session_id || Some(session_id) == last_session_id)
+            {
+                continue;
+            }
+
+            if let Some(remote_connection_id) = remote_connection_id {
+                if !remote_connections.contains_key(&RemoteConnectionId(*remote_connection_id)) {
+                    workspaces_to_delete.push(candidate);
+                }
+                continue;
+            }
+
+            let paths = PathList::deserialize(&SerializedPathList {
+                paths: paths.clone().unwrap_or_default(),
+                order: paths_order.clone().unwrap_or_default(),
+            });
+
+            // Delete the workspace if any of the paths are WSL paths. If a
+            // local workspace points to WSL, attempting to read its metadata
+            // will wait for the WSL VM and file server to boot up. This can
+            // block for many seconds. Supported scenarios use remote
+            // workspaces.
+            if contains_wsl_path(&paths) {
+                workspaces_to_delete.push(candidate);
+                continue;
+            }
+
+            if now - parse_timestamp(timestamp) >= chrono::Duration::days(7)
+                && Self::all_paths_exist_with_a_directory_for_gc(paths.paths(), &mut metadata)
+                    .await
+                    .log_err()
+                    == Some(false)
+            {
+                workspaces_to_delete.push(candidate);
+            }
+        }
+
+        if workspaces_to_delete.is_empty() {
+            return Ok(());
+        }
+
+        self.write(move |connection| {
+            connection.with_savepoint("garbage_collect_workspaces", || {
+                let mut delete = connection.exec_bound(sql!(
+                    DELETE FROM workspaces
+                    WHERE workspace_id = ?1
+                        AND paths IS ?2
+                        AND paths_order IS ?3
+                        AND identity_paths IS ?4
+                        AND identity_paths_order IS ?5
+                        AND remote_connection_id IS ?6
+                        AND session_id IS ?7
+                        AND timestamp IS ?8
+                        AND window_id IS ?9
+                ))?;
+                for candidate in workspaces_to_delete {
+                    delete(candidate)?;
+                }
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    async fn all_paths_exist_with_a_directory_for_gc<F>(
+        paths: &[PathBuf],
+        metadata: &mut impl FnMut(PathBuf) -> F,
+    ) -> Result<bool>
+    where
+        F: Future<Output = Result<Option<fs::Metadata>>>,
+    {
+        let mut all_exist = true;
+        let mut any_dir = false;
+        for path in paths {
+            match metadata(path.clone()).await.with_context(|| {
+                format!(
+                    "checking workspace path for garbage collection: {}",
+                    path.display()
+                )
+            })? {
+                Some(metadata) => any_dir |= metadata.is_dir,
+                None => all_exist = false,
+            }
+        }
+        Ok(all_exist && any_dir)
+    }
+
+    query! {
+        fn workspaces_for_gc() -> Result<Vec<(WorkspaceId, Option<String>, Option<String>, Option<String>, Option<String>, Option<u64>, Option<String>, String, Option<u64>)>> {
+            SELECT workspace_id, paths, paths_order, identity_paths, identity_paths_order,
+                remote_connection_id, session_id, timestamp, window_id
+            FROM workspaces
+            WHERE paths IS NOT NULL OR remote_connection_id IS NOT NULL
+            ORDER BY timestamp DESC
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2807,6 +2883,7 @@ mod tests {
             read_multi_workspace_state,
         },
     };
+    use futures::channel::oneshot;
     use gpui::TaskExt;
 
     use gpui::AppContext as _;
@@ -6484,5 +6561,182 @@ mod tests {
                 vec![WorkspaceId(1), WorkspaceId(2)]
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_gc_revalidates_candidates_after_metadata(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_gc_revalidates_candidates_after_metadata").await;
+        let stale_timestamp = "2000-01-01 00:00:00";
+        let changed_timestamp = "2000-01-02 00:00:00";
+        let cases = [
+            (None, None, stale_timestamp, false),
+            (Some("stale"), Some("stale"), stale_timestamp, false),
+            (None, None, changed_timestamp, true),
+            (Some("stale"), Some("stale"), changed_timestamp, true),
+            (None, Some("current"), stale_timestamp, true),
+            (Some("stale"), Some("current"), stale_timestamp, true),
+            (None, Some("last"), stale_timestamp, true),
+            (Some("stale"), Some("last"), stale_timestamp, true),
+            (None, Some("other"), stale_timestamp, true),
+            (Some("stale"), Some("other"), stale_timestamp, true),
+            (Some("stale"), None, stale_timestamp, true),
+        ];
+
+        for (session_id, updated_session_id, timestamp, should_survive) in cases {
+            db.save_workspace(workspace_with(
+                1,
+                &[Path::new("/gc-candidate")],
+                empty_pane_group(),
+                session_id,
+            ))
+            .await;
+            db.save_workspace(workspace_with(
+                2,
+                &[Path::new("/gc-unchanged")],
+                empty_pane_group(),
+                None,
+            ))
+            .await;
+            for id in [1, 2] {
+                db.set_timestamp_for_tests(WorkspaceId(id), stale_timestamp.to_owned())
+                    .await
+                    .expect("failed to age workspace");
+            }
+
+            garbage_collect_while(&db, fs.as_ref(), async {
+                db.set_session_binding(
+                    WorkspaceId(1),
+                    updated_session_id.map(str::to_owned),
+                    Some(1),
+                )
+                .await
+                .expect("failed to change session binding");
+                db.set_timestamp_for_tests(WorkspaceId(1), timestamp.to_owned())
+                    .await
+                    .expect("failed to change timestamp");
+            })
+            .await;
+
+            assert_eq!(
+                db.select::<WorkspaceId>(sql!(
+                    SELECT workspace_id FROM workspaces ORDER BY workspace_id
+                ))
+                .expect("failed to prepare workspace query")()
+                .expect("failed to read workspaces"),
+                if should_survive {
+                    vec![WorkspaceId(1)]
+                } else {
+                    Vec::new()
+                },
+                "session {session_id:?} -> {updated_session_id:?}, timestamp {timestamp}"
+            );
+            assert_eq!(
+                db.workspace_for_id(WorkspaceId(1))
+                    .map(|workspace| workspace.center_group),
+                should_survive.then(|| {
+                    SerializedPaneGroup::Pane(SerializedPane::new(Vec::new(), true, 0))
+                })
+            );
+            db.delete_workspace_by_id(WorkspaceId(1))
+                .await
+                .expect("failed to reset candidate");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_gc_preserves_workspaces_on_metadata_errors(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_gc_preserves_workspaces_on_metadata_errors").await;
+        fs.insert_tree("/gc", json!({"directory": {}, "file": "contents"}))
+            .await;
+        let cases: &[&[&str]] = &[
+            &["/gc/error"],
+            &["/gc/a-missing", "/gc/error"],
+            &["/gc/error", "/gc/z-missing"],
+            &["/gc/directory", "/gc/error"],
+            &["/gc/directory"],
+            &["/gc/missing"],
+            &["/gc/file"],
+            &["/gc/directory", "/gc/missing"],
+            &[],
+        ];
+        for (index, paths) in cases.iter().enumerate() {
+            let id = index as u64 + 1;
+            let paths = paths.iter().map(Path::new).collect::<Vec<_>>();
+            db.save_workspace(workspace_with(id, &paths, empty_pane_group(), None))
+                .await;
+            db.set_timestamp_for_tests(WorkspaceId(id as i64), "2000-01-01 00:00:00".to_owned())
+                .await
+                .expect("failed to age workspace");
+        }
+
+        db.garbage_collect_workspaces_with_metadata("current", None, |path| {
+            let fs = &fs;
+            async move {
+                if path == Path::new("/gc/error") {
+                    bail!("metadata unavailable");
+                }
+                fs.metadata(&path).await
+            }
+        })
+        .await
+        .expect("garbage collection failed");
+
+        assert_eq!(
+            db.select::<WorkspaceId>(sql!(
+                SELECT workspace_id FROM workspaces ORDER BY workspace_id
+            ))
+            .expect("failed to prepare workspace query")()
+            .expect("failed to read workspaces"),
+            vec![
+                WorkspaceId(1),
+                WorkspaceId(2),
+                WorkspaceId(3),
+                WorkspaceId(4),
+                WorkspaceId(5),
+            ]
+        );
+        for id in 1..=5 {
+            assert_eq!(
+                db.workspace_for_id(WorkspaceId(id))
+                    .map(|workspace| workspace.center_group),
+                Some(SerializedPaneGroup::Pane(SerializedPane::new(
+                    Vec::new(),
+                    true,
+                    0,
+                )))
+            );
+        }
+    }
+
+    async fn garbage_collect_while(
+        db: &WorkspaceDb,
+        fs: &dyn Fs,
+        change: impl Future<Output = ()>,
+    ) {
+        let (metadata_started, wait_for_metadata) = oneshot::channel();
+        let (resume_metadata, wait_for_change) = oneshot::channel();
+        let mut gate = Some((metadata_started, wait_for_change));
+        let garbage_collect =
+            db.garbage_collect_workspaces_with_metadata("current", Some("last"), |path| {
+                let gate = gate.take();
+                async move {
+                    if let Some((metadata_started, wait_for_change)) = gate {
+                        metadata_started
+                            .send(())
+                            .expect("metadata start receiver dropped");
+                        wait_for_change.await.expect("metadata gate dropped");
+                    }
+                    fs.metadata(&path).await
+                }
+            });
+        let change = async {
+            wait_for_metadata.await.expect("metadata did not start");
+            change.await;
+            resume_metadata.send(()).expect("metadata receiver dropped");
+        };
+        let (result, ()) = futures::join!(garbage_collect, change);
+        result.expect("garbage collection failed");
     }
 }
