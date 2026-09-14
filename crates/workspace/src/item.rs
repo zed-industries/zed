@@ -1,6 +1,6 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
-    SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceDb, WorkspaceId,
     invalid_item_view::InvalidItemView,
     pane::{self, Pane},
     persistence::model::ItemId,
@@ -408,6 +408,10 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
 pub trait SerializableItem: Item {
     fn serialized_item_kind() -> &'static str;
+
+    fn serialized_item_ids(workspace_id: WorkspaceId, cx: &App) -> Result<Vec<ItemId>> {
+        WorkspaceDb::global(cx).serialized_item_ids(workspace_id, Self::serialized_item_kind())
+    }
 
     fn cleanup(
         workspace_id: WorkspaceId,

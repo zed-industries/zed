@@ -457,6 +457,12 @@ db::static_connection!(TerminalDb, [WorkspaceDb]);
 
 impl TerminalDb {
     query! {
+        pub fn item_ids(workspace_id: WorkspaceId) -> Result<Vec<ItemId>> {
+            SELECT item_id FROM terminals WHERE workspace_id = ? ORDER BY item_id
+        }
+    }
+
+    query! {
        pub async fn update_workspace_id(
             new_id: WorkspaceId,
             old_id: WorkspaceId,

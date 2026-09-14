@@ -235,6 +235,12 @@ const MAX_QUERY_PLACEHOLDERS: usize = 32000;
 
 impl EditorDb {
     query! {
+        pub fn get_serialized_item_ids(workspace_id: WorkspaceId) -> Result<Vec<ItemId>> {
+            SELECT item_id FROM editors WHERE workspace_id = ? ORDER BY item_id
+        }
+    }
+
+    query! {
         pub fn get_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<SerializedEditor>> {
             SELECT path, buffer_path, contents, language, mtime_seconds, mtime_nanos FROM editors
             WHERE item_id = ? AND workspace_id = ?
@@ -413,6 +419,55 @@ VALUES {placeholders};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    async fn test_serialized_item_ids_include_orphaned_editors(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let workspace_database = cx.update(|cx| WorkspaceDb::global(cx));
+        let workspace_id = workspace_database
+            .next_id()
+            .await
+            .expect("failed to reserve workspace");
+        let other_workspace_id = workspace_database
+            .next_id()
+            .await
+            .expect("failed to reserve workspace");
+        let database = cx.update(|cx| EditorDb::global(cx));
+        for (item_id, workspace_id, contents) in [
+            (19, workspace_id, Some("unread payload")),
+            (2, workspace_id, None),
+            (7, workspace_id, Some("orphaned payload")),
+            (99, other_workspace_id, Some("other workspace")),
+        ] {
+            database
+                .save_serialized_editor(
+                    item_id,
+                    workspace_id,
+                    SerializedEditor {
+                        contents: contents.map(str::to_owned),
+                        ..SerializedEditor::default()
+                    },
+                )
+                .await
+                .expect("failed to seed editor");
+        }
+        assert_eq!(
+            cx.update(|cx| {
+                <crate::Editor as workspace::item::SerializableItem>::serialized_item_ids(
+                    workspace_id,
+                    cx,
+                )
+            })
+            .expect("failed to query editor IDs"),
+            vec![2, 7, 19]
+        );
+        assert_eq!(
+            database
+                .get_serialized_item_ids(other_workspace_id)
+                .expect("failed to query editor IDs"),
+            vec![99]
+        );
+    }
 
     #[gpui::test]
     async fn test_save_and_get_serialized_editor(cx: &mut gpui::TestAppContext) {

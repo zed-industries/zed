@@ -1263,6 +1263,10 @@ impl SerializableItem for Editor {
         "Editor"
     }
 
+    fn serialized_item_ids(workspace_id: WorkspaceId, cx: &App) -> Result<Vec<ItemId>> {
+        EditorDb::global(cx).get_serialized_item_ids(workspace_id)
+    }
+
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,

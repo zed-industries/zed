@@ -28,6 +28,8 @@ mod toolbar;
 pub mod welcome;
 pub mod workspace_error;
 mod workspace_settings;
+#[cfg(test)]
+mod workspace_tests;
 
 pub use dock::Panel;
 pub use multi_workspace::{
@@ -1242,6 +1244,7 @@ struct SerializableItemDescriptor {
         &mut Context<Pane>,
     ) -> Task<Result<Box<dyn ItemHandle>>>,
     cleanup: fn(WorkspaceId, Vec<ItemId>, &mut Window, &mut App) -> Task<Result<()>>,
+    serialized_item_ids: fn(WorkspaceId, &App) -> Result<Vec<ItemId>>,
     view_to_serializable_item: fn(AnyView) -> Box<dyn SerializableItemHandle>,
 }
 
@@ -1290,6 +1293,16 @@ impl SerializableItemRegistry {
         (descriptor.cleanup)(workspace_id, loaded_items, window, cx)
     }
 
+    fn serialized_item_ids(
+        item_kind: &str,
+        workspace_id: WorkspaceId,
+        cx: &App,
+    ) -> Result<Vec<ItemId>> {
+        let descriptor = Self::descriptor(item_kind, cx)
+            .with_context(|| format!("cannot reserve {item_kind} IDs, descriptor not found"))?;
+        (descriptor.serialized_item_ids)(workspace_id, cx)
+    }
+
     fn view_to_serializable_item_handle(
         view: AnyView,
         cx: &App,
@@ -1318,6 +1331,7 @@ pub fn register_serializable_item<I: SerializableItem>(cx: &mut App) {
         cleanup: |workspace_id, loaded_items, window, cx| {
             I::cleanup(workspace_id, loaded_items, window, cx)
         },
+        serialized_item_ids: I::serialized_item_ids,
         view_to_serializable_item: |view| Box::new(view.downcast::<I>().unwrap()),
     };
     registry
@@ -1654,6 +1668,8 @@ pub struct Workspace {
     persisted_recent_navigation_history: Vec<PathBuf>,
     last_active_project_path: Option<ProjectPath>,
     restoring_workspace: bool,
+
+    serialized_item_ids: HashMap<&'static str, SerializedItemIds>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -2165,6 +2181,8 @@ impl Workspace {
             persisted_recent_navigation_history: Vec::new(),
             last_active_project_path: None,
             restoring_workspace: false,
+
+            serialized_item_ids: HashMap::default(),
         }
     }
 
@@ -2917,6 +2935,35 @@ impl Workspace {
 
     pub fn is_restoring(&self) -> bool {
         self.restoring_workspace
+    }
+
+    pub fn serialization_id(
+        &mut self,
+        kind: &'static str,
+        runtime_id: EntityId,
+        cx: &App,
+    ) -> Result<ItemId> {
+        self.serialized_item_id_namespace(kind, cx)?
+            .allocate(runtime_id)
+    }
+
+    pub fn assigned_serialized_item_ids(&self, kind: &str) -> Vec<ItemId> {
+        self.serialized_item_ids
+            .get(kind)
+            .into_iter()
+            .flat_map(|namespace| namespace.by_runtime_id.values().copied())
+            .collect()
+    }
+
+    pub fn register_serialized_item_id(
+        &mut self,
+        kind: &'static str,
+        runtime_id: EntityId,
+        persisted_id: ItemId,
+        cx: &App,
+    ) -> Result<()> {
+        self.serialized_item_id_namespace(kind, cx)?
+            .register(runtime_id, persisted_id)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -7789,6 +7836,27 @@ impl Workspace {
         }
     }
 
+    fn serialized_item_id_namespace(
+        &mut self,
+        kind: &'static str,
+        cx: &App,
+    ) -> Result<&mut SerializedItemIds> {
+        match self.serialized_item_ids.entry(kind) {
+            hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
+            hash_map::Entry::Vacant(entry) => {
+                let workspace_id = self.database_id.context("workspace has no database ID")?;
+                let reserved =
+                    SerializableItemRegistry::serialized_item_ids(kind, workspace_id, cx)?
+                        .into_iter()
+                        .collect::<HashSet<_>>();
+                Ok(entry.insert(SerializedItemIds {
+                    reserved,
+                    by_runtime_id: HashMap::default(),
+                }))
+            }
+        }
+    }
+
     fn workspace_location(&self, cx: &App) -> WorkspaceLocation {
         let paths = PathList::new(&self.root_paths(cx));
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
@@ -10581,6 +10649,56 @@ async fn join_channel_internal(
         return anyhow::Ok(true);
     }
     anyhow::Ok(false)
+}
+
+#[derive(Default)]
+struct SerializedItemIds {
+    reserved: HashSet<ItemId>,
+    by_runtime_id: HashMap<EntityId, ItemId>,
+}
+
+impl SerializedItemIds {
+    fn allocate(&mut self, runtime_id: EntityId) -> Result<ItemId> {
+        if let Some(item_id) = self.by_runtime_id.get(&runtime_id) {
+            return Ok(*item_id);
+        }
+        let mut item_id = runtime_id.as_u64();
+        if self.reserved.contains(&item_id) {
+            item_id = self
+                .reserved
+                .iter()
+                .max()
+                .copied()
+                .and_then(|maximum| maximum.checked_add(1))
+                .context("serialized item ID namespace exhausted")?;
+        }
+        self.reserved.insert(item_id);
+        self.by_runtime_id.insert(runtime_id, item_id);
+        Ok(item_id)
+    }
+
+    fn register(&mut self, runtime_id: EntityId, persisted_id: ItemId) -> Result<()> {
+        anyhow::ensure!(
+            self.reserved.contains(&persisted_id),
+            "unknown serialized item ID {persisted_id}"
+        );
+        if let Some(item_id) = self.by_runtime_id.get(&runtime_id) {
+            anyhow::ensure!(
+                *item_id == persisted_id,
+                "item {runtime_id} already has serialized ID {item_id}, not {persisted_id}"
+            );
+            return Ok(());
+        }
+        anyhow::ensure!(
+            !self
+                .by_runtime_id
+                .values()
+                .any(|item_id| *item_id == persisted_id),
+            "serialized item ID {persisted_id} already belongs to another item"
+        );
+        self.by_runtime_id.insert(runtime_id, persisted_id);
+        Ok(())
+    }
 }
 
 fn serialize_pane_handle(

@@ -1858,6 +1858,13 @@ impl SerializableItem for TerminalView {
         "Terminal"
     }
 
+    fn serialized_item_ids(
+        workspace_id: WorkspaceId,
+        cx: &App,
+    ) -> anyhow::Result<Vec<workspace::ItemId>> {
+        TerminalDb::global(cx).item_ids(workspace_id)
+    }
+
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<workspace::ItemId>,

@@ -1504,6 +1504,10 @@ impl WorkspaceDb {
     }
 
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
+        self.try_save_workspace(workspace).await.log_err();
+    }
+
+    pub(crate) async fn try_save_workspace(&self, workspace: SerializedWorkspace) -> Result<()> {
         let paths = workspace.paths.serialize();
         let identity_paths = workspace.identity_paths.map(|paths| paths.serialize());
         log::debug!("Saving workspace at location: {:?}", workspace.location);
@@ -1674,9 +1678,8 @@ impl WorkspaceDb {
 
                 Ok(())
             })
-            .log_err();
         })
-        .await;
+        .await
     }
 
     pub(crate) async fn get_or_create_remote_connection(
@@ -1917,6 +1920,16 @@ impl WorkspaceDb {
             WHERE session_id = ?1
             ORDER BY timestamp DESC
         }
+    }
+
+    pub(crate) fn serialized_item_ids(
+        &self,
+        workspace_id: WorkspaceId,
+        kind: &str,
+    ) -> Result<Vec<ItemId>> {
+        self.select_bound(sql!(
+            SELECT item_id FROM items WHERE workspace_id = ? AND kind = ?
+        ))?((workspace_id, kind))
     }
 
     pub fn max_window_id(&self) -> Result<Option<u64>> {
@@ -3575,6 +3588,73 @@ mod tests {
 
         assert!(db.delete_workspace_by_id(workspace.id).await.is_ok());
         assert!(db.recent_navigation_history(workspace.id).is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_try_save_workspace_rolls_back_failed_graph_publication() {
+        let db = WorkspaceDb::open_test_db(
+            "test_try_save_workspace_rolls_back_failed_graph_publication",
+        )
+        .await;
+        let mut original = workspace_with(
+            1,
+            &[Path::new("/original")],
+            group(
+                Axis::Horizontal,
+                vec![
+                    pane_with_items(&[10]),
+                    group(
+                        Axis::Vertical,
+                        vec![pane_with_items(&[11]), pane_with_items(&[12])],
+                    ),
+                ],
+            ),
+            None,
+        );
+        original.recent_navigation_history = vec![PathBuf::from("/original/file")];
+        db.try_save_workspace(original.clone())
+            .await
+            .expect("failed to seed workspace");
+
+        db.write(|connection| {
+            connection.exec(
+                "CREATE TRIGGER fail_graph_publication
+                BEFORE INSERT ON items
+                WHEN NEW.workspace_id = 1 AND NEW.item_id = 22
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected graph publication failure');
+                END;",
+            )?()
+        })
+        .await
+        .expect("failed to install publication failure trigger");
+
+        let mut replacement = original.clone();
+        replacement.paths = PathList::new(&["/replacement"]);
+        replacement.window_id = Some(3);
+        replacement.recent_navigation_history = vec![PathBuf::from("/replacement/file")];
+        replacement.center_group = group(
+            Axis::Vertical,
+            vec![pane_with_items(&[21]), pane_with_items(&[22])],
+        );
+        let error = db
+            .try_save_workspace(replacement.clone())
+            .await
+            .expect_err("graph publication must fail");
+        assert_eq!(error.to_string(), "save pane group in save workspace");
+        assert_eq!(
+            error.root_cause().to_string(),
+            "Sqlite call failed with code 1811 and message: Some(\"injected graph publication failure\")"
+        );
+        assert_eq!(db.workspace_for_id(original.id), Some(original));
+
+        db.write(|connection| connection.exec(sql!(DROP TRIGGER fail_graph_publication))?())
+            .await
+            .expect("failed to remove publication failure trigger");
+        db.try_save_workspace(replacement.clone())
+            .await
+            .expect("graph publication should succeed without the trigger");
+        assert_eq!(db.workspace_for_id(replacement.id), Some(replacement));
     }
 
     #[gpui::test]
