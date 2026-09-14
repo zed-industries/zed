@@ -5,6 +5,7 @@ pub(crate) struct CloneSuggestion {
     pub(crate) title: SharedString,
     pub(crate) detail: SharedString,
     pub(crate) repo_url: SharedString,
+    pub(crate) provider: Option<SharedString>,
 }
 
 pub(crate) fn for_input(input: &str) -> Vec<CloneSuggestion> {
@@ -34,12 +35,16 @@ pub(crate) fn append_unique(
     }
 }
 
-impl From<git::RepositorySearchResult> for CloneSuggestion {
-    fn from(result: git::RepositorySearchResult) -> Self {
+impl CloneSuggestion {
+    pub(crate) fn from_search_result(
+        result: git::RepositorySearchResult,
+        provider_name: &str,
+    ) -> Self {
         Self {
             title: result.name,
             detail: result.detail,
             repo_url: result.clone_url,
+            provider: Some(provider_name.into()),
         }
     }
 }
@@ -50,6 +55,7 @@ fn entered_repository(input: &str) -> CloneSuggestion {
         title: SharedString::new_static("Clone entered repository"),
         detail: repo_url.clone(),
         repo_url,
+        provider: None,
     }
 }
 
@@ -123,11 +129,12 @@ mod tests {
             detail: "public".into(),
             clone_url: "https://github.com/zed-industries/zed.git".into(),
         };
-        let suggestion = CloneSuggestion::from(result);
+        let suggestion = CloneSuggestion::from_search_result(result, "GitHub");
         let mut suggestions = vec![suggestion.clone()];
         append_unique(&mut suggestions, [suggestion]);
 
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].title, "zed-industries/zed");
+        assert_eq!(suggestions[0].provider.as_deref(), Some("GitHub"));
     }
 }
