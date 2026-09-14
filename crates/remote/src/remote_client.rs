@@ -1176,6 +1176,18 @@ impl RemoteClient {
         MockConnection::new_with_opts(mock_opts, client_cx, server_cx)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn queue_fake_server(
+        opts: &RemoteConnectionOptions,
+        client_cx: &mut gpui::TestAppContext,
+        server_cx: &mut gpui::TestAppContext,
+    ) -> AnyProtoClient {
+        let RemoteConnectionOptions::Mock(mock_opts) = opts else {
+            panic!("queue_fake_server requires Mock connection options");
+        };
+        crate::transport::mock::MockConnection::queue_server(mock_opts, client_cx, server_cx)
+    }
+
     /// Creates a `RemoteClient` connected to a mock server.
     ///
     /// Call `fake_server` first to get the connection options, set up the

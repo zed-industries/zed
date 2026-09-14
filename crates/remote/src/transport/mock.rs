@@ -33,7 +33,7 @@ use crate::remote_client::{
     ChannelClient, CommandTemplate, Interactive, RemoteClientDelegate, RemoteConnection,
     RemoteConnectionOptions,
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -45,8 +45,10 @@ use futures::{
     select_biased,
 };
 use gpui::{App, AppContext as _, AsyncApp, Global, Task, TestAppContext};
+use parking_lot::Mutex;
 use rpc::{AnyProtoClient, proto::Envelope};
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     sync::{
         Arc,
@@ -64,8 +66,7 @@ pub struct MockConnectionOptions {
 /// A mock implementation of `RemoteConnection` for testing.
 pub struct MockRemoteConnection {
     options: MockConnectionOptions,
-    server_channel: Arc<ChannelClient>,
-    server_cx: SendableCx,
+    servers: Mutex<MockServers>,
 }
 
 /// Wrapper to pass `AsyncApp` across thread boundaries in tests.
@@ -160,15 +161,14 @@ impl MockConnection {
         client_cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
     ) -> (AnyProtoClient, ConnectGuard) {
-        let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
-        let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let server_client = server_cx
-            .update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "mock-server", false));
-
+        let server = Self::new_server(server_cx);
+        let server_client = server.channel.clone();
         let connection = Arc::new(MockRemoteConnection {
             options: opts.clone(),
-            server_channel: server_client.clone(),
-            server_cx: SendableCx::new(server_cx),
+            servers: Mutex::new(MockServers {
+                queued: VecDeque::from([server]),
+                assigned: HashMap::default(),
+            }),
         });
 
         let (tx, rx) = oneshot::channel();
@@ -180,6 +180,35 @@ impl MockConnection {
         });
 
         (server_client.into(), tx)
+    }
+
+    pub(crate) fn queue_server(
+        opts: &MockConnectionOptions,
+        client_cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> AnyProtoClient {
+        let server = Self::new_server(server_cx);
+        let server_client = server.channel.clone();
+        client_cx.update(|cx| {
+            let registry = cx.default_global::<MockConnectionRegistry>();
+            let (_, connection) = registry
+                .pending
+                .get(&opts.id)
+                .expect("queue mock servers before connecting");
+            connection.servers.lock().queued.push_back(server);
+        });
+        server_client.into()
+    }
+
+    fn new_server(server_cx: &mut TestAppContext) -> Arc<MockServer> {
+        let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
+        let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let channel = server_cx
+            .update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "mock-server", false));
+        Arc::new(MockServer {
+            channel,
+            cx: SendableCx::new(server_cx),
+        })
     }
 }
 
@@ -242,30 +271,48 @@ impl RemoteConnection for MockRemoteConnection {
     }
 
     fn simulate_disconnect(&self, cx: &AsyncApp) {
-        let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
-        let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-        self.server_channel
-            .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(cx));
+        for server in self.servers.lock().assigned.values() {
+            let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
+            let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
+            server
+                .channel
+                .reconnect(incoming_rx, outgoing_tx, &server.cx.get(cx));
+        }
     }
 
     fn start_proxy(
         &self,
-        _unique_identifier: String,
-        _reconnect: bool,
+        unique_identifier: String,
+        reconnect: bool,
         mut client_incoming_tx: mpsc::UnboundedSender<Envelope>,
         mut client_outgoing_rx: mpsc::UnboundedReceiver<Envelope>,
         mut connection_activity_tx: Sender<()>,
         _delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
+        let server = {
+            let mut servers = self.servers.lock();
+            if let Some(server) = servers.assigned.get(&unique_identifier) {
+                server.clone()
+            } else if reconnect {
+                return Task::ready(Err(anyhow!(
+                    "Unknown mock server identifier: {unique_identifier}"
+                )));
+            } else if let Some(server) = servers.queued.pop_front() {
+                servers.assigned.insert(unique_identifier, server.clone());
+                server
+            } else {
+                return Task::ready(Err(anyhow!(
+                    "No queued mock server for identifier: {unique_identifier}"
+                )));
+            }
+        };
         let (mut server_incoming_tx, server_incoming_rx) = mpsc::unbounded::<Envelope>();
         let (server_outgoing_tx, mut server_outgoing_rx) = mpsc::unbounded::<Envelope>();
 
-        self.server_channel.reconnect(
-            server_incoming_rx,
-            server_outgoing_tx,
-            &self.server_cx.get(cx),
-        );
+        server
+            .channel
+            .reconnect(server_incoming_rx, server_outgoing_tx, &server.cx.get(cx));
 
         cx.background_spawn(async move {
             loop {
@@ -351,4 +398,166 @@ impl RemoteClientDelegate for MockDelegate {
     }
 
     fn set_status(&self, _status: Option<&str>, _cx: &mut AsyncApp) {}
+}
+
+struct MockServers {
+    queued: VecDeque<Arc<MockServer>>,
+    assigned: HashMap<String, Arc<MockServer>>,
+}
+
+struct MockServer {
+    channel: Arc<ChannelClient>,
+    cx: SendableCx,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rpc::proto::{self, EnvelopedMessage};
+
+    #[gpui::test]
+    async fn test_mock_server_channels_are_identifier_scoped(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (options, first_server, guard) = MockConnection::new(cx, server_cx);
+        let second_server = MockConnection::queue_server(&options, cx, server_cx);
+        drop(guard);
+        let connection = cx
+            .update(|cx| {
+                cx.default_global::<MockConnectionRegistry>()
+                    .take(&options)
+                    .expect("missing mock connection")
+            })
+            .await;
+        assert_eq!(connection.servers.lock().queued.len(), 2);
+        assert_eq!(connection.servers.lock().assigned.len(), 0);
+
+        let unknown = start_test_proxy(&connection, "unknown", true, cx);
+        assert_eq!(
+            unknown
+                .task
+                .await
+                .expect_err("unknown reconnect succeeded")
+                .to_string(),
+            "Unknown mock server identifier: unknown"
+        );
+        assert_eq!(connection.servers.lock().queued.len(), 2);
+
+        let mut first = start_test_proxy(&connection, "first", false, cx);
+        let mut second = start_test_proxy(&connection, "second", false, cx);
+        assert_test_proxy_started(&mut first).await;
+        assert_test_proxy_started(&mut second).await;
+        assert_test_proxy_round_trip(&first_server, &mut first, 11).await;
+        assert_test_proxy_round_trip(&second_server, &mut second, 22).await;
+        assert_eq!(connection.servers.lock().queued.len(), 0);
+        assert_eq!(connection.servers.lock().assigned.len(), 2);
+
+        for reconnect in [false, true] {
+            let unknown = start_test_proxy(&connection, "third", reconnect, cx);
+            assert_eq!(
+                unknown
+                    .task
+                    .await
+                    .expect_err("exhausted endpoints aliased")
+                    .to_string(),
+                if reconnect {
+                    "Unknown mock server identifier: third"
+                } else {
+                    "No queued mock server for identifier: third"
+                }
+            );
+        }
+        assert_test_proxy_round_trip(&first_server, &mut first, 33).await;
+        assert_test_proxy_round_trip(&second_server, &mut second, 44).await;
+
+        connection.simulate_disconnect(&cx.to_async());
+        drop((first, second));
+        let mut second = start_test_proxy(&connection, "second", true, cx);
+        let mut first = start_test_proxy(&connection, "first", true, cx);
+        assert_test_proxy_started(&mut second).await;
+        assert_test_proxy_started(&mut first).await;
+        assert_test_proxy_round_trip(&first_server, &mut first, 55).await;
+        assert_test_proxy_round_trip(&second_server, &mut second, 66).await;
+        assert_eq!(connection.servers.lock().queued.len(), 0);
+        assert_eq!(connection.servers.lock().assigned.len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_mock_single_server_reconnect(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (options, server, guard) = MockConnection::new(cx, server_cx);
+        drop(guard);
+        let connection = cx
+            .update(|cx| {
+                cx.default_global::<MockConnectionRegistry>()
+                    .take(&options)
+                    .expect("missing mock connection")
+            })
+            .await;
+        let mut proxy = start_test_proxy(&connection, "single", false, cx);
+        assert_test_proxy_started(&mut proxy).await;
+        assert_test_proxy_round_trip(&server, &mut proxy, 1).await;
+        drop(proxy);
+        let mut proxy = start_test_proxy(&connection, "single", true, cx);
+        assert_test_proxy_started(&mut proxy).await;
+        assert_test_proxy_round_trip(&server, &mut proxy, 2).await;
+        assert_eq!(connection.servers.lock().queued.len(), 0);
+        assert_eq!(connection.servers.lock().assigned.len(), 1);
+    }
+
+    struct TestProxy {
+        task: Task<Result<i32>>,
+        outgoing: mpsc::UnboundedSender<Envelope>,
+        incoming: mpsc::UnboundedReceiver<Envelope>,
+    }
+
+    fn start_test_proxy(
+        connection: &MockRemoteConnection,
+        identifier: &str,
+        reconnect: bool,
+        cx: &mut TestAppContext,
+    ) -> TestProxy {
+        let (incoming_tx, incoming) = mpsc::unbounded();
+        let (outgoing, outgoing_rx) = mpsc::unbounded();
+        let (activity_tx, _) = mpsc::channel(1);
+        let task = connection.start_proxy(
+            String::from(identifier),
+            reconnect,
+            incoming_tx,
+            outgoing_rx,
+            activity_tx,
+            Arc::new(MockDelegate),
+            &mut cx.to_async(),
+        );
+        TestProxy {
+            task,
+            outgoing,
+            incoming,
+        }
+    }
+
+    async fn assert_test_proxy_started(proxy: &mut TestProxy) {
+        let envelope = proxy.incoming.next().await.expect("proxy disconnected");
+        assert_eq!(
+            proto::RemoteStarted::from_envelope(envelope),
+            Some(proto::RemoteStarted {})
+        );
+    }
+
+    async fn assert_test_proxy_round_trip(server: &AnyProtoClient, proxy: &mut TestProxy, id: u32) {
+        let message = proto::Test { id: u64::from(id) };
+        server.send(message).expect("server send failed");
+        let envelope = proxy.incoming.next().await.expect("proxy disconnected");
+        assert_eq!(proto::Test::from_envelope(envelope), Some(message));
+        proxy
+            .outgoing
+            .unbounded_send(proto::RemoteStarted {}.into_envelope(id, None, None))
+            .expect("client send failed");
+        let envelope = proxy.incoming.next().await.expect("proxy disconnected");
+        assert_eq!(envelope.responding_to, Some(id));
+        assert_eq!(proto::Ack::from_envelope(envelope), Some(proto::Ack {}));
+    }
 }
