@@ -1,9 +1,9 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
-    DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
-    FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
-    TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
+    CustomStyleProperty, DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font,
+    FontFeatures, FontStyle, FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla,
+    JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement, TextAlign,
+    TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -22,6 +22,17 @@ const ELLIPSIS: SharedString = SharedString::new_static("…");
 pub trait Styled: Sized {
     /// Returns a reference to the style memory of this element.
     fn style(&mut self) -> &mut StyleRefinement;
+
+    /// Sets a style property defined outside of GPUI's core style structs.
+    ///
+    /// Engines and forks read the property back with
+    /// [`CustomStyles::get`](crate::CustomStyles::get) while painting, which is
+    /// how a custom effect travels the style cascade without a field of its
+    /// own on [`Style`](crate::Style).
+    fn custom_style<T: CustomStyleProperty>(mut self, property: T) -> Self {
+        self.style().custom.insert(property);
+        self
+    }
 
     gpui_macros::style_helpers!();
     gpui_macros::visibility_style_methods!();

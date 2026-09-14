@@ -1,7 +1,11 @@
 use std::{
+    any::{Any, TypeId},
+    borrow::Cow,
+    fmt,
     hash::{Hash, Hasher},
     iter, mem,
     ops::Range,
+    sync::Arc,
 };
 
 use crate::{
@@ -13,9 +17,9 @@ use crate::{
     StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window, black, phi, point, px, quad, rems,
     size,
 };
-use collections::HashSet;
-use refineable::Refineable;
-use schemars::JsonSchema;
+use collections::{HashMap, HashSet};
+use refineable::{IsEmpty, Refineable};
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 
 /// Use this struct for interfacing with the 'debug_below' styling from your own elements.
@@ -137,6 +141,202 @@ impl ObjectFit {
                 size: image_size,
             },
         }
+    }
+}
+
+/// A style property defined outside of GPUI's core style structs.
+///
+/// Engines and forks carry their own rendering extensions - a backdrop blur
+/// radius, a custom shader's parameters - through the style cascade by defining
+/// a type and setting it with [`Styled::custom_style`], rather than adding a
+/// field to [`Style`] that every consumer of this crate has to know about.
+///
+/// The type itself keys the property, so a reader recovers exactly the type
+/// that was set. Any `Send + Sync + PartialEq + 'static` type is a custom
+/// property as-is; there is nothing to implement. Properties must be
+/// [`PartialEq`] because merging and subtracting style refinements diffs them.
+pub trait CustomStyleProperty: 'static + Send + Sync {
+    /// Upcasts to [`Any`] so [`CustomStyles::get`] can recover the concrete type.
+    fn as_any(&self) -> &dyn Any;
+
+    /// Compares two properties that share a concrete type.
+    fn eq_property(&self, other: &dyn CustomStyleProperty) -> bool;
+}
+
+impl<T: 'static + Send + Sync + PartialEq> CustomStyleProperty for T {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn eq_property(&self, other: &dyn CustomStyleProperty) -> bool {
+        other.as_any().downcast_ref::<T>() == Some(self)
+    }
+}
+
+/// The custom style properties set on an element or inherited from its
+/// ancestors, keyed by property type.
+///
+/// Every property lives behind one [`Arc`], so cloning a style shares them and
+/// an element that sets none carries only a null pointer. A write copies the
+/// map before mutating it, so clones never observe each other's changes.
+#[derive(Clone, Default)]
+pub struct CustomStyles {
+    entries: Option<Arc<HashMap<TypeId, Arc<dyn CustomStyleProperty>>>>,
+}
+
+/// Custom properties merge key by key, so a refinement has the same shape as
+/// the style it refines and [`Refineable`] can use [`CustomStyles`] directly.
+pub type CustomStylesRefinement = CustomStyles;
+
+impl CustomStyles {
+    /// Sets `property`, replacing any value already set for its type.
+    pub fn insert<T: CustomStyleProperty>(&mut self, property: T) {
+        self.entries_mut()
+            .insert(TypeId::of::<T>(), Arc::new(property));
+    }
+
+    /// Returns the property of type `T`, if one was set.
+    pub fn get<T: CustomStyleProperty>(&self) -> Option<&T> {
+        self.entries
+            .as_ref()?
+            .get(&TypeId::of::<T>())?
+            .as_any()
+            .downcast_ref::<T>()
+    }
+
+    /// Merges `other` into `self`, letting `other` win where both set the same
+    /// type.
+    pub fn refine(&mut self, other: &Self) {
+        let Some(other_entries) = other.entries.as_ref() else {
+            return;
+        };
+        let entries = self.entries_mut();
+        for (type_id, property) in other_entries.iter() {
+            entries.insert(*type_id, property.clone());
+        }
+    }
+
+    fn entries_mut(&mut self) -> &mut HashMap<TypeId, Arc<dyn CustomStyleProperty>> {
+        Arc::make_mut(self.entries.get_or_insert_with(Default::default))
+    }
+
+    /// Whether any property is set. It exists because the `Refineable` derive
+    /// calls `is_some` on every field of the refinement it generates.
+    fn is_some(&self) -> bool {
+        self.entries
+            .as_ref()
+            .is_some_and(|entries| !entries.is_empty())
+    }
+}
+
+impl IsEmpty for CustomStyles {
+    fn is_empty(&self) -> bool {
+        self.entries
+            .as_ref()
+            .is_none_or(|entries| entries.is_empty())
+    }
+}
+
+impl Refineable for CustomStyles {
+    type Refinement = CustomStylesRefinement;
+
+    fn refine(&mut self, refinement: &Self::Refinement) {
+        CustomStyles::refine(self, refinement);
+    }
+
+    fn refined(mut self, refinement: Self::Refinement) -> Self {
+        CustomStyles::refine(&mut self, &refinement);
+        self
+    }
+
+    fn is_superset_of(&self, refinement: &Self::Refinement) -> bool {
+        let Some(refinement_entries) = refinement.entries.as_ref() else {
+            return true;
+        };
+        let Some(entries) = self.entries.as_ref() else {
+            return refinement_entries.is_empty();
+        };
+        refinement_entries.iter().all(|(type_id, property)| {
+            entries
+                .get(type_id)
+                .is_some_and(|value| value.eq_property(&**property))
+        })
+    }
+
+    fn subtract(&self, refinement: &Self::Refinement) -> Self::Refinement {
+        let Some(entries) = self.entries.as_ref() else {
+            return CustomStyles::default();
+        };
+        let mut subtracted = CustomStyles::default();
+        for (type_id, property) in entries.iter() {
+            let covered_by_refinement = refinement
+                .entries
+                .as_ref()
+                .and_then(|refinement_entries| refinement_entries.get(type_id))
+                .is_some_and(|refined| property.eq_property(&**refined));
+            if !covered_by_refinement {
+                subtracted.entries_mut().insert(*type_id, property.clone());
+            }
+        }
+        subtracted
+    }
+}
+
+impl PartialEq for CustomStyles {
+    fn eq(&self, other: &Self) -> bool {
+        // An absent map is an empty one, so a style that never set a property
+        // equals one whose properties were all removed.
+        let no_properties = HashMap::default();
+        let entries = self.entries.as_deref().unwrap_or(&no_properties);
+        let other_entries = other.entries.as_deref().unwrap_or(&no_properties);
+        entries.len() == other_entries.len()
+            && entries.iter().all(|(type_id, property)| {
+                other_entries
+                    .get(type_id)
+                    .is_some_and(|other| property.eq_property(&**other))
+            })
+    }
+}
+
+impl fmt::Debug for CustomStyles {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Property values are opaque, so report how many are set rather than
+        // pretending to name them.
+        f.debug_struct("CustomStyles")
+            .field(
+                "len",
+                &self.entries.as_ref().map_or(0, |entries| entries.len()),
+            )
+            .finish()
+    }
+}
+
+impl Serialize for CustomStyles {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // A property's type is what keys it, and no serialized format can name
+        // a Rust type, so custom properties do not round-trip. Serialize an
+        // opaque value instead of claiming values we cannot represent.
+        serializer.serialize_unit()
+    }
+}
+
+impl<'de> Deserialize<'de> for CustomStyles {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Consume whatever was serialized so the rest of the style still
+        // parses, but recover no properties.
+        serde::de::IgnoredAny::deserialize(deserializer)?;
+        Ok(CustomStyles::default())
+    }
+}
+
+impl JsonSchema for CustomStyles {
+    fn schema_name() -> Cow<'static, str> {
+        "CustomStyles".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        // Custom properties have no serialized form to describe.
+        json_schema!({ "type": "null" })
     }
 }
 
@@ -277,6 +477,12 @@ pub struct Style {
 
     /// The grid location of this element
     pub grid_location: Option<GridLocation>,
+
+    /// Rendering extensions defined outside of GPUI's core style structs.
+    ///
+    /// Engines read these back with [`CustomStyles::get`] while painting.
+    #[refineable]
+    pub custom: CustomStyles,
 
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
@@ -778,6 +984,7 @@ impl Default for Style {
             grid_rows: None,
             grid_cols: None,
             grid_location: None,
+            custom: CustomStyles::default(),
 
             #[cfg(debug_assertions)]
             debug: false,
@@ -1164,6 +1371,121 @@ mod tests {
         assert_eq!(
             Some(FontWeight::SEMIBOLD),
             style.text_style().unwrap().font_weight
+        );
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct BackdropBlur(f32);
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct CustomShader(u32);
+
+    #[derive(Default)]
+    struct Element {
+        refinement: StyleRefinement,
+    }
+
+    impl Styled for Element {
+        fn style(&mut self) -> &mut StyleRefinement {
+            &mut self.refinement
+        }
+    }
+
+    #[test]
+    fn custom_style_properties_reach_the_resolved_style() {
+        let element = Element::default()
+            .custom_style(BackdropBlur(8.0))
+            .custom_style(CustomShader(7));
+
+        let mut style = Style::default();
+        style.refine(&element.refinement);
+
+        assert_eq!(style.custom.get::<BackdropBlur>(), Some(&BackdropBlur(8.0)));
+        assert_eq!(style.custom.get::<CustomShader>(), Some(&CustomShader(7)));
+    }
+
+    #[test]
+    fn refining_custom_style_properties_overrides_matching_keys_and_keeps_disjoint_ones() {
+        let mut inherited = StyleRefinement::default();
+        inherited.custom.insert(BackdropBlur(8.0));
+        inherited.custom.insert(CustomShader(7));
+
+        let mut overridden = StyleRefinement::default();
+        overridden.custom.insert(BackdropBlur(16.0));
+
+        let mut style = Style::default();
+        style.refine(&inherited);
+        style.refine(&overridden);
+
+        assert_eq!(
+            style.custom.get::<BackdropBlur>(),
+            Some(&BackdropBlur(16.0)),
+            "the later refinement should win"
+        );
+        assert_eq!(
+            style.custom.get::<CustomShader>(),
+            Some(&CustomShader(7)),
+            "a property the later refinement does not set should survive"
+        );
+    }
+
+    #[test]
+    fn custom_style_properties_are_shared_until_written() {
+        let mut style = Style::default();
+        style.custom.insert(BackdropBlur(8.0));
+
+        let mut clone = style.clone();
+        clone.custom.insert(BackdropBlur(16.0));
+
+        assert_eq!(
+            style.custom.get::<BackdropBlur>(),
+            Some(&BackdropBlur(8.0)),
+            "writing to a clone should not disturb the original"
+        );
+    }
+
+    #[test]
+    fn custom_style_properties_are_diffed_by_value() {
+        let mut style = Style::default();
+        style.custom.insert(BackdropBlur(8.0));
+
+        let mut matching = StyleRefinement::default();
+        matching.custom.insert(BackdropBlur(8.0));
+        assert!(style.is_superset_of(&matching));
+        assert!(style.subtract(&matching).custom.is_empty());
+
+        let mut differing = StyleRefinement::default();
+        differing.custom.insert(BackdropBlur(16.0));
+        assert!(!style.is_superset_of(&differing));
+        assert_eq!(
+            style.subtract(&differing).custom.get::<BackdropBlur>(),
+            Some(&BackdropBlur(8.0))
+        );
+    }
+
+    #[test]
+    fn styles_without_custom_style_properties_are_indistinguishable() {
+        assert_eq!(Style::default().custom, CustomStyles::default());
+        assert!(Style::default().custom.is_empty());
+        assert_eq!(
+            std::mem::size_of::<CustomStyles>(),
+            std::mem::size_of::<Option<Arc<()>>>(),
+            "custom properties should cost a style no more than a null pointer"
+        );
+    }
+
+    #[test]
+    fn custom_style_properties_do_not_round_trip_through_json() {
+        let mut refinement = StyleRefinement::default();
+        refinement.custom.insert(BackdropBlur(8.0));
+
+        let json = serde_json::to_string(&refinement).expect("the refinement should serialize");
+        let deserialized: StyleRefinement =
+            serde_json::from_str(&json).expect("the refinement should deserialize");
+
+        assert!(
+            deserialized.custom.is_empty(),
+            "a property type cannot be named in JSON, so nothing should come back"
         );
     }
 }
