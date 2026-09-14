@@ -7777,6 +7777,74 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_thread_search_tracks_tool_name_fallback(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread search should be open");
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mcp__search_tool", window, cx);
+            });
+            search_bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        for (update, expected_count) in [
+            (
+                acp::SessionUpdate::ToolCall(
+                    acp::ToolCall::new("tool", "")
+                        .name("mcp__search_tool")
+                        .status(acp::ToolCallStatus::Completed),
+                ),
+                1,
+            ),
+            (
+                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    "tool",
+                    acp::ToolCallUpdateFields::new().title("Reading **file**"),
+                )),
+                0,
+            ),
+            (
+                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    "tool",
+                    acp::ToolCallUpdateFields::new().title("\n\t "),
+                )),
+                1,
+            ),
+        ] {
+            thread
+                .update(cx, |thread, cx| thread.handle_session_update(update, cx))
+                .expect("tool update should apply");
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                expected_count
+            );
+            thread.read_with(cx, |thread, cx| {
+                let (_, call) = thread
+                    .tool_call(&acp::ToolCallId::new("tool"))
+                    .expect("tool call should exist");
+                assert_eq!(
+                    !call.label.read(cx).search_highlights().is_empty(),
+                    expected_count > 0
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_thread_search_refreshes_on_new_thread_entry(cx: &mut TestAppContext) {
         init_test(cx);
 
