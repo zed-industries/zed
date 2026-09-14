@@ -6,6 +6,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
+use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
@@ -13,7 +14,6 @@ use language_model::{
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
     ProviderSettingsView, RateLimiter, env_var,
 };
-use open_ai::ResponseStreamEvent;
 use serde::Deserialize;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 pub use settings::VercelAiGatewayAvailableModel as AvailableModel;
@@ -463,7 +463,7 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
         let completions = self.stream_open_ai(request, cx);
         let executor = cx.background_executor().clone();
         async move {
-            let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
+            let mapper = ChatCompletionEventMapper::new();
             Ok(language_model::stream_in_background(
                 mapper.map_stream(completions.await?).boxed(),
                 executor,
