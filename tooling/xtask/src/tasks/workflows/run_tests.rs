@@ -730,13 +730,19 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
 
 fn miri_scheduler() -> NamedJob {
     fn install_miri() -> Step<Run> {
+        // TODO: Unpin Miri after updating parking_lot_core to fix its futex argument types.
+        // Nightly 2026-09-10 added stricter checks in rust-lang/rust#161734.
         named::bash(
-            "rustup toolchain install nightly --profile minimal --component miri --component rust-src",
+            "rustup toolchain install nightly-2026-09-09 --profile minimal --component miri --component rust-src",
         )
     }
 
+    fn clean_miri() -> Step<Run> {
+        named::bash("cargo +nightly-2026-09-09 miri clean")
+    }
+
     fn run_scheduler_tests_under_miri() -> Step<Run> {
-        named::bash("cargo +nightly -q miri test -p scheduler")
+        named::bash("cargo +nightly-2026-09-09 -q miri test -p scheduler")
     }
 
     named::job(
@@ -747,6 +753,7 @@ fn miri_scheduler() -> NamedJob {
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(install_miri())
+            .add_step(clean_miri())
             .add_step(run_scheduler_tests_under_miri())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
