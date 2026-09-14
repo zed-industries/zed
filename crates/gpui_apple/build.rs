@@ -69,10 +69,10 @@ mod macos_build {
         let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
 
         // Source files that define the types used in the shaders. These live in
-        // `gpui_types` and `gpui_backend` since the engine carve-out.
+        // `gpui_types` and `gpui_engine` since the engine carve-out.
         let shader_src_paths = [
-            find_sibling_crate_dir("gpui_backend").join("src/scene.rs"),
-            find_sibling_crate_dir("gpui_backend").join("src/atlas.rs"),
+            find_sibling_crate_dir("gpui_engine").join("src/scene.rs"),
+            find_sibling_crate_dir("gpui_engine").join("src/atlas.rs"),
             find_sibling_crate_dir("gpui_types").join("src/geometry.rs"),
             find_sibling_crate_dir("gpui_types").join("src/color.rs"),
             find_sibling_crate_dir("gpui_types").join("src/scene.rs"),

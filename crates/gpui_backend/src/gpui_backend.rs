@@ -1,37 +1,23 @@
-//! GPUI's rendering engine: scene graph, sprite atlas identifiers, and the
-//! renderer contract.
+//! GPUI's default engine: Taffy-backed layout evaluation and the text shaping
+//! and wrapping caches the facade drives.
 //!
-//! This crate holds the frame representation that `gpui` builds and the
-//! platform backends present. It deliberately has no dependency on the
-//! windowing layer so alternative engines can reuse or replace the scene
-//! representation.
+//! The scene representation and the engine's interface contracts live in
+//! [`gpui_engine`]; this crate holds the concrete implementations that depend on
+//! `taffy`. During the crate split it re-exports `gpui_engine`, so existing
+//! `gpui_backend::...` paths keep resolving.
 
 #![warn(missing_docs)]
 
-mod atlas;
-mod bounds_tree;
 mod engine;
-mod font_fallbacks;
-mod font_features;
 mod layout;
 mod line_layout;
 mod line_wrapper;
-mod render;
-mod renderer;
-mod scene;
-mod text;
 mod text_system;
 
-pub use atlas::*;
-pub use font_fallbacks::*;
-pub use font_features::*;
+pub use gpui_engine::*;
 pub use layout::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
-pub use render::*;
-pub use renderer::*;
-pub use scene::*;
-pub use text::*;
 pub use text_system::*;
 
 /// Engine internals consumed by the `gpui` facade. Not a stable API.
