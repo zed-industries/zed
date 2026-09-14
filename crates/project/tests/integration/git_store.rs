@@ -1244,10 +1244,34 @@ mod git_worktrees {
         let err = worktrees_directory_for_repo(work_dir, "///", PathStyle::Unix).unwrap_err();
         assert!(err.to_string().contains("relative path"));
 
-        // Invalid: escapes too far up
-        let err = worktrees_directory_for_repo(work_dir, "../../other-project/wt", PathStyle::Unix)
-            .unwrap_err();
-        assert!(err.to_string().contains("outside"));
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, "../../other-project/wt", PathStyle::Unix)
+                .expect("worktrees can be outside the repository's parent"),
+            PathBuf::from("/other-project/wt/my-project")
+        );
+    }
+
+    #[test]
+    fn test_worktree_directory_at_different_depths() {
+        let work_dir = Path::new("/home/user/Code/dovocode/agent");
+
+        for (setting, expected) in [
+            ("../../../Worktrees", "/home/user/Worktrees/agent"),
+            (
+                "../../../Worktrees/team/project",
+                "/home/user/Worktrees/team/project/agent",
+            ),
+            (
+                "./local/nested/worktrees",
+                "/home/user/Code/dovocode/agent/local/nested/worktrees",
+            ),
+        ] {
+            assert_eq!(
+                worktrees_directory_for_repo(work_dir, setting, PathStyle::Unix)
+                    .expect("worktree directories can have different depths"),
+                PathBuf::from(expected)
+            );
+        }
     }
 
     #[test]

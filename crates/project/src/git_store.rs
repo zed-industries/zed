@@ -10707,10 +10707,8 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
     Some(repo_identity_path(&common_dir, PathStyle::local()).to_path_buf())
 }
 
-/// Validates that the resolved worktree directory is acceptable:
-/// - The setting must not be an absolute path.
-/// - The resolved path must be either a subdirectory of the working
-///   directory or a subdirectory of its parent (i.e., a sibling).
+/// Resolves a relative worktree directory against the repository anchor,
+/// adding the repository name when the directory is outside the repository.
 ///
 /// Returns `Ok(resolved_path)` or an error with a user-facing message.
 pub fn worktrees_directory_for_repo(
@@ -10756,18 +10754,6 @@ pub fn worktrees_directory_for_repo(
     } else {
         resolved
     };
-
-    let parent = repository_anchor_path
-        .parent()
-        .unwrap_or(repository_anchor_path);
-
-    if !resolved.starts_with(parent) {
-        anyhow::bail!(
-            "git.worktree_directory resolved to {resolved:?}, which is outside \
-             the project root and its parent directory. It must resolve to a \
-             subdirectory of {repository_anchor_path:?} or a sibling of it."
-        );
-    }
 
     Ok(resolved)
 }

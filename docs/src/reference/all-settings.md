@@ -5907,6 +5907,10 @@ When the resolved directory falls outside the project root, the project's direct
 
 When the resolved directory is inside the project root, no extra component is added (it's already project-scoped).
 
+Relative paths can traverse any number of parent folders using `..`.
+For a repository at `~/Code/dovocode/agent`, setting `"../../../Worktrees"`
+creates worktrees at `~/Worktrees/agent/<worktree-name>/agent`.
+
 **Examples**:
 
 - `"../worktrees"` — `~/code/worktrees/<project>/` (default)
