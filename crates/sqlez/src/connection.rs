@@ -47,6 +47,8 @@ impl Connection {
             }
 
             connection.last_error()?;
+            let filename = sqlite3_db_filename(connection.sqlite3, c"main".as_ptr());
+            connection.persistent = persistent && !filename.is_null() && *filename != 0;
         }
 
         Ok(connection)
@@ -327,6 +329,19 @@ mod test {
                 let _ = fs::remove_file(path);
             }
         }
+    }
+
+    #[test]
+    fn open_file_nonpersistent_databases() -> Result<()> {
+        for uri in ["", ":memory:"] {
+            let connection = Connection::open_file(uri);
+            assert!(!connection.persistent(), "{uri:?}");
+            assert_eq!(
+                connection.select::<(i32, String, String)>("PRAGMA database_list")?()?,
+                vec![(0, String::from("main"), String::new())],
+            );
+        }
+        Ok(())
     }
 
     #[test]

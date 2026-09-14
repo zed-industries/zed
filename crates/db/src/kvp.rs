@@ -13,7 +13,7 @@ pub struct KeyValueStore(crate::sqlez::thread_safe_connection::ThreadSafeConnect
 
 impl KeyValueStore {
     pub fn from_app_db(db: &crate::AppDatabase) -> Self {
-        Self(db.0.clone())
+        Self(db.connection.clone())
     }
 }
 

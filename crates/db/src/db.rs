@@ -38,7 +38,11 @@ inventory::collect!(DomainMigration);
 
 /// The shared database connection backing all domain-specific DB wrappers.
 /// Set as a GPUI global per-App. Falls back to a shared LazyLock if not set.
-pub struct AppDatabase(pub ThreadSafeConnection);
+pub struct AppDatabase {
+    pub connection: ThreadSafeConnection,
+    #[cfg(any(test, feature = "test-support"))]
+    simulate_restart: bool,
+}
 
 impl Global for AppDatabase {}
 
@@ -63,7 +67,7 @@ impl AppDatabase {
     pub fn new() -> Self {
         let db_dir = database_dir();
         let connection = gpui::block_on(open_db::<AppMigrator>(db_dir, *RELEASE_CHANNEL));
-        Self(connection)
+        Self::from(connection)
     }
 
     /// Creates a new in-memory database with a unique name and runs all
@@ -72,20 +76,55 @@ impl AppDatabase {
     pub fn test_new() -> Self {
         let name = format!("test-db-{}", uuid::Uuid::new_v4());
         let connection = gpui::block_on(open_test_db::<AppMigrator>(&name));
-        Self(connection)
+        Self {
+            connection,
+            simulate_restart: true,
+        }
+    }
+
+    pub fn can_recover_after_exit(cx: &App) -> impl Future<Output = bool> + use<> {
+        let database = Self::global_database(cx);
+        #[cfg(any(test, feature = "test-support"))]
+        let simulate_restart = database.simulate_restart;
+        let connection = database.connection.clone();
+        async move {
+            connection
+                .write(move |connection| {
+                    #[cfg(any(test, feature = "test-support"))]
+                    if simulate_restart {
+                        return true;
+                    }
+                    connection.persistent()
+                })
+                .await
+        }
     }
 
     /// Returns the per-App connection if set, otherwise falls back to
     /// the shared LazyLock.
     pub fn global(cx: &App) -> &ThreadSafeConnection {
+        &Self::global_database(cx).connection
+    }
+
+    fn global_database(cx: &App) -> &Self {
         #[allow(unreachable_code)]
         if let Some(db) = cx.try_global::<Self>() {
-            return &db.0;
+            return db;
         } else {
             #[cfg(any(feature = "test-support", test))]
-            return &TEST_APP_DATABASE.0;
+            return &TEST_APP_DATABASE;
 
             panic!("database not initialized")
+        }
+    }
+}
+
+impl From<ThreadSafeConnection> for AppDatabase {
+    fn from(connection: ThreadSafeConnection) -> Self {
+        Self {
+            connection,
+            #[cfg(any(test, feature = "test-support"))]
+            simulate_restart: false,
         }
     }
 }
@@ -294,12 +333,130 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
+    use std::{fs, thread};
 
-    use sqlez::domain::Domain;
+    use sqlez::{
+        connection::Connection,
+        domain::{Domain, Migrator},
+        thread_safe_connection::ThreadSafeConnection,
+    };
     use sqlez_macros::sql;
 
-    use crate::open_db;
+    use crate::{
+        AppDatabase, AppMigrator, kvp::KeyValueStore, open_db, open_main_db, open_test_db,
+    };
+
+    #[gpui::test]
+    async fn test_can_recover_after_exit_from_disk(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("failed to create database directory");
+        let path = directory.path().join("db.sqlite");
+        let connection = open_main_db::<AppMigrator>(&path)
+            .await
+            .expect("failed to initialize database");
+        let database = AppDatabase::from(connection);
+        KeyValueStore::from_app_db(&database)
+            .write_kvp(String::from("hot-exit"), String::from("unsaved contents"))
+            .await
+            .expect("failed to write recovery data");
+        cx.update(|cx| cx.set_global(database));
+
+        assert!(
+            cx.update(|cx| AppDatabase::can_recover_after_exit(cx))
+                .await
+        );
+
+        drop(cx.update(|cx| cx.remove_global::<AppDatabase>()));
+        let reopened = Connection::open_file(path.to_str().expect("invalid database path"));
+        assert!(reopened.persistent());
+        assert_eq!(
+            reopened
+                .select_row::<String>("SELECT value FROM kv_store WHERE key = 'hot-exit'")
+                .expect("failed to prepare recovery query")()
+            .expect("failed to read recovery data"),
+            Some(String::from("unsaved contents")),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_can_recover_after_exit_rejects_fallback_writer(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("failed to create database directory");
+        let path = directory.path().join("db.sqlite");
+        fs::create_dir(&path).expect("failed to block database file");
+        let connection = open_main_db::<AppMigrator>(&path)
+            .await
+            .expect("failed to initialize fallback database");
+        assert_eq!(
+            connection
+                .write(|connection| {
+                    connection.select::<(i32, String, String)>("PRAGMA database_list")?()
+                })
+                .await
+                .expect("failed to inspect writer"),
+            vec![(0, String::from("main"), String::new())],
+        );
+
+        fs::remove_dir(&path).expect("failed to unblock database file");
+        assert!(connection.persistent());
+        assert!(path.is_file());
+        cx.update(|cx| cx.set_global(AppDatabase::from(connection)));
+
+        assert!(
+            !cx.update(|cx| AppDatabase::can_recover_after_exit(cx))
+                .await
+        );
+    }
+
+    #[gpui::test]
+    async fn test_can_recover_after_exit_ignores_memory_reader(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("failed to create database directory");
+        let path = directory.path().join("db.sqlite");
+        fs::create_dir(&path).expect("failed to block database file");
+        let connection = ThreadSafeConnection::new(
+            path.to_str().expect("invalid database path"),
+            true,
+            None,
+            None,
+        );
+        assert!(!connection.persistent());
+
+        fs::remove_dir(&path).expect("failed to unblock database file");
+        connection
+            .write(AppMigrator::migrate)
+            .await
+            .expect("failed to initialize persistent writer");
+        assert!(!connection.persistent());
+        assert!(path.is_file());
+        cx.update(|cx| cx.set_global(AppDatabase::from(connection)));
+
+        assert!(
+            cx.update(|cx| AppDatabase::can_recover_after_exit(cx))
+                .await
+        );
+    }
+
+    #[gpui::test]
+    async fn test_can_recover_after_exit_requires_explicit_test_fixture(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let name = format!("test-db-{}", uuid::Uuid::new_v4());
+        let connection = open_test_db::<AppMigrator>(&name).await;
+        cx.update(|cx| cx.set_global(AppDatabase::from(connection)));
+
+        assert!(
+            !cx.update(|cx| AppDatabase::can_recover_after_exit(cx))
+                .await
+        );
+
+        cx.update(|cx| cx.set_global(AppDatabase::test_new()));
+        assert!(!cx.update(|cx| AppDatabase::global(cx).persistent()));
+        assert!(
+            cx.update(|cx| AppDatabase::can_recover_after_exit(cx))
+                .await
+        );
+    }
 
     // Test bad migration panics
     #[gpui::test]

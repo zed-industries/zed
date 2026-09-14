@@ -3889,6 +3889,10 @@ impl Workspace {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
                 let mut serialize_tasks = Vec::new();
                 let mut remaining_dirty_items = Vec::new();
+                let allow_hot_exit_serialization = allow_hot_exit_serialization
+                    && workspace
+                        .update(cx, |_, cx| db::AppDatabase::can_recover_after_exit(cx))?
+                        .await;
                 if allow_hot_exit_serialization {
                     workspace.update(cx, |workspace, cx| {
                         for (pane, item) in dirty_items {

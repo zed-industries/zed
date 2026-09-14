@@ -2866,6 +2866,7 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
+    use db::AppDatabase;
     use editor::{
         DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
     };
@@ -2900,7 +2901,7 @@ mod tests {
     use workspace::MultiWorkspace;
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
-        WorkspaceHandle,
+        WorkspaceHandle, WorkspaceId,
         item::SaveOptions,
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
@@ -8294,6 +8295,154 @@ mod tests {
                 "expected Diagnostics to remain in the View menu"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_hot_exit_prompts_with_in_memory_database(cx: &mut TestAppContext) {
+        let database = AppDatabase::test_new();
+        cx.update(|cx| cx.set_global(AppDatabase::from(database.connection)));
+        let app_state = init_test(cx);
+        let root = Path::new(path!("/in-memory-hot-exit"));
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(root, json!({"note.txt": "saved on disk\n"}))
+            .await;
+        let window =
+            open_test_project_window_with_tabs(&app_state, root, &[rel_path("note.txt")], cx).await;
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("workspace window was closed");
+        set_test_recovery_text(window, &workspace, "must not disappear 🦀\n", cx).await;
+        flush_workspace_serialization(&window, cx).await;
+        assert!(
+            !cx.update(|cx| AppDatabase::can_recover_after_exit(cx))
+                .await
+        );
+
+        assert!(!VisualTestContext::from_window(window.into(), cx).simulate_close());
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        assert_eq!(cx.windows(), vec![window.into()]);
+        let workspace_id = workspace.read_with(cx, |workspace, _| {
+            workspace.database_id().expect("missing workspace ID")
+        });
+        assert_test_recovery_contents(
+            window,
+            workspace_id,
+            &[(
+                workspace_id,
+                vec![root.to_path_buf()],
+                vec![String::from("must not disappear 🦀\n")],
+            )],
+            cx,
+        );
+        assert!(!cx.has_pending_prompt());
+
+        assert!(!VisualTestContext::from_window(window.into(), cx).simulate_close());
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Save");
+        cx.run_until_parked();
+        assert_eq!(cx.windows(), Vec::<AnyWindowHandle>::new());
+        assert_eq!(
+            app_state
+                .fs
+                .load(&root.join("note.txt"))
+                .await
+                .expect("failed to read saved file"),
+            "must not disappear 🦀\n",
+        );
+    }
+
+    async fn set_test_recovery_text(
+        window: WindowHandle<MultiWorkspace>,
+        workspace: &Entity<Workspace>,
+        text: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let editor =
+            workspace.read_with(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx));
+        let editor = if let Some(editor) = editor {
+            editor
+        } else {
+            window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        Editor::new_in_workspace(workspace, window, cx)
+                    })
+                })
+                .expect("workspace window was closed")
+                .await
+                .expect("failed to create scratch buffer")
+        };
+        window
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| editor.set_text(text, window, cx));
+            })
+            .expect("workspace window was closed");
+        cx.run_until_parked();
+    }
+
+    fn assert_test_recovery_contents(
+        window: WindowHandle<MultiWorkspace>,
+        active_workspace_id: WorkspaceId,
+        expected: &[(WorkspaceId, Vec<PathBuf>, Vec<String>)],
+        cx: &TestAppContext,
+    ) {
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                assert_eq!(
+                    multi_workspace.workspace().read(cx).database_id(),
+                    Some(active_workspace_id)
+                );
+                let remote_active = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .is_remote();
+                let mut initial_workspaces = 0;
+                let mut actual = multi_workspace
+                    .workspaces()
+                    .filter_map(|workspace| {
+                        let workspace = workspace.read(cx);
+                        let Some(workspace_id) = workspace.database_id() else {
+                            assert!(workspace.project().read(cx).is_local());
+                            assert_eq!(workspace.root_paths(cx), Vec::<Arc<Path>>::new());
+                            assert_eq!(workspace.items(cx).count(), 0);
+                            initial_workspaces += 1;
+                            return None;
+                        };
+                        let texts = workspace
+                            .items(cx)
+                            .map(|item| {
+                                let editor = item
+                                    .downcast::<Editor>()
+                                    .expect("restored item is not an editor");
+                                let editor = editor.read(cx);
+                                assert!(editor.is_dirty(cx));
+                                editor.text(cx)
+                            })
+                            .collect::<Vec<_>>();
+                        Some((
+                            workspace_id,
+                            workspace
+                                .root_paths(cx)
+                                .iter()
+                                .map(|path| path.to_path_buf())
+                                .collect::<Vec<_>>(),
+                            texts,
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(initial_workspaces, usize::from(remote_active));
+                actual.sort_by_key(|(id, _, _)| *id);
+                assert_eq!(actual, expected);
+            })
+            .expect("workspace window was closed");
     }
 
     fn has_view_item(cx: &mut App, item_name: &str) -> bool {
