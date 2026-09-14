@@ -6472,6 +6472,21 @@ async fn test_autoreveal_follows_multibuffer_selection(cx: &mut gpui::TestAppCon
         "Moving the cursor into a different excerpt buffer should reveal that buffer's entry"
     );
 
+    cx.dispatch_action(workspace::RevealInProjectPanel::default());
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_2.py  <== selected  <== marked",
+        ],
+        "Explicit reveal should use the project path for the excerpt under the cursor"
+    );
+
     // Wrappers re-emit inner-editor events through `to_item_events`, so a
     // benign `TitleChanged` (e.g. diagnostic summary updates) ultimately
     // reaches `Workspace::active_item_path_changed`. The active path should be
