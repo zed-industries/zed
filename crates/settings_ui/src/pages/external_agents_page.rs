@@ -10,7 +10,8 @@ use gpui::{
 use itertools::Itertools as _;
 use project::agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource};
 use settings::{
-    AgentConfigOptionValue, CustomAgentServerSettings, SettingsStore, update_settings_file,
+    AgentConfigOptionValue, AgentServerSandboxSettings, CustomAgentServerSettings, SettingsStore,
+    update_settings_file,
 };
 use ui::{
     AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ContextMenu, ContextMenuEntry,
@@ -338,6 +339,7 @@ pub(crate) struct CustomAgentForm {
     default_mode: Option<String>,
     default_config_options: HashMap<String, AgentConfigOptionValue>,
     favorite_config_option_values: HashMap<String, Vec<String>>,
+    sandbox: Option<AgentServerSandboxSettings>,
     /// Stable handles for the Cancel/Save buttons so they can render a focus
     /// ring. `Filled`/`Subtle` buttons only get a subtle `focus_visible`
     /// background change otherwise, which is hard to see.
@@ -361,6 +363,7 @@ impl CustomAgentForm {
         let mut default_mode = None;
         let mut default_config_options = HashMap::default();
         let mut favorite_config_option_values = HashMap::default();
+        let mut sandbox = None;
 
         // Pre-fill from the raw settings so invalid values typed directly into
         // settings.json still load into the form for correction.
@@ -373,6 +376,7 @@ impl CustomAgentForm {
                     default_mode: mode,
                     default_config_options: config_options,
                     favorite_config_option_values: favorites,
+                    sandbox: existing_sandbox,
                 } => {
                     command_initial = Some(path.to_string_lossy().to_string());
                     if !args.is_empty() {
@@ -384,12 +388,14 @@ impl CustomAgentForm {
                     default_mode = mode.clone();
                     default_config_options = config_options.clone();
                     favorite_config_option_values = favorites.clone();
+                    sandbox = existing_sandbox.clone();
                 }
                 CustomAgentServerSettings::Registry {
                     env: env_map,
                     default_mode: mode,
                     default_config_options: config_options,
                     favorite_config_option_values: favorites,
+                    sandbox: existing_sandbox,
                 } => {
                     for (key, value) in sorted_pairs(env_map) {
                         env.push(new_kv_row(Some(&key), Some(&value), window, cx));
@@ -397,6 +403,7 @@ impl CustomAgentForm {
                     default_mode = mode.clone();
                     default_config_options = config_options.clone();
                     favorite_config_option_values = favorites.clone();
+                    sandbox = existing_sandbox.clone();
                 }
             }
         }
@@ -410,6 +417,7 @@ impl CustomAgentForm {
             default_mode,
             default_config_options,
             favorite_config_option_values,
+            sandbox,
             cancel_focus_handle: cx.focus_handle(),
             save_focus_handle: cx.focus_handle(),
             error: None,
@@ -784,6 +792,7 @@ struct CustomAgentFormValues {
     default_mode: Option<String>,
     default_config_options: HashMap<String, AgentConfigOptionValue>,
     favorite_config_option_values: HashMap<String, Vec<String>>,
+    sandbox: Option<AgentServerSandboxSettings>,
 }
 
 fn build_settings_from_form(
@@ -799,6 +808,7 @@ fn build_settings_from_form(
         default_mode: form.default_mode.clone(),
         default_config_options: form.default_config_options.clone(),
         favorite_config_option_values: form.favorite_config_option_values.clone(),
+        sandbox: form.sandbox.clone(),
     };
     build_settings_from_values(values)
 }
@@ -836,6 +846,7 @@ fn build_settings_from_values(
         default_mode: values.default_mode,
         default_config_options: values.default_config_options,
         favorite_config_option_values: values.favorite_config_option_values,
+        sandbox: values.sandbox,
     };
 
     Ok((AgentId(name.into()), values.original_id, content))
@@ -948,6 +959,7 @@ async fn add_custom_agent_settings_entry(
                                 default_mode: None,
                                 default_config_options: Default::default(),
                                 favorite_config_option_values: Default::default(),
+                                sandbox: None,
                             },
                         );
                     }
@@ -1045,6 +1057,7 @@ mod tests {
             default_mode: None,
             default_config_options: HashMap::default(),
             favorite_config_option_values: HashMap::default(),
+            sandbox: None,
         }
     }
 
@@ -1112,6 +1125,7 @@ mod tests {
                 default_mode: None,
                 default_config_options: HashMap::default(),
                 favorite_config_option_values: HashMap::default(),
+                sandbox: None,
             }
         );
     }
@@ -1122,12 +1136,16 @@ mod tests {
         values.default_mode = Some("ask".into());
         values.default_config_options =
             HashMap::from_iter([("opt".to_string(), AgentConfigOptionValue::from("val"))]);
+        values.sandbox = Some(AgentServerSandboxSettings {
+            require: Some(true),
+        });
 
         let (_, _, content) = build_settings_from_values(values).unwrap();
         match content {
             CustomAgentServerSettings::Custom {
                 default_mode,
                 default_config_options,
+                sandbox,
                 ..
             } => {
                 assert_eq!(default_mode.as_deref(), Some("ask"));
@@ -1137,6 +1155,7 @@ mod tests {
                         .and_then(AgentConfigOptionValue::as_value_id),
                     Some("val"),
                 );
+                assert_eq!(sandbox.and_then(|sandbox| sandbox.require), Some(true));
             }
             _ => panic!("expected a custom agent"),
         }

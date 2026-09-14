@@ -327,6 +327,7 @@ fn default_settings_for_agent() -> settings::CustomAgentServerSettings {
         env: Default::default(),
         default_config_options: Default::default(),
         favorite_config_option_values: Default::default(),
+        sandbox: None,
     }
 }
 
@@ -421,6 +422,7 @@ mod tests {
                     default_mode: None,
                     default_config_options: HashMap::default(),
                     favorite_config_option_values: HashMap::default(),
+                    sandbox: None,
                 },
             )],
         );

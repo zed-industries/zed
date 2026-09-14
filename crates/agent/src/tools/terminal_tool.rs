@@ -17,7 +17,7 @@ use std::{
 use crate::SandboxFallbackDecision;
 use crate::sandboxing::{
     NetworkRequest, sandbox_git_dirs, sandbox_worktree_writable_paths,
-    sandboxing_enabled_for_project,
+    sandboxing_enabled_for_project, sandboxing_required,
 };
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
@@ -423,7 +423,7 @@ async fn run_terminal_tool(
     let selection = input.selection;
     let sandbox_input = input.sandbox.clone().unwrap_or_default();
 
-    let (working_dir, authorize, sandboxing, is_local_project, wsl_zed_release) =
+    let (working_dir, authorize, sandboxing, sandbox_required, is_local_project, wsl_zed_release) =
         cx.update(|cx| {
             let working_dir =
                 working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
@@ -431,6 +431,7 @@ async fn run_terminal_tool(
                 crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
             let authorize =
                 event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
+            let sandbox_required = sandboxing_required(cx);
             let sandboxing =
                 input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
             let is_local_project = project.read(cx).is_local();
@@ -439,12 +440,21 @@ async fn run_terminal_tool(
                 working_dir,
                 authorize,
                 sandboxing,
+                sandbox_required,
                 is_local_project,
                 wsl_zed_release,
             ))
         })?;
 
     authorize.await.map_err(|e| e.to_string())?;
+
+    if sandbox_required && !sandboxing {
+        return Err(
+            "Sandboxing is required by settings, but no OS sandbox is available for this project. \
+             Open a local project on macOS, Linux, or Windows with its supported sandbox backend."
+                .to_string(),
+        );
+    }
 
     let want_fs_write_all = sandboxing && sandbox_input.allow_fs_write_all == Some(true);
     let want_unsandboxed = sandboxing && sandbox_input.unsandboxed == Some(true);
@@ -456,6 +466,13 @@ async fn run_terminal_tool(
             .clone()
     });
 
+    if sandbox_required && want_unsandboxed {
+        return Err(
+            "Sandboxing is required by settings, so `unsandboxed: true` is not permitted."
+                .to_string(),
+        );
+    }
+
     // Standing permissions the user already approved — in settings or "for this
     // thread" — that every command in the thread inherits and that the model
     // cannot narrow. The actually-enforced policy is always at least this
@@ -465,6 +482,7 @@ async fn run_terminal_tool(
     let floor = event_stream
         .effective_sandbox_request(&crate::sandboxing::SandboxRequest::default(), &persistent);
     let unsandboxed_floor = sandboxing
+        && !sandbox_required
         && (event_stream.unsandboxed_granted_for_thread()
             || event_stream.sandbox_fallback_granted_for_thread());
     let fs_unrestricted_floor = sandboxing && floor.allow_fs_write_all;
@@ -773,11 +791,15 @@ async fn run_terminal_tool(
                         Err(error) => error,
                     };
 
-                    // Distinct from the intentional skips above (settings / thread
-                    // grant): the sandbox was requested but couldn't be created.
                     log::warn!(
                         "Failed to create a sandbox for an agent terminal command: {error:?}"
                     );
+                    if sandbox_required {
+                        return Err(format!(
+                            "Sandboxing is required by settings, but the sandbox could not be created: {}",
+                            error.user_facing_message()
+                        ));
+                    }
 
                     let decision = cx
                         .update(|cx| {

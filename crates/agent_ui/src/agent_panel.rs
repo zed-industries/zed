@@ -1451,7 +1451,7 @@ impl AgentPanel {
                                     .filter(|agent| panel.should_restore_agent(agent, cx))
                             })
                     });
-                    if let Some(agent) = initial_agent {
+                    if let Some(agent) = initial_agent.or_else(|| panel.first_available_agent(cx)) {
                         panel.selected_agent = agent;
                     }
 
@@ -1668,6 +1668,10 @@ impl AgentPanel {
     }
 
     fn should_restore_agent(&self, agent: &Agent, cx: &App) -> bool {
+        if agent.is_native() {
+            return AgentSettings::get_global(cx).native_agent_enabled;
+        }
+
         let Agent::Custom { id } = agent else {
             return true;
         };
@@ -1677,12 +1681,26 @@ impl AgentPanel {
             || AllAgentServersSettings::get_global(cx).contains_key(id.0.as_ref())
     }
 
+    fn first_available_agent(&self, cx: &App) -> Option<Agent> {
+        if AgentSettings::get_global(cx).native_agent_enabled {
+            return Some(Agent::NativeAgent);
+        }
+
+        let store = self.project.read(cx).agent_server_store().clone();
+        store
+            .read(cx)
+            .external_agents()
+            .next()
+            .cloned()
+            .map(|id| Agent::Custom { id })
+    }
+
     fn restorable_agent_selection(&self, cx: &App) -> Agent {
         let agent = self.selected_agent(cx);
         if self.should_restore_agent(&agent, cx) {
             agent
         } else {
-            Agent::NativeAgent
+            self.first_available_agent(cx).unwrap_or(agent)
         }
     }
 
@@ -1694,6 +1712,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !AgentSettings::get_global(cx).native_agent_enabled {
+            return;
+        }
+
         // Share links / clipboard imports enter with only a session id. If
         // this machine already has a metadata row for the session, route
         // through the normal thread-id path.
@@ -1977,6 +1999,9 @@ impl AgentPanel {
     /// right away, if the panel is already showing the empty new-thread
     /// draft).
     pub fn select_agent(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
+        if agent.is_native() && !AgentSettings::get_global(cx).native_agent_enabled {
+            return;
+        }
         if self.project.read(cx).is_via_collab() && !agent.is_native() {
             return;
         }
@@ -2955,7 +2980,7 @@ impl AgentPanel {
     }
 
     fn ensure_native_agent_connection(&self, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
+        if !AgentSettings::get_global(cx).native_agent_enabled || !self.has_open_project(cx) {
             return;
         }
 
@@ -3472,6 +3497,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !AgentSettings::get_global(cx).native_agent_enabled {
+            return;
+        }
+
         let session_id = action.from_session_id.clone();
 
         let Some(content) = Self::initial_content_for_thread_summary(session_id.clone(), cx) else {
@@ -4773,7 +4802,16 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
         cx.spawn(async move |cx| {
             let agent_choice = match request.agent_id.as_deref() {
                 None => None,
-                Some(id) if id == agent::ZED_AGENT_ID.as_ref() => Some(Agent::NativeAgent),
+                Some(id) if id == agent::ZED_AGENT_ID.as_ref() => {
+                    let native_agent_enabled =
+                        cx.update(|cx| AgentSettings::get_global(cx).native_agent_enabled);
+                    if !native_agent_enabled {
+                        return Err(anyhow!(
+                            "Zed's built-in agent is disabled by the `agent.native_agent.enabled` setting"
+                        ));
+                    }
+                    Some(Agent::NativeAgent)
+                }
                 Some(id) => {
                     // Reject unknown agent ids up front so the model gets a
                     // structured error pointing at `list_agents_and_models`,
@@ -4922,38 +4960,40 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
 
         let mut agents = Vec::new();
 
-        // Native Zed agent — always available, and we can enumerate models
-        // directly from the language model registry.
-        let native_models = {
-            let registry = LanguageModelRegistry::read_global(cx);
-            let default = registry.default_model();
-            let mut models = Vec::new();
-            for provider in registry.providers() {
-                if !provider.is_authenticated(cx) {
-                    continue;
+        if AgentSettings::get_global(cx).native_agent_enabled {
+            let native_models = {
+                let registry = LanguageModelRegistry::read_global(cx);
+                let default = registry.default_model();
+                let mut models = Vec::new();
+                for provider in registry.providers() {
+                    if !provider.is_authenticated(cx) {
+                        continue;
+                    }
+                    let provider_id = provider.id();
+                    for model in provider.provided_models(cx) {
+                        let id = format!("{}/{}", provider_id.0, model.id().0);
+                        let is_default = default
+                            .as_ref()
+                            .map(|cm| {
+                                cm.provider.id() == provider_id && cm.model.id() == model.id()
+                            })
+                            .unwrap_or(false);
+                        models.push(agent::AvailableModel {
+                            id,
+                            name: model.name().0,
+                            is_default,
+                        });
+                    }
                 }
-                let provider_id = provider.id();
-                for model in provider.provided_models(cx) {
-                    let id = format!("{}/{}", provider_id.0, model.id().0);
-                    let is_default = default
-                        .as_ref()
-                        .map(|cm| cm.provider.id() == provider_id && cm.model.id() == model.id())
-                        .unwrap_or(false);
-                    models.push(agent::AvailableModel {
-                        id,
-                        name: model.name().0,
-                        is_default,
-                    });
-                }
-            }
-            models
-        };
-        agents.push(agent::AvailableAgent {
-            id: agent::ZED_AGENT_ID.to_string(),
-            name: Agent::NativeAgent.label(),
-            is_native: true,
-            models: native_models,
-        });
+                models
+            };
+            agents.push(agent::AvailableAgent {
+                id: agent::ZED_AGENT_ID.to_string(),
+                name: Agent::NativeAgent.label(),
+                is_native: true,
+                models: native_models,
+            });
+        }
 
         let project = panel.read(cx).project.clone();
         let agent_server_store = project.read(cx).agent_server_store().clone();
@@ -5882,37 +5922,40 @@ impl AgentPanel {
             Rc::new(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |menu, _window, cx| {
                     menu.context(focus_handle.clone())
-                        .item(
-                            ContextMenuEntry::new("Zed Agent")
-                                .when(
-                                    !showing_terminal && is_agent_selected(Agent::NativeAgent),
-                                    |this| this.action(Box::new(NewThread)),
-                                )
-                                .icon(IconName::ZedAgent)
-                                .icon_color(Color::Muted)
-                                .handler({
-                                    let workspace = workspace.clone();
-                                    move |window, cx| {
-                                        if let Some(workspace) = workspace.upgrade() {
-                                            workspace.update(cx, |workspace, cx| {
-                                                if let Some(panel) =
-                                                    workspace.panel::<AgentPanel>(cx)
-                                                {
-                                                    panel.update(cx, |panel, cx| {
-                                                        panel.selected_agent = Agent::NativeAgent;
-                                                        panel.activate_new_thread(
-                                                            true,
-                                                            AgentThreadSource::AgentPanel,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    });
-                                                }
-                                            });
+                        .when(AgentSettings::get_global(cx).native_agent_enabled, |menu| {
+                            menu.item(
+                                ContextMenuEntry::new("Zed Agent")
+                                    .when(
+                                        !showing_terminal && is_agent_selected(Agent::NativeAgent),
+                                        |this| this.action(Box::new(NewThread)),
+                                    )
+                                    .icon(IconName::ZedAgent)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.selected_agent =
+                                                                Agent::NativeAgent;
+                                                            panel.activate_new_thread(
+                                                                true,
+                                                                AgentThreadSource::AgentPanel,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                });
+                                            }
                                         }
-                                    }
-                                }),
-                        )
+                                    }),
+                            )
+                        })
                         .when(supports_terminal, |menu| {
                             menu.item(
                                 ContextMenuEntry::new("Terminal")
@@ -6914,6 +6957,7 @@ mod tests {
                         default_mode: None,
                         default_config_options: Default::default(),
                         favorite_config_option_values: Default::default(),
+                        sandbox: None,
                     },
                 );
             });

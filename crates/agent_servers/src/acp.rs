@@ -8,6 +8,7 @@ use agent_client_protocol::schema::{
     v1::{self as acp, ErrorCode},
 };
 use agent_client_protocol::{Agent, Client, ConnectionTo, JsonRpcResponse, Lines, Responder};
+use agent_settings::AgentSettings;
 use anyhow::anyhow;
 use async_channel;
 use collections::{HashMap, HashSet};
@@ -22,7 +23,7 @@ use project::agent_server_store::{
 use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
-use settings::{AgentConfigOptionValue, SettingsStore};
+use settings::{AgentConfigOptionValue, Settings as _, SettingsStore};
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
@@ -286,10 +287,17 @@ struct ClientContext {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
     request_elicitations: Entity<ElicitationStore>,
+    sandbox_required: bool,
 }
 
 fn dispatch_queue_closed_error() -> acp::Error {
     acp::Error::internal_error().data("ACP foreground dispatch queue closed")
+}
+
+fn sandbox_host_callback_error() -> acp::Error {
+    acp::Error::internal_error().data(
+        "This external agent is sandboxed, so host filesystem and terminal callbacks are disabled",
+    )
 }
 
 /// Work items sent from `Send` handler closures to the `!Send` foreground thread.
@@ -413,6 +421,8 @@ pub struct AcpConnection {
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
+    _sandbox: Option<acp_thread::SandboxConfigHandle>,
+    sandbox_required: bool,
 }
 
 #[derive(Clone, Default)]
@@ -764,10 +774,24 @@ fn connect_client_future(
         )
 }
 
-fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities {
+fn sandbox_required_for_agent(agent_id: &AgentId, cx: &App) -> bool {
+    let default = AgentSettings::try_get(cx)
+        .map(|settings| settings.sandbox_permissions.require_sandbox)
+        .unwrap_or(false);
+
+    AllAgentServersSettings::try_get(cx)
+        .and_then(|settings| settings.get(agent_id.as_ref()))
+        .and_then(CustomAgentServerSettings::sandbox_required)
+        .unwrap_or(default)
+}
+
+fn client_capabilities_for_agent(
+    agent_id: &AgentId,
+    sandbox_required: bool,
+) -> acp::ClientCapabilities {
     let mut meta = acp::Meta::from_iter([
-        ("terminal_output".into(), true.into()),
-        ("terminal-auth".into(), true.into()),
+        ("terminal_output".into(), (!sandbox_required).into()),
+        ("terminal-auth".into(), (!sandbox_required).into()),
     ]);
 
     if agent_id.as_ref() == CURSOR_ID {
@@ -776,10 +800,10 @@ fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities 
 
     acp::ClientCapabilities::new()
         .fs(acp::FileSystemCapabilities::new()
-            .read_text_file(true)
-            .write_text_file(true))
-        .terminal(true)
-        .auth(acp::AuthCapabilities::new().terminal(true))
+            .read_text_file(!sandbox_required)
+            .write_text_file(!sandbox_required))
+        .terminal(!sandbox_required)
+        .auth(acp::AuthCapabilities::new().terminal(!sandbox_required))
         .session(
             acp::ClientSessionCapabilities::new().config_options(
                 acp::SessionConfigOptionsCapabilities::new()
@@ -813,6 +837,7 @@ impl AcpConnection {
         default_config_options: HashMap<String, AgentConfigOptionValue>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        let sandbox_required = cx.update(|cx| sandbox_required_for_agent(&agent_id, cx));
         let root_dir = project.read_with(cx, |project, cx| {
             project
                 .default_path_list(cx)
@@ -845,6 +870,63 @@ impl AcpConnection {
                     command.env.unwrap_or_default(),
                 )
             });
+
+        let (path, args, env, sandbox) = if sandbox_required {
+            #[cfg(target_os = "windows")]
+            {
+                return Err(anyhow!(
+                    "Sandbox-required external agents are not yet supported on Windows"
+                ));
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                let sandbox_wrap = project.read_with(cx, |project, cx| {
+                    if !project.is_local() {
+                        return Err(anyhow!(
+                            "Sandboxing is required for this external agent, but remote projects cannot be sandboxed locally"
+                        ));
+                    }
+
+                    Ok(acp_thread::SandboxWrap {
+                        writable_paths: project.sandbox_worktree_writable_paths(cx),
+                        extra_write_paths: Vec::new(),
+                        protected_paths: project.sandbox_protected_paths(cx),
+                        network: acp_thread::SandboxNetworkAccess::All,
+                        allow_fs_write: false,
+                        is_local: true,
+                        wsl_zed_release: None,
+                    })
+                })?;
+
+                #[cfg(target_os = "linux")]
+                {
+                    let probe = sandbox_wrap.clone();
+                    cx.background_executor()
+                        .spawn(async move { probe.can_create_sandbox() })
+                        .await
+                        .map_err(|error| {
+                            anyhow!(
+                                "Sandboxing is required for this external agent, but the sandbox could not be created: {}",
+                                error.user_facing_message()
+                            )
+                        })?;
+                }
+
+                let (path, args, env, sandbox) = acp_thread::prepare_sandbox_wrap(
+                    path,
+                    args,
+                    root_dir.clone(),
+                    Some(sandbox_wrap),
+                    env,
+                )
+                .await
+                .context("Sandboxing is required for this external agent, but setup failed")?;
+                (path, args, env, sandbox)
+            }
+        } else {
+            (path, args, env, None)
+        };
 
         let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
         let mut child = builder.build_std_command(Some(path.clone()), &args);
@@ -978,6 +1060,7 @@ impl AcpConnection {
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
+            sandbox_required,
         };
         let dispatch_task = cx.spawn({
             let mut dispatch_rx = dispatch_rx;
@@ -991,7 +1074,7 @@ impl AcpConnection {
         let initialize_response = connection
             .send_request(
                 acp::InitializeRequest::new(ProtocolVersion::V1)
-                    .client_capabilities(client_capabilities_for_agent(&agent_id))
+                    .client_capabilities(client_capabilities_for_agent(&agent_id, sandbox_required))
                     .client_info(
                         acp::Implementation::new("zed", version)
                             .title(release_channel.map(ToOwned::to_owned)),
@@ -1109,6 +1192,8 @@ impl AcpConnection {
             _dispatch_task: dispatch_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
+            _sandbox: sandbox,
+            sandbox_required,
             child: Some(child),
         })
     }
@@ -1152,6 +1237,8 @@ impl AcpConnection {
             _dispatch_task: dispatch_task,
             _wait_task: Task::ready(Ok(())),
             _stderr_task: Task::ready(Ok(())),
+            _sandbox: None,
+            sandbox_required: false,
         }
     }
 
@@ -1889,6 +1976,10 @@ impl AgentConnection for AcpConnection {
         method_id: &acp::AuthMethodId,
         cx: &App,
     ) -> Option<Task<Result<SpawnInTerminal>>> {
+        if self.sandbox_required {
+            return None;
+        }
+
         let method = self
             .auth_methods
             .iter()
@@ -2573,6 +2664,7 @@ pub mod test_support {
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
+            sandbox_required: false,
         };
         let dispatch_task = cx.spawn({
             let mut dispatch_rx = dispatch_rx;
@@ -2706,8 +2798,6 @@ mod tests {
 
     use super::*;
     use feature_flags::FeatureFlag as _;
-    use settings::Settings as _;
-
     fn init_feature_flags_test(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let mut settings_store = SettingsStore::test(cx);
@@ -2722,13 +2812,28 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         init_feature_flags_test(cx);
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
         let elicitation = capabilities
             .elicitation
             .expect("elicitation should always be advertised");
 
         assert!(elicitation.form.is_some());
         assert!(elicitation.url.is_some());
+    }
+
+    #[test]
+    fn required_sandbox_hides_host_access_capabilities() {
+        let capabilities = client_capabilities_for_agent(&AgentId::new("test"), true);
+        assert!(!capabilities.fs.read_text_file);
+        assert!(!capabilities.fs.write_text_file);
+        assert!(!capabilities.terminal);
+        assert!(!capabilities.auth.terminal);
+
+        let meta = capabilities
+            .meta
+            .expect("expected client capabilities meta");
+        assert_eq!(meta.get("terminal_output"), Some(&serde_json::json!(false)));
+        assert_eq!(meta.get("terminal-auth"), Some(&serde_json::json!(false)));
     }
 
     #[gpui::test]
@@ -3015,7 +3120,7 @@ mod tests {
 
     #[test]
     fn cursor_client_capabilities_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID));
+        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID), false);
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
@@ -3030,7 +3135,7 @@ mod tests {
 
     #[test]
     fn non_cursor_client_capabilities_do_not_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
@@ -3040,7 +3145,7 @@ mod tests {
 
     #[test]
     fn client_capabilities_include_boolean_config_options() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
 
         assert!(
             capabilities
@@ -3573,6 +3678,7 @@ mod tests {
                             AgentConfigOptionValue::from("manual"),
                         )]),
                         favorite_config_option_values: HashMap::default(),
+                        sandbox: None,
                     }
                     .into(),
                 )])),
@@ -3987,6 +4093,7 @@ mod tests {
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
+            sandbox_required: false,
         };
         // `TestAppContext::spawn` hands out an `AsyncApp` by value, whereas the
         // production path uses `Context::spawn` which hands out `&mut AsyncApp`.
@@ -4755,6 +4862,10 @@ fn handle_write_text_file(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    if ctx.sandbox_required {
+        return respond_err(responder, sandbox_host_callback_error());
+    }
+
     let thread = match session_thread(ctx, &args.session_id) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
@@ -4790,6 +4901,10 @@ fn handle_read_text_file(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    if ctx.sandbox_required {
+        return respond_err(responder, sandbox_host_callback_error());
+    }
+
     let thread = match session_thread(ctx, &args.session_id) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
@@ -4975,6 +5090,10 @@ fn handle_create_terminal(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    if ctx.sandbox_required {
+        return respond_err(responder, sandbox_host_callback_error());
+    }
+
     let thread = match session_thread(ctx, &args.session_id) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
@@ -5035,6 +5154,10 @@ fn handle_kill_terminal(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    if ctx.sandbox_required {
+        return respond_err(responder, sandbox_host_callback_error());
+    }
+
     let thread = match session_thread(ctx, &args.session_id) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
@@ -5059,6 +5182,10 @@ fn handle_release_terminal(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    if ctx.sandbox_required {
+        return respond_err(responder, sandbox_host_callback_error());
+    }
+
     let thread = match session_thread(ctx, &args.session_id) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
@@ -5085,6 +5212,10 @@ fn handle_terminal_output(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    if ctx.sandbox_required {
+        return respond_err(responder, sandbox_host_callback_error());
+    }
+
     let thread = match session_thread(ctx, &args.session_id) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
@@ -5113,6 +5244,10 @@ fn handle_wait_for_terminal_exit(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
+    if ctx.sandbox_required {
+        return respond_err(responder, sandbox_host_callback_error());
+    }
+
     let thread = match session_thread(ctx, &args.session_id) {
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),

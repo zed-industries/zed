@@ -343,7 +343,8 @@ pub enum SandboxNotAppliedReason {
 
 /// The live sandbox kept alive for its per-command resources (the network proxy
 /// and, on macOS, the Seatbelt policy file) until the terminal exits.
-type SandboxConfigHandle = sandbox::Sandbox;
+/// A live sandbox whose resources must outlive the wrapped child process.
+pub type SandboxConfigHandle = sandbox::Sandbox;
 
 /// Upper bound on preparing a WSL-sandboxed command. Deliberately generous:
 /// the first invocation after the WSL utility VM has shut down (or after boot)
@@ -360,7 +361,7 @@ pub(crate) const WSL_SANDBOX_WRAP_TIMEOUT: std::time::Duration = std::time::Dura
 /// The sandbox owns the network proxy (for restricted-network policies) and any
 /// per-command policy file; the env it returns already routes through that
 /// proxy when applicable.
-pub(crate) async fn prepare_sandbox_wrap(
+pub async fn prepare_sandbox_wrap(
     program: String,
     args: Vec<String>,
     cwd: Option<PathBuf>,

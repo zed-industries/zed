@@ -20,8 +20,7 @@ sandbox?](#trust) for more details.
 - Tool permissions restrict the agent's ability to run certain tool actions in the first place
 - Once a tool action is actually running, sandboxing restricts what it can do
 
-Sandboxing applies only to Zed Agent. It does not sandbox Zed itself, language servers, extensions, tasks, your normal
-terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./terminal-threads.md).
+Sandboxing applies to Zed Agent terminal and fetch tools. It can also sandbox an [External Agent](./external-agents.md) process when that agent's sandbox policy requires it. It does not sandbox Zed itself, language servers, extensions, tasks, normal terminal tabs, or [Terminal Threads](./terminal-threads.md).
 
 > **Note**: Under some conditions, sandboxes on Windows are weaker than those on
 > Linux and MacOS, and may not prevent all escape attempts. See
@@ -51,6 +50,8 @@ Sandboxing is supported, in some form, on all platforms. In order to sandbox a
 There are no extra requirements on MacOS.
 
 The `fetch` tool has no extra requirements on any platform.
+
+Zed discovers Bubblewrap from the process `$PATH`. A Nix flake can provide it when Zed is launched from that flake's development shell, but Zed does not evaluate a project `flake.nix` automatically: evaluating an untrusted project flake before creating the sandbox would undermine this boundary.
 
 ## Default Access {#default-access}
 
@@ -173,9 +174,24 @@ The available options are:
 | `write_paths`        | Directory subtrees that sandboxed terminal commands may write to without prompting. Paths are absolute.           |
 | `allow_fs_write_all` | Allow sandboxed terminal commands to write anywhere except protected Git metadata without prompting.              |
 | `allow_unsandboxed`  | Turn sandboxing off entirely for Zed Agent terminal commands. The fetch tool will have no restrictions.           |
+| `require_sandbox`    | Require OS-level sandboxing. If the backend is unavailable or setup fails, the command fails and unsandboxed execution is not offered. Takes precedence over `allow_unsandboxed`. |
 
 Prefer narrow grants, such as a specific host or write path, over `allow_all_hosts`, `allow_fs_write_all`, or
 `allow_unsandboxed`.
+
+To require sandboxing by default, use:
+
+```json [settings]
+{
+  "agent": {
+    "sandbox_permissions": {
+      "require_sandbox": true
+    }
+  }
+}
+```
+
+This setting also supplies the default for External Agents. An External Agent can override it under `agent_servers.<id>.sandbox.require`; see [External Agents](./external-agents.md#sandboxing).
 
 ## Git Metadata {#git-metadata}
 

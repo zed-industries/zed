@@ -40,10 +40,7 @@ use std::path::PathBuf;
 /// [`acp_thread::SandboxWrap::writable_paths`]) and the status UI (which lists
 /// them), so the two can't drift if the set ever changes.
 pub fn sandbox_worktree_writable_paths(project: &Project, cx: &App) -> Vec<PathBuf> {
-    project
-        .worktrees(cx)
-        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-        .collect()
+    project.sandbox_worktree_writable_paths(cx)
 }
 
 /// The candidate `.git` paths the sandbox protects for a project. Locating these
@@ -51,37 +48,7 @@ pub fn sandbox_worktree_writable_paths(project: &Project, cx: &App) -> Vec<PathB
 /// `.git`, a linked worktree's common dir (which lives outside the worktree),
 /// and every discovered repository's git/common dirs.
 pub fn sandbox_git_dirs(project: &Project, cx: &App) -> Vec<PathBuf> {
-    let mut git_dirs = Vec::new();
-
-    for worktree in project.worktrees(cx) {
-        let worktree = worktree.read(cx);
-        let worktree_abs_path = worktree.abs_path();
-        // Protect `<worktree>/.git` even when it doesn't exist yet, so a command
-        // can't `git init` and then write to the freshly created metadata.
-        //
-        // We don't gate this on the worktree's scanned root being a directory:
-        // that state can be stale/pending, and for a *single-file* worktree
-        // (e.g. `settings.json` opened on its own) this synthesizes
-        // `settings.json/.git`, which can never exist. That impossible path is
-        // resolved authoritatively at capture time — the real filesystem
-        // reports `NotADirectory`, and `SandboxWrap::to_policy` skips a
-        // protected path that can't exist — so it never reaches enforcement.
-        git_dirs.push(worktree_abs_path.join(".git"));
-        if let Some(root_repo_common_dir) = worktree.root_repo_common_dir() {
-            git_dirs.push(root_repo_common_dir.to_path_buf());
-        }
-    }
-
-    for repository in project.git_store().read(cx).repositories().values() {
-        let repository = repository.read(cx);
-        git_dirs.push(repository.dot_git_abs_path.to_path_buf());
-        git_dirs.push(repository.repository_dir_abs_path.to_path_buf());
-        git_dirs.push(repository.common_dir_abs_path.to_path_buf());
-    }
-
-    git_dirs.sort();
-    git_dirs.dedup();
-    git_dirs
+    project.sandbox_protected_paths(cx)
 }
 
 /// What sandbox a thread applies to agent terminal commands, as one value the
@@ -146,7 +113,7 @@ impl ThreadSandbox {
 /// sandbox entirely; otherwise the writable-path and host grants form its
 /// scope. The per-thread overrides come from [`ThreadSandboxGrants::thread_sandbox`].
 pub fn settings_thread_sandbox(persistent: &SandboxPermissions) -> ThreadSandbox {
-    if persistent.allow_unsandboxed {
+    if persistent.allow_unsandboxed && !persistent.require_sandbox {
         ThreadSandbox::Unsandboxed
     } else {
         ThreadSandbox::Sandboxed(settings_sandbox_policy(persistent))
@@ -201,16 +168,23 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
 /// prompt in place, since the model is still operating in the sandbox model and
 /// only escaping individual commands (tracked in `ThreadSandboxGrants`).
 pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> bool {
+    let permissions = &AgentSettings::get_global(cx).sandbox_permissions;
     sandboxing_available_for_project(project, cx)
-        && !AgentSettings::get_global(cx)
-            .sandbox_permissions
-            .allow_unsandboxed
+        && (!permissions.allow_unsandboxed || permissions.require_sandbox)
 }
 
 /// Whether agent-run terminal commands should be wrapped in an OS-level
 /// sandbox for this process. See module docs for the policy.
 pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
-    cx.has_flag::<SandboxingFeatureFlag>()
+    sandboxing_required(cx) || cx.has_flag::<SandboxingFeatureFlag>()
+}
+
+/// Whether settings require an OS sandbox instead of permitting fallback to
+/// ambient host access.
+pub(crate) fn sandboxing_required(cx: &App) -> bool {
+    AgentSettings::get_global(cx)
+        .sandbox_permissions
+        .require_sandbox
 }
 
 /// Whether sandboxing is *applicable* for this project at all — the feature is
@@ -337,6 +311,9 @@ impl ThreadSandboxGrants {
         request: &SandboxRequest,
         persistent: &SandboxPermissions,
     ) -> bool {
+        if request.unsandboxed && persistent.require_sandbox {
+            return false;
+        }
         if request.unsandboxed {
             // The persistent `allow_unsandboxed` setting is intentionally not
             // consulted here: when it's set, sandboxing is removed from the
@@ -423,8 +400,8 @@ impl ThreadSandboxGrants {
     /// the sandbox entirely; otherwise the granted writable paths and hosts form
     /// its scope. This is the "overridden in this thread" half of the sandbox
     /// status surface; the persistent half comes from [`settings_thread_sandbox`].
-    pub fn thread_sandbox(&self) -> ThreadSandbox {
-        if self.unsandboxed || self.sandbox_fallback {
+    pub fn thread_sandbox(&self, require_sandbox: bool) -> ThreadSandbox {
+        if !require_sandbox && (self.unsandboxed || self.sandbox_fallback) {
             ThreadSandbox::Unsandboxed
         } else {
             ThreadSandbox::Sandboxed(self.to_policy())
@@ -746,11 +723,32 @@ mod tests {
     fn thread_grants_sandbox_reflects_unsandboxed_grant() {
         let mut grants = ThreadSandboxGrants::default();
         assert!(matches!(
-            grants.thread_sandbox(),
+            grants.thread_sandbox(false),
             ThreadSandbox::Sandboxed(_)
         ));
         grants.record(&unsandboxed_request());
-        assert!(grants.thread_sandbox().is_unsandboxed());
+        assert!(grants.thread_sandbox(false).is_unsandboxed());
+        assert!(matches!(
+            grants.thread_sandbox(true),
+            ThreadSandbox::Sandboxed(_)
+        ));
+    }
+
+    #[test]
+    fn required_sandbox_overrides_persistent_unsandboxed_access() {
+        let permissions = SandboxPermissions {
+            allow_unsandboxed: true,
+            require_sandbox: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            settings_thread_sandbox(&permissions),
+            ThreadSandbox::Sandboxed(_)
+        ));
+        assert!(
+            !ThreadSandboxGrants::default()
+                .covers_with_persistent(&unsandboxed_request(), &permissions)
+        );
     }
 
     #[test]

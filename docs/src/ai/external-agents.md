@@ -135,7 +135,33 @@ External Agents run as separate processes that communicate with Zed over ACP. Th
 | Native MCP config                | May also be read by the agent                                                              |
 | Tool permissions                 | Zed ACP/tool forwarding permissions may apply; native tool permissions depend on the agent |
 
-For Zed's native agent configuration, see [Zed Agent](./zed-agent.md).
+For Zed's native agent configuration, see [Zed Agent](./zed-agent.md). Organizations that allow only External Agents can set `agent.native_agent.enabled` to `false`; this disables Zed's built-in agent while keeping configured ACP agents available.
+
+## Sandboxing {#sandboxing}
+
+Set `agent.sandbox_permissions.require_sandbox` to require sandboxing for all External Agents by default. A per-agent `sandbox.require` setting overrides that default:
+
+```json [settings]
+{
+  "agent": {
+    "sandbox_permissions": {
+      "require_sandbox": true
+    }
+  },
+  "agent_servers": {
+    "opencode": {
+      "type": "registry",
+      "sandbox": {
+        "require": true
+      }
+    }
+  }
+}
+```
+
+For a sandbox-required local External Agent, Zed wraps the ACP process with the platform sandbox. The agent can write open project worktrees but not protected Git metadata. Zed rejects the connection if setup fails; it does not fall back to host execution. To prevent host-side bypasses, Zed does not advertise or honor ACP filesystem, terminal, terminal output, or terminal-auth callbacks for that connection.
+
+This first version is a **write-integrity boundary**, not host-data confidentiality isolation: the platform backends retain ordinary host read access and External Agent network access remains unrestricted. Do not use it to protect host-readable secrets from an untrusted External Agent. Restrictive read, environment, and network policies require a later dedicated design because ACP does not provide a per-command network authorization protocol. Remote projects and Windows External Agents fail closed when sandboxing is required.
 
 ## Agent-Specific Auth and Config {#agent-auth-config}
 

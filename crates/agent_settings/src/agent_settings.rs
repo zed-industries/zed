@@ -204,6 +204,7 @@ fn parse_auto_compact_threshold(raw: &str) -> anyhow::Result<AutoCompactThreshol
 #[derive(Clone, Debug, RegisterSetting)]
 pub struct AgentSettings {
     pub enabled: bool,
+    pub native_agent_enabled: bool,
     pub button: bool,
     pub dock: DockPosition,
     pub flexible: bool,
@@ -432,6 +433,10 @@ pub struct SandboxPermissions {
     /// approved "once" or "for this thread", which keeps the sandboxed
     /// tool/prompt in place — see `agent::sandboxing`.
     pub allow_unsandboxed: bool,
+    /// Require OS-level sandboxing for terminal commands. When the sandbox
+    /// cannot be created, the command fails instead of falling back to ambient
+    /// host access. This takes precedence over `allow_unsandboxed`.
+    pub require_sandbox: bool,
     /// Directory subtree grants, each paired with the canonical
     /// (symlink-resolved) target established when the grant was approved.
     pub write_paths: Vec<settings::GrantedWritePath>,
@@ -452,6 +457,7 @@ impl Default for SandboxPermissions {
             network_hosts: Vec::new(),
             allow_fs_write_all: false,
             allow_unsandboxed: false,
+            require_sandbox: false,
             write_paths: Vec::new(),
             // The confusable-Unicode warning is a safety net, so it defaults on.
             warn_confusable_unicode: true,
@@ -756,6 +762,10 @@ impl Settings for AgentSettings {
         let agent = content.agent.clone().unwrap();
         Self {
             enabled: agent.enabled.unwrap(),
+            native_agent_enabled: agent
+                .native_agent
+                .and_then(|native_agent| native_agent.enabled)
+                .unwrap_or(true),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
             sidebar_side: agent.sidebar_side.unwrap(),
@@ -854,11 +864,13 @@ fn compile_sandbox_permissions(
         .map(|hosts| hosts.0)
         .unwrap_or_default();
 
+    let require_sandbox = content.require_sandbox.unwrap_or(false);
     SandboxPermissions {
         allow_all_hosts: content.allow_all_hosts.unwrap_or(false),
         network_hosts,
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
-        allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
+        allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false) && !require_sandbox,
+        require_sandbox,
         write_paths,
         warn_confusable_unicode: content.warn_confusable_unicode.unwrap_or(true),
         warn_ntfs_grants: content.warn_ntfs_grants.unwrap_or(true),
@@ -1183,6 +1195,19 @@ mod tests {
             serde_json::from_value(json!({})).unwrap();
         let permissions = compile_sandbox_permissions(Some(content));
         assert!(permissions.warn_confusable_unicode);
+    }
+
+    #[test]
+    fn required_sandbox_overrides_allow_unsandboxed() {
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json!({
+            "require_sandbox": true,
+            "allow_unsandboxed": true,
+        }))
+        .unwrap();
+
+        let permissions = compile_sandbox_permissions(Some(content));
+        assert!(permissions.require_sandbox);
+        assert!(!permissions.allow_unsandboxed);
     }
 
     #[test]

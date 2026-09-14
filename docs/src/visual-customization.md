@@ -520,7 +520,10 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
 ```json [settings]
 {
   "agent": {
-    "enabled": true, // Enable/disable the agent
+    "enabled": true, // Enable/disable the Agent panel and all agents
+    "native_agent": {
+      "enabled": false // Disable Zed's built-in agent; External Agents remain available
+    },
     "button": true, // Show/hide the icon in the status bar
     "dock": "right", // Where to dock: left, right, bottom
     "default_width": 640, // Default width (left/right docked)

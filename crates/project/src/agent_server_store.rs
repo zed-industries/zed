@@ -235,6 +235,7 @@ impl AgentServerStore {
                     env: Default::default(),
                     default_config_options: HashMap::default(),
                     favorite_config_option_values: HashMap::default(),
+                    sandbox: None,
                 }),
             );
         });
@@ -1551,6 +1552,7 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: {}
         favorite_config_option_values: HashMap<String, Vec<String>>,
+        sandbox_required: Option<bool>,
     },
     Registry {
         /// Additional environment variables to pass to the agent.
@@ -1575,6 +1577,7 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: {}
         favorite_config_option_values: HashMap<String, Vec<String>>,
+        sandbox_required: Option<bool>,
     },
 }
 
@@ -1583,6 +1586,18 @@ impl CustomAgentServerSettings {
         match self {
             CustomAgentServerSettings::Custom { command, .. } => Some(command),
             CustomAgentServerSettings::Registry { .. } => None,
+        }
+    }
+
+    /// The per-agent override for the global required-sandbox policy.
+    pub fn sandbox_required(&self) -> Option<bool> {
+        match self {
+            CustomAgentServerSettings::Custom {
+                sandbox_required, ..
+            }
+            | CustomAgentServerSettings::Registry {
+                sandbox_required, ..
+            } => *sandbox_required,
         }
     }
 
@@ -1632,6 +1647,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
+                sandbox,
             } => CustomAgentServerSettings::Custom {
                 command: AgentServerCommand {
                     path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
@@ -1641,17 +1657,20 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
+                sandbox_required: sandbox.and_then(|sandbox| sandbox.require),
             },
             settings::CustomAgentServerSettings::Registry {
                 env,
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
+                sandbox,
             } => CustomAgentServerSettings::Registry {
                 env,
                 default_mode,
                 default_config_options,
                 favorite_config_option_values,
+                sandbox_required: sandbox.and_then(|sandbox| sandbox.require),
             },
         }
     }
@@ -1801,6 +1820,7 @@ mod tests {
                                     default_mode: None,
                                     default_config_options: HashMap::default(),
                                     favorite_config_option_values: HashMap::default(),
+                                    sandbox: None,
                                 }
                                 .into(),
                             )

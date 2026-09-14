@@ -191,6 +191,15 @@ pub struct AutoCompactSettingsContent {
     pub threshold: Option<AutoCompactThreshold>,
 }
 
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct NativeAgentSettingsContent {
+    /// Whether Zed's built-in agent is enabled. This does not affect External
+    /// Agents configured through `agent_servers`.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -198,6 +207,8 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
+    /// Settings for Zed's built-in agent.
+    pub native_agent: Option<NativeAgentSettingsContent>,
     /// Whether to show the agent panel button in the status bar.
     ///
     /// Default: true
@@ -682,7 +693,16 @@ impl std::ops::DerefMut for AllAgentServersSettings {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AgentServerSandboxSettings {
+    /// Require OS-level sandboxing for this external agent. When it cannot be
+    /// created, Zed refuses to start the agent rather than falling back to host
+    /// access. This overrides `agent.sandbox_permissions.require_sandbox`.
+    /// Default: inherited from `agent.sandbox_permissions.require_sandbox`
+    pub require: Option<bool>,
+}
+
+#[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
 #[serde(untagged)]
 pub enum AgentConfigOptionValue {
     ValueId(String),
@@ -764,6 +784,8 @@ pub enum CustomAgentServerSettings {
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
+        /// Per-agent sandbox policy.
+        sandbox: Option<AgentServerSandboxSettings>,
     },
     // Used for the ACP extension migration
     #[serde(alias = "extension")]
@@ -793,6 +815,8 @@ pub enum CustomAgentServerSettings {
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
+        /// Per-agent sandbox policy.
+        sandbox: Option<AgentServerSandboxSettings>,
     },
 }
 
@@ -931,6 +955,12 @@ pub struct SandboxPermissionsContent {
     /// Default: false
     pub allow_unsandboxed: Option<bool>,
 
+    /// Require OS-level sandboxing for Zed Agent terminal commands. If the
+    /// sandbox cannot be created, the command fails instead of offering an
+    /// unsandboxed fallback. Takes precedence over `allow_unsandboxed`.
+    /// Default: false
+    pub require_sandbox: Option<bool>,
+
     /// Directory subtrees that sandboxed terminal commands may always write
     /// to without prompting. Each entry is either a bare path string or an
     /// object `{requested, resolved}`; Zed writes objects (the canonical,
@@ -1049,6 +1079,23 @@ impl std::fmt::Display for ToolPermissionMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_agent_settings_parse() {
+        let settings: AgentSettingsContent = serde_json::from_value(serde_json::json!({
+            "native_agent": {
+                "enabled": false,
+            },
+        }))
+        .expect("parse native agent settings");
+
+        assert_eq!(
+            settings
+                .native_agent
+                .and_then(|native_agent| native_agent.enabled),
+            Some(false)
+        );
+    }
 
     #[test]
     fn agent_config_option_value_serializes_value_id_as_string() {

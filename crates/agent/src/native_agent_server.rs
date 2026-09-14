@@ -1,10 +1,12 @@
 use std::{any::Any, rc::Rc, sync::Arc};
 
 use agent_servers::{AgentServer, AgentServerDelegate};
-use anyhow::Result;
+use agent_settings::AgentSettings;
+use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{App, Entity, Task};
 use project::{AgentId, Project};
+use settings::Settings as _;
 
 use crate::{NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates};
 
@@ -35,6 +37,12 @@ impl AgentServer for NativeAgentServer {
         _project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
+        if !AgentSettings::get_global(cx).native_agent_enabled {
+            return Task::ready(Err(anyhow!(
+                "Zed's built-in agent is disabled by the `agent.native_agent.enabled` setting"
+            )));
+        }
+
         log::debug!("NativeAgentServer::connect");
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();

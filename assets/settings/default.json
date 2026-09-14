@@ -1125,6 +1125,10 @@
     "commit_message_include_project_rules": true,
     // Whether the agent is enabled.
     "enabled": true,
+    // Whether Zed's built-in agent is enabled. This does not affect External Agents.
+    "native_agent": {
+      "enabled": true,
+    },
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.

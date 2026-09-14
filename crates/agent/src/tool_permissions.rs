@@ -569,6 +569,7 @@ mod tests {
     fn test_agent_settings(tool_permissions: ToolPermissions) -> AgentSettings {
         AgentSettings {
             enabled: true,
+            native_agent_enabled: true,
             button: true,
             dock: DockPosition::Right,
             flexible: true,

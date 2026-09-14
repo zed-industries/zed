@@ -6390,6 +6390,38 @@ impl Project {
         &self.git_store
     }
 
+    /// All project worktree roots that a sandboxed child process may write to.
+    pub fn sandbox_worktree_writable_paths(&self, cx: &App) -> Vec<PathBuf> {
+        self.worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect()
+    }
+
+    /// Git metadata paths that must remain read-only to sandboxed child
+    /// processes, including linked-worktree common directories.
+    pub fn sandbox_protected_paths(&self, cx: &App) -> Vec<PathBuf> {
+        let mut protected_paths = Vec::new();
+
+        for worktree in self.worktrees(cx) {
+            let worktree = worktree.read(cx);
+            protected_paths.push(worktree.abs_path().join(".git"));
+            if let Some(root_repo_common_dir) = worktree.root_repo_common_dir() {
+                protected_paths.push(root_repo_common_dir.to_path_buf());
+            }
+        }
+
+        for repository in self.git_store.read(cx).repositories().values() {
+            let repository = repository.read(cx);
+            protected_paths.push(repository.dot_git_abs_path.to_path_buf());
+            protected_paths.push(repository.repository_dir_abs_path.to_path_buf());
+            protected_paths.push(repository.common_dir_abs_path.to_path_buf());
+        }
+
+        protected_paths.sort();
+        protected_paths.dedup();
+        protected_paths
+    }
+
     pub fn agent_server_store(&self) -> &Entity<AgentServerStore> {
         &self.agent_server_store
     }

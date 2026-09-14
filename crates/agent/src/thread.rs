@@ -14,7 +14,7 @@ use agent_settings::UserAgentsMd;
 use crate::sandboxing::{
     SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandbox_git_dirs,
     sandbox_worktree_writable_paths, sandboxing_available_for_project,
-    sandboxing_enabled_for_project,
+    sandboxing_enabled_for_project, sandboxing_required,
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
@@ -1850,7 +1850,9 @@ impl Thread {
         let grants = self.sandbox_grants.borrow();
         let settings = crate::sandboxing::settings_thread_sandbox(&persistent)
             .with_protected_paths(git_dirs.clone());
-        let thread = grants.thread_sandbox().with_protected_paths(git_dirs);
+        let thread = grants
+            .thread_sandbox(persistent.require_sandbox)
+            .with_protected_paths(git_dirs);
         Some((settings, thread))
     }
 
@@ -1865,7 +1867,7 @@ impl Thread {
         let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
         let settings_sandbox = crate::sandboxing::settings_thread_sandbox(&persistent);
         let grants = self.sandbox_grants.borrow();
-        let thread_sandbox = grants.thread_sandbox();
+        let thread_sandbox = grants.thread_sandbox(persistent.require_sandbox);
         drop(grants);
 
         let project = self.project.read(cx);
@@ -4145,6 +4147,7 @@ impl Thread {
         // `terminal` name. Expose the one matching the current sandbox state
         // to the model under that name.
         let use_sandboxed_terminal = sandboxing_enabled_for_project(self.project.read(cx), cx);
+        let sandbox_required = sandboxing_required(cx);
 
         // Tools that aren't allowed in restricted workspaces must never be
         // provided to the model while the workspace is restricted, regardless
@@ -4170,6 +4173,9 @@ impl Thread {
                 if tool.supports_provider(&model.provider_id())
                     && profile.is_tool_enabled(profile_tool_name)
                 {
+                    if terminal_variant && sandbox_required && !use_sandboxed_terminal {
+                        return None;
+                    }
                     match (tool_name.as_ref(), use_sandboxed_terminal) {
                         (TerminalTool::NAME, false) | (SandboxedTerminalTool::NAME, true) => {
                             Some((SharedString::from(TerminalTool::NAME), tool.clone()))
@@ -6126,11 +6132,11 @@ impl ToolCallEventStream {
     /// no longer provide isolation and callers may skip host authorization
     /// entirely.
     pub(crate) fn unsandboxed_access_granted(&self, cx: &App) -> bool {
-        self.unsandboxed_granted_for_thread()
-            || self.sandbox_fallback_granted_for_thread()
-            || AgentSettings::get_global(cx)
-                .sandbox_permissions
-                .allow_unsandboxed
+        let permissions = &AgentSettings::get_global(cx).sandbox_permissions;
+        !permissions.require_sandbox
+            && (self.unsandboxed_granted_for_thread()
+                || self.sandbox_fallback_granted_for_thread()
+                || permissions.allow_unsandboxed)
     }
 
     /// Ask the user how to proceed when the OS sandbox could not be created

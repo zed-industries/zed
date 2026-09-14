@@ -971,6 +971,7 @@ mod tests {
 
         let agent_settings = AgentSettings {
             enabled: true,
+            native_agent_enabled: true,
             button: true,
             dock: DockPosition::Right,
             flexible: true,
