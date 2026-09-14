@@ -15,7 +15,7 @@ use git::{
 };
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Global, SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
+    SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use http_client::HttpClient;
 use menu::{Cancel, Confirm};
@@ -1284,11 +1284,6 @@ impl Component for GitStatusIcon {
 
 const REPOSITORY_SEARCH_DEBOUNCE: Duration = Duration::from_millis(500);
 
-#[derive(Default)]
-struct EnabledRepositorySearchProviders(HashSet<String>);
-
-impl Global for EnabledRepositorySearchProviders {}
-
 struct GitCloneModal {
     picker: Entity<Picker<GitCloneDelegate>>,
 }
@@ -1305,21 +1300,18 @@ impl GitCloneModal {
             .into_iter()
             .filter(|provider| provider.supports_repository_search())
             .collect();
-        let enabled_provider_urls = cx
-            .default_global::<EnabledRepositorySearchProviders>()
-            .0
-            .clone();
         let delegate = GitCloneDelegate {
             modal: cx.entity().downgrade(),
             panel,
             http_client,
             providers,
-            enabled_provider_urls,
+            enabled_provider_urls: HashSet::default(),
             provider_menu_handle: PopoverMenuHandle::default(),
             suggestions: Vec::new(),
             cached_searches: HashMap::default(),
             search_errors: Vec::new(),
             is_searching: false,
+            has_searched_providers: false,
             selected_index: 0,
         };
         let picker = cx.new(|cx| {
@@ -1365,6 +1357,7 @@ struct GitCloneDelegate {
     cached_searches: HashMap<(String, String), Vec<clone_suggestions::CloneSuggestion>>,
     search_errors: Vec<SharedString>,
     is_searching: bool,
+    has_searched_providers: bool,
     selected_index: usize,
 }
 
@@ -1465,13 +1458,6 @@ impl PickerDelegate for GitCloneDelegate {
                                                         .enabled_provider_urls
                                                         .insert(provider_url.clone());
                                                 }
-                                                cx.default_global::<
-                                                    EnabledRepositorySearchProviders,
-                                                >()
-                                                .0 = picker
-                                                    .delegate
-                                                    .enabled_provider_urls
-                                                    .clone();
                                                 let query = picker.query(cx);
                                                 picker.update_matches(query, window, cx);
                                             })
@@ -1539,12 +1525,16 @@ impl PickerDelegate for GitCloneDelegate {
         }
 
         self.is_searching = true;
+        let should_debounce = self.has_searched_providers;
+        self.has_searched_providers = true;
         cx.notify();
         let http_client = self.http_client.clone();
         cx.spawn_in(window, async move |picker, cx| {
-            cx.background_executor()
-                .timer(REPOSITORY_SEARCH_DEBOUNCE)
-                .await;
+            if should_debounce {
+                cx.background_executor()
+                    .timer(REPOSITORY_SEARCH_DEBOUNCE)
+                    .await;
+            }
             let search_query = query.clone();
             let search_results = cx
                 .background_spawn(async move {
@@ -1636,19 +1626,9 @@ impl PickerDelegate for GitCloneDelegate {
                 .w_full()
                 .px_2()
                 .py_1p5()
-                .gap_2()
-                .justify_between()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(status)
-                .child(
-                    Button::new("learn-more", "Learn More")
-                        .label_size(LabelSize::Small)
-                        .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
-                        .on_click(|_, _, cx| {
-                            cx.open_url("https://github.com/git-guides/git-clone");
-                        }),
-                )
                 .into_any_element(),
         )
     }

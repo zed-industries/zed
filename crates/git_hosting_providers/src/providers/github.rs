@@ -214,7 +214,7 @@ impl Github {
         let mut request = Request::get(url.as_str())
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
-            .follow_redirects(http_client::RedirectPolicy::FollowAll)
+            .follow_redirects(http_client::RedirectPolicy::NoFollow)
             .timeout(REPOSITORY_SEARCH_TIMEOUT);
         if let Some(token) = github_token() {
             request = request.header("Authorization", format!("Bearer {token}"));
@@ -468,6 +468,10 @@ mod tests {
                     .get("Accept")
                     .and_then(|value| value.to_str().ok()),
                 Some("application/vnd.github+json")
+            );
+            assert_eq!(
+                request.extensions().get::<http_client::RedirectPolicy>(),
+                Some(&http_client::RedirectPolicy::NoFollow)
             );
             Ok(Response::builder()
                 .status(200)
