@@ -571,6 +571,7 @@ impl TestAppContext {
             .unwrap()
             .as_deref_mut()
             .unwrap()
+            .core
             .platform_window
             .as_test()
             .and_then(|any| any.downcast_mut::<TestWindow>())
@@ -950,15 +951,15 @@ impl VisualTestContext {
         self.update(|window, cx| {
             let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
-            window.invalidator.set_phase(DrawPhase::Prepaint);
+            window.core.invalidator.set_phase(DrawPhase::Prepaint);
             let mut element = Drawable::new(f(window, cx));
             element.layout_as_root(space.into(), window, cx);
             window.with_absolute_element_offset(origin, |window| element.prepaint(window, cx));
 
-            window.invalidator.set_phase(DrawPhase::Paint);
+            window.core.invalidator.set_phase(DrawPhase::Paint);
             let (request_layout_state, prepaint_state) = element.paint(window, cx);
 
-            window.invalidator.set_phase(DrawPhase::None);
+            window.core.invalidator.set_phase(DrawPhase::None);
             window.refresh();
 
             drop(element);
@@ -991,6 +992,7 @@ impl VisualTestContext {
             .cx
             .update_window(self.window, |_, window, _| {
                 window
+                    .core
                     .platform_window
                     .as_test()
                     .and_then(|any| any.downcast_mut::<TestWindow>())
@@ -1005,7 +1007,7 @@ impl VisualTestContext {
             let should_close = handler();
             self.cx
                 .update_window(self.window, |_, window, _| {
-                    window.platform_window.on_should_close(handler);
+                    window.core.platform_window.on_should_close(handler);
                 })
                 .unwrap();
             should_close

@@ -1303,7 +1303,7 @@ impl App {
                     cx.window_update_stack.push(id);
                     let root_view = build_root_view(&mut window, cx);
                     cx.window_update_stack.pop();
-                    window.root.replace(root_view.into());
+                    window.core.root.replace(root_view.into());
                     window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
 
                     // allow a window to draw at least once before returning
@@ -1313,7 +1313,7 @@ impl App {
                     let clear = window.draw(cx);
                     clear.clear(cx);
 
-                    cx.window_handles.insert(id, window.handle);
+                    cx.window_handles.insert(id, window.core.handle);
                     cx.windows.get_mut(id).unwrap().replace(Box::new(window));
                     Ok(handle)
                 }
@@ -1747,7 +1747,11 @@ impl App {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_deref()?;
-                        window.invalidator.is_dirty().then_some(window.handle)
+                        window
+                            .core
+                            .invalidator
+                            .is_dirty()
+                            .then_some(window.core.handle)
                     })
                     .collect::<Vec<_>>()
                 {
@@ -1757,11 +1761,11 @@ impl App {
 
                 if self.pending_effects.is_empty() {
                     for window in self.windows.values().filter_map(|window| window.as_deref()) {
-                        if window.invalidator.is_dirty()
-                            || window.needs_present.get()
-                            || !window.next_frame_callbacks.borrow().is_empty()
+                        if window.core.invalidator.is_dirty()
+                            || window.core.needs_present.get()
+                            || !window.core.next_frame_callbacks.borrow().is_empty()
                         {
-                            window.platform_window.schedule_frame();
+                            window.core.platform_window.schedule_frame();
                         }
                     }
 
@@ -1804,7 +1808,7 @@ impl App {
                     for window_handle in self.windows() {
                         window_handle
                             .update(self, |_, window, cx| {
-                                if window.focus == Some(handle_id) {
+                                if window.core.focus == Some(handle_id) {
                                     window.blur(cx);
                                 }
                             })
@@ -1840,8 +1844,8 @@ impl App {
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_deref_mut() {
-                window.refreshing = true;
-                window.invalidator.set_dirty(true);
+                window.core.refreshing = true;
+                window.core.invalidator.set_dirty(true);
             }
         }
     }
@@ -1912,14 +1916,14 @@ impl App {
         self.update(|cx| {
             let mut window = cx.windows.get_mut(id)?.take()?;
 
-            let root_view = window.root.clone().unwrap();
+            let root_view = window.core.root.clone().unwrap();
 
-            cx.window_update_stack.push(window.handle.id);
+            cx.window_update_stack.push(window.core.handle.id);
             let result = update(root_view, &mut window, cx);
             fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
                 cx.window_update_stack.pop();
 
-                if window.removed {
+                if window.core.removed {
                     cx.end_platform_drag(id);
                     cx.window_handles.remove(&id);
                     cx.windows.remove(id);
@@ -2213,7 +2217,7 @@ impl App {
     where
         T: 'static,
     {
-        let window_handle = window.handle;
+        let window_handle = window.core.handle;
         self.observe_release(handle, move |entity, cx| {
             let _ = window_handle.update(cx, |_, window, cx| on_release(entity, window, cx));
         })
@@ -2943,7 +2947,7 @@ impl AppContext for App {
             .as_deref()
             .expect("attempted to read a window that is already on the stack");
 
-        let root_view = window.root.clone().unwrap();
+        let root_view = window.core.root.clone().unwrap();
         let view = root_view
             .downcast::<T>()
             .map_err(|_| anyhow!("root view's type has changed"))?;

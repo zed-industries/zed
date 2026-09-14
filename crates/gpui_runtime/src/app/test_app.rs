@@ -364,7 +364,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             .windows
             .get(self.handle.window_id())
             .and_then(|w| w.as_ref())
-            .and_then(|w| w.root.clone())
+            .and_then(|w| w.core.root.clone())
             .and_then(|r| r.downcast::<V>().ok())
             .expect("window or root view not found");
         f(view.read(&app), &app)
@@ -474,6 +474,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
         let mut app = self.app.borrow_mut();
         if let Some(Some(window)) = app.windows.get_mut(window_id) {
             if let Some(test_window) = window
+                .core
                 .platform_window
                 .as_test()
                 .and_then(|any| any.downcast_mut::<TestWindow>())
@@ -495,6 +496,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
                 .and_then(|window| window.as_mut())
                 .and_then(|window| {
                     window
+                        .core
                         .platform_window
                         .as_test()
                         .and_then(|any| any.downcast_mut::<TestWindow>())

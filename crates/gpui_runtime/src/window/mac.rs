@@ -21,7 +21,7 @@ impl MacWindowExt for Window {
     fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
         use crate::PaintSurface;
 
-        self.invalidator.debug_assert_paint();
+        self.core.invalidator.debug_assert_paint();
 
         let bounds = self.snap_bounds(bounds);
         let content_mask = self.snapped_content_mask();

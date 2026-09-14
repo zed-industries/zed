@@ -161,6 +161,7 @@ mod any_view {
         // attribute nodes to the view that produced them.
         #[cfg(debug_assertions)]
         window
+            .core
             .a11y
             .view_type_names
             .insert(view.entity_id(), std::any::type_name::<V>());
@@ -385,8 +386,8 @@ impl<V: View> Element for ViewElement<V> {
                             && element_state.cache_key.bounds == bounds
                             && element_state.cache_key.content_mask == content_mask
                             && element_state.cache_key.text_style == text_style
-                            && !window.dirty_views.contains(&entity_id)
-                            && !window.refreshing
+                            && !window.frame_state.dirty_views.contains(&entity_id)
+                            && !window.core.refreshing
                         {
                             let prepaint_start = window.prepaint_index();
                             window.reuse_prepaint(element_state.prepaint_range.clone());
@@ -398,7 +399,7 @@ impl<V: View> Element for ViewElement<V> {
                             return (None, element_state);
                         }
 
-                        let refreshing = mem::replace(&mut window.refreshing, true);
+                        let refreshing = mem::replace(&mut window.core.refreshing, true);
                         let prepaint_start = window.prepaint_index();
                         let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                             let mut element = self
@@ -413,7 +414,7 @@ impl<V: View> Element for ViewElement<V> {
                         });
 
                         let prepaint_end = window.prepaint_index();
-                        window.refreshing = refreshing;
+                        window.core.refreshing = refreshing;
 
                         (
                             Some(element),
@@ -498,9 +499,9 @@ fn paint_view(
                     let paint_start = window.paint_index();
 
                     if let Some(element) = element {
-                        let refreshing = mem::replace(&mut window.refreshing, true);
+                        let refreshing = mem::replace(&mut window.core.refreshing, true);
                         element.paint(window, cx);
-                        window.refreshing = refreshing;
+                        window.core.refreshing = refreshing;
                     } else {
                         window.reuse_paint(element_state.paint_range.clone());
                     }
