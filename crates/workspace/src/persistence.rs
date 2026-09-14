@@ -1065,6 +1065,10 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE workspaces ADD COLUMN native_window_state BLOB;
         ),
+        sql!(
+            DROP INDEX ix_workspaces_location;
+            CREATE INDEX ix_workspaces_location ON workspaces(remote_connection_id, paths);
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1164,6 +1168,7 @@ impl WorkspaceDb {
                 WHERE
                     paths IS ? AND
                     remote_connection_id IS ?
+                ORDER BY timestamp DESC, workspace_id DESC
                 LIMIT 1
             })
             .and_then(|mut prepared_statement| {
@@ -1585,25 +1590,6 @@ impl WorkspaceDb {
                             continue;
                         }
                     }
-                }
-
-                // Clear out old workspaces with the same paths.
-                // Skip this for empty workspaces - they are identified by workspace_id, not paths.
-                // Multiple empty workspaces with different content should coexist.
-                if !paths.paths.is_empty() {
-                    conn.exec_bound(sql!(
-                        DELETE
-                        FROM workspaces
-                        WHERE
-                            workspace_id != ?1 AND
-                            paths IS ?2 AND
-                            remote_connection_id IS ?3
-                    ))?((
-                        workspace.id,
-                        paths.paths.clone(),
-                        remote_connection_id,
-                    ))
-                    .context("clearing out old locations")?;
                 }
 
                 // Upsert
@@ -6407,5 +6393,96 @@ mod tests {
                 "fallback should have found workspace_b, not the excluded workspace_a"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_save_workspace_preserves_colliding_local_graphs() {
+        let db =
+            WorkspaceDb::open_test_db("test_save_workspace_preserves_colliding_local_graphs").await;
+        assert_colliding_workspaces_survive(&db, SerializedWorkspaceLocation::Local).await;
+    }
+
+    #[gpui::test]
+    async fn test_save_workspace_preserves_colliding_remote_graphs() {
+        let db = WorkspaceDb::open_test_db("test_save_workspace_preserves_colliding_remote_graphs")
+            .await;
+        let workspace = remote_workspace_with(1, "collision-host", &[]);
+        assert_colliding_workspaces_survive(&db, workspace.location).await;
+    }
+
+    async fn assert_colliding_workspaces_survive(
+        db: &WorkspaceDb,
+        location: SerializedWorkspaceLocation,
+    ) {
+        let remote_connection_id = match &location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(options) => Some(
+                db.get_or_create_remote_connection(options.clone())
+                    .await
+                    .expect("failed to create remote connection"),
+            ),
+        };
+        for initially_colliding in [true, false] {
+            let mut first = workspace_with(
+                1,
+                &[Path::new("/collision/a"), Path::new("/collision/b")],
+                group(
+                    Axis::Horizontal,
+                    vec![pane_with_items(&[10]), pane_with_items(&[11])],
+                ),
+                None,
+            );
+            first.location = location.clone();
+            let mut second =
+                workspace_with(2, &[Path::new("/other")], pane_with_items(&[20, 21]), None);
+            second.location = location.clone();
+            if initially_colliding {
+                second.paths = first.paths.clone();
+            }
+            for workspace in [&first, &second] {
+                db.save_workspace(workspace.clone()).await;
+            }
+            assert_eq!(db.workspace_for_id(first.id), Some(first.clone()));
+            assert_eq!(db.workspace_for_id(second.id), Some(second.clone()));
+            second.paths = first.paths.clone();
+            db.save_workspace(second.clone()).await;
+            assert_eq!(db.workspace_for_id(first.id), Some(first.clone()));
+            assert_eq!(db.workspace_for_id(second.id), Some(second.clone()));
+
+            for (first_timestamp, second_timestamp, expected) in [
+                ("2000-01-03 00:00:00", "2000-01-02 00:00:00", &first),
+                ("2000-01-01 00:00:00", "2000-01-02 00:00:00", &second),
+                ("2000-01-02 00:00:00", "2000-01-02 00:00:00", &second),
+            ] {
+                db.set_timestamp_for_tests(first.id, first_timestamp.to_owned())
+                    .await
+                    .expect("failed to set first timestamp");
+                db.set_timestamp_for_tests(second.id, second_timestamp.to_owned())
+                    .await
+                    .expect("failed to set second timestamp");
+                assert_eq!(
+                    db.workspace_for_roots_internal(
+                        &["/collision/b", "/collision/a"],
+                        remote_connection_id,
+                    ),
+                    Some(expected.clone())
+                );
+            }
+            let reopened = db
+                .workspace_for_roots_internal(first.paths.paths(), remote_connection_id)
+                .expect("failed to reopen workspace");
+            assert_eq!(reopened, second);
+            db.save_workspace(reopened).await;
+            assert_eq!(db.workspace_for_id(first.id), Some(first));
+            assert_eq!(db.workspace_for_id(second.id), Some(second));
+            assert_eq!(
+                db.select::<WorkspaceId>(sql!(
+                    SELECT workspace_id FROM workspaces ORDER BY workspace_id
+                ))
+                .expect("failed to prepare workspace query")()
+                .expect("failed to read workspaces"),
+                vec![WorkspaceId(1), WorkspaceId(2)]
+            );
+        }
     }
 }
