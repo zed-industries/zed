@@ -54,6 +54,7 @@ mod test_dispatcher;
 mod text_input;
 mod window;
 mod window_id;
+mod window_metrics;
 
 pub use app::*;
 pub use clipboard::*;
@@ -93,3 +94,4 @@ pub use test_dispatcher::*;
 pub use text_input::*;
 pub use window::*;
 pub use window_id::*;
+pub use window_metrics::*;

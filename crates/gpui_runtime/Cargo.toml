@@ -50,6 +50,7 @@ doctest = false
 [dependencies]
 accesskit.workspace = true
 anyhow.workspace = true
+arc-swap.workspace = true
 async-task.workspace = true
 backtrace = { workspace = true, optional = true }
 bitflags.workspace = true

@@ -22,13 +22,14 @@ use crate::{
     TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
     TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowId, WindowOptions, WindowParams, WindowTextSystem,
+    WindowDecorations, WindowId, WindowMetrics, WindowOptions, WindowParams, WindowTextSystem,
     new_platform_input_handler, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::TouchEvent;
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
 use anyhow::{Context as _, Result, anyhow};
+use arc_swap::ArcSwap;
 use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
@@ -1191,6 +1192,8 @@ pub(crate) struct WindowHostCore {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
+    /// The most recently sampled metrics, published for lock-free reads.
+    metrics: Arc<ArcSwap<WindowMetrics>>,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
     is_resizable: bool,
@@ -1252,6 +1255,69 @@ pub(crate) struct WindowHostCore {
     #[cfg(feature = "profiler")]
     debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     pub(crate) a11y: A11y,
+}
+
+/// A cloneable handle for reading a window's metrics without borrowing it.
+///
+/// The snapshot it reads is published by the window, so a handle can be held by
+/// an entity or moved to a background task and read at any time, without the
+/// window being borrowed and without a round trip through the UI thread.
+pub struct WindowMetricsHandle {
+    id: WindowId,
+    metrics: Arc<ArcSwap<WindowMetrics>>,
+}
+
+impl WindowMetricsHandle {
+    /// The id of the window these metrics were sampled from.
+    pub fn id(&self) -> WindowId {
+        self.id
+    }
+
+    /// The snapshot all of the accessors below read from.
+    ///
+    /// Reading one snapshot rather than several keeps the values consistent
+    /// with each other, since a frame may publish a new one in between.
+    pub fn snapshot(&self) -> Arc<WindowMetrics> {
+        self.metrics.load_full()
+    }
+
+    /// The window's bounds in the global coordinate space, which can span displays.
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.metrics.load().bounds
+    }
+
+    /// The visible viewport in window-local logical pixels.
+    ///
+    /// Unlike [`Self::content_size`], this can shrink or move when a software
+    /// keyboard opens.
+    pub fn viewport(&self) -> Bounds<Pixels> {
+        self.metrics.load().viewport
+    }
+
+    /// The size of the drawable area, which is the window's full layout size.
+    pub fn content_size(&self) -> Size<Pixels> {
+        self.metrics.load().content_size
+    }
+
+    /// The scale factor of the display the window is on.
+    pub fn scale_factor(&self) -> f32 {
+        self.metrics.load().scale_factor
+    }
+
+    /// The display the window is on, when the platform reports one.
+    pub fn display_id(&self) -> Option<DisplayId> {
+        self.metrics.load().display_id
+    }
+
+    /// Whether this is the platform's active, or focused, window.
+    pub fn is_active(&self) -> bool {
+        self.metrics.load().is_active
+    }
+
+    /// Whether the window is fullscreen.
+    pub fn is_fullscreen(&self) -> bool {
+        self.metrics.load().is_fullscreen
+    }
 }
 
 /// Holds the state for a specific window.
@@ -1621,6 +1687,15 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
+        let metrics = Arc::new(ArcSwap::from_pointee(WindowMetrics {
+            bounds: platform_window.bounds(),
+            viewport: platform_window.visual_viewport_bounds(),
+            content_size,
+            scale_factor,
+            display_id,
+            is_active: active.get(),
+            is_fullscreen: platform_window.is_fullscreen(),
+        }));
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
@@ -2050,6 +2125,7 @@ impl Window {
                 handle,
                 invalidator,
                 removed: false,
+                metrics,
                 platform_window,
                 display_id,
                 is_resizable,
@@ -2222,6 +2298,18 @@ impl Window {
     /// Obtain a handle to the window that belongs to this context.
     pub fn window_handle(&self) -> AnyWindowHandle {
         self.core.handle
+    }
+
+    /// A handle for reading this window's metrics without borrowing it.
+    ///
+    /// The values the handle reads are the ones published by the most recent
+    /// frame, so unlike the accessors on `Window` it can be used from another
+    /// thread. See [`WindowMetricsHandle`].
+    pub fn metrics_handle(&self) -> WindowMetricsHandle {
+        WindowMetricsHandle {
+            id: self.core.handle.window_id(),
+            metrics: self.core.metrics.clone(),
+        }
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
@@ -2653,6 +2741,23 @@ impl Window {
         })
     }
 
+    /// Samples the platform window into the published metrics snapshot.
+    ///
+    /// Readers of [`Window::metrics_handle`] only see what is published here,
+    /// so this runs at the start of every frame and whenever the cached
+    /// geometry is refreshed outside one.
+    fn sync_metrics(&self) {
+        self.core.metrics.store(Arc::new(WindowMetrics {
+            bounds: self.core.platform_window.bounds(),
+            viewport: self.core.platform_window.visual_viewport_bounds(),
+            content_size: self.core.viewport_size,
+            scale_factor: self.core.scale_factor,
+            display_id: self.core.display_id,
+            is_active: self.core.active.get(),
+            is_fullscreen: self.core.platform_window.is_fullscreen(),
+        }));
+    }
+
     /// Notify the window that its bounds have changed.
     ///
     /// This updates internal state like `viewport_size` and `scale_factor` from
@@ -2668,6 +2773,7 @@ impl Window {
             .map(|display| display.id());
         self.core.mouse_position = self.core.platform_window.mouse_position();
 
+        self.sync_metrics();
         self.refresh();
 
         self.core
@@ -2917,6 +3023,7 @@ impl Window {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_scale_factor(&mut self, scale_factor: f32) {
         self.core.scale_factor = scale_factor;
+        self.sync_metrics();
         self.refresh();
     }
 
@@ -3174,6 +3281,7 @@ impl Window {
         if self.core.platform_window.prepare_frame() {
             self.refresh();
         }
+        self.sync_metrics();
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.frame_state.rendered_entity_stack.is_empty());
@@ -7381,6 +7489,19 @@ impl AnyWindowHandle {
         self.id
     }
 
+    /// A handle for reading this window's metrics without borrowing it.
+    ///
+    /// Returns `None` if the window has been closed. Unlike
+    /// [`WindowHandle::is_active`], this needs only a shared borrow of the app
+    /// and reads the last published snapshot, so it succeeds even while the
+    /// window is borrowed and never blocks on the UI thread.
+    pub fn metrics(&self, cx: &App) -> Option<WindowMetricsHandle> {
+        cx.windows
+            .get(self.id)
+            .and_then(|window| window.as_deref())
+            .map(Window::metrics_handle)
+    }
+
     /// Returns the name of the window's declared root entity type.
     pub fn root_entity_type_name(&self) -> &'static str {
         self.root_entity_type_name
@@ -7896,6 +8017,82 @@ mod tests {
                 (scale_factor, expected_bounds, resized_size)
             );
         }
+    }
+
+    #[gpui::test]
+    fn metrics_handle_agrees_with_the_window_and_tracks_resizes(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let handle: AnyWindowHandle = window.into();
+
+        let metrics = cx.read(|app| handle.metrics(app).expect("window is open"));
+        assert_eq!(metrics.id(), handle.window_id());
+        assert!(metrics.display_id().is_some());
+
+        // Every field of the snapshot agrees with the window it was sampled from.
+        let window_state = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, _| {
+                assert_eq!(metrics.bounds(), window.bounds());
+                assert_eq!(metrics.viewport(), window.visual_viewport_bounds());
+                assert_eq!(metrics.content_size(), window.viewport_size());
+                assert_eq!(metrics.scale_factor(), window.scale_factor());
+                assert_eq!(metrics.is_active(), window.is_window_active());
+                assert_eq!(metrics.is_fullscreen(), window.is_fullscreen());
+            })
+            .unwrap();
+        };
+        window_state(cx);
+
+        cx.simulate_window_resize(handle, size(px(800.), px(600.)));
+        cx.simulate_window_scale_factor_change(handle, 1.25);
+
+        // The snapshot is shared with the window, so a handle obtained before
+        // the change observes it.
+        assert_eq!(metrics.content_size(), size(px(800.), px(600.)));
+        assert_eq!(metrics.scale_factor(), 1.25);
+        window_state(cx);
+    }
+
+    /// Geometry the platform changes without resizing the window reaches the
+    /// snapshot too. The visual viewport only marks the window dirty, so the
+    /// draw that follows the update is what publishes it.
+    #[gpui::test]
+    fn metrics_track_viewport_changes_that_do_not_resize(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let handle: AnyWindowHandle = window.into();
+        let metrics = cx.read(|app| handle.metrics(app).expect("window is open"));
+
+        let narrow = Bounds::new(point(px(0.), px(120.)), size(px(400.), px(680.)));
+        assert_ne!(metrics.viewport(), narrow);
+
+        cx.simulate_window_visual_viewport_change(handle, narrow);
+        assert_eq!(metrics.viewport(), narrow);
+
+        cx.update_window(handle, |_, window, _| {
+            assert_eq!(metrics.viewport(), window.visual_viewport_bounds());
+            // Shrinking the visual viewport leaves the layout size alone.
+            assert_eq!(metrics.content_size(), window.viewport_size());
+        })
+        .unwrap();
+    }
+
+    /// The handle borrows nothing from the window, so it can be read off the UI
+    /// thread while the window is otherwise occupied.
+    #[gpui::test]
+    fn metrics_handle_is_readable_from_another_thread(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let handle: AnyWindowHandle = window.into();
+        cx.simulate_window_resize(handle, size(px(640.), px(480.)));
+        let metrics = cx.read(|app| handle.metrics(app).expect("window is open"));
+
+        let (id, content_size, scale_factor) = std::thread::spawn(move || {
+            (metrics.id(), metrics.content_size(), metrics.scale_factor())
+        })
+        .join()
+        .expect("the metrics reader did not panic");
+
+        assert_eq!(id, handle.window_id());
+        assert_eq!(content_size, size(px(640.), px(480.)));
+        assert_eq!(scale_factor, 2.0);
     }
 
     /// Platforms that stop requesting frames for idle windows (currently web)
