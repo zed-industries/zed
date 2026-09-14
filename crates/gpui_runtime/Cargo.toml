@@ -1,5 +1,5 @@
 [package]
-name = "gpui_api"
+name = "gpui_runtime"
 version = "0.2.2"
 edition.workspace = true
 publish.workspace = true
@@ -44,7 +44,7 @@ profiler = ["dep:hdrhistogram", "gpui_platform/profiler"]
 stacker = ["dep:stacksafe", "gpui_engine_default/stacker"]
 
 [lib]
-path = "src/gpui_api.rs"
+path = "src/gpui_runtime.rs"
 doctest = false
 
 [dependencies]
