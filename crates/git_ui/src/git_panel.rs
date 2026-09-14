@@ -9712,8 +9712,8 @@ mod tests {
     use util::rel_path::rel_path;
 
     use workspace::{
-        ActivatePaneLeft, ActivatePaneRight, MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation,
-        item::test::TestItem,
+        ActivatePaneLeft, ActivatePaneRight, ItemHandle as _, MultiWorkspace, ToolbarItemEvent,
+        ToolbarItemLocation, item::test::TestItem,
     };
 
     use super::*;
@@ -11369,6 +11369,11 @@ mod tests {
             .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
             .unwrap();
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        let project_path = project.read_with(&cx, |project, cx| {
+            project
+                .find_project_path(path!("/project/partial.rs"), cx)
+                .expect("partial.rs should have a project path")
+        });
 
         cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -11404,7 +11409,10 @@ mod tests {
         cx.run_until_parked();
 
         workspace.read_with(&cx, |workspace, cx| {
-            assert!(workspace.active_item_as::<StagedDiff>(cx).is_some());
+            let staged_diff = workspace
+                .active_item_as::<StagedDiff>(cx)
+                .expect("StagedDiff should be active");
+            assert_eq!(staged_diff.project_path(cx), Some(project_path.clone()));
             assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<UnstagedDiff>(cx).count(), 0);
             assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
@@ -11429,6 +11437,7 @@ mod tests {
             let solo_diff = workspace
                 .active_item_as::<SoloDiffView>(cx)
                 .expect("SoloDiffView should be active");
+            assert_eq!(solo_diff.project_path(cx), Some(project_path.clone()));
             let searchable = solo_diff
                 .read(cx)
                 .as_searchable(&solo_diff, cx)
@@ -11473,7 +11482,10 @@ mod tests {
         cx.run_until_parked();
 
         workspace.read_with(&cx, |workspace, cx| {
-            assert!(workspace.active_item_as::<UnstagedDiff>(cx).is_some());
+            let unstaged_diff = workspace
+                .active_item_as::<UnstagedDiff>(cx)
+                .expect("UnstagedDiff should be active");
+            assert_eq!(unstaged_diff.project_path(cx), Some(project_path));
             assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<UnstagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
