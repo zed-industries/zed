@@ -6840,8 +6840,11 @@ impl Window {
 
     /// Registers a hitbox that can be used for inspector picking mode, allowing users to select and
     /// inspect UI elements by clicking on them.
+    ///
+    /// The runtime does this for an element as it paints it; elements do not call
+    /// it themselves.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn insert_inspector_hitbox(&mut self, hitbox_id: HitboxId, cx: &App) {
+    pub(crate) fn insert_inspector_hitbox(&mut self, hitbox_id: HitboxId, cx: &App) {
         self.invalidator.debug_assert_paint_or_prepaint();
         if !self.is_inspector_picking(cx) {
             return;

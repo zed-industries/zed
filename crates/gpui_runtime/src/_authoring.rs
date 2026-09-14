@@ -78,3 +78,11 @@
 //!
 //! Depend on the authoring surface instead. If something in that list is the
 //! only way to express what you need, that is a gap worth reporting.
+//!
+//! ## The rest of `Window` is runtime API
+//!
+//! The remaining methods on [`Window`](crate::Window) are public on purpose, and
+//! they are not authoring API: window management, input, focus, event
+//! subscriptions, element state and assets. Whether a *component* or an
+//! *element* needs them is a judgement each call site makes, so they are neither
+//! hidden here nor treated as a frozen contract.
