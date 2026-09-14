@@ -23,8 +23,8 @@ use quick_xml::{Reader, XmlVersion};
 
 use crate::MermaidTheme;
 
-pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
-    // merman 0.6 already applies the generic resvg-safe cleanup before this point.
+pub(super) fn postprocess(svg: &str, theme: &MermaidTheme, custom_palette: bool) -> Result<String> {
+    // merman already applies the generic resvg-safe cleanup before this point.
     // The remaining passes are Zed-specific theme and accent adjustments.
     let svg_id = extract_svg_id(svg);
 
@@ -36,16 +36,80 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     // those fallback labels, but drops any that merely duplicate a native
     // <text> (e.g. user journey renders some labels both ways).
     let events = strip_foreignobject::process(events, svg);
-    let events = element_fixup::process(events, theme);
-
-    let events = accent_colors::process(events, theme);
-    let events = inject_css::process(events, theme, &svg_id);
+    let events = events.map(|event| preserve_fallback_text_color(event?));
+    let events = element_fixup::process(events, theme, custom_palette);
+    let events: Box<dyn Iterator<Item = Result<Event<'_>>>> = if !custom_palette {
+        let events = accent_colors::process(events, theme);
+        Box::new(inject_css::process(events, theme, &svg_id))
+    } else {
+        Box::new(events)
+    };
 
     let mut writer = quick_xml::Writer::new(Vec::with_capacity(svg.len()));
     for event in events {
         writer.write_event(event?)?;
     }
     String::from_utf8(writer.into_inner()).context("SVG output is not valid UTF-8")
+}
+
+fn preserve_fallback_text_color(event: Event<'_>) -> Result<Event<'_>> {
+    let element = match &event {
+        Event::Start(element) | Event::Empty(element) => element,
+        _ => return Ok(event),
+    };
+    let class = match element.name().as_ref() {
+        b"g" if accent_colors::is_foreign_object_fallback_group(element)? => {
+            "merman-foreignobject-fallback"
+        }
+        b"text"
+            if element
+                .try_get_attribute("class")?
+                .map(|class| {
+                    class
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .map(|class| {
+                            class
+                                .split_whitespace()
+                                .any(|class| class == "merman-foreignobject-fallback-text")
+                        })
+                })
+                .transpose()?
+                .unwrap_or(false) =>
+        {
+            "merman-foreignobject-fallback-text"
+        }
+        _ => return Ok(event),
+    };
+    // Copied node classes apply shape fill rules to the moved fallback text.
+    let mut replacement = element_fixup::rewrite_attr(element, b"class", class)?;
+    if element.name().as_ref() == b"text"
+        && let Some(fill) = element.try_get_attribute("fill")?
+    {
+        let previous_style = element.try_get_attribute("style")?;
+        let mut style = previous_style
+            .as_ref()
+            .map(|style| {
+                style
+                    .normalized_value(XmlVersion::Implicit1_0)
+                    .map(|style| style.into_owned())
+            })
+            .transpose()?
+            .unwrap_or_default();
+        // Keep the color merman resolved in the original HTML label context.
+        style.push_str(&format!(
+            ";fill:{} !important;",
+            fill.normalized_value(XmlVersion::Implicit1_0)?
+        ));
+        if previous_style.is_some() {
+            replacement = element_fixup::rewrite_attr(&replacement, b"style", &style)?;
+        } else {
+            replacement.push_attribute(("style", style.as_str()));
+        }
+    }
+    Ok(match event {
+        Event::Start(_) => Event::Start(replacement),
+        _ => Event::Empty(replacement),
+    })
 }
 
 fn extract_svg_id(svg: &str) -> String {

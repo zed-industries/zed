@@ -18,8 +18,10 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-merman = { version = "=0.8.0-alpha.5", default-features = false, features = [
+merman = { git = "https://github.com/Latias94/merman", rev = "4c2ac78177f3429ed78abb864a1f9f13d415c55c", default-features = false, features = [
     "layout-cytoscape",
+    "layout-elk",
+    "math",
     "svg",
 ] }
 quick-xml.workspace = true

@@ -420,38 +420,6 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
     )
 }
 
-/// We deliberately block rendering of some diagram types, even though `merman`
-/// supports them, because we have not yet written custom CSS to ensure text is
-/// readable.
-fn is_supported_diagram_type(source: &str) -> bool {
-    /// If updating this list, also update the system prompt!
-    const SUPPORTED_PREFIXES: &[&str] = &[
-        "flowchart",
-        "graph",
-        "sequenceDiagram",
-        "classDiagram",
-        "stateDiagram",
-        "stateDiagram-v2",
-        "erDiagram",
-        "gantt",
-        "pie",
-        "gitGraph",
-        "mindmap",
-        "timeline",
-        "quadrantChart",
-        "xychart-beta",
-        "journey",
-    ];
-    let first_token = source
-        .trim_start()
-        .split(|c: char| c.is_whitespace() || c == '\n')
-        .next()
-        .unwrap_or("");
-    SUPPORTED_PREFIXES
-        .iter()
-        .any(|prefix| first_token.eq_ignore_ascii_case(prefix))
-}
-
 pub(crate) fn extract_mermaid_diagrams(
     source: &str,
     events: &[(Range<usize>, MarkdownEvent)],
@@ -484,9 +452,6 @@ pub(crate) fn extract_mermaid_diagrams(
             .strip_suffix('\n')
             .unwrap_or(&source[metadata.content_range.clone()])
             .to_string();
-        if !is_supported_diagram_type(&contents) {
-            continue;
-        }
         mermaid_diagrams.insert(
             source_range.start,
             ParsedMarkdownMermaidDiagram {
@@ -636,9 +601,10 @@ pub(crate) fn render_mermaid_diagram(
                 })
                 .into_any_element()
         }
-        Some(Err(_)) => {
-            // Render failed — show the source code without tabs
+        Some(Err(error)) => {
+            // Keep the source available alongside the renderer error.
             container
+                .child(Label::new(format!("Mermaid: {error:#}")))
                 .child(render_mermaid_code_view(&parsed.contents.contents))
                 .when(show_interactive, |container| {
                     container.child(render_mermaid_overlay_controls(
@@ -1129,6 +1095,31 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_mermaid_preserves_front_matter_and_directives() {
+        for source in [
+            "---\ntitle: Packet example\nconfig:\n  packet:\n    bitsPerRow: 64\n    bitWidth: 12\n---\npacket\n+8: \"Header\"\n+432: \"Data\"",
+            "---\nconfig:\n  theme: base\n  themeVariables:\n    primaryColor: '#ff1234'\n---\nflowchart TD\n A --> B",
+            "%%{init: {'theme': 'forest'}}%%\n%% comment\nsequenceDiagram\n A->>B: Hello",
+        ] {
+            let markdown = format!("```mermaid\n{source}\n```");
+            let events =
+                crate::parser::parse_markdown_with_options(&markdown, false, false, false).events;
+            let diagrams = extract_mermaid_diagrams(&markdown, &events);
+            assert_eq!(diagrams.len(), 1);
+            assert_eq!(
+                diagrams
+                    .values()
+                    .next()
+                    .expect("diagram")
+                    .contents
+                    .contents
+                    .as_ref(),
+                source
+            );
+        }
+    }
+
+    #[test]
     fn test_extract_mermaid_diagrams_parses_scale() {
         let markdown = "```mermaid 150\ngraph TD;\n```\n\n```rust\nfn main() {}\n```";
         let events =
@@ -1159,25 +1150,30 @@ mod tests {
     }
 
     #[test]
-    fn test_unsupported_diagram_types_are_skipped() {
-        let markdown = concat!(
-            "```mermaid\nsankey-beta\n```\n\n",
-            "```mermaid\nblock-beta\n```\n\n",
-            "```mermaid\nflowchart TD\n    A --> B\n```",
-        );
-        let events =
-            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
-        let diagrams = extract_mermaid_diagrams(markdown, &events);
-        assert_eq!(
-            diagrams.len(),
-            1,
-            "Only the flowchart should be extracted; sankey and block should be skipped"
-        );
-        let diagram = diagrams.values().next().unwrap();
-        assert!(
-            diagram.contents.contents.contains("flowchart"),
-            "The extracted diagram should be the flowchart"
-        );
+    fn test_mermaid_types_are_not_filtered() {
+        for source in [
+            "sankey-beta\nA,B,1",
+            "block-beta\nA --> B",
+            "xychart\nbar [1]",
+            "futureDiagram\nexample",
+            "---\ninvalid yaml: [\n---\npacket",
+        ] {
+            let markdown = format!("```mermaid\n{source}\n```");
+            let events =
+                crate::parser::parse_markdown_with_options(&markdown, false, false, false).events;
+            let diagrams = extract_mermaid_diagrams(&markdown, &events);
+            assert_eq!(diagrams.len(), 1);
+            assert_eq!(
+                diagrams
+                    .values()
+                    .next()
+                    .expect("diagram")
+                    .contents
+                    .contents
+                    .as_ref(),
+                source
+            );
+        }
     }
 
     #[gpui::test]

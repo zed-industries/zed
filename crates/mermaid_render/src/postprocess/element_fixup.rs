@@ -33,10 +33,11 @@ struct ElementFixup<I> {
     text_color_css: String,
     font_family_css: String,
     svg_seen: bool,
+    preserve_colors: bool,
     skip_rect_depth: usize,
 }
 
-fn rewrite_attr<'a>(
+pub(super) fn rewrite_attr<'a>(
     e: &BytesStart<'_>,
     attr_name: &[u8],
     new_value: &str,
@@ -198,6 +199,10 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
     }
 
     fn rewrite_text_element(&self, e: &BytesStart<'_>, fix_fill: bool) -> Result<BytesStart<'a>> {
+        // The renderer has already resolved the diagram's explicit typography.
+        if self.preserve_colors {
+            return Ok(e.to_owned());
+        }
         let name = e.name();
         let tag = std::str::from_utf8(name.as_ref())?;
         let mut new_elem = BytesStart::new(tag.to_owned());
@@ -244,7 +249,9 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
         match &event {
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"svg" && !self.svg_seen => {
                 self.svg_seen = true;
-                if let Some(new_elem) = self.rewrite_svg_style(e)? {
+                if !self.preserve_colors
+                    && let Some(new_elem) = self.rewrite_svg_style(e)?
+                {
                     Ok(Some(rewrap(&event, new_elem)))
                 } else {
                     Ok(Some(event))
@@ -262,9 +269,10 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
                 }
             }
 
-            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"text" => {
-                Ok(Some(rewrap(&event, self.rewrite_text_element(e, true)?)))
-            }
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"text" => Ok(Some(rewrap(
+                &event,
+                self.rewrite_text_element(e, !self.preserve_colors)?,
+            ))),
 
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"tspan" => {
                 Ok(Some(rewrap(&event, self.rewrite_text_element(e, false)?)))
@@ -306,6 +314,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for ElementFixup<I> {
 pub(super) fn process<'a>(
     events: impl Iterator<Item = Result<Event<'a>>>,
     theme: &MermaidTheme,
+    preserve_colors: bool,
 ) -> impl Iterator<Item = Result<Event<'a>>> {
     ElementFixup {
         inner: events,
@@ -313,6 +322,7 @@ pub(super) fn process<'a>(
         text_color_css: crate::css_color(theme.text_color),
         font_family_css: theme.font_family.clone(),
         svg_seen: false,
+        preserve_colors,
         skip_rect_depth: 0,
     }
 }

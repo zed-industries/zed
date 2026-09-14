@@ -58,6 +58,65 @@ const DIAGRAMS: &[(&str, &str)] = &[
         "xychart",
         "xychart-beta\n    title Test\n    x-axis [\"A\", \"B\", \"C\"]\n    y-axis \"Val\" 0 --> 10\n    bar [3, 7, 5]",
     ),
+    (
+        "architecture",
+        "architecture-beta\n service api(server)[API]\n service db(database)[Database]\n api:R --> L:db",
+    ),
+    ("block", "block-beta\n A --> B"),
+    (
+        "c4",
+        "C4Context\n Person(user, \"User\")\n System(app, \"App\")\n Rel(user, app, \"Uses\")",
+    ),
+    ("cynefin", "cynefin-beta\n clear\n  \"Task\""),
+    (
+        "eventmodeling",
+        "eventmodeling\ntf 01 ui App.Form\ntf 02 cmd App.Save ->> 01",
+    ),
+    ("ishikawa", "ishikawa-beta\n Problem\n  Cause\n   Detail"),
+    ("kanban", "kanban\n todo[Todo]\n  task[Task]"),
+    (
+        "radar",
+        "radar-beta\n axis Speed, Quality, Cost\n curve Team {3,4,2}",
+    ),
+    (
+        "railroad",
+        "railroad-beta\nrule = sequence(terminal(\"a\"), terminal(\"b\")) ;",
+    ),
+    (
+        "requirement",
+        "requirementDiagram\n requirement test {\n id: 1\n text: Example\n risk: low\n verifymethod: test\n }",
+    ),
+    ("sankey", "sankey-beta\nA,B,10\nB,C,5"),
+    (
+        "swimlane",
+        "swimlane-beta LR\n subgraph Team\n A[Task]\n end\n subgraph Other\n B[Result]\n end\n A --> B",
+    ),
+    ("treemap", "treemap-beta\n\"Root\"\n \"A\": 30\n \"B\": 20"),
+    ("treeview", "treeView-beta\n \"Root\"\n  \"Child\""),
+    (
+        "venn",
+        "venn-beta\n set A[\"Alpha\"]:10\n set B[\"Beta\"]:8\n union A,B[\"Both\"]:3",
+    ),
+    (
+        "wardley",
+        "wardley-beta\nanchor User [0.9, 0.5]\ncomponent App [0.5, 0.5]\nUser -> App",
+    ),
+    ("zenuml", "zenuml\n Alice->Bob: Hello"),
+    ("packet", "packet\n+8: \"Header\"\n+16: \"Data\""),
+    ("xychart-alias", "xychart\n x-axis [A, B]\n bar [1, 2]"),
+    ("class-alias", "classDiagram-v2\n A --> B"),
+    ("packet-alias", "packet-beta\n+8: \"Data\""),
+    ("elk", "flowchart-elk\n A --> B"),
+    (
+        "railroad-ebnf",
+        "railroad-ebnf-beta\nrule ::= \"a\" | \"b\" ;",
+    ),
+    (
+        "railroad-abnf",
+        "railroad-abnf-beta\nrule = \"a\" / \"b\" ;",
+    ),
+    ("railroad-peg", "railroad-peg-beta\nrule <- \"a\" / \"b\" ;"),
+    ("math", "flowchart LR\n A[\"$$x^2$$\"] --> B[Result]"),
 ];
 
 fn rgb_theme() -> MermaidTheme {
@@ -360,7 +419,7 @@ fn no_empty_attributes_or_nan_with_rgb_theme() {
     for (name, source) in DIAGRAMS {
         match mermaid_render::render_to_svg(source, &theme) {
             Ok(svg) => all_issues.extend(check_svg_issues(name, &svg)),
-            Err(e) => eprintln!("{name}: render failed (skipped): {e}"),
+            Err(e) => all_issues.push(format!("{name}: render failed: {e}")),
         }
     }
 
@@ -371,4 +430,30 @@ fn no_empty_attributes_or_nan_with_rgb_theme() {
             all_issues.join("\n")
         );
     }
+}
+
+#[test]
+fn all_diagram_families_produce_native_svg_in_both_themes() {
+    let mut options = usvg::Options::default();
+    options.fontdb_mut().load_system_fonts();
+    let mut failures = Vec::new();
+    for dark_mode in [false, true] {
+        let theme = if dark_mode {
+            rgb_theme()
+        } else {
+            MermaidTheme::default()
+        };
+        for (name, source) in DIAGRAMS {
+            let result = mermaid_render::render_to_svg(source, &theme)
+                .and_then(|svg| Ok(usvg::Tree::from_str(&svg, &options)?));
+            match result {
+                Ok(tree) if tree.root().children().is_empty() => {
+                    failures.push(format!("{name}: empty SVG"))
+                }
+                Ok(_) => {}
+                Err(error) => failures.push(format!("{name} (dark={dark_mode}): {error}")),
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

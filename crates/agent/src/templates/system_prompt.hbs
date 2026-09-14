@@ -23,9 +23,9 @@ graph TD
     A[Start] --> B[End]
 ```
 
-The renderer supports the following diagram types: flowchart, sequence, class, state, ER, gantt, pie, gitgraph, mindmap, timeline, quadrant chart, xy chart, and journey. Other diagram types will only show as code.
+Mermaid blocks are passed to the built-in renderer without filtering diagram types. Unsupported syntax shows a rendering error alongside the source.
 
-Mermaid diagrams are automatically themed to match the user's editor theme. Do not include `%%{init}%%` directives or define your own `classDef` styles.
+Mermaid diagrams use the user's editor theme by default. Only specify custom diagram colors or styles when the user requests them.
 
 Do *NOT* include inline HTML elements in mermaid diagrams, as they cannot be rendered. It is better to simply skip formatting (e.g. bold/italic/etc.).
 

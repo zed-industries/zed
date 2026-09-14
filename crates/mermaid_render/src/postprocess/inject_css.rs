@@ -7,7 +7,7 @@
 //!
 //! <!-- after -->
 //! <style>.node rect { fill: white; }
-//! #mermaid-1 .node rect { fill: #89b4fa !important; }
+//! #mermaid-1 .node rect { fill: #89b4fa; }
 //! /* ... theme rules ... */
 //! </style>
 //! ```
@@ -126,13 +126,13 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
         write!(
             css,
             "{selector} rect, {selector} path, {selector} circle, {selector} polygon \
-             {{ fill: {fill} !important; stroke: {color} !important; }}\n\
+             {{ fill: {fill}; stroke: {color}; }}\n\
              {selector} text, {selector} span, \
              text{selector}, tspan{selector} \
-             {{ fill: {txt} !important; color: {txt} !important; }}\n\
+             {{ fill: {txt}; color: {txt}; }}\n\
              {selector} foreignObject div, {selector} foreignObject span, {selector} foreignObject p \
-             {{ color: {txt} !important; }}\n\
-             .section-edge{section_index} {{ stroke: {color} !important; }}\n",
+             {{ color: {txt}; }}\n\
+             .section-edge{section_index} {{ stroke: {color}; }}\n",
         )
         .expect("write to String cannot fail");
     };
@@ -216,9 +216,9 @@ fn accent_css(theme: &MermaidTheme) -> String {
             css,
             "{class} rect, {class} path, {class} circle, {class} polygon, {class} ellipse, \
              rect{class}, path{class}, circle{class}, polygon{class}, ellipse{class} \
-             {{ fill: {fill} !important; stroke: {stroke} !important; }}\n\
+             {{ fill: {fill}; stroke: {stroke}; }}\n\
              {class} text, {class} tspan, text{class}, tspan{class} \
-             {{ fill: {text} !important; }}\n",
+             {{ fill: {text}; }}\n",
         )
         .expect("write to String cannot fail");
     }
@@ -233,9 +233,9 @@ fn chart_color_css(theme: &MermaidTheme) -> String {
         let class = format!(".zed-chart-{i}");
         write!(
             css,
-            "path.pieCircle{class} {{ fill: {color} !important; }}\n\
-             .plot rect{class}, .legend rect{class} {{ fill: {color} !important; stroke: {color} !important; }}\n\
-             .plot path{class} {{ stroke: {color} !important; }}\n"
+            "path.pieCircle{class} {{ fill: {color}; }}\n\
+             .plot rect{class}, .legend rect{class} {{ fill: {color}; stroke: {color}; }}\n\
+             .plot path{class} {{ stroke: {color}; }}\n"
         )
         .expect("write to String cannot fail");
     }
@@ -254,8 +254,9 @@ fn timeline_css(theme: &MermaidTheme) -> String {
         ));
         write!(
             css,
-            "rect.task-type-{i}, rect.section-type-{i} {{ fill: {fill} !important; stroke: {c} !important; }}\n"
-        ).expect("write to String cannot fail");
+            "rect.task-type-{i}, rect.section-type-{i} {{ fill: {fill}; stroke: {c}; }}\n"
+        )
+        .expect("write to String cannot fail");
     }
     for i in 0..4 {
         let c = crate::css_color(theme.git_branch_colors[i % 8]);
@@ -266,10 +267,10 @@ fn timeline_css(theme: &MermaidTheme) -> String {
         ));
         write!(
             css,
-            ".section{i} {{ fill: {fill} !important; }}\n\
-             .task{i} {{ fill: {fill} !important; stroke: {c} !important; }}\n\
-             .taskText{i} {{ fill: {text} !important; }}\n\
-             .taskTextOutside{i} {{ fill: {text} !important; }}\n"
+            ".section{i} {{ fill: {fill}; }}\n\
+             .task{i} {{ fill: {fill}; stroke: {c}; }}\n\
+             .taskText{i} {{ fill: {text}; }}\n\
+             .taskTextOutside{i} {{ fill: {text}; }}\n"
         )
         .expect("write to String cannot fail");
     }
@@ -377,102 +378,103 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .merman-foreignobject-fallback-text {{ font-size: 16px !important; }}
         foreignObject p {{ margin: 0; }}
         foreignObject {{ overflow: visible; }}
-        foreignObject div {{ max-width: none !important; }}
+        foreignObject div {{ max-width: none; }}
         .label-group foreignObject {{ font-weight: bold; }}
+        .em-swimlane text {{ fill: {text}; }}
         .node rect, .node path {{ fill: {primary}; stroke: {border}; }}
         .node polygon {{ fill: {primary}; stroke: {border}; }}
         .label-container path {{ fill: {primary}; stroke: {border}; }}
         {mindmap_css}
-        .mindmap-node line, .timeline-node line {{ stroke: transparent !important; }}
-        g.stateGroup rect {{ fill: {primary} !important; stroke: {border} !important; }}
-        g.stateGroup text {{ fill: {text} !important; }}
-        g.stateGroup .state-title {{ fill: {text} !important; }}
-        .stateGroup .composit {{ fill: {background} !important; }}
-        .stateGroup .alt-composit {{ fill: {tertiary} !important; }}
-        .state-note {{ stroke: {note_border} !important; fill: {note_bg} !important; }}
-        .state-note text {{ fill: {note_text} !important; }}
-        .stateLabel .box {{ fill: {primary} !important; }}
-        .stateLabel text {{ fill: {text} !important; }}
-        .node circle.state-start {{ fill: {line} !important; stroke: {line} !important; }}
-        .node .fork-join {{ fill: {line} !important; stroke: {line} !important; }}
-        .node circle.state-end {{ fill: {border} !important; stroke: {background} !important; }}
-        .end-state-inner {{ fill: {background} !important; }}
-        .statediagram-cluster rect {{ fill: {primary} !important; stroke: {border} !important; }}
-        .statediagram-cluster.statediagram-cluster .inner {{ fill: {background} !important; }}
-        .statediagram-cluster.statediagram-cluster-alt .inner {{ fill: {tertiary} !important; }}
-        .statediagram-state rect.divider {{ fill: {tertiary} !important; }}
-        .statediagram-note rect {{ fill: {note_bg} !important; stroke: {note_border} !important; }}
-        .statediagram-note text {{ fill: {note_text} !important; }}
-        .statediagramTitleText {{ fill: {text} !important; }}
-        .transition {{ stroke: {line} !important; }}
-        .cluster-label, .nodeLabel {{ color: {text} !important; }}
-        defs #statediagram-barbEnd {{ fill: {line} !important; stroke: {line} !important; }}
-        #statediagram-barbEnd {{ fill: {line} !important; }}
-        .edgeLabel .label rect {{ fill: {edge_label_bg} !important; opacity: 1 !important; }}
-        .edgeLabel rect {{ fill: {edge_label_bg} !important; opacity: 1 !important; background-color: {edge_label_bg} !important; }}
-        .edgeLabel .label text {{ fill: {text} !important; }}
-        .edgeLabel p {{ background-color: {primary} !important; }}
-        .edgeLabel {{ background-color: {primary} !important; }}
+        .mindmap-node line, .timeline-node line {{ stroke: transparent; }}
+        g.stateGroup rect {{ fill: {primary}; stroke: {border}; }}
+        g.stateGroup text {{ fill: {text}; }}
+        g.stateGroup .state-title {{ fill: {text}; }}
+        .stateGroup .composit {{ fill: {background}; }}
+        .stateGroup .alt-composit {{ fill: {tertiary}; }}
+        .state-note {{ stroke: {note_border}; fill: {note_bg}; }}
+        .state-note text {{ fill: {note_text}; }}
+        .stateLabel .box {{ fill: {primary}; }}
+        .stateLabel text {{ fill: {text}; }}
+        .node circle.state-start {{ fill: {line}; stroke: {line}; }}
+        .node .fork-join {{ fill: {line}; stroke: {line}; }}
+        .node circle.state-end {{ fill: {border}; stroke: {background}; }}
+        .end-state-inner {{ fill: {background}; }}
+        .statediagram-cluster rect {{ fill: {primary}; stroke: {border}; }}
+        .statediagram-cluster.statediagram-cluster .inner {{ fill: {background}; }}
+        .statediagram-cluster.statediagram-cluster-alt .inner {{ fill: {tertiary}; }}
+        .statediagram-state rect.divider {{ fill: {tertiary}; }}
+        .statediagram-note rect {{ fill: {note_bg}; stroke: {note_border}; }}
+        .statediagram-note text {{ fill: {note_text}; }}
+        .statediagramTitleText {{ fill: {text}; }}
+        .transition {{ stroke: {line}; }}
+        .cluster-label, .nodeLabel {{ color: {text}; }}
+        defs #statediagram-barbEnd {{ fill: {line}; stroke: {line}; }}
+        #statediagram-barbEnd {{ fill: {line}; }}
+        .edgeLabel .label rect {{ fill: {edge_label_bg}; opacity: 1; }}
+        .edgeLabel rect {{ fill: {edge_label_bg}; opacity: 1; background-color: {edge_label_bg}; }}
+        .edgeLabel .label text {{ fill: {text}; }}
+        .edgeLabel p {{ background-color: {primary}; }}
+        .edgeLabel {{ background-color: {primary}; }}
         .actor {{ stroke: {actor_border}; fill: {actor_bg}; }}
         text.actor {{ text-anchor: middle; }}
-        text.actor>tspan {{ fill: {actor_text} !important; stroke: none; }}
-        .labelText, .labelText>tspan {{ fill: {actor_text} !important; }}
-        .actor-line {{ stroke: {actor_border} !important; fill: none !important; }}
-        .messageLine0 {{ stroke: {text} !important; }}
-        .messageLine1 {{ stroke: {text} !important; }}
-        #arrowhead path {{ fill: {text} !important; stroke: {text} !important; }}
-        #crosshead path {{ fill: {text} !important; stroke: {text} !important; }}
-        .messageText {{ fill: {text} !important; }}
-        .loopText, .loopText>tspan {{ fill: {text} !important; }}
-        .loopLine {{ stroke: {actor_border} !important; fill: {actor_border} !important; }}
-        .note {{ stroke: {note_border} !important; fill: {note_bg} !important; }}
-        .noteText, .noteText>tspan {{ fill: {note_text} !important; }}
-        .activation0, .activation1, .activation2 {{ fill: {secondary} !important; stroke: {border} !important; }}
-        .labelBox {{ stroke: {actor_border} !important; fill: {actor_bg} !important; }}
-        .actor-man line {{ stroke: {actor_border} !important; fill: none !important; }}
-        .actor-man circle {{ stroke: {actor_border} !important; fill: {actor_bg} !important; }}
-        .pieTitleText {{ fill: {text} !important; }}
-        .slice {{ fill: {text} !important; }}
-        .legend text {{ fill: {text} !important; }}
-        .pieOuterCircle {{ stroke: {border} !important; }}
-        .pieCircle {{ stroke: {border} !important; }}
+        text.actor>tspan {{ fill: {actor_text}; stroke: none; }}
+        .labelText, .labelText>tspan {{ fill: {actor_text}; }}
+        .actor-line {{ stroke: {actor_border}; fill: none; }}
+        .messageLine0 {{ stroke: {text}; }}
+        .messageLine1 {{ stroke: {text}; }}
+        #arrowhead path {{ fill: {text}; stroke: {text}; }}
+        #crosshead path {{ fill: {text}; stroke: {text}; }}
+        .messageText {{ fill: {text}; }}
+        .loopText, .loopText>tspan {{ fill: {text}; }}
+        .loopLine {{ stroke: {actor_border}; fill: {actor_border}; }}
+        .note {{ stroke: {note_border}; fill: {note_bg}; }}
+        .noteText, .noteText>tspan {{ fill: {note_text}; }}
+        .activation0, .activation1, .activation2 {{ fill: {secondary}; stroke: {border}; }}
+        .labelBox {{ stroke: {actor_border}; fill: {actor_bg}; }}
+        .actor-man line {{ stroke: {actor_border}; fill: none; }}
+        .actor-man circle {{ stroke: {actor_border}; fill: {actor_bg}; }}
+        .pieTitleText {{ fill: {text}; }}
+        .slice {{ fill: {text}; }}
+        .legend text {{ fill: {text}; }}
+        .pieOuterCircle {{ stroke: {border}; }}
+        .pieCircle {{ stroke: {border}; }}
         {timeline_css}
-        text.journey-section, text.task {{ fill: {text} !important; }}
-        .relationshipLabelBox {{ fill: {tertiary} !important; opacity: 0.7; background-color: {tertiary} !important; }}
-        .labelBkg {{ background-color: {tertiary} !important; }}
-        .edgeLabel .label {{ fill: {text} !important; }}
-        .label {{ color: {text} !important; }}
-        .relationshipLine {{ stroke: {line} !important; fill: none !important; }}
+        text.journey-section, text.task {{ fill: {text}; }}
+        .relationshipLabelBox {{ fill: {tertiary}; opacity: 0.7; background-color: {tertiary}; }}
+        .labelBkg {{ background-color: {tertiary}; }}
+        .edgeLabel .label {{ fill: {text}; }}
+        .label {{ color: {text}; }}
+        .relationshipLine {{ stroke: {line}; fill: none; }}
         .entityBox {{ fill: {primary}; stroke: {border}; }}
-        .node .row-rect-odd path {{ fill: {er_odd} !important; }}
-        .node .row-rect-even path {{ fill: {er_even} !important; }}
+        .node .row-rect-odd path {{ fill: {er_odd}; }}
+        .node .row-rect-even path {{ fill: {er_even}; }}
         .edge-thickness-normal {{ stroke-width: 1px; }}
         .relation {{ stroke: {line}; stroke-width: 1; fill: none; }}
         .edgePaths path {{ fill: none; }}
-        .marker {{ fill: {line} !important; stroke: {line} !important; }}
-        .marker.er {{ fill: none !important; stroke: {line} !important; }}
-        .composition {{ fill: {line} !important; stroke: {line} !important; stroke-width: 1; }}
-        .extension {{ fill: transparent !important; stroke: {line} !important; stroke-width: 1; }}
-        .aggregation {{ fill: transparent !important; stroke: {line} !important; stroke-width: 1; }}
-        .dependency {{ fill: {line} !important; stroke: {line} !important; stroke-width: 1; }}
-        .lollipop {{ fill: {primary} !important; stroke: {line} !important; stroke-width: 1; }}
-        .sectionTitle0, .sectionTitle1, .sectionTitle2, .sectionTitle3 {{ fill: {text} !important; }}
+        .marker {{ fill: {line}; stroke: {line}; }}
+        .marker.er {{ fill: none; stroke: {line}; }}
+        .composition {{ fill: {line}; stroke: {line}; stroke-width: 1; }}
+        .extension {{ fill: transparent; stroke: {line}; stroke-width: 1; }}
+        .aggregation {{ fill: transparent; stroke: {line}; stroke-width: 1; }}
+        .dependency {{ fill: {line}; stroke: {line}; stroke-width: 1; }}
+        .lollipop {{ fill: {primary}; stroke: {line}; stroke-width: 1; }}
+        .sectionTitle0, .sectionTitle1, .sectionTitle2, .sectionTitle3 {{ fill: {text}; }}
         .sectionTitle {{ font-family: {font} !important; }}
-        .taskTextOutsideRight {{ fill: {text} !important; font-family: {font} !important; }}
-        .taskTextOutsideLeft {{ fill: {text} !important; }}
-        .active0, .active1, .active2, .active3 {{ fill: {secondary} !important; stroke: {border} !important; }}
-        .activeText0, .activeText1, .activeText2, .activeText3 {{ fill: {text} !important; }}
-        .done0, .done1, .done2, .done3 {{ stroke: {border} !important; fill: {secondary} !important; stroke-width: 2; }}
-        .doneText0, .doneText1, .doneText2, .doneText3 {{ fill: {text} !important; }}
-        .crit0, .crit1, .crit2, .crit3 {{ fill: {error} !important; stroke: {error} !important; }}
-        .critText0, .critText1, .critText2, .critText3 {{ fill: {error_text} !important; }}
-        .activeCrit0, .activeCrit1, .activeCrit2, .activeCrit3 {{ fill: {warning} !important; stroke: {warning} !important; }}
-        .activeCritText0, .activeCritText1, .activeCritText2, .activeCritText3 {{ fill: {warning_text} !important; }}
-        .doneCrit0, .doneCrit1, .doneCrit2, .doneCrit3 {{ fill: {error} !important; stroke: {border} !important; stroke-width: 2; }}
-        .doneCritText0, .doneCritText1, .doneCritText2, .doneCritText3 {{ fill: {error_text} !important; }}
-        .titleText {{ fill: {text} !important; font-family: {font} !important; }}
-        .grid .tick text {{ fill: {text} !important; font-family: {font} !important; }}
-        .grid .tick {{ stroke: {border} !important; }}
+        .taskTextOutsideRight {{ fill: {text}; font-family: {font} !important; }}
+        .taskTextOutsideLeft {{ fill: {text}; }}
+        .active0, .active1, .active2, .active3 {{ fill: {secondary}; stroke: {border}; }}
+        .activeText0, .activeText1, .activeText2, .activeText3 {{ fill: {text}; }}
+        .done0, .done1, .done2, .done3 {{ stroke: {border}; fill: {secondary}; stroke-width: 2; }}
+        .doneText0, .doneText1, .doneText2, .doneText3 {{ fill: {text}; }}
+        .crit0, .crit1, .crit2, .crit3 {{ fill: {error}; stroke: {error}; }}
+        .critText0, .critText1, .critText2, .critText3 {{ fill: {error_text}; }}
+        .activeCrit0, .activeCrit1, .activeCrit2, .activeCrit3 {{ fill: {warning}; stroke: {warning}; }}
+        .activeCritText0, .activeCritText1, .activeCritText2, .activeCritText3 {{ fill: {warning_text}; }}
+        .doneCrit0, .doneCrit1, .doneCrit2, .doneCrit3 {{ fill: {error}; stroke: {border}; stroke-width: 2; }}
+        .doneCritText0, .doneCritText1, .doneCritText2, .doneCritText3 {{ fill: {error_text}; }}
+        .titleText {{ fill: {text}; font-family: {font} !important; }}
+        .grid .tick text {{ fill: {text}; font-family: {font} !important; }}
+        .grid .tick {{ stroke: {border}; }}
         {git_branch_css}
         .commit-merge {{ stroke: {primary}; fill: {primary}; }}
         .commit-reverse {{ stroke: {primary}; fill: {primary}; stroke-width: 3; }}
@@ -484,7 +486,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .commit-label-bkg {{ fill: {edge_label_bg}; }}
         .commit-id, .commit-msg, .branch-label {{ fill: {text}; color: {text}; font-family: {font}; }}
         {accent_css}
-        .data-point text {{ fill: {text} !important; }}
+        .data-point text {{ fill: {text}; }}
         {chart_color_css}
         "#,
         mindmap_css = mindmap_section_css(theme),
