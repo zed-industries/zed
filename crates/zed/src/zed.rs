@@ -2866,7 +2866,7 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
-    use db::AppDatabase;
+    use db::{AppDatabase, kvp::KeyValueStore};
     use editor::{
         DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
     };
@@ -6133,6 +6133,11 @@ mod tests {
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            if !cx.has_global::<AppDatabase>() {
+                cx.set_global(AppDatabase::test_new());
+            }
+        });
         init_test_with_state(cx, cx.update(AppState::test))
     }
 
@@ -7324,7 +7329,28 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_multi_workspace_session_restore(cx: &mut TestAppContext) {
+    async fn test_init_preserves_explicit_database(cx: &mut TestAppContext) {
+        cx.set_global(AppDatabase::test_new());
+        let kvp = cx.read(KeyValueStore::global);
+        kvp.write_kvp(String::from("test_database"), String::from("preserved"))
+            .await
+            .expect("failed to seed fixture database");
+
+        init_test(cx);
+
+        assert_eq!(
+            cx.read(KeyValueStore::global)
+                .read_kvp("test_database")
+                .expect("failed to read fixture database"),
+            Some(String::from("preserved")),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_multi_workspace_session_restore(
+        cx: &mut TestAppContext,
+        other_cx: &mut TestAppContext,
+    ) {
         use collections::HashMap;
         use session::Session;
         use util::path_list::PathList;
@@ -7418,6 +7444,36 @@ mod tests {
         flush_workspace_serialization(&window_a, cx).await;
         flush_workspace_serialization(&window_b, cx).await;
         cx.run_until_parked();
+
+        let other_app_state = init_test(other_cx);
+        other_app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({"dir1": {"a": {}}, "dir2": {}}))
+            .await;
+        let other_window = open_test_project_window_with_tabs(
+            &other_app_state,
+            Path::new(path!("/root/dir1/a")),
+            &[],
+            other_cx,
+        )
+        .await;
+        assert_eq!(other_window.window_id(), window_a.window_id());
+        other_window
+            .update(other_cx, |multi_workspace, window, cx| {
+                multi_workspace.open_sidebar(cx);
+                multi_workspace.open_project(
+                    vec![PathBuf::from(path!("/root/dir2"))],
+                    OpenMode::Activate,
+                    window,
+                    cx,
+                )
+            })
+            .expect("other app window was closed")
+            .await
+            .expect("failed to open other app project");
+        other_cx.run_until_parked();
+        flush_workspace_serialization(&other_window, other_cx).await;
 
         // Verify all workspaces retained their session_ids.
         let db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
