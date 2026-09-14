@@ -5879,7 +5879,8 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "scrollbar": {
       "show": null
     },
-    "starts_open": false
+    "starts_open": false,
+    "confirm_discard": true
   }
 }
 ```
@@ -5896,6 +5897,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+- `confirm_discard`: Whether to show a confirmation prompt before discarding changes to a file from the git panel
 
 ## Git Worktree Directory
 

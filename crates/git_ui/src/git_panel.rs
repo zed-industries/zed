@@ -2516,18 +2516,34 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let skip_prompt = action.skip_prompt || !GitPanelSettings::get_global(cx).confirm_discard;
         let marked = self.effective_status_entries();
         if marked.len() > 1 {
-            self.revert_entries(marked, action.skip_prompt, window, cx);
+            self.revert_entries(marked, skip_prompt, window, cx);
             return;
         }
-        let path_style = self.project.read(cx).path_style(cx);
         maybe!({
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
             let entry = list_entry.status_entry()?.to_owned();
-            let skip_prompt = action.skip_prompt || entry.status.is_created();
+            self.revert_single_entry(entry, skip_prompt, window, cx);
+            Some(())
+        });
+    }
 
-            let prompt = if skip_prompt {
+    fn revert_single_entry(
+        &mut self,
+        entry: GitStatusEntry,
+        skip_prompt: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let path_style = self.project.read(cx).path_style(cx);
+        maybe!({
+            // Created files are trashed rather than checked out and prompt separately in
+            // `revert_entry`, so a second prompt here would be redundant.
+            let skip_checkout_prompt = skip_prompt || entry.status.is_created();
+
+            let prompt = if skip_checkout_prompt {
                 Task::ready(Ok(0))
             } else {
                 let (message, confirm_text) = if entry.status.is_deleted() {
@@ -2565,7 +2581,7 @@ impl GitPanel {
                     }
 
                     this.update_in(cx, |this, window, cx| {
-                        this.revert_entry(&entry, window, cx);
+                        this.revert_entry(&entry, skip_prompt, window, cx);
                     })?;
 
                     Ok(())
@@ -2749,6 +2765,7 @@ impl GitPanel {
     fn revert_entry(
         &mut self,
         entry: &GitStatusEntry,
+        skip_prompt: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2767,7 +2784,11 @@ impl GitPanel {
             if !entry.status.is_created() {
                 self.perform_checkout(vec![entry.clone()], window, cx);
             } else {
-                let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
+                let prompt = if skip_prompt {
+                    Task::ready(Ok(TrashCancel::Trash))
+                } else {
+                    prompt(&format!("Trash {}?", filename), None, window, cx)
+                };
                 cx.spawn_in(window, async move |_, cx| {
                     match prompt.await? {
                         TrashCancel::Trash => {}
@@ -2882,7 +2903,10 @@ impl GitPanel {
 
         match entries.len() {
             0 => return,
-            1 => return self.revert_entry(&entries[0], window, cx),
+            1 => {
+                let skip_prompt = !GitPanelSettings::get_global(cx).confirm_discard;
+                return self.revert_entry(&entries[0], skip_prompt, window, cx);
+            }
             _ => {}
         }
         let mut details = entries
@@ -2931,7 +2955,10 @@ impl GitPanel {
 
         match to_delete.len() {
             0 => return,
-            1 => return self.revert_entry(&to_delete[0], window, cx),
+            1 => {
+                let skip_prompt = !GitPanelSettings::get_global(cx).confirm_discard;
+                return self.revert_entry(&to_delete[0], skip_prompt, window, cx);
+            }
             _ => {}
         };
 
@@ -8237,6 +8264,15 @@ impl GitPanel {
             ElementId::Name(format!("entry_{}_{}_checkbox_wrapper", display_name, ix).into());
         let checkbox_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
+        let discard_button_id: ElementId =
+            ElementId::Name(format!("entry_{}_{}_discard", display_name, ix).into());
+        let discard_tooltip: SharedString = if is_deleted {
+            "Restore File".into()
+        } else if is_created {
+            "Trash File".into()
+        } else {
+            "Discard Changes".into()
+        };
 
         let stage_status = GitPanel::stage_status_for_entry(entry, &repo);
         let stage_intent = self.stage_intent_for_entry_index(ix);
@@ -8360,6 +8396,32 @@ impl GitPanel {
                         stat.deleted as usize,
                     ))
                 })
+            })
+            .when(has_write_access, |el| {
+                el.child(
+                    IconButton::new(discard_button_id, IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text(discard_tooltip))
+                        .on_click({
+                            let entry = entry.clone();
+                            let this = cx.weak_entity();
+                            move |_, window, cx| {
+                                this.update(cx, |this, cx| {
+                                    let skip_prompt =
+                                        !GitPanelSettings::get_global(cx).confirm_discard;
+                                    this.revert_single_entry(
+                                        entry.clone(),
+                                        skip_prompt,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                                cx.stop_propagation();
+                            }
+                        }),
+                )
             })
             .child(
                 div()
