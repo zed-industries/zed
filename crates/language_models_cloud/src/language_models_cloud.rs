@@ -248,6 +248,18 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
 }
 
 impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
+    fn check_data_retention_consent(
+        &self,
+        cx: &AsyncApp,
+    ) -> Result<(), LanguageModelCompletionError> {
+        if self.requires_data_retention() && !self.token_provider.has_data_retention_consent(cx) {
+            return Err(LanguageModelCompletionError::DataRetentionConsentRequired {
+                model_name: self.model.display_name.clone(),
+            });
+        }
+        Ok(())
+    }
+
     fn anthropic_request(&self, request: LanguageModelRequest) -> Result<anthropic::Request> {
         let enable_thinking = request.thinking_allowed && self.model.supports_thinking;
         let effort = request
@@ -694,6 +706,9 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        if let Err(error) = self.check_data_retention_consent(cx) {
+            return async move { Err(error) }.boxed();
+        }
         if !self.supports_explicit_compaction() {
             return async {
                 Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
@@ -770,6 +785,9 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        if let Err(error) = self.check_data_retention_consent(cx) {
+            return async move { Err(error) }.boxed();
+        }
         use cloud_llm_client::LanguageModelProvider;
         let provider_request = match self.model.provider {
             LanguageModelProvider::Anthropic => self
@@ -842,12 +860,8 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             LanguageModelCompletionError,
         >,
     > {
-        if self.requires_data_retention() && !self.token_provider.has_data_retention_consent(cx) {
-            let model_name = self.model.display_name.clone();
-            return async move {
-                Err(LanguageModelCompletionError::DataRetentionConsentRequired { model_name })
-            }
-            .boxed();
+        if let Err(error) = self.check_data_retention_consent(cx) {
+            return async move { Err(error) }.boxed();
         }
 
         let mut request = request;
@@ -1554,10 +1568,9 @@ mod tests {
         });
         let model = cloud_anthropic_test_model(http_client);
 
-        let result = model
-            .compact(compact_test_request(), &cx.to_async())
-            .await
-            .unwrap();
+        let mut request = compact_test_request();
+        request.max_output_tokens = Some(8192);
+        let result = model.compact(request, &cx.to_async()).await.unwrap();
 
         assert_eq!(
             result.usage,
@@ -1589,6 +1602,7 @@ mod tests {
         assert_eq!(uri, "http://test.example/completions?");
         let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
         assert_eq!(body["provider"], "anthropic");
+        assert_eq!(body["provider_request"]["max_tokens"], 8192);
         assert_eq!(
             body["provider_request"]["context_management"],
             json!({
@@ -1993,6 +2007,113 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn retention_consent_gates_counting_compaction_and_generation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut model = cloud_anthropic_test_model(FakeHttpClient::create({
+            let calls = calls.clone();
+            move |request| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    assert_eq!(request.uri().path(), "/count_tokens");
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(r#"{"tokens":731}"#))?)
+                }
+            }
+        }));
+        model.id = LanguageModelId::from("claude-fable-5-1".to_string());
+        Arc::make_mut(&mut model.model).id =
+            cloud_llm_client::LanguageModelId("claude-fable-5-1".into());
+        assert!(model.requires_data_retention());
+        let mut request = compact_test_request();
+        request.messages[0].content.push(MessageContent::Image(
+            language_model::LanguageModelImage {
+                source: "aW1hZ2U=".into(),
+            },
+        ));
+        assert!(matches!(
+            model
+                .count_input_tokens(request.clone(), &cx.to_async())
+                .await,
+            Err(LanguageModelCompletionError::DataRetentionConsentRequired { .. })
+        ));
+        assert!(matches!(
+            model.compact(request.clone(), &cx.to_async()).await,
+            Err(LanguageModelCompletionError::DataRetentionConsentRequired { .. })
+        ));
+        assert!(matches!(
+            model
+                .stream_completion(request.clone(), &cx.to_async())
+                .await,
+            Err(LanguageModelCompletionError::DataRetentionConsentRequired { .. })
+        ));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        Arc::get_mut(&mut model.token_provider)
+            .unwrap()
+            .data_retention_consent = true;
+        assert_eq!(
+            model
+                .count_input_tokens(request, &cx.to_async())
+                .await
+                .unwrap(),
+            Some(731)
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn hosted_open_ai_preserves_unset_output_and_clamps_explicit_caps(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for (limit, expected) in [
+            (None, None),
+            (Some(8192), Some(8192)),
+            (Some(u64::MAX), Some(128_000)),
+        ] {
+            let model = cloud_test_model(FakeHttpClient::create(move |mut request| async move {
+                assert_eq!(request.uri().path(), "/completions");
+                let mut body = String::new();
+                request.body_mut().read_to_string(&mut body).await?;
+                let body: serde_json::Value = serde_json::from_str(&body)?;
+                assert_eq!(
+                    body["provider_request"].get("max_output_tokens").cloned(),
+                    expected.map(|value| json!(value))
+                );
+                let completed = CompletionEvent::Event(json!({
+                    "type": "response.completed",
+                    "response": {
+                        "id": "response-1", "status": "completed", "output": [],
+                        "usage": {"input_tokens": 1, "output_tokens": 0, "total_tokens": 1}
+                    }
+                }));
+                let ended = CompletionEvent::<serde_json::Value>::Status(
+                    CompletionRequestStatus::StreamEnded,
+                );
+                Ok(Response::builder()
+                    .status(200)
+                    .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                    .body(AsyncBody::from(format!(
+                        "{}\n{}\n",
+                        serde_json::to_string(&completed)?,
+                        serde_json::to_string(&ended)?,
+                    )))?)
+            }));
+            let mut request = compact_test_request();
+            request.max_output_tokens = limit;
+            let mut stream = model
+                .stream_completion(request, &cx.to_async())
+                .await
+                .unwrap();
+            while let Some(event) = stream.next().await {
+                event.unwrap();
+            }
+        }
+    }
+
     fn compact_test_request() -> LanguageModelRequest {
         LanguageModelRequest {
             thread_id: Some("thread-123".to_string()),
@@ -2032,7 +2153,7 @@ mod tests {
                 is_disabled: false,
                 disabled_reason: None,
             }),
-            token_provider: Arc::new(TestTokenProvider),
+            token_provider: Arc::new(TestTokenProvider::default()),
             http_client,
             app_version: None,
             request_limiter: RateLimiter::new(4),
@@ -2064,14 +2185,17 @@ mod tests {
                 is_disabled: false,
                 disabled_reason: None,
             }),
-            token_provider: Arc::new(TestTokenProvider),
+            token_provider: Arc::new(TestTokenProvider::default()),
             http_client,
             app_version: None,
             request_limiter: RateLimiter::new(4),
         }
     }
 
-    struct TestTokenProvider;
+    #[derive(Default)]
+    struct TestTokenProvider {
+        data_retention_consent: bool,
+    }
 
     impl CloudLlmTokenProvider for TestTokenProvider {
         type AuthContext = ();
@@ -2093,7 +2217,7 @@ mod tests {
         }
 
         fn has_data_retention_consent(&self, _cx: &impl AppContext) -> bool {
-            false
+            self.data_retention_consent
         }
     }
 }

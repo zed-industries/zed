@@ -127,11 +127,17 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+        self.model
+            .max_prompt_tokens()
+            .unwrap_or_else(|| self.model.max_token_count())
+    }
+
+    fn max_total_tokens(&self) -> Option<u64> {
+        Some(self.model.max_token_count())
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(self.model.max_output_tokens() as u64)
+        self.model.max_output_tokens()
     }
 
     fn stream_completion(
@@ -165,6 +171,12 @@ impl LanguageModel for CopilotChatLanguageModel {
             let copilot_chat = self.copilot_chat.clone();
             let request_limiter = self.request_limiter.clone();
             let future = cx.spawn(async move |cx| {
+                let max_output_tokens = model
+                    .max_output_tokens()
+                    .or(request.max_output_tokens)
+                    .ok_or_else(|| {
+                        anyhow!("Copilot did not provide an output limit for this model")
+                    })?;
                 let effort = request
                     .thinking_effort
                     .as_ref()
@@ -174,7 +186,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     request,
                     model.id().to_string(),
                     0.0,
-                    model.max_output_tokens() as u64,
+                    max_output_tokens,
                     if model.supports_adaptive_thinking() {
                         AnthropicModelMode::Thinking {
                             budget_tokens: None,
@@ -184,7 +196,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                             budget_tokens: compute_thinking_budget(
                                 model.min_thinking_budget(),
                                 model.max_thinking_budget(),
-                                model.max_output_tokens() as u32,
+                                max_output_tokens.min(u32::MAX as u64) as u32,
                             ),
                         }
                     } else {
@@ -820,7 +832,7 @@ fn into_copilot_chat(
 ) -> Result<CopilotChatRequest> {
     let max_tokens = request
         .max_output_tokens
-        .map(|limit| limit.min(model.max_output_tokens() as u64));
+        .and_then(|_| request.effective_max_output_tokens(model.max_output_tokens()));
     let temperature = request.temperature;
     let tool_choice = request.tool_choice;
     let thinking_allowed = request.thinking_allowed;
@@ -1023,11 +1035,13 @@ fn into_copilot_chat(
             LanguageModelToolChoice::None => ToolChoice::None,
         }),
         thinking_budget: if thinking_allowed && model.supports_thinking() {
-            compute_thinking_budget(
-                model.min_thinking_budget(),
-                model.max_thinking_budget(),
-                model.max_output_tokens() as u32,
-            )
+            model.max_output_tokens().or(max_tokens).and_then(|limit| {
+                compute_thinking_budget(
+                    model.min_thinking_budget(),
+                    model.max_thinking_budget(),
+                    limit.min(u32::MAX as u64) as u32,
+                )
+            })
         } else {
             None
         },
@@ -1074,7 +1088,7 @@ fn into_copilot_responses(
 
     let max_output_tokens = request
         .max_output_tokens
-        .map(|limit| limit.min(model.max_output_tokens() as u64));
+        .and_then(|_| request.effective_max_output_tokens(model.max_output_tokens()));
     let LanguageModelRequest {
         thread_id: _,
         prompt_id: _,
@@ -1309,10 +1323,40 @@ mod tests {
                 cx,
             )
         });
-        let model = create_language_model(test_responses_model(), copilot_chat);
-
-        assert_eq!(model.max_token_count(), 128_000);
-        assert_eq!(model.max_output_tokens(), Some(4_096));
+        for (limits, input, context, output) in [
+            (
+                json!({"max_context_window_tokens": 200_000, "max_prompt_tokens": 90_000, "max_output_tokens": 16_384}),
+                90_000,
+                200_000,
+                Some(16_384),
+            ),
+            (
+                json!({"max_context_window_tokens": 128_000, "max_output_tokens": 4096}),
+                128_000,
+                128_000,
+                Some(4096),
+            ),
+            (
+                json!({"max_context_window_tokens": 128_000, "max_prompt_tokens": 100_000}),
+                100_000,
+                128_000,
+                None,
+            ),
+            (
+                json!({"max_context_window_tokens": 128_000, "max_prompt_tokens": 0, "max_output_tokens": 0}),
+                128_000,
+                128_000,
+                None,
+            ),
+        ] {
+            let mut value = serde_json::to_value(test_responses_model()).unwrap();
+            value["capabilities"]["limits"] = limits;
+            let descriptor = serde_json::from_value(value).unwrap();
+            let model = create_language_model(descriptor, copilot_chat.clone());
+            assert_eq!(model.max_token_count(), input);
+            assert_eq!(model.max_total_tokens(), Some(context));
+            assert_eq!(model.max_output_tokens(), output);
+        }
     }
 
     struct EmptyCredentialsProvider;
@@ -1590,7 +1634,7 @@ mod tests {
         for (limit, expected) in [
             (None, None),
             (Some(1024), Some(1024)),
-            (Some(u64::MAX), Some(model.max_output_tokens() as u64)),
+            (Some(u64::MAX), Some(4096)),
         ] {
             let request = LanguageModelRequest {
                 max_output_tokens: limit,
@@ -1605,6 +1649,28 @@ mod tests {
             assert_eq!(
                 chat.get("max_tokens").cloned(),
                 expected.map(|value| json!(value))
+            );
+        }
+        let mut value = serde_json::to_value(test_responses_model())?;
+        value["capabilities"]["limits"]
+            .as_object_mut()
+            .unwrap()
+            .remove("max_output_tokens");
+        let model = serde_json::from_value(value)?;
+        for limit in [None, Some(1024)] {
+            let request = LanguageModelRequest {
+                max_output_tokens: limit,
+                ..Default::default()
+            };
+            let responses = serde_json::to_value(into_copilot_responses(&model, request.clone())?)?;
+            let chat = serde_json::to_value(into_copilot_chat(&model, request)?)?;
+            assert_eq!(
+                responses.get("max_output_tokens").cloned(),
+                limit.map(|value| json!(value))
+            );
+            assert_eq!(
+                chat.get("max_tokens").cloned(),
+                limit.map(|value| json!(value))
             );
         }
         Ok(())
