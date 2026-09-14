@@ -70,7 +70,6 @@ use workspace::{
     AppState, MultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace, Toast,
     WorkspaceSettings, WorkspaceStore,
     notifications::{NotificationId, NotifyResultExt},
-    restore_multiworkspace,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -1445,63 +1444,101 @@ pub(crate) async fn restore_or_create_workspace(
     if let Some(multi_workspaces) = restorable_workspaces(cx, &app_state).await {
         let mut error_count = 0;
         for multi_workspace in multi_workspaces {
-            let result = match &multi_workspace.active_workspace.location {
-                SerializedWorkspaceLocation::Local => {
-                    restore_multiworkspace(multi_workspace, app_state.clone(), cx)
-                        .await
-                        .map(|_| ())
-                }
-                SerializedWorkspaceLocation::Remote(connection_options) => {
-                    let mut connection_options = connection_options.clone();
-                    if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
-                        cx.update(|cx| {
-                            RemoteSettings::get_global(cx)
-                                .fill_connection_options_from_settings(options)
-                        });
+            let result = async {
+                let mut window = None;
+                let mut active = None;
+                for (index, member) in std::iter::once(&multi_workspace.active_workspace)
+                    .chain(&multi_workspace.remaining_workspaces)
+                    .enumerate()
+                {
+                    let restored = async {
+                        let restored_window = if index == 0
+                            && member.location == SerializedWorkspaceLocation::Local
+                        {
+                            workspace::restore_local_active_workspace(
+                                &multi_workspace,
+                                app_state.clone(),
+                                cx,
+                            )
+                            .await?
+                        } else {
+                            restore_session_workspace(member, window, app_state.clone(), cx).await?
+                        };
+                        let restored =
+                            restored_window.update(cx, |multi_workspace, window, cx| {
+                                let restored = multi_workspace
+                                    .workspaces()
+                                    .find(|workspace| {
+                                        workspace.read(cx).database_id()
+                                            == Some(member.workspace_id)
+                                    })
+                                    .cloned()
+                                    .unwrap_or_else(|| multi_workspace.workspace().clone());
+                                anyhow::ensure!(
+                                    !restored.read(cx).is_restoring(),
+                                    "Workspace {:?} did not finish restoring",
+                                    member.workspace_id
+                                );
+                                multi_workspace.add(restored.clone(), window, cx);
+                                anyhow::Ok(restored)
+                            })??;
+                        anyhow::Ok((restored_window, restored))
                     }
-
-                    let paths = multi_workspace
-                        .active_workspace
-                        .paths
-                        .paths()
-                        .iter()
-                        .map(PathBuf::from)
-                        .collect::<Vec<_>>();
-                    let state = multi_workspace.state.clone();
-                    async {
-                        let window = open_remote_project(
-                            connection_options,
-                            paths,
-                            app_state.clone(),
-                            workspace::OpenOptions {
-                                restore_workspace_id: Some(
-                                    multi_workspace.active_workspace.workspace_id,
-                                ),
-                                ..workspace::OpenOptions::default()
-                            },
-                            cx,
-                        )
-                        .await?;
-                        workspace::restore_remaining_workspaces(
-                            window,
-                            multi_workspace.remaining_workspaces,
-                            app_state.clone(),
-                            cx,
-                        )
-                        .await?;
-                        workspace::apply_restored_multiworkspace_state(
-                            window,
-                            &state,
-                            app_state.fs.clone(),
-                            cx,
-                        )
-                        .await;
-                        Ok::<(), anyhow::Error>(())
+                    .await;
+                    match restored {
+                        Ok((restored_window, restored)) => {
+                            window = Some(restored_window);
+                            active.get_or_insert(restored);
+                        }
+                        Err(error) => {
+                            log::error!(
+                                "Failed to restore workspace {:?}: {error:#}",
+                                member.workspace_id
+                            );
+                            error_count += 1;
+                            let attached = cx.update(|cx| {
+                                cx.windows().into_iter().find_map(|window| {
+                                    let window = window.downcast::<MultiWorkspace>()?;
+                                    let workspace = window
+                                        .read(cx)
+                                        .ok()?
+                                        .workspaces()
+                                        .find(|workspace| {
+                                            workspace.read(cx).database_id()
+                                                == Some(member.workspace_id)
+                                        })?
+                                        .clone();
+                                    Some((window, workspace))
+                                })
+                            });
+                            if let Some((attached_window, workspace)) = attached {
+                                attached_window.update(cx, |multi_workspace, window, cx| {
+                                    multi_workspace.add(workspace, window, cx);
+                                })?;
+                                window.get_or_insert(attached_window);
+                            }
+                        }
                     }
-                    .await
                 }
-            };
-
+                let Some(window) = window else {
+                    return anyhow::Ok(());
+                };
+                window.update(cx, |multi_workspace, window, cx| {
+                    if let Some(active) = active {
+                        multi_workspace.activate(active, None, window, cx);
+                    }
+                    window.activate_window();
+                })?;
+                workspace::apply_restored_multiworkspace_state(
+                    window,
+                    &multi_workspace.state,
+                    app_state.fs.clone(),
+                    cx,
+                )
+                .await;
+                anyhow::Ok(())
+            }
+            .await;
             if let Err(error) = result {
                 log::error!("Failed to restore workspace: {error:#}");
                 error_count += 1;
@@ -1606,6 +1643,67 @@ pub(crate) async fn restore_or_create_workspace(
     }
 
     Ok(())
+}
+
+async fn restore_session_workspace(
+    member: &SessionWorkspace,
+    requesting_window: Option<gpui::WindowHandle<MultiWorkspace>>,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> Result<gpui::WindowHandle<MultiWorkspace>> {
+    let restored_window = match &member.location {
+        SerializedWorkspaceLocation::Local => {
+            cx.update(|cx| {
+                workspace::open_workspace_by_id(
+                    member.workspace_id,
+                    app_state,
+                    requesting_window,
+                    cx,
+                )
+            })
+            .await?
+        }
+        SerializedWorkspaceLocation::Remote(connection_options) => {
+            let mut connection_options = connection_options.clone();
+            if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                cx.update(|cx| {
+                    RemoteSettings::get_global(cx).fill_connection_options_from_settings(options)
+                });
+            }
+            open_remote_project(
+                connection_options,
+                member.paths.ordered_paths().cloned().collect(),
+                app_state,
+                workspace::OpenOptions {
+                    requesting_window,
+                    restore_workspace_id: Some(member.workspace_id),
+                    ..workspace::OpenOptions::default()
+                },
+                cx,
+            )
+            .await?
+        }
+    };
+    anyhow::ensure!(
+        requesting_window.is_none_or(|window| window == restored_window),
+        "Workspace {:?} was restored in another window",
+        member.workspace_id
+    );
+    restored_window.update(cx, |multi_workspace, window, cx| {
+        let restored = multi_workspace
+            .workspaces()
+            .find(|workspace| workspace.read(cx).database_id() == Some(member.workspace_id))
+            .cloned()
+            .with_context(|| format!("Workspace {:?} was not restored", member.workspace_id))?;
+        multi_workspace.add(restored.clone(), window, cx);
+        anyhow::ensure!(
+            !restored.read(cx).is_restoring(),
+            "Workspace {:?} did not finish restoring",
+            member.workspace_id
+        );
+        anyhow::Ok(())
+    })??;
+    Ok(restored_window)
 }
 
 async fn restorable_workspaces(

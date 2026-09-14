@@ -659,6 +659,106 @@ async fn test_open_workspace_by_id_reuses_owner_after_concurrent_restore(cx: &mu
 }
 
 #[gpui::test]
+async fn test_open_workspace_by_id_rejects_remote_location(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    let unowned_id = database.next_id().await.expect("unowned ID");
+    saved.location = crate::SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(
+        remote::SshConnectionOptions {
+            host: "remote.test".into(),
+            ..remote::SshConnectionOptions::default()
+        },
+    ));
+    for workspace_id in [saved.id, unowned_id] {
+        saved.id = workspace_id;
+        if workspace_id == unowned_id {
+            saved.window_bounds = None;
+            saved.display = None;
+        }
+        database
+            .try_save_workspace(saved.clone())
+            .await
+            .expect("seed remote workspace");
+        let result = cx
+            .update(|_, cx| crate::open_workspace_by_id(workspace_id, app_state.clone(), None, cx))
+            .await;
+        assert_eq!(
+            result.expect_err("reject remote provider").to_string(),
+            format!("Workspace {workspace_id:?} is not local")
+        );
+        assert_eq!(database.workspace_for_id(workspace_id), Some(saved.clone()));
+        assert_eq!(cx.update(|_, cx| cx.windows().len()), 1);
+    }
+}
+
+#[gpui::test]
+async fn test_remote_restore_rejects_mismatched_provider(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    let connection = Arc::new(PendingRemoteConnection {
+        options: RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "requested.test".into(),
+            ..remote::SshConnectionOptions::default()
+        }),
+        identifiers: Mutex::new(Vec::new()),
+    });
+    let window = cx.update(|window, _| {
+        window
+            .window_handle()
+            .downcast::<MultiWorkspace>()
+            .expect("window")
+    });
+    for location in [
+        crate::SerializedWorkspaceLocation::Local,
+        crate::SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(
+            remote::SshConnectionOptions {
+                host: "other.test".into(),
+                ..remote::SshConnectionOptions::default()
+            },
+        )),
+    ] {
+        saved.location = location;
+        database
+            .try_save_workspace(saved.clone())
+            .await
+            .expect("seed provider");
+        let (_cancel, cancelled) = oneshot::channel();
+        let result = cx
+            .update(|_, cx| {
+                crate::open_remote_project_with_new_connection(
+                    window,
+                    connection.clone(),
+                    cancelled,
+                    Arc::new(remote::MockDelegate),
+                    app_state.clone(),
+                    Vec::new(),
+                    Some(saved.id),
+                    cx,
+                )
+            })
+            .await;
+        assert_eq!(
+            result
+                .err()
+                .expect("reject mismatched provider")
+                .to_string(),
+            format!(
+                "Workspace {:?} does not match the remote connection",
+                saved.id
+            )
+        );
+        assert_eq!(database.workspace_for_id(saved.id), Some(saved.clone()));
+        assert!(
+            connection
+                .identifiers
+                .lock()
+                .expect("identifiers")
+                .is_empty()
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_new_window_starts_fresh_when_saved_identity_is_owned(cx: &mut TestAppContext) {
     let (workspace, database, saved, cx) = restore_fixture(cx).await;
     cx.update(|_, cx| {

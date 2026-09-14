@@ -132,7 +132,12 @@ pub async fn open_remote_project(
     mut open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<WindowHandle<MultiWorkspace>> {
-    if open_options.restore_workspace_id.is_some() {
+    if let Some(workspace_id) = open_options.restore_workspace_id {
+        if let Some(opened) =
+            workspace::reuse_open_remote_workspace(workspace_id, &connection_options, cx).await?
+        {
+            return Ok(opened.window);
+        }
         open_options.workspace_matching = workspace::WorkspaceMatching::None;
     }
     let created_new_window = open_options.requesting_window.is_none();
@@ -221,12 +226,15 @@ pub async fn open_remote_project(
         } else {
             None
         };
-        let workspace_position = cx
-            .update(|cx| {
+        let workspace_position = if let Some(workspace_id) = open_options.restore_workspace_id {
+            cx.update(|cx| workspace::workspace_position_for_id(workspace_id, cx))?
+        } else {
+            cx.update(|cx| {
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
             })
             .await
-            .context("fetching remote workspace position from db")?;
+            .context("fetching remote workspace position from db")?
+        };
 
         let mut options =
             cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
@@ -301,7 +309,33 @@ pub async fn open_remote_project(
 
         let Some(delegate) = delegate else { break };
 
-        let connection = remote::connect(connection_options.clone(), delegate.clone(), cx);
+        let reusable_connection = if open_options.restore_workspace_id.is_some() {
+            window.update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspaces().find_map(|workspace| {
+                    let client = workspace.read(cx).project().read(cx).remote_client()?;
+                    let client = client.read(cx);
+                    if client.connection_state() != remote::ConnectionState::Connected {
+                        return None;
+                    }
+                    client.remote_connection().filter(|connection| {
+                        !connection.has_been_killed()
+                            && workspace::same_remote_connection_identity(
+                                Some(&connection.connection_options()),
+                                Some(&connection_options),
+                            )
+                    })
+                })
+            })?
+        } else {
+            None
+        };
+        let connection = async {
+            if let Some(connection) = reusable_connection {
+                Ok(connection)
+            } else {
+                remote::connect(connection_options.clone(), delegate.clone(), cx).await
+            }
+        };
         let connection = select! {
             _ = cancel_rx => {
                 initial_workspace.update(cx, |workspace, cx| {
@@ -349,6 +383,10 @@ pub async fn open_remote_project(
                     continue;
                 }
 
+                if let Some(workspace_id) = open_options.restore_workspace_id {
+                    retain_failed_remote_workspace(window, workspace_id, created_new_window, cx)?;
+                    return Err(e);
+                }
                 if created_new_window {
                     window
                         .update(cx, |_, window, _| window.remove_window())
@@ -358,8 +396,11 @@ pub async fn open_remote_project(
             }
         };
 
-        let (paths, paths_with_positions) =
-            determine_paths_with_positions(&remote_connection, paths.clone()).await;
+        let (paths, paths_with_positions) = if open_options.restore_workspace_id.is_some() {
+            (paths.clone(), Vec::new())
+        } else {
+            determine_paths_with_positions(&remote_connection, paths.clone()).await
+        };
 
         let opened = cx
             .update(|cx| {
@@ -410,6 +451,10 @@ pub async fn open_remote_project(
                     continue;
                 }
 
+                if let Some(workspace_id) = open_options.restore_workspace_id {
+                    retain_failed_remote_workspace(window, workspace_id, created_new_window, cx)?;
+                    return Err(e);
+                }
                 if created_new_window {
                     window
                         .update(cx, |_, window, _| window.remove_window())
@@ -453,7 +498,9 @@ pub async fn open_remote_project(
                 return Ok(opened.window);
             }
             Ok(None) => {
-                if created_new_window {
+                if let Some(workspace_id) = open_options.restore_workspace_id {
+                    retain_failed_remote_workspace(window, workspace_id, created_new_window, cx)?;
+                } else if created_new_window {
                     window.update(cx, |_, window, _| window.remove_window())?;
                 }
                 anyhow::bail!("remote project opening was cancelled");
@@ -463,6 +510,10 @@ pub async fn open_remote_project(
         break;
     }
 
+    if let Some(workspace_id) = open_options.restore_workspace_id {
+        retain_failed_remote_workspace(window, workspace_id, created_new_window, cx)?;
+        anyhow::bail!("remote project opening was cancelled");
+    }
     Ok(window)
 }
 
@@ -517,6 +568,25 @@ pub(crate) async fn determine_paths_with_positions(
         paths_with_positions.push(PathWithPosition::from_path(path.clone()))
     }
     (paths, paths_with_positions)
+}
+
+fn retain_failed_remote_workspace(
+    window: WindowHandle<MultiWorkspace>,
+    workspace_id: workspace::WorkspaceId,
+    created_new_window: bool,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    window.update(cx, |multi_workspace, window, cx| {
+        let restored = multi_workspace
+            .workspaces()
+            .find(|workspace| workspace.read(cx).database_id() == Some(workspace_id))
+            .cloned();
+        if let Some(restored) = restored {
+            multi_workspace.add(restored, window, cx);
+        } else if created_new_window {
+            window.remove_window();
+        }
+    })
 }
 
 async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> bool {
@@ -768,6 +838,68 @@ mod tests {
                     .expect("remote ID")
             })
             .expect("owner workspace");
+        let owner = first_window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("owner workspace");
+        let remote_client = owner.read_with(cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .remote_client()
+                .expect("remote client")
+        });
+        let saved_connection = cx.update(|cx| {
+            workspace::WorkspaceDb::global(cx)
+                .select_row_bound::<_, Option<i64>>(
+                    "SELECT remote_connection_id FROM workspaces WHERE workspace_id = ?",
+                )
+                .expect("connection query")(workspace_id)
+            .expect("saved connection")
+        });
+        assert_eq!(saved_connection, Some(None));
+        let mismatched = open_remote_project(
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "other.test".into(),
+                ..SshConnectionOptions::default()
+            }),
+            Vec::new(),
+            app_state.clone(),
+            workspace::OpenOptions {
+                restore_workspace_id: Some(workspace_id),
+                ..workspace::OpenOptions::default()
+            },
+            &mut async_cx,
+        )
+        .await;
+        assert_eq!(
+            mismatched
+                .expect_err("reject mismatched live owner")
+                .to_string(),
+            format!("Workspace {workspace_id:?} does not match the remote connection")
+        );
+        let (_cancel, cancelled) = oneshot::channel();
+        let remote_connection = remote_client.read_with(cx, |client, _| {
+            client.remote_connection().expect("live connection")
+        });
+        let opened = cx
+            .update(|cx| {
+                workspace::open_remote_project_with_new_connection(
+                    first_window,
+                    remote_connection,
+                    cancelled,
+                    Arc::new(remote::MockDelegate),
+                    app_state.clone(),
+                    Vec::new(),
+                    Some(workspace_id),
+                    cx,
+                )
+            })
+            .await
+            .expect("provider owner reuse")
+            .expect("not cancelled");
+        assert_eq!(opened.window, first_window);
+        assert_eq!(opened.workspace, owner);
+        assert_eq!(opened.opened_items.len(), 0);
         let restored_window = open_remote_project(
             opts,
             vec![PathBuf::from(path!("/project"))],
@@ -781,6 +913,18 @@ mod tests {
         .await
         .expect("explicit owner restore");
         assert_eq!(restored_window, first_window);
+        first_window
+            .update(cx, |multi_workspace, _, cx| {
+                assert_eq!(multi_workspace.workspace(), &owner);
+                owner.read_with(cx, |workspace, cx| {
+                    assert_eq!(
+                        workspace.project().read(cx).remote_client(),
+                        Some(remote_client.clone())
+                    );
+                    assert_eq!(workspace.items(cx).count(), 1);
+                });
+            })
+            .expect("retained owner");
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
     }
 

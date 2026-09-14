@@ -7939,6 +7939,213 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_multi_workspace_session_restore_failed_active_remote(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| cx.set_global(AppDatabase::test_new()));
+        let app_state = init_test(cx);
+        start_test_recovery_session(&app_state, "failed-active-original", cx).await;
+        let root = Path::new(path!("/failed-active-remote"));
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(root, json!({"note.txt": "remote on disk\n"}))
+            .await;
+        let (connection_options, headless) =
+            start_test_recovery_remote_server(None, remote_fs.clone(), cx, server_cx);
+        let window = open_remote_project(
+            connection_options.clone(),
+            vec![root.to_path_buf()],
+            app_state.clone(),
+            OpenOptions::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .expect("open remote workspace");
+        let logical_window_id = window.window_id();
+        let remote = open_test_recovery_remote_file(window, root, cx).await;
+        set_test_recovery_text(window, &remote, "remote unsaved source\n", cx).await;
+        let scratch = add_test_recovery_workspace(window, cx).await;
+        set_test_recovery_text(window, &scratch, "healthy scratch Ω\n", cx).await;
+        let (remote_id, scratch_id) = cx.read(|cx| {
+            (
+                remote.read(cx).database_id().expect("remote ID"),
+                scratch.read(cx).database_id().expect("scratch ID"),
+            )
+        });
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(remote.clone(), None, window, cx);
+            })
+            .expect("activate remote");
+        drop((remote, scratch));
+        disconnect_test_recovery_remote_window(window, cx).await;
+        close_test_recovery_window(window, cx).await;
+        drop(headless);
+        let database = cx.read(|cx| workspace::WorkspaceDb::global(cx));
+        database
+            .write(move |connection| {
+                connection.exec_bound(
+                    "UPDATE items SET kind = 'unavailable-test-item' WHERE workspace_id = ?",
+                )?(remote_id)
+            })
+            .await
+            .expect("inject unknown item kind");
+        let read_source = || {
+            (
+                database.select_bound::<_, (u64, u64, String, i64, bool)>(
+                    "SELECT item_id, pane_id, kind, position, active FROM items WHERE workspace_id = ? ORDER BY item_id",
+                ).expect("prepare source items")(remote_id).expect("read source items"),
+                database.select_bound::<_, (u64, bool, Option<u64>, Option<u64>)>(
+                    "SELECT panes.pane_id, active, parent_group_id, position FROM panes JOIN center_panes USING (pane_id) WHERE workspace_id = ? ORDER BY panes.pane_id",
+                ).expect("prepare source panes")(remote_id).expect("read source panes"),
+            )
+        };
+        let source = read_source();
+        assert_eq!(source.0.len(), 1);
+        let item_id = source.0.first().expect("source item").0;
+        for launch_id in ["failed-active-second", "failed-active-third"] {
+            let (_, headless) = start_test_recovery_remote_server(
+                Some(&connection_options),
+                remote_fs.clone(),
+                cx,
+                server_cx,
+            );
+            start_test_recovery_session(&app_state, launch_id, cx).await;
+            let restore = cx.spawn({
+                let app_state = app_state.clone();
+                async move |mut cx| crate::restore_or_create_workspace(app_state, &mut cx).await
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                cx.pending_prompt(),
+                Some((
+                    String::from("Failed to connect to mock server"),
+                    format!(
+                        "Could not deserialize pane: Could not deserialize unavailable-test-item item {item_id}: cannot deserialize unavailable-test-item, descriptor not found"
+                    ),
+                ))
+            );
+            let failed_window = cx.windows().first().copied().expect("failed member window");
+            cx.simulate_prompt_answer("Cancel");
+            restore.await.expect("recover healthy member");
+            cx.run_until_parked();
+            assert_eq!(cx.windows(), vec![failed_window]);
+            assert!(!cx.has_pending_prompt());
+            let window = failed_window
+                .downcast::<MultiWorkspace>()
+                .expect("workspace window");
+            window
+                .read_with(cx, |multi_workspace, cx| {
+                    assert_eq!(
+                        multi_workspace.workspace().read(cx).database_id(),
+                        Some(scratch_id)
+                    );
+                    let mut members = multi_workspace
+                        .workspaces()
+                        .filter_map(|workspace| workspace.read(cx).database_id())
+                        .collect::<Vec<_>>();
+                    members.sort();
+                    assert_eq!(members, vec![remote_id, scratch_id]);
+                    let failed = multi_workspace
+                        .workspaces()
+                        .find(|workspace| workspace.read(cx).database_id() == Some(remote_id))
+                        .expect("guarded remote member");
+                    assert!(failed.read(cx).is_restoring());
+                    let scratch = multi_workspace.workspace().read(cx);
+                    assert!(!scratch.is_restoring());
+                    assert_eq!(
+                        scratch
+                            .active_item_as::<Editor>(cx)
+                            .expect("scratch editor")
+                            .read(cx)
+                            .text(cx),
+                        "healthy scratch Ω\n"
+                    );
+                })
+                .expect("recovered window");
+            flush_workspace_serialization(&window, cx).await;
+            assert_eq!(read_source(), source);
+            assert_test_recovery_bindings(
+                &app_state,
+                "failed-active-original",
+                logical_window_id,
+                &[remote_id, scratch_id],
+                cx,
+            );
+            disconnect_test_recovery_remote_window(window, cx).await;
+            close_test_recovery_window(window, cx).await;
+            drop(headless);
+            assert_eq!(read_source(), source);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_multi_workspace_session_restore_same_host_remote_members(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let roots = test_recovery_remote_roots();
+        check_test_recovery_remote_members([roots.clone(), roots], true, false, cx, server_cx)
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_multi_workspace_session_restore_different_remote_roots(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        check_test_recovery_remote_members(
+            [
+                test_recovery_remote_roots(),
+                vec![
+                    PathBuf::from(path!("/remote-members/b")),
+                    PathBuf::from(path!("/remote-members/a")),
+                ],
+            ],
+            true,
+            false,
+            cx,
+            server_cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_multi_workspace_session_restore_mixed_remote_hosts(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let roots = test_recovery_remote_roots();
+        check_test_recovery_remote_members([roots.clone(), roots], false, false, cx, server_cx)
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_multi_workspace_session_restore_remote_zero_roots(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        check_test_recovery_remote_members(
+            [test_recovery_remote_roots(), Vec::new()],
+            true,
+            false,
+            cx,
+            server_cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_multi_workspace_session_restore_remote_members_sidebar_disabled(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let roots = test_recovery_remote_roots();
+        check_test_recovery_remote_members([roots.clone(), roots], true, true, cx, server_cx).await;
+    }
+
+    #[gpui::test]
     async fn test_multi_workspace_session_restore_remote_colliding_roots(
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
@@ -8971,6 +9178,425 @@ mod tests {
         });
     }
 
+    fn test_recovery_remote_roots() -> Vec<PathBuf> {
+        vec![
+            PathBuf::from(path!("/remote-members/z")),
+            PathBuf::from(path!("/remote-members/a")),
+        ]
+    }
+
+    async fn check_test_recovery_remote_members(
+        roots: [Vec<PathBuf>; 2],
+        same_host: bool,
+        sidebar_disabled: bool,
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| cx.set_global(AppDatabase::test_new()));
+        let app_state = init_test(cx);
+        let session_id = "remote-members-original";
+        start_test_recovery_session(&app_state, session_id, cx).await;
+        let first_fs = FakeFs::new(server_cx.executor());
+        let second_fs = if same_host {
+            first_fs.clone()
+        } else {
+            FakeFs::new(server_cx.executor())
+        };
+        let remote_filesystems = [first_fs, second_fs];
+        let disk_texts = [
+            "remote on disk\n",
+            if same_host {
+                "remote on disk\n"
+            } else {
+                "other host on disk\n"
+            },
+        ];
+        for ((roots, remote_fs), text) in roots.iter().zip(&remote_filesystems).zip(disk_texts) {
+            for root in roots {
+                remote_fs.insert_tree(root, json!({"note.txt": text})).await;
+            }
+        }
+        let (first_options, first_server) =
+            start_test_recovery_remote_server(None, remote_filesystems[0].clone(), cx, server_cx);
+        let (second_options, second_server) = if same_host {
+            let session = RemoteClient::queue_fake_server(&first_options, cx, server_cx);
+            (
+                first_options.clone(),
+                create_test_recovery_headless_project(
+                    session,
+                    remote_filesystems[1].clone(),
+                    server_cx,
+                ),
+            )
+        } else {
+            start_test_recovery_remote_server(None, remote_filesystems[1].clone(), cx, server_cx)
+        };
+        let options = [first_options, second_options];
+        let mut servers = vec![first_server, second_server];
+        assert_eq!(servers.len(), 2);
+        let mut window = open_remote_project(
+            options[0].clone(),
+            roots[0].clone(),
+            app_state.clone(),
+            OpenOptions::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .expect("failed to open first remote workspace");
+        let logical_window_id = window.window_id();
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx)
+            })
+            .expect("workspace window was closed");
+        let first = open_test_recovery_remote_file(
+            window,
+            roots[0].first().expect("first remote needs a root"),
+            cx,
+        )
+        .await;
+        set_test_recovery_text(window, &first, "R1 Ω\n\tfirst", cx).await;
+        let second_open_roots = if roots[1].is_empty() {
+            roots[0].clone()
+        } else {
+            roots[1].clone()
+        };
+        let second_window = open_remote_project(
+            options[1].clone(),
+            second_open_roots,
+            app_state.clone(),
+            OpenOptions {
+                requesting_window: Some(window),
+                workspace_matching: workspace::WorkspaceMatching::None,
+                ..OpenOptions::default()
+            },
+            &mut cx.to_async(),
+        )
+        .await
+        .expect("failed to open second remote workspace");
+        assert_eq!(second_window, window);
+        let second = if let Some(root) = roots[1].first() {
+            open_test_recovery_remote_file(window, root, cx).await
+        } else {
+            window
+                .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                .expect("workspace window was closed")
+        };
+        set_test_recovery_text(window, &second, "R2 🦀\n\tsecond", cx).await;
+        if roots[1].is_empty() {
+            let project = second.read_with(cx, |workspace, _| workspace.project().clone());
+            project.update(cx, |project, cx| {
+                let worktree_ids = project
+                    .worktrees(cx)
+                    .map(|worktree| worktree.read(cx).id())
+                    .collect::<Vec<_>>();
+                for worktree_id in worktree_ids {
+                    project.remove_worktree(worktree_id, cx);
+                }
+            });
+            cx.run_until_parked();
+            second.read_with(cx, |workspace, cx| {
+                assert_eq!(workspace.root_paths(cx), Vec::<Arc<Path>>::new());
+                let editor = workspace
+                    .active_item_as::<Editor>(cx)
+                    .expect("missing untitled remote editor");
+                let buffer = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("remote editor is not a singleton");
+                assert!(buffer.read(cx).file().is_none());
+                assert_eq!(editor.read(cx).text(cx), "R2 🦀\n\tsecond");
+            });
+        }
+        let scratch = add_test_recovery_workspace(window, cx).await;
+        set_test_recovery_text(window, &scratch, "local scratch e\u{301}\n終", cx).await;
+        let (remote_ids, scratch_id, original_projects) = cx.read(|cx| {
+            (
+                [
+                    first.read(cx).database_id().expect("missing first ID"),
+                    second.read(cx).database_id().expect("missing second ID"),
+                ],
+                scratch.read(cx).database_id().expect("missing scratch ID"),
+                [
+                    first.read(cx).project().downgrade(),
+                    second.read(cx).project().downgrade(),
+                ],
+            )
+        });
+        assert_ne!(remote_ids[0], remote_ids[1]);
+        assert_ne!(remote_ids[0], scratch_id);
+        assert_ne!(remote_ids[1], scratch_id);
+        let mut expected = vec![
+            (
+                remote_ids[0],
+                roots[0].clone(),
+                vec![String::from("R1 Ω\n\tfirst")],
+            ),
+            (
+                remote_ids[1],
+                roots[1].clone(),
+                vec![String::from("R2 🦀\n\tsecond")],
+            ),
+            (
+                scratch_id,
+                Vec::new(),
+                vec![String::from("local scratch e\u{301}\n終")],
+            ),
+        ];
+        expected.sort_by_key(|(id, _, _)| *id);
+        let workspace_ids = expected.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
+        let mut expected_sources = vec![
+            (
+                remote_ids[0],
+                workspace::SerializedWorkspaceLocation::Remote(options[0].clone()),
+                roots[0].clone(),
+                Some(logical_window_id),
+            ),
+            (
+                remote_ids[1],
+                workspace::SerializedWorkspaceLocation::Remote(options[1].clone()),
+                roots[1].clone(),
+                Some(logical_window_id),
+            ),
+            (
+                scratch_id,
+                workspace::SerializedWorkspaceLocation::Local,
+                Vec::new(),
+                Some(logical_window_id),
+            ),
+        ];
+        expected_sources.sort_by_key(|(id, _, _, _)| *id);
+        drop((first, second, scratch));
+        cx.run_until_parked();
+        assert_test_recovery_contents(window, scratch_id, &expected, cx);
+        assert_test_recovery_remote_members(window, &remote_ids, &options, &roots, cx);
+        flush_workspace_serialization(&window, cx).await;
+        cx.read(|cx| assert!(app_state.session.read(cx).last_session_id().is_none()));
+        assert_test_recovery_current_bindings(
+            &app_state,
+            session_id,
+            logical_window_id,
+            &workspace_ids,
+            cx,
+        );
+
+        for launch_id in ["remote-members-second", "remote-members-third"] {
+            disconnect_test_recovery_remote_window(window, cx).await;
+            let (_, first_server) = start_test_recovery_remote_server(
+                Some(&options[0]),
+                remote_filesystems[0].clone(),
+                cx,
+                server_cx,
+            );
+            let second_server = if same_host {
+                let session = RemoteClient::queue_fake_server(&options[1], cx, server_cx);
+                create_test_recovery_headless_project(
+                    session,
+                    remote_filesystems[1].clone(),
+                    server_cx,
+                )
+            } else {
+                start_test_recovery_remote_server(
+                    Some(&options[1]),
+                    remote_filesystems[1].clone(),
+                    cx,
+                    server_cx,
+                )
+                .1
+            };
+            close_test_recovery_window(window, cx).await;
+            if sidebar_disabled {
+                cx.update(|cx| {
+                    SettingsStore::update_global(cx, |store, cx| {
+                        store.update_user_settings(cx, |settings| {
+                            settings.project.disable_ai = Some(SaturatingBool(true))
+                        });
+                    });
+                });
+                cx.run_until_parked();
+            }
+            window = restore_test_recovery_window(&app_state, launch_id, cx).await;
+            servers = vec![first_server, second_server];
+            assert_eq!(servers.len(), 2);
+            assert_ne!(window.window_id(), logical_window_id);
+            for project in &original_projects {
+                assert!(
+                    project.upgrade().is_none(),
+                    "old remote project is still alive"
+                );
+            }
+            assert_test_recovery_contents(window, scratch_id, &expected, cx);
+            assert_test_recovery_remote_members(window, &remote_ids, &options, &roots, cx);
+            window
+                .read_with(cx, |multi_workspace, cx| {
+                    let scratch = multi_workspace.workspace().read(cx);
+                    assert!(scratch.project().read(cx).is_local());
+                    if sidebar_disabled {
+                        assert!(!multi_workspace.multi_workspace_enabled(cx));
+                        assert!(multi_workspace.sidebar_open());
+                        assert!(!multi_workspace.sidebar_render_state(cx).open);
+                    }
+                    for workspace in multi_workspace
+                        .workspaces()
+                        .filter(|workspace| workspace.read(cx).database_id().is_some())
+                    {
+                        assert_eq!(workspace.read(cx).session_id().as_deref(), Some(session_id));
+                    }
+                })
+                .expect("workspace window was closed");
+            let mut actual_server_roots = server_cx.read(|cx| {
+                servers
+                    .iter()
+                    .map(|server| {
+                        server
+                            .read(cx)
+                            .worktree_store
+                            .read(cx)
+                            .worktrees()
+                            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            });
+            actual_server_roots.sort();
+            let mut expected_server_roots = roots.to_vec();
+            expected_server_roots.sort();
+            assert_eq!(actual_server_roots, expected_server_roots);
+            for ((roots, remote_fs), text) in roots.iter().zip(&remote_filesystems).zip(disk_texts)
+            {
+                for root in roots {
+                    assert_eq!(
+                        remote_fs
+                            .load(&root.join("note.txt"))
+                            .await
+                            .expect("failed to read remote file"),
+                        text
+                    );
+                }
+            }
+            flush_workspace_serialization(&window, cx).await;
+            assert_test_recovery_bindings(
+                &app_state,
+                session_id,
+                logical_window_id,
+                &workspace_ids,
+                cx,
+            );
+            let database = cx.read(|cx| workspace::WorkspaceDb::global(cx));
+            let mut saved_sources = database
+                .last_session_workspace_locations(session_id, None, app_state.fs.as_ref())
+                .await
+                .expect("failed to read persisted remote sources")
+                .into_iter()
+                .map(|workspace| {
+                    (
+                        workspace.workspace_id,
+                        workspace.location,
+                        workspace.paths.ordered_paths().cloned().collect::<Vec<_>>(),
+                        workspace.window_id,
+                    )
+                })
+                .collect::<Vec<_>>();
+            saved_sources.sort_by_key(|(id, _, _, _)| *id);
+            assert_eq!(saved_sources, expected_sources);
+            let first = window
+                .read_with(cx, |multi_workspace, cx| {
+                    multi_workspace
+                        .workspaces()
+                        .find(|workspace| workspace.read(cx).database_id() == Some(remote_ids[0]))
+                        .expect("first remote was not restored")
+                        .clone()
+                })
+                .expect("workspace window was closed");
+            let text = format!("R1 Ω edited after {launch_id}\n");
+            set_test_recovery_text(window, &first, &text, cx).await;
+            expected
+                .iter_mut()
+                .find(|(id, _, _)| *id == remote_ids[0])
+                .expect("missing first expected remote")
+                .2 = vec![text];
+            assert_test_recovery_contents(window, scratch_id, &expected, cx);
+            assert!(!cx.has_pending_prompt());
+        }
+        disconnect_test_recovery_remote_window(window, cx).await;
+    }
+
+    fn assert_test_recovery_remote_members(
+        window: WindowHandle<MultiWorkspace>,
+        remote_ids: &[WorkspaceId; 2],
+        options: &[RemoteConnectionOptions; 2],
+        roots: &[Vec<PathBuf>; 2],
+        cx: &TestAppContext,
+    ) {
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                let mut projects = Vec::new();
+                let mut clients = Vec::new();
+                let mut connections = Vec::new();
+                let mut buffers = Vec::new();
+                for ((id, options), roots) in remote_ids.iter().zip(options).zip(roots) {
+                    let workspace = multi_workspace
+                        .workspaces()
+                        .find(|workspace| workspace.read(cx).database_id() == Some(*id))
+                        .expect("saved remote workspace was not restored")
+                        .read(cx);
+                    let project = workspace.project().read(cx);
+                    assert!(project.is_remote());
+                    assert_eq!(
+                        project.remote_connection_options(cx).as_ref(),
+                        Some(options)
+                    );
+                    let client = project.remote_client().expect("missing remote client");
+                    assert_eq!(
+                        client.read(cx).connection_state(),
+                        remote::ConnectionState::Connected
+                    );
+                    connections.push(
+                        client
+                            .read(cx)
+                            .remote_connection()
+                            .expect("missing remote connection"),
+                    );
+                    clients.push(client.entity_id());
+                    projects.push(workspace.project().entity_id());
+                    let editor = workspace
+                        .active_item_as::<Editor>(cx)
+                        .expect("missing remote editor");
+                    let buffer = editor
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .expect("remote editor is not a singleton");
+                    assert!(editor.read(cx).is_dirty(cx));
+                    if let Some(root) = roots.first() {
+                        let project_path = buffer
+                            .read(cx)
+                            .project_path(cx)
+                            .expect("remote file restored as untitled");
+                        assert_eq!(
+                            project.absolute_path(&project_path, cx),
+                            Some(root.join("note.txt"))
+                        );
+                    } else {
+                        assert!(buffer.read(cx).file().is_none());
+                    }
+                    buffers.push(buffer.entity_id());
+                }
+                assert_ne!(projects[0], projects[1]);
+                assert_ne!(clients[0], clients[1]);
+                assert_ne!(buffers[0], buffers[1]);
+                if options[0] == options[1] {
+                    assert!(Arc::ptr_eq(&connections[0], &connections[1]));
+                } else {
+                    assert!(!Arc::ptr_eq(&connections[0], &connections[1]));
+                }
+            })
+            .expect("workspace window was closed");
+    }
+
     fn start_test_recovery_remote_server(
         connection_options: Option<&RemoteConnectionOptions>,
         remote_fs: Arc<FakeFs>,
@@ -8988,8 +9614,18 @@ mod tests {
                 });
                 RemoteClient::fake_server(cx, server_cx)
             };
+        let headless = create_test_recovery_headless_project(server_session, remote_fs, server_cx);
+        drop(connect_guard);
+        (connection_options, headless)
+    }
+
+    fn create_test_recovery_headless_project(
+        server_session: client::AnyProtoClient,
+        remote_fs: Arc<FakeFs>,
+        server_cx: &mut TestAppContext,
+    ) -> Entity<HeadlessProject> {
         let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
-        let headless = server_cx.new(|cx| {
+        server_cx.new(|cx| {
             HeadlessProject::new(
                 HeadlessAppState {
                     session: server_session,
@@ -9003,9 +9639,7 @@ mod tests {
                 false,
                 cx,
             )
-        });
-        drop(connect_guard);
-        (connection_options, headless)
+        })
     }
 
     async fn disconnect_test_recovery_remote_window(
@@ -9013,37 +9647,53 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         flush_workspace_serialization(&window, cx).await;
-        let (connection, shutdown) = window
+        let (connections, shutdowns) = window
             .update(cx, |multi_workspace, _, cx| {
-                let client = multi_workspace
-                    .workspace()
-                    .read(cx)
-                    .project()
-                    .read(cx)
-                    .remote_client()
-                    .expect("missing remote client");
-                client.update(cx, |client, cx| {
-                    let connection = Arc::downgrade(
-                        &client
-                            .remote_connection()
-                            .expect("missing remote connection"),
-                    );
-                    let shutdown = client
-                        .shutdown_processes::<proto::ShutdownRemoteServer>(
-                            None,
-                            cx.background_executor().clone(),
-                        )
-                        .expect("remote client was not connected");
-                    (connection, shutdown)
-                })
+                let clients = multi_workspace
+                    .workspaces()
+                    .filter_map(|workspace| workspace.read(cx).project().read(cx).remote_client())
+                    .collect::<Vec<_>>();
+                assert!(!clients.is_empty(), "missing remote clients");
+                let mut connections = Vec::new();
+                let shutdowns = clients
+                    .into_iter()
+                    .map(|client| {
+                        client.update(cx, |client, cx| {
+                            let connection = client
+                                .remote_connection()
+                                .expect("missing remote connection");
+                            if !connections
+                                .iter()
+                                .any(|existing| Arc::ptr_eq(&connection, existing))
+                            {
+                                connections.push(connection);
+                            }
+                            client
+                                .shutdown_processes::<proto::ShutdownRemoteServer>(
+                                    None,
+                                    cx.background_executor().clone(),
+                                )
+                                .expect("remote client was not connected")
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                (connections, shutdowns)
             })
             .expect("workspace window was closed");
-        shutdown.await;
-        cx.run_until_parked();
-        assert!(
-            connection.upgrade().is_none(),
-            "old fake transport is still alive"
-        );
+        futures::future::join_all(shutdowns).await;
+        for connection in connections {
+            connection
+                .kill()
+                .await
+                .expect("failed to stop remote transport");
+            let weak_connection = Arc::downgrade(&connection);
+            drop(connection);
+            cx.run_until_parked();
+            assert!(
+                weak_connection.upgrade().is_none(),
+                "old fake transport is still alive"
+            );
+        }
     }
 
     async fn open_test_recovery_remote_file(
@@ -9182,12 +9832,27 @@ mod tests {
         launch_id: &str,
         cx: &mut TestAppContext,
     ) -> WindowHandle<MultiWorkspace> {
+        close_test_recovery_window(window, cx).await;
+        restore_test_recovery_window(app_state, launch_id, cx).await
+    }
+
+    async fn close_test_recovery_window(
+        window: WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) {
         flush_workspace_serialization(&window, cx).await;
         window
             .update(cx, |_, window, _| window.remove_window())
             .expect("workspace window was closed");
         cx.run_until_parked();
         assert_eq!(cx.windows(), Vec::<AnyWindowHandle>::new());
+    }
+
+    async fn restore_test_recovery_window(
+        app_state: &Arc<AppState>,
+        launch_id: &str,
+        cx: &mut TestAppContext,
+    ) -> WindowHandle<MultiWorkspace> {
         start_test_recovery_session(app_state, launch_id, cx).await;
         crate::restore_or_create_workspace(app_state.clone(), &mut cx.to_async())
             .await
@@ -9214,13 +9879,15 @@ mod tests {
                     multi_workspace.workspace().read(cx).database_id(),
                     Some(active_workspace_id)
                 );
-                let remote_active = multi_workspace
-                    .workspace()
-                    .read(cx)
-                    .project()
-                    .read(cx)
-                    .is_remote();
-                let mut initial_workspaces = 0;
+                let mut persisted_ids = multi_workspace
+                    .workspaces()
+                    .filter_map(|workspace| workspace.read(cx).database_id())
+                    .collect::<Vec<_>>();
+                persisted_ids.sort();
+                assert_eq!(
+                    persisted_ids,
+                    expected.iter().map(|(id, _, _)| *id).collect::<Vec<_>>()
+                );
                 let mut actual = multi_workspace
                     .workspaces()
                     .filter_map(|workspace| {
@@ -9229,7 +9896,6 @@ mod tests {
                             assert!(workspace.project().read(cx).is_local());
                             assert_eq!(workspace.root_paths(cx), Vec::<Arc<Path>>::new());
                             assert_eq!(workspace.items(cx).count(), 0);
-                            initial_workspaces += 1;
                             return None;
                         };
                         let texts = workspace
@@ -9254,7 +9920,6 @@ mod tests {
                         ))
                     })
                     .collect::<Vec<_>>();
-                assert_eq!(initial_workspaces, usize::from(remote_active));
                 actual.sort_by_key(|(id, _, _)| *id);
                 assert_eq!(actual, expected);
             })
@@ -9269,8 +9934,23 @@ mod tests {
         cx: &TestAppContext,
     ) {
         cx.read(|cx| {
+            assert_eq!(
+                app_state.session.read(cx).last_session_id(),
+                Some(session_id)
+            )
+        });
+        assert_test_recovery_current_bindings(app_state, session_id, window_id, workspace_ids, cx);
+    }
+
+    fn assert_test_recovery_current_bindings(
+        app_state: &Arc<AppState>,
+        session_id: &str,
+        window_id: gpui::WindowId,
+        workspace_ids: &[WorkspaceId],
+        cx: &TestAppContext,
+    ) {
+        cx.read(|cx| {
             assert_eq!(app_state.session.read(cx).id(), session_id);
-            assert_eq!(app_state.session.read(cx).last_session_id(), Some(session_id));
             assert_eq!(
                 KeyValueStore::global(cx).read_kvp("session_id").expect("failed to read recovery pointer"),
                 Some(String::from(session_id)),
