@@ -1362,7 +1362,7 @@ impl LocalWorktree {
             let background = cx.background_executor().clone();
             async move {
                 let defer_watch =
-                    force_defer_watch || (scanning_enabled && fs::requires_poll_watcher(&abs_path));
+                    force_defer_watch || (scanning_enabled && fs.requires_poll_watcher(&abs_path));
 
                 let (events, watcher) = if scanning_enabled && !defer_watch {
                     fs.watch(&abs_path, FS_WATCH_LATENCY).await

@@ -1713,7 +1713,7 @@ mod tests {
         http_client: Arc<dyn HttpClient>,
         sha256: Option<String>,
     ) -> LocalRegistryArchiveAgent {
-        let fs: Arc<dyn Fs> = Arc::new(fs::RealFs::new(None, cx.executor()));
+        let fs: Arc<dyn Fs> = fs::RealFs::new(None, cx.executor());
         let target = RegistryTargetConfig {
             archive: TEST_ARCHIVE_URL.to_string(),
             cmd: "./agent".to_string(),
