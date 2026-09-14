@@ -115,14 +115,35 @@ pub(crate) enum FeatureOptions {
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq, Clone)]
 #[serde(untagged)]
 pub(crate) enum FeatureOptionValue {
+    Null,
     Bool(bool),
     String(String),
+    Number(serde_json::Number),
+    Array(Vec<FeatureOptionValue>),
+    Object(HashMap<String, FeatureOptionValue>),
 }
 impl std::fmt::Display for FeatureOptionValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            FeatureOptionValue::Null => write!(f, "null"),
             FeatureOptionValue::Bool(b) => write!(f, "{}", b),
             FeatureOptionValue::String(s) => write!(f, "{}", s),
+            FeatureOptionValue::Number(n) => write!(f, "{}", n),
+            FeatureOptionValue::Array(items) => {
+                let formatted = items
+                    .iter()
+                    .map(|item| item.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                write!(f, "{}", formatted)
+            }
+            FeatureOptionValue::Object(map) => {
+                if let Ok(json_str) = serde_json::to_string(map) {
+                    write!(f, "{}", json_str)
+                } else {
+                    write!(f, "")
+                }
+            }
         }
     }
 }
@@ -655,10 +676,11 @@ mod test {
     use crate::{
         devcontainer_api::DevContainerError,
         devcontainer_json::{
-            ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
-            HostRequirements, LifecycleCommand, LifecycleScript, MountDefinition, OnAutoForward,
-            PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe, ZedCustomization,
-            ZedCustomizationsWrapper, deserialize_devcontainer_json,
+            ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptionValue,
+            FeatureOptions, ForwardPort, HostRequirements, LifecycleCommand, LifecycleScript,
+            MountDefinition, OnAutoForward, PortAttributeProtocol, PortAttributes, ShutdownAction,
+            UserEnvProbe, ZedCustomization, ZedCustomizationsWrapper,
+            deserialize_devcontainer_json,
         },
     };
 
@@ -1888,5 +1910,106 @@ mod test {
         } else {
             panic!("Expected post_create_command to be Some");
         }
+    }
+
+    #[test]
+    fn should_deserialize_feature_with_array_number_and_null_options() {
+        let json = r#"
+        {
+            "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+            "features": {
+                "ghcr.io/rocker-org/devcontainer-features/apt-packages:1": {
+                    "packages": ["libsnappy-dev", "libvips-dev", "xauth"],
+                    "upgradePackages": false,
+                    "timeout": 30,
+                    "extraConfig": null
+                }
+            }
+        }
+        "#;
+
+        let result = deserialize_devcontainer_json(json);
+        assert!(
+            result.is_ok(),
+            "Expected deserialization to succeed with array, number, and null options, got: {:?}",
+            result.err()
+        );
+
+        let devcontainer = result.unwrap();
+        let features = devcontainer.features.expect("features should be present");
+        let feature = features
+            .get("ghcr.io/rocker-org/devcontainer-features/apt-packages:1")
+            .expect("feature should be present");
+
+        match feature {
+            FeatureOptions::Options(map) => {
+                assert_eq!(
+                    map.get("packages").map(|v| v.to_string()),
+                    Some("libsnappy-dev,libvips-dev,xauth".to_string())
+                );
+                assert_eq!(
+                    map.get("upgradePackages").map(|v| v.to_string()),
+                    Some("false".to_string())
+                );
+                assert_eq!(
+                    map.get("timeout").map(|v| v.to_string()),
+                    Some("30".to_string())
+                );
+                assert_eq!(
+                    map.get("extraConfig").map(|v| v.to_string()),
+                    Some("null".to_string())
+                );
+            }
+            other => panic!("Expected FeatureOptions::Options, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn should_deserialize_feature_with_empty_array_options() {
+        let json = r#"
+        {
+            "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+            "features": {
+                "ghcr.io/example/feature:1": {
+                    "packages": []
+                }
+            }
+        }
+        "#;
+
+        let result = deserialize_devcontainer_json(json);
+        assert!(result.is_ok());
+
+        let devcontainer = result.unwrap();
+        let features = devcontainer.features.unwrap();
+        let feature = features.get("ghcr.io/example/feature:1").unwrap();
+
+        match feature {
+            FeatureOptions::Options(map) => {
+                assert_eq!(
+                    map.get("packages").map(|v| v.to_string()),
+                    Some("".to_string())
+                );
+            }
+            other => panic!("Expected FeatureOptions::Options, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn should_format_feature_option_values_properly() {
+        assert_eq!(FeatureOptionValue::Null.to_string(), "null");
+        assert_eq!(FeatureOptionValue::Bool(true).to_string(), "true");
+        assert_eq!(FeatureOptionValue::Bool(false).to_string(), "false");
+        assert_eq!(
+            FeatureOptionValue::String("hello".to_string()).to_string(),
+            "hello"
+        );
+        let num: serde_json::Number = serde_json::from_str("42").unwrap();
+        assert_eq!(FeatureOptionValue::Number(num).to_string(), "42");
+        let arr = FeatureOptionValue::Array(vec![
+            FeatureOptionValue::String("a".to_string()),
+            FeatureOptionValue::String("b".to_string()),
+        ]);
+        assert_eq!(arr.to_string(), "a,b");
     }
 }
