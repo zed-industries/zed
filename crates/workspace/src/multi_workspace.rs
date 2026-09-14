@@ -1477,7 +1477,7 @@ impl MultiWorkspace {
     pub fn flush_serialization(&mut self, cx: &mut Context<Self>) -> Task<()> {
         self._serialize_task.take();
         let serialization = self.serialize_now(cx);
-        cx.spawn(async move |_, _| serialization.await)
+        cx.background_spawn(serialization)
     }
 
     pub fn flush_pending_serialization(
@@ -2196,5 +2196,75 @@ impl Render for MultiWorkspace {
             window,
             cx,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MultiWorkspace;
+    use db::kvp::KeyValueStore;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use serde_json::{Value, json};
+
+    #[gpui::test]
+    async fn test_pending_multi_workspace_state_flushed_on_shutdown(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+        cx.update(|cx| {
+            cx.on_app_quit(crate::flush_windows_serialization_on_quit)
+                .detach();
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, visual_cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let window_key = multi_workspace.read_with(visual_cx, |multi_workspace, _| {
+            multi_workspace.window_id.as_u64().to_string()
+        });
+        cx.run_until_parked();
+
+        let key_value_store = cx.read(KeyValueStore::global);
+        let mut expected_state = json!({
+            "active_workspace_id": null,
+            "sidebar_open": false,
+            "project_groups": [],
+            "sidebar_state": null,
+        });
+        key_value_store
+            .scoped("multi_workspace_state")
+            .write(window_key.clone(), expected_state.to_string())
+            .await
+            .expect("failed to seed multi-workspace state");
+
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.sidebar_open = true;
+            multi_workspace.serialize(cx);
+        });
+        assert_eq!(
+            key_value_store
+                .scoped("multi_workspace_state")
+                .read(&window_key)
+                .expect("failed to read pending multi-workspace state"),
+            Some(expected_state.to_string())
+        );
+
+        cx.executor().allow_parking();
+        cx.executor().set_block_on_ticks(10_000..=10_000);
+        cx.update(|cx| cx.shutdown());
+        cx.executor().forbid_parking();
+
+        expected_state["sidebar_open"] = json!(true);
+        let persisted = key_value_store
+            .scoped("multi_workspace_state")
+            .read(&window_key)
+            .expect("failed to read flushed multi-workspace state")
+            .expect("multi-workspace state is missing after shutdown");
+        assert_eq!(
+            serde_json::from_str::<Value>(&persisted)
+                .expect("flushed multi-workspace state is invalid"),
+            expected_state
+        );
     }
 }
