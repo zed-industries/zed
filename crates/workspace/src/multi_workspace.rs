@@ -1463,11 +1463,11 @@ impl MultiWorkspace {
             self.held.remove(index);
         }
         cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
-        workspace.update(cx, |workspace, _cx| {
+        let pending_serialization = workspace.update(cx, |workspace, _cx| {
             workspace.session_id.take();
             workspace.serialized_window_id.take();
             workspace._schedule_serialize_workspace.take();
-            workspace.pending_workspace_serialization.take();
+            workspace.pending_workspace_serialization.clone()
         });
 
         if let Some(workspace_id) = workspace.read(cx).database_id() {
@@ -1475,6 +1475,9 @@ impl MultiWorkspace {
             self.pending_removal_tasks.retain(|task| !task.is_ready());
             self.pending_removal_tasks
                 .push(cx.background_spawn(async move {
+                    if let Some(serialization) = pending_serialization {
+                        serialization.await.log_err();
+                    }
                     db.set_session_binding(workspace_id, None, None)
                         .await
                         .log_err();

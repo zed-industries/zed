@@ -3705,6 +3705,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
+        let preserve_session = should_preserve_window_session(close_intent, window, cx);
+        self.prepare_to_close_internal(close_intent, preserve_session, window, cx)
+    }
+
+    fn prepare_to_close_internal(
+        &mut self,
+        close_intent: CloseIntent,
+        preserve_session: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<bool>> {
         let active_call = self.active_global_call();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -3720,28 +3731,6 @@ impl Workspace {
                     .filter(|window| window.downcast::<MultiWorkspace>().is_some())
                     .count()
             })?;
-
-            let (remaining_workspaces, closing_last_window_quits) = cx.update(|window, cx| {
-                let current_window = window.window_handle();
-                let remaining_workspaces =
-                    cx.windows()
-                        .into_iter()
-                        .filter(|window| *window != current_window)
-                        .filter_map(|window| window.downcast::<MultiWorkspace>())
-                        .filter_map(|multi_workspace| {
-                            multi_workspace.read(cx).ok().map(|multi_workspace| {
-                                multi_workspace.workspace().read(cx).removing
-                            })
-                        })
-                        .filter(|removing| !removing)
-                        .count();
-
-                (remaining_workspaces, closing_last_window_quits_app(cx))
-            })?;
-
-            let save_last_workspace = close_intent != CloseIntent::ReplaceWindow
-                && remaining_workspaces == 0
-                && closing_last_window_quits;
 
             if let Some(active_call) = active_call
                 && workspace_count == 1
@@ -3795,8 +3784,7 @@ impl Workspace {
             // if the workspace will be reachable again, either via session
             // restore or by reopening its folder paths. Otherwise prompt, so
             // we don't orphan the buffers.
-            let allow_hot_exit_serialization = close_intent == CloseIntent::Quit
-                || save_last_workspace
+            let allow_hot_exit_serialization = preserve_session
                 || this
                     .read_with(cx, |workspace, cx| {
                         workspace
@@ -3807,28 +3795,10 @@ impl Workspace {
                             .is_some()
                     })
                     .unwrap_or(false);
-            let save_result = this
-                .update_in(cx, |this, window, cx| {
-                    this.save_all_internal(
-                        SaveIntent::Close,
-                        allow_hot_exit_serialization,
-                        window,
-                        cx,
-                    )
-                })?
-                .await;
-
-            // If we're not quitting, but closing, we remove the workspace from
-            // the current session.
-            if close_intent != CloseIntent::Quit
-                && !save_last_workspace
-                && save_result.as_ref().is_ok_and(|&res| res)
-            {
-                this.update_in(cx, |this, window, cx| this.remove_from_session(window, cx))?
-                    .await;
-            }
-
-            save_result
+            this.update_in(cx, |this, window, cx| {
+                this.save_all_internal(SaveIntent::Close, allow_hot_exit_serialization, window, cx)
+            })?
+            .await
         })
     }
 
@@ -7701,14 +7671,6 @@ impl Workspace {
                 self.force_remove_pane(&pane, &None, window, cx);
             }
         }
-    }
-
-    fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
-        self.session_id.take();
-        let serialization = self.serialize_workspace_internal(window, cx);
-        cx.background_spawn(async move {
-            serialization.await.log_err();
-        })
     }
 
     fn force_remove_pane(
@@ -12226,26 +12188,33 @@ pub(crate) async fn prepare_window_to_close(
     cx: &mut AsyncApp,
 ) -> Result<bool> {
     let active_and_workspaces = window
-        .update(cx, |multi_workspace, window, _cx| {
+        .update(cx, |multi_workspace, window, cx| {
             if close_intent == CloseIntent::Quit {
                 window.activate_window();
+            }
+            let preserve_session = should_preserve_window_session(close_intent, window, cx);
+            if close_intent == CloseIntent::CloseWindow {
+                for workspace in multi_workspace.workspaces() {
+                    workspace.update(cx, |workspace, _| workspace.removing = true);
+                }
             }
             (
                 multi_workspace.workspace().clone(),
                 multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
+                preserve_session,
             )
         })
         .log_err();
 
-    let Some((originally_active, workspaces)) = active_and_workspaces else {
+    let Some((originally_active, workspaces, preserve_session)) = active_and_workspaces else {
         return Ok(true);
     };
 
     let mut prepared = anyhow::Ok(true);
-    for workspace in workspaces {
+    for workspace in &workspaces {
         prepared = match window.update(cx, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
-                workspace.prepare_to_close(close_intent, window, cx)
+                workspace.prepare_to_close_internal(close_intent, preserve_session, window, cx)
             })
         }) {
             Ok(task) => task.await,
@@ -12255,6 +12224,79 @@ pub(crate) async fn prepare_window_to_close(
         if !matches!(prepared, Ok(true)) {
             break;
         }
+    }
+
+    if prepared.as_ref().is_ok_and(|prepared| *prepared) && !preserve_session {
+        prepared = async {
+            flush_windows_serialization(&[window], cx).await;
+            let (database, session_id, window_id, memberships, pending_serializations) =
+                window.update(cx, |_, _, cx| {
+                    let workspace = originally_active.read(cx);
+                    let session_id = workspace
+                        .session_id
+                        .clone()
+                        .context("closing workspace is not in a session")?;
+                    let window_id = workspace
+                        .serialized_window_id
+                        .context("closing workspace has no persisted window ID")?;
+                    let mut pending_serializations = Vec::new();
+                    let memberships = workspaces
+                        .iter()
+                        .map(|workspace| {
+                            let (session_id, window_id) = workspace.update(cx, |workspace, _| {
+                                workspace._schedule_serialize_workspace.take();
+                                if let Some(serialization) =
+                                    &workspace.pending_workspace_serialization
+                                {
+                                    pending_serializations.push(serialization.clone());
+                                }
+                                (
+                                    workspace.session_id.take(),
+                                    workspace.serialized_window_id.take(),
+                                )
+                            });
+                            (workspace.clone(), session_id, window_id)
+                        })
+                        .collect::<Vec<_>>();
+                    anyhow::Ok((
+                        WorkspaceDb::global(cx),
+                        session_id,
+                        window_id,
+                        memberships,
+                        pending_serializations,
+                    ))
+                })??;
+            let cleared = async {
+                for result in futures::future::join_all(pending_serializations).await {
+                    result.map_err(|error| anyhow!(error))?;
+                }
+                database
+                    .clear_window_session(session_id, window_id.as_u64())
+                    .await
+            }
+            .await;
+            if cleared.is_err() {
+                let repairs = window.update(cx, |_, window, cx| {
+                    memberships
+                        .into_iter()
+                        .map(|(workspace, session_id, window_id)| {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.session_id = session_id;
+                                workspace.serialized_window_id = window_id;
+                                workspace._schedule_serialize_workspace.take();
+                                workspace.serialize_workspace_internal(window, cx)
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })?;
+                for result in futures::future::join_all(repairs).await {
+                    result.log_err();
+                }
+            }
+            cleared.context("removing closed window from session")?;
+            Ok(true)
+        }
+        .await;
     }
 
     // Re-activate the workspace the user actually had focused so it is the
@@ -12294,6 +12336,21 @@ fn flush_windows_serialization_on_quit(cx: &mut App) -> impl Future<Output = ()>
     async move {
         futures::future::join_all(flush_tasks).await;
     }
+}
+
+fn should_preserve_window_session(close_intent: CloseIntent, window: &Window, cx: &App) -> bool {
+    close_intent == CloseIntent::Quit
+        || (close_intent != CloseIntent::ReplaceWindow
+            && closing_last_window_quits_app(cx)
+            && !cx.windows().into_iter().any(|other_window| {
+                other_window != window.window_handle()
+                    && other_window
+                        .downcast::<MultiWorkspace>()
+                        .and_then(|window| window.read(cx).ok())
+                        .is_some_and(|multi_workspace| {
+                            !multi_workspace.workspace().read(cx).removing
+                        })
+            }))
 }
 
 fn collect_flush_tasks(

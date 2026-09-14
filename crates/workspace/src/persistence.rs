@@ -1923,6 +1923,13 @@ impl WorkspaceDb {
         }
     }
 
+    query! {
+        pub(crate) async fn clear_window_session(session_id: String, window_id: u64) -> Result<()> {
+            UPDATE workspaces SET session_id = NULL, window_id = NULL
+            WHERE session_id = ? AND window_id = ?
+        }
+    }
+
     pub(crate) fn serialized_item_ids(
         &self,
         workspace_id: WorkspaceId,
@@ -5397,6 +5404,79 @@ mod tests {
         assert!(
             !restored_ids.contains(&workspace2_db_id),
             "Pending removal task should have cleared the session binding"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_clear_window_session_targets_exact_group() {
+        let database =
+            WorkspaceDb::open_test_db("test_clear_window_session_targets_exact_group").await;
+        let window_id = 4_294_967_510;
+        let mut expected = Vec::new();
+        for (index, (session_id, saved_window_id)) in [
+            (Some("closing"), Some(window_id)),
+            (Some("closing"), Some(window_id)),
+            (Some("closing"), Some(window_id + 1)),
+            (Some("other"), Some(window_id)),
+            (None, Some(window_id)),
+            (Some("closing"), None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut workspace =
+                workspace_with(index as u64 + 1, &[], empty_pane_group(), session_id);
+            workspace.window_id = saved_window_id;
+            database
+                .try_save_workspace(workspace.clone())
+                .await
+                .expect("seed membership");
+            if index < 2 {
+                workspace.session_id = None;
+                workspace.window_id = None;
+            }
+            expected.push(workspace);
+        }
+        for _ in 0..2 {
+            database
+                .clear_window_session(String::from("closing"), window_id)
+                .await
+                .expect("clear group");
+            assert_eq!(
+                database.select::<(WorkspaceId, Option<String>, Option<u64>)>("SELECT workspace_id, session_id, window_id FROM workspaces ORDER BY workspace_id").expect("prepare memberships")().expect("read memberships"),
+                expected.iter().map(|workspace| (workspace.id, workspace.session_id.clone(), workspace.window_id)).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_clear_window_session_failure_rolls_back_group() {
+        let database =
+            WorkspaceDb::open_test_db("test_clear_window_session_failure_rolls_back_group").await;
+        let mut expected = Vec::new();
+        for id in 1..=2 {
+            let mut workspace = workspace_with(id, &[], empty_pane_group(), Some("closing"));
+            workspace.window_id = Some(4_294_967_510);
+            database
+                .try_save_workspace(workspace.clone())
+                .await
+                .expect("seed membership");
+            expected.push(workspace);
+        }
+        database.write(|connection| {
+            connection.exec("CREATE TRIGGER fail_second_membership BEFORE UPDATE OF session_id ON workspaces WHEN OLD.workspace_id = 2 AND NEW.session_id IS NULL BEGIN SELECT RAISE(ABORT, 'injected group clear failure'); END;")?()
+        }).await.expect("inject second-row failure");
+        let error = database
+            .clear_window_session(String::from("closing"), 4_294_967_510)
+            .await
+            .expect_err("clear must fail");
+        assert_eq!(
+            error.root_cause().to_string(),
+            "Sqlite call failed with code 1811 and message: Some(\"injected group clear failure\")"
+        );
+        assert_eq!(
+            database.select::<(WorkspaceId, Option<String>, Option<u64>)>("SELECT workspace_id, session_id, window_id FROM workspaces ORDER BY workspace_id").expect("prepare memberships")().expect("read memberships"),
+            expected.into_iter().map(|workspace| (workspace.id, workspace.session_id, workspace.window_id)).collect::<Vec<_>>()
         );
     }
 

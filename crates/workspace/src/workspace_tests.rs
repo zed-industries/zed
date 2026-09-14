@@ -19,7 +19,7 @@ use futures::{
 };
 use gpui::{
     App, AppContext, AsyncApp, Axis, Entity, EntityId, Global, Task, TestAppContext,
-    VisualTestContext,
+    VisualTestContext, WindowHandle, WindowId,
 };
 use project::{
     Project,
@@ -31,6 +31,7 @@ use remote::{
     RemotePlatform,
 };
 use serde_json::json;
+use settings::{OnLastWindowClosed, SettingsStore};
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
@@ -1206,6 +1207,186 @@ async fn test_remote_pending_opens_claim_distinct_server_identities(cx: &mut Tes
     assert_eq!(database.workspace_for_id(saved.id), Some(saved));
 }
 
+#[gpui::test]
+async fn test_window_close_cancellation_preserves_all_bindings(cx: &mut TestAppContext) {
+    let (fixture, cx) = close_fixture(true, true, cx).await;
+    let window = fixture.window;
+    let closing = cx.cx.spawn(async move |mut cx| {
+        crate::prepare_window_to_close(window, CloseIntent::CloseWindow, &mut cx).await
+    });
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt());
+    assert_eq!(session_bindings(&fixture.database), fixture.bindings);
+    cx.simulate_prompt_answer("Don't Save");
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt());
+    fixture
+        .window
+        .read_with(cx, |multi_workspace, _| {
+            assert_eq!(
+                multi_workspace.workspace(),
+                fixture.workspaces.last().expect("second workspace")
+            );
+        })
+        .expect("window while second prompt is pending");
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    assert_eq!(session_bindings(&fixture.database), fixture.bindings);
+    cx.simulate_prompt_answer("Cancel");
+    assert!(!closing.await.expect("cancelled close"));
+    cx.run_until_parked();
+    assert_eq!(session_bindings(&fixture.database), fixture.bindings);
+    assert_live_bindings(&fixture, cx);
+}
+
+#[gpui::test]
+async fn test_window_close_clears_exact_group_after_pending_graph(cx: &mut TestAppContext) {
+    let (fixture, cx) = close_fixture(true, true, cx).await;
+    let window = fixture.window;
+    let closing = cx.cx.spawn(async move |mut cx| {
+        crate::prepare_window_to_close(window, CloseIntent::CloseWindow, &mut cx).await
+    });
+    cx.run_until_parked();
+    cx.simulate_prompt_answer("Don't Save");
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt());
+    let workspace = fixture.workspaces.first().expect("first workspace");
+    let (workspace_id, session_id, window_id) = workspace.read_with(cx, |workspace, _| {
+        (
+            workspace.database_id().expect("workspace ID"),
+            workspace.session_id.clone(),
+            workspace.serialized_window_id,
+        )
+    });
+    let mut pending_graph = fixture
+        .database
+        .workspace_for_id(workspace_id)
+        .expect("saved graph");
+    pending_graph.session_id = session_id;
+    pending_graph.window_id = window_id.map(|id| id.as_u64());
+    let (release, receiver) = oneshot::channel();
+    let database = fixture.database.clone();
+    let pending = cx
+        .executor()
+        .spawn(async move {
+            receiver.await.map_err(|error| Arc::new(anyhow!(error)))?;
+            database
+                .try_save_workspace(pending_graph)
+                .await
+                .map_err(Arc::new)
+        })
+        .shared();
+    workspace.update(cx, |workspace, _| {
+        workspace.pending_workspace_serialization = Some(pending)
+    });
+    cx.simulate_prompt_answer("Don't Save");
+    cx.run_until_parked();
+    assert!(!closing.is_ready());
+    assert_eq!(session_bindings(&fixture.database), fixture.bindings);
+    release.send(()).expect("release old graph write");
+    assert!(closing.await.expect("accepted close"));
+    let mut expected = fixture.bindings.clone();
+    for (_, session_id, window_id) in expected.iter_mut().take(3) {
+        *session_id = None;
+        *window_id = None;
+    }
+    assert_eq!(session_bindings(&fixture.database), expected);
+    for workspace in &fixture.workspaces {
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(workspace.session_id, None);
+            assert_eq!(workspace.serialized_window_id, None);
+            workspace.serialize_workspace(window, cx);
+        });
+    }
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    assert_eq!(session_bindings(&fixture.database), expected);
+}
+
+#[gpui::test]
+async fn test_window_close_database_failure_restores_membership(cx: &mut TestAppContext) {
+    let (fixture, cx) = close_fixture(true, false, cx).await;
+    fixture
+        .database
+        .write(|connection| {
+            connection.exec(
+                "CREATE TRIGGER fail_window_session_clear
+            BEFORE UPDATE OF session_id ON workspaces
+            WHEN OLD.session_id IS NOT NULL AND NEW.session_id IS NULL
+            BEGIN SELECT RAISE(ABORT, 'injected session clear failure'); END;",
+            )?()
+        })
+        .await
+        .expect("install session clear failure");
+    let window = fixture.window;
+    let closing = cx.cx.spawn(async move |mut cx| {
+        crate::prepare_window_to_close(window, CloseIntent::CloseWindow, &mut cx).await
+    });
+    let error = closing.await.expect_err("session clear must fail");
+    assert_eq!(
+        error.root_cause().to_string(),
+        "Sqlite call failed with code 1811 and message: Some(\"injected session clear failure\")"
+    );
+    cx.run_until_parked();
+    assert!(fixture.window.read_with(cx, |_, _| ()).is_ok());
+    assert_eq!(session_bindings(&fixture.database), fixture.bindings);
+    assert_live_bindings(&fixture, cx);
+}
+
+#[gpui::test]
+async fn test_window_close_quit_preserves_group(cx: &mut TestAppContext) {
+    assert_window_close_preserves_group(CloseIntent::Quit, true, cx).await;
+}
+
+#[gpui::test]
+async fn test_window_close_last_window_quits_preserves_group(cx: &mut TestAppContext) {
+    assert_window_close_preserves_group(CloseIntent::CloseWindow, false, cx).await;
+}
+
+#[gpui::test]
+async fn test_window_close_preserves_hot_exit_when_another_window_opens(cx: &mut TestAppContext) {
+    let (fixture, cx) = close_fixture(false, false, cx).await;
+    let workspace = fixture.workspaces.first().expect("first workspace");
+    let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
+    let (release, receiver) = oneshot::channel();
+    let payload = cx
+        .executor()
+        .spawn(async move { receiver.await.map_err(|error| Arc::new(anyhow!(error))) })
+        .shared();
+    let executor = cx.executor();
+    let item = cx.new(|cx| {
+        TestItem::new(cx).with_dirty(true).with_serialize(move || {
+            let payload = payload.clone();
+            Some(executor.spawn(async move { payload.await.map_err(|error| anyhow!(error)) }))
+        })
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+    });
+    let window = fixture.window;
+    let closing = cx.cx.spawn(async move |mut cx| {
+        crate::prepare_window_to_close(window, CloseIntent::CloseWindow, &mut cx).await
+    });
+    cx.run_until_parked();
+    assert!(!closing.is_ready());
+    assert!(!cx.has_pending_prompt());
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    cx.cx.add_window(|window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+        MultiWorkspace::new(workspace, window, cx)
+    });
+    release.send(()).expect("release hot-exit payload");
+    assert!(closing.await.expect("accepted close"));
+    assert!(!cx.has_pending_prompt());
+    assert_eq!(session_bindings(&fixture.database), fixture.bindings);
+    for workspace in &fixture.workspaces {
+        workspace.read_with(cx, |workspace, _| {
+            assert!(workspace.session_id.is_some());
+            assert!(workspace.serialized_window_id.is_some());
+        });
+    }
+}
+
 struct PendingRemoteConnection {
     options: RemoteConnectionOptions,
     identifiers: Mutex<Vec<String>>,
@@ -1466,8 +1647,16 @@ async fn assert_hot_exit_graph_failure_prompts(close_intent: CloseIntent, cx: &m
         if answer == "Cancel" {
             assert!(!decision.expect("cancel close"));
             assert!(!workspace.read_with(cx, |workspace, _| workspace.removing));
+        } else if close_intent == CloseIntent::CloseWindow {
+            assert_eq!(
+                decision
+                    .expect_err("failed session publication keeps window open")
+                    .to_string(),
+                "removing closed window from session",
+            );
+            assert!(!workspace.read_with(cx, |workspace, _| workspace.removing));
         } else {
-            assert!(decision.expect("accept close after explicit save or discard"));
+            assert!(decision.expect("accept quit after explicit save or discard"));
         }
         assert!(window.read_with(cx, |_, _| ()).is_ok());
     }
@@ -2017,4 +2206,163 @@ fn assert_restored_graph(
         restored.recent_navigation_history,
         saved.recent_navigation_history
     );
+}
+
+struct CloseFixture {
+    window: WindowHandle<MultiWorkspace>,
+    workspaces: Vec<Entity<Workspace>>,
+    database: WorkspaceDb,
+    bindings: Vec<(WorkspaceId, Option<String>, Option<u64>)>,
+}
+
+async fn close_fixture(
+    other_window: bool,
+    dirty: bool,
+    cx: &mut TestAppContext,
+) -> (CloseFixture, &mut VisualTestContext) {
+    init_test(cx);
+    cx.update(register_serializable_item::<TestItem>);
+    cx.update_global::<SettingsStore, ()>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.workspace.on_last_window_closed = Some(OnLastWindowClosed::QuitApp);
+        });
+    });
+    let fs = FakeFs::new(cx.executor());
+    if other_window {
+        let project = Project::test(fs.clone(), [], cx).await;
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    }
+    let first_project = Project::test(fs.clone(), [], cx).await;
+    let second_project = Project::test(fs, [], cx).await;
+    let database = cx.read(WorkspaceDb::global);
+    let first_id = database.next_id().await.expect("first workspace ID");
+    let second_id = database.next_id().await.expect("second workspace ID");
+    let saved_window_id = WindowId::from(4_294_967_510);
+    let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+        let workspace = cx.new(|cx| {
+            let mut workspace = Workspace::test_new(first_project, window, cx);
+            workspace.set_database_id(first_id);
+            workspace.serialized_window_id = Some(saved_window_id);
+            workspace
+        });
+        MultiWorkspace::new(workspace, window, cx)
+    });
+    let first =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    let session_id = first.read_with(cx, |workspace, _| {
+        workspace.session_id.clone().expect("session ID")
+    });
+    let second = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.open_sidebar(cx);
+        let workspace = cx.new(|cx| Workspace::test_new(second_project, window, cx));
+        workspace.update(cx, |workspace, _| {
+            workspace.set_database_id(second_id);
+            workspace.session_id = Some(session_id.clone());
+        });
+        multi_workspace.add(workspace.clone(), window, cx);
+        workspace
+    });
+    let workspaces = vec![first, second];
+    for workspace in &workspaces {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+    }
+    cx.run_until_parked();
+    let template = database
+        .workspace_for_id(first_id)
+        .expect("saved workspace");
+    for (session_id, window_id) in [
+        (session_id.clone(), saved_window_id.as_u64()),
+        (session_id.clone(), saved_window_id.as_u64() + 1),
+        (String::from("other-session"), saved_window_id.as_u64()),
+    ] {
+        let mut saved = template.clone();
+        saved.id = database
+            .next_id()
+            .await
+            .expect("uninstantiated workspace ID");
+        saved.session_id = Some(session_id);
+        saved.window_id = Some(window_id);
+        database
+            .try_save_workspace(saved)
+            .await
+            .expect("seed uninstantiated workspace");
+    }
+    for workspace in &workspaces {
+        let item = cx.new(|cx| TestItem::new(cx).with_dirty(dirty));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+        });
+    }
+    cx.run_until_parked();
+    let window = cx.update(|window, _| {
+        window
+            .window_handle()
+            .downcast::<MultiWorkspace>()
+            .expect("multi-workspace window")
+    });
+    let bindings = session_bindings(&database);
+    assert_eq!(bindings.len(), 5);
+    (
+        CloseFixture {
+            window,
+            workspaces,
+            database,
+            bindings,
+        },
+        cx,
+    )
+}
+
+async fn assert_window_close_preserves_group(
+    close_intent: CloseIntent,
+    other_window: bool,
+    cx: &mut TestAppContext,
+) {
+    let (fixture, cx) = close_fixture(other_window, false, cx).await;
+    let window = fixture.window;
+    let closing = cx.cx.spawn(async move |mut cx| {
+        crate::prepare_window_to_close(window, close_intent, &mut cx).await
+    });
+    assert!(closing.await.expect("accepted close"));
+    for workspace in &fixture.workspaces {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+            .await;
+    }
+    assert_eq!(session_bindings(&fixture.database), fixture.bindings);
+    for workspace in &fixture.workspaces {
+        workspace.read_with(cx, |workspace, _| {
+            assert!(workspace.session_id.is_some());
+            assert!(workspace.serialized_window_id.is_some());
+        });
+    }
+}
+
+fn assert_live_bindings(fixture: &CloseFixture, cx: &VisualTestContext) {
+    for (workspace, (_, session_id, window_id)) in fixture.workspaces.iter().zip(&fixture.bindings)
+    {
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(&workspace.session_id, session_id);
+            assert_eq!(
+                workspace.serialized_window_id.map(|id| id.as_u64()),
+                *window_id
+            );
+            assert!(!workspace.removing);
+        });
+    }
+}
+
+fn session_bindings(database: &WorkspaceDb) -> Vec<(WorkspaceId, Option<String>, Option<u64>)> {
+    database
+        .select::<(WorkspaceId, Option<String>, Option<u64>)>(
+            "SELECT workspace_id, session_id, window_id FROM workspaces ORDER BY workspace_id",
+        )
+        .expect("prepare session bindings query")()
+    .expect("read session bindings")
 }
