@@ -9849,36 +9849,6 @@ outline: struct OutlineEntryExcerpt
         .await;
     }
 
-    async fn deploy_non_empty_buffer_search(
-        workspace: &Entity<Workspace>,
-        editor: &Entity<Editor>,
-        query: &str,
-        cx: &mut VisualTestContext,
-    ) -> (Entity<BufferSearchBar>, usize) {
-        let search_bar = workspace.update_in(cx, |_, window, cx| {
-            cx.new(|cx| {
-                let mut search_bar = BufferSearchBar::new(None, window, cx);
-                search_bar.set_active_pane_item(Some(editor), window, cx);
-                search_bar.show(window, cx);
-                search_bar
-            })
-        });
-        search_bar
-            .update_in(cx, |search_bar, window, cx| {
-                search_bar.search(query, None, true, window, cx)
-            })
-            .await
-            .expect("search should complete");
-        let match_count = editor.update_in(cx, |editor, window, cx| {
-            editor.get_matches(window, cx).0.len()
-        });
-        assert!(
-            match_count > 0,
-            "buffer search for {query:?} matched nothing, so its assertions would be vacuous"
-        );
-        (search_bar, match_count)
-    }
-
     fn update_outline_panel_settings(
         cx: &mut VisualTestContext,
         update: impl FnOnce(&mut settings::OutlinePanelSettingsContent),
@@ -11107,13 +11077,27 @@ outline: fn main"
         let buffer = open_buffer(&project, "/test/foo.txt", cx).await;
         let editor = add_multi_buffer_editor(&workspace, &project, &[(&buffer, Vec::new())], cx);
 
+        let search_bar = workspace.update_in(cx, |_, window, cx| {
+            cx.new(|cx| {
+                let mut search_bar = BufferSearchBar::new(None, window, cx);
+                search_bar.set_active_pane_item(Some(&editor), window, cx);
+                search_bar.show(window, cx);
+                search_bar
+            })
+        });
+
         let outline_panel = outline_panel(&workspace, cx);
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
-        let (search_bar, _) = deploy_non_empty_buffer_search(&workspace, &editor, "  ", cx).await;
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("  ", None, true, window, cx)
+            })
+            .await
+            .unwrap();
 
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
@@ -11258,9 +11242,28 @@ outline: fn main"
             .unwrap();
         wait_for_outline_tasks(&outline_panel, cx).await;
 
-        deploy_non_empty_buffer_search(&workspace, &editor, "needle", cx).await;
+        let search_bar = workspace.update_in(cx, |_, window, cx| {
+            cx.new(|cx| {
+                let mut search_bar = BufferSearchBar::new(None, window, cx);
+                search_bar.set_active_pane_item(Some(&editor), window, cx);
+                search_bar.show(window, cx);
+                search_bar
+            })
+        });
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("needle", None, true, window, cx)
+            })
+            .await
+            .unwrap();
         wait_for_outline_tasks(&outline_panel, cx).await;
 
+        let match_count =
+            editor.update_in(cx, |editor, window, cx| editor.get_matches(window, cx).0.len());
+        assert!(
+            match_count > 0,
+            "the buffer search matched nothing, so the assertion below would be vacuous"
+        );
         assert_tree(
             &outline_panel,
             &project,
