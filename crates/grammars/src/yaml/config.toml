@@ -12,6 +12,7 @@ brackets = [
 ]
 
 auto_indent_on_paste = false
+auto_indent_on_move = false
 auto_indent_using_last_non_empty_line = false
 # 1st block to match basic elements followed by ':' like 'test: ' for example
 # 2nd block to match for first element in an array if it's an object
