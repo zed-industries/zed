@@ -179,6 +179,7 @@ impl Gitlab {
         let mut url = self.base_url.join("api/v4/projects")?;
         url.query_pairs_mut()
             .append_pair("search", query)
+            .extend_pairs(query.contains('/').then_some(("search_namespaces", "true")))
             .append_pair("simple", "true")
             .append_pair("order_by", "last_activity_at")
             .append_pair("sort", "desc")
@@ -386,6 +387,7 @@ mod tests {
     use git::repository::repo_path;
     use http_client::{AsyncBody, FakeHttpClient, Response};
     use pretty_assertions::assert_eq;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
 
@@ -440,6 +442,70 @@ mod tests {
                 clone_url: "https://gitlab.com/zed-industries/zed.git".into(),
             }]
         );
+    }
+
+    #[test]
+    fn test_search_repositories_includes_namespaces_for_namespaced_queries() {
+        let http_client = FakeHttpClient::create(|request| async move {
+            assert_eq!(
+                request.uri().to_string(),
+                "https://gitlab.com/api/v4/projects?search=zed-industries%2Fzed&search_namespaces=true&simple=true&order_by=last_activity_at&sort=desc&per_page=8"
+            );
+            Ok(Response::builder()
+                .status(200)
+                .body(AsyncBody::from("[]"))
+                .expect("valid response"))
+        });
+
+        futures::executor::block_on(
+            Gitlab::public_instance().search_repositories("zed-industries/zed", http_client),
+        )
+        .expect("repository search should succeed");
+    }
+
+    #[test]
+    fn test_search_repositories_reports_http_errors() {
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(Response::builder()
+                .status(403)
+                .body(AsyncBody::default())
+                .expect("valid response"))
+        });
+
+        let error = futures::executor::block_on(
+            Gitlab::public_instance().search_repositories("zed", http_client),
+        )
+        .expect_err("repository search should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "GitLab repository search returned HTTP 403 Forbidden"
+        );
+    }
+
+    #[test]
+    fn test_self_hosted_search_does_not_make_network_requests() {
+        let request_sent = Arc::new(AtomicBool::new(false));
+        let http_client = FakeHttpClient::create({
+            let request_sent = request_sent.clone();
+            move |_| {
+                let request_sent = request_sent.clone();
+                async move {
+                    request_sent.store(true, Ordering::SeqCst);
+                    anyhow::bail!("unexpected repository search request")
+                }
+            }
+        });
+        let gitlab = Gitlab::new(
+            "GitLab Self-Hosted",
+            Url::parse("https://gitlab.example.com").expect("valid GitLab URL"),
+        );
+
+        let results = futures::executor::block_on(gitlab.search_repositories("zed", http_client))
+            .expect("unsupported repository search should be empty");
+
+        assert!(results.is_empty());
+        assert!(!request_sent.load(Ordering::SeqCst));
     }
 
     #[test]

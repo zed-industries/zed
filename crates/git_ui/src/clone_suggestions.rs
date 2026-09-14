@@ -35,17 +35,6 @@ pub(crate) fn append_unique(
     }
 }
 
-impl From<git::RepositorySearchResult> for CloneSuggestion {
-    fn from(result: git::RepositorySearchResult) -> Self {
-        Self {
-            title: result.name,
-            detail: result.detail,
-            repo_url: result.clone_url,
-            provider: None,
-        }
-    }
-}
-
 impl CloneSuggestion {
     pub(crate) fn from_search_result(
         result: git::RepositorySearchResult,
@@ -140,11 +129,12 @@ mod tests {
             detail: "public".into(),
             clone_url: "https://github.com/zed-industries/zed.git".into(),
         };
-        let suggestion = CloneSuggestion::from(result);
+        let suggestion = CloneSuggestion::from_search_result(result, "GitHub");
         let mut suggestions = vec![suggestion.clone()];
         append_unique(&mut suggestions, [suggestion]);
 
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].title, "zed-industries/zed");
+        assert_eq!(suggestions[0].provider.as_deref(), Some("GitHub"));
     }
 }
