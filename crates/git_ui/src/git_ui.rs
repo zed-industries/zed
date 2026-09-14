@@ -20,12 +20,13 @@ use gpui::{
 use http_client::HttpClient;
 use menu::{Cancel, Confirm};
 use picker::{Picker, PickerDelegate};
-use project::git_store::Repository;
+use project::{Fs, git_store::Repository, project_settings::ProjectSettings};
 use project_diff::ProjectDiff;
+use settings::{Settings as _, update_settings_file};
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, ContextMenu, ElevationIndex, Indicator, ListItem, ListItemSpacing, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    ButtonLike, CommonAnimationExt, ContextMenu, ElevationIndex, Indicator, ListItem,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::{
@@ -338,9 +339,10 @@ pub fn init(cx: &mut App) {
                 return;
             };
             let http_client = workspace.client().http_client();
+            let fs = workspace.app_state().fs.clone();
 
             workspace.toggle_modal(window, cx, |window, cx| {
-                GitCloneModal::show(panel, http_client, window, cx)
+                GitCloneModal::show(panel, http_client, fs, window, cx)
             });
         });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
@@ -1292,6 +1294,7 @@ impl GitCloneModal {
     fn show(
         panel: Entity<GitPanel>,
         http_client: Arc<dyn HttpClient>,
+        fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1304,8 +1307,14 @@ impl GitCloneModal {
             modal: cx.entity().downgrade(),
             panel,
             http_client,
+            fs,
             providers,
-            enabled_provider_urls: HashSet::default(),
+            enabled_provider_urls: ProjectSettings::get_global(cx)
+                .git
+                .repository_search_providers
+                .iter()
+                .cloned()
+                .collect(),
             provider_menu_handle: PopoverMenuHandle::default(),
             suggestions: Vec::new(),
             cached_searches: HashMap::default(),
@@ -1350,6 +1359,7 @@ struct GitCloneDelegate {
     modal: WeakEntity<GitCloneModal>,
     panel: Entity<GitPanel>,
     http_client: Arc<dyn HttpClient>,
+    fs: Arc<dyn Fs>,
     providers: Vec<Arc<dyn GitHostingProvider + Send + Sync + 'static>>,
     enabled_provider_urls: HashSet<String>,
     provider_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1458,6 +1468,24 @@ impl PickerDelegate for GitCloneDelegate {
                                                         .enabled_provider_urls
                                                         .insert(provider_url.clone());
                                                 }
+                                                let mut enabled_provider_urls = picker
+                                                    .delegate
+                                                    .enabled_provider_urls
+                                                    .iter()
+                                                    .cloned()
+                                                    .collect::<Vec<_>>();
+                                                enabled_provider_urls.sort_unstable();
+                                                update_settings_file(
+                                                    picker.delegate.fs.clone(),
+                                                    cx,
+                                                    move |settings, _| {
+                                                        settings
+                                                            .git
+                                                            .get_or_insert_default()
+                                                            .repository_search_providers =
+                                                            Some(enabled_provider_urls);
+                                                    },
+                                                );
                                                 let query = picker.query(cx);
                                                 picker.update_matches(query, window, cx);
                                             })
@@ -1595,8 +1623,15 @@ impl PickerDelegate for GitCloneDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let status = if self.is_searching {
-            LoadingLabel::new("Searching repositories")
-                .size(LabelSize::Small)
+            h_flex()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::LoadCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted)
+                        .with_rotate_animation(2),
+                )
+                .child(Label::new("Searching repositories").size(LabelSize::Small))
                 .into_any_element()
         } else if !self.search_errors.is_empty() {
             Label::new(
@@ -1708,7 +1743,7 @@ mod view_commit_tests {
     use project::project_settings::ProjectSettings;
     use project::{FakeFs, Project, WorktreeSettings};
     use serde_json::json;
-    use settings::{Settings as _, SettingsStore};
+    use settings::SettingsStore;
     use std::path::Path;
     use std::sync::Arc;
     use theme::LoadThemes;
