@@ -2,13 +2,22 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use anyhow::Context as _;
-use dev_container::{DevContainerConfig, DevContainerContext, find_devcontainer_configs};
-use gpui::{AsyncApp, AsyncWindowContext, Context, WeakEntity, Window, WindowHandle};
-use remote::{DockerConnectionOptions, RemoteConnectionOptions};
+use askpass::EncryptedPassword;
+use dev_container::{
+    DevContainerConfig, DevContainerContext, DevContainerHost, find_devcontainer_configs,
+};
+use gpui::{
+    AnyWindowHandle, AsyncApp, AsyncWindowContext, Context, Entity, WeakEntity, Window,
+    WindowHandle,
+};
+use remote::{DockerConnectionOptions, DockerHost, RemoteConnectionOptions};
 use workspace::{AppState, MultiWorkspace, OpenOptions, Workspace};
 
 use crate::dev_container_suggest;
-use crate::remote_connections::{Connection, RemoteConnectionModal, open_remote_project};
+use crate::remote_connections::{
+    Connection, RemoteClientDelegate, RemoteConnectionModal, RemoteConnectionPrompt,
+    open_remote_project,
+};
 
 /// Surfaces a lifecycle failure to the user. All of the operations here report
 /// errors the same way: a critical modal titled with the operation that
@@ -22,6 +31,125 @@ async fn prompt_error(cx: &mut AsyncWindowContext, title: &str, detail: impl std
     )
     .await
     .ok();
+}
+
+/// The machine whose container engine owns `options`' container, as the host
+/// type the `dev_container` lifecycle commands take.
+///
+/// A dev container's engine is not necessarily this machine's: when the
+/// container was built on an SSH or WSL host, every lifecycle command has to
+/// be routed over a connection to that host, or it reaches this machine's
+/// daemon and either finds no such container or, worse, an unrelated one.
+///
+/// The connection comes from the shared pool, so the one the container itself
+/// is using is reused. Resolve it *before* tearing the container's connection
+/// down, while that connection is still holding the host's open.
+///
+/// `window` and `workspace` are where a host that needs credentials asks for
+/// them: connecting may require a password or a passphrase, and a lifecycle
+/// command is an explicit user action, so it is allowed to prompt.
+async fn lifecycle_host(
+    options: &DockerConnectionOptions,
+    window: Option<AnyWindowHandle>,
+    workspace: Option<&WeakEntity<Workspace>>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<DevContainerHost> {
+    if matches!(options.host, DockerHost::Local) {
+        return Ok(DevContainerHost::Local);
+    }
+
+    let delegate = host_delegate(options, window, workspace, cx);
+    // The modal `host_delegate` may have just opened would otherwise sit blank
+    // until the transport reports its own first status.
+    delegate.set_status(Some("Connecting to dev container host\u{2026}"), cx);
+
+    let connection = remote::connect_docker_host(&options.host, delegate, cx)
+        .await
+        .with_context(|| format!("connecting to the host of dev container {}", options.name))?;
+
+    Ok(match connection {
+        Some(connection) => DevContainerHost::Remote(connection),
+        None => DevContainerHost::Local,
+    })
+}
+
+/// The delegate the host connection authenticates through.
+///
+/// Prompts in the connection modal when there is a window to show it in, so a
+/// password- or passphrase-protected host can be reached. Falls back to the
+/// non-interactive delegate when there is no UI to prompt over (the host then
+/// has to authenticate unattended, or be in the pool already).
+fn host_delegate(
+    options: &DockerConnectionOptions,
+    window: Option<AnyWindowHandle>,
+    workspace: Option<&WeakEntity<Workspace>>,
+    cx: &mut AsyncApp,
+) -> Arc<dyn remote::RemoteClientDelegate> {
+    let prompt = window
+        .zip(workspace)
+        .and_then(|(window, workspace)| lifecycle_prompt(window, workspace, options, cx));
+
+    let Some((window, prompt)) = window.zip(prompt) else {
+        return remote_connection::background_delegate();
+    };
+
+    Arc::new(RemoteClientDelegate::new(
+        window,
+        prompt.downgrade(),
+        saved_password(&options.host),
+    ))
+}
+
+/// The password already stored on the host's own connection, which is the one
+/// the user would otherwise be asked to retype when a lifecycle command
+/// reaches that host.
+fn saved_password(host: &DockerHost) -> Option<EncryptedPassword> {
+    let DockerHost::Ssh(ssh) = host else {
+        return None;
+    };
+    EncryptedPassword::try_from(ssh.password.as_deref()?).ok()
+}
+
+/// The connection modal's prompt for `workspace`, opening the modal if it is
+/// not already up. Returns `None` if the workspace or window has gone away.
+///
+/// The modal is the same type and entity [`open_remote_project`] uses for the
+/// connect phase, so it is handed over rather than replaced: a password prompt
+/// raised while resolving the host appears in the window the user is already
+/// looking at, and the spinner carries on into connecting.
+fn lifecycle_prompt(
+    window: AnyWindowHandle,
+    workspace: &WeakEntity<Workspace>,
+    options: &DockerConnectionOptions,
+    cx: &mut AsyncApp,
+) -> Option<Entity<RemoteConnectionPrompt>> {
+    let connection_options = RemoteConnectionOptions::Docker(options.clone());
+    let workspace = workspace.clone();
+    window
+        .update(cx, move |_, window, cx| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    if workspace
+                        .active_modal::<RemoteConnectionModal>(cx)
+                        .is_none()
+                    {
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
+                        });
+                    }
+                    Some(
+                        workspace
+                            .active_modal::<RemoteConnectionModal>(cx)?
+                            .read(cx)
+                            .prompt
+                            .clone(),
+                    )
+                })
+                .ok()
+                .flatten()
+        })
+        .ok()
+        .flatten()
 }
 
 /// Cleanly tears down the remote connection currently backing `workspace`,
@@ -80,22 +208,42 @@ pub(crate) fn stop_dev_container(
     let workspace_handle = cx.entity().downgrade();
 
     cx.spawn_in(window, async move |_, cx| {
-        let origin =
-            match dev_container::dev_container_origin(&options.container_id, options.use_podman)
-                .await
-            {
-                Ok(origin) => origin,
-                Err(e) => {
-                    log::error!("Failed to determine dev container's local folder: {e}");
-                    prompt_error(cx, "Failed to stop Dev Container", &e).await;
-                    return;
-                }
-            };
+        let host = match lifecycle_host(
+            &options,
+            Some(cx.window_handle()),
+            Some(&workspace_handle),
+            cx,
+        )
+        .await
+        {
+            Ok(host) => host,
+            Err(e) => {
+                log::error!("Failed to reach the dev container's host: {e:#}");
+                dismiss_lifecycle_status(&workspace_handle, cx);
+                prompt_error(cx, "Failed to stop Dev Container", format!("{e:#}")).await;
+                return;
+            }
+        };
+
+        let origin = match dev_container::dev_container_origin(
+            &options.container_id,
+            host.clone(),
+            options.use_podman,
+        )
+        .await
+        {
+            Ok(origin) => origin,
+            Err(e) => {
+                log::error!("Failed to determine dev container's local folder: {e}");
+                prompt_error(cx, "Failed to stop Dev Container", &e).await;
+                return;
+            }
+        };
 
         shutdown_remote_connection(&workspace_handle, cx).await;
 
         if let Err(e) =
-            dev_container::stop_dev_container(&options.container_id, options.use_podman).await
+            dev_container::stop_dev_container(&options.container_id, host, options.use_podman).await
         {
             log::error!("Failed to stop dev container: {e}");
             prompt_error(cx, "Failed to stop Dev Container", &e).await;
@@ -162,7 +310,14 @@ pub(crate) fn delete_dev_container(
 
     cx.spawn_in(window, async move |_, cx| {
         let reopen = replace_window.map(|window| (window, app_state));
-        delete_dev_container_with_options(options, vec![workspace_handle], reopen, cx).await;
+        delete_dev_container_with_options(
+            options,
+            workspace_handle.clone(),
+            vec![workspace_handle],
+            reopen,
+            cx,
+        )
+        .await;
     })
     .detach();
 }
@@ -172,6 +327,9 @@ pub(crate) fn delete_dev_container(
 /// thread sidebar's project-group menu (which may target a *stopped* container
 /// that has no live workspace).
 ///
+/// - `ui_workspace`: the workspace whose window carries the progress and
+///   credential prompts. A stopped container has no workspace of its own, so
+///   this is the active one rather than one of `connected_workspaces`.
 /// - `connected_workspaces`: any live workspaces currently backed by this
 ///   container; each has its remote connection cleanly shut down before the
 ///   container is destroyed. Empty for a stopped container.
@@ -181,6 +339,7 @@ pub(crate) fn delete_dev_container(
 ///   to hijack the user's current window.
 pub async fn delete_dev_container_with_options(
     options: DockerConnectionOptions,
+    ui_workspace: WeakEntity<Workspace>,
     connected_workspaces: Vec<WeakEntity<Workspace>>,
     reopen: Option<(WindowHandle<MultiWorkspace>, Weak<AppState>)>,
     cx: &mut AsyncWindowContext,
@@ -204,8 +363,25 @@ pub async fn delete_dev_container_with_options(
     // Only resolve the local folder when we intend to reopen it. Read it from
     // the container's labels *before* removing it; afterwards it can no longer
     // be inspected.
+    let host =
+        match lifecycle_host(&options, Some(cx.window_handle()), Some(&ui_workspace), cx).await {
+            Ok(host) => host,
+            Err(e) => {
+                log::error!("Failed to reach the dev container's host: {e:#}");
+                dismiss_lifecycle_status(&ui_workspace, cx);
+                prompt_error(cx, "Failed to delete Dev Container", format!("{e:#}")).await;
+                return;
+            }
+        };
+
     let local_folder = if reopen.is_some() {
-        match dev_container::dev_container_origin(&options.container_id, options.use_podman).await {
+        match dev_container::dev_container_origin(
+            &options.container_id,
+            host.clone(),
+            options.use_podman,
+        )
+        .await
+        {
             Ok(origin) => Some(origin.local_folder),
             Err(e) => {
                 log::error!("Failed to determine dev container's local folder: {e}");
@@ -222,7 +398,7 @@ pub async fn delete_dev_container_with_options(
     }
 
     if let Err(e) =
-        dev_container::remove_dev_container(&options.container_id, options.use_podman).await
+        dev_container::remove_dev_container(&options.container_id, host, options.use_podman).await
     {
         log::error!("Failed to remove dev container: {e}");
         prompt_error(cx, "Failed to delete Dev Container", &e).await;
@@ -450,21 +626,42 @@ fn reconnect_connected_dev_container(
     let force_rebuild = matches!(mode, ReconnectMode::Rebuild);
 
     cx.spawn_in(window, async move |_, cx| {
-        let origin =
-            match dev_container::dev_container_origin(&options.container_id, options.use_podman)
-                .await
-            {
-                Ok(origin) => origin,
-                Err(e) => {
-                    log::error!("Failed to determine dev container's local folder: {e}");
-                    prompt_error(cx, error_title, &e).await;
-                    return;
-                }
-            };
+        let host = match lifecycle_host(
+            &options,
+            Some(cx.window_handle()),
+            Some(&workspace_handle),
+            cx,
+        )
+        .await
+        {
+            Ok(host) => host,
+            Err(e) => {
+                log::error!("Failed to reach the dev container's host: {e:#}");
+                dismiss_lifecycle_status(&workspace_handle, cx);
+                prompt_error(cx, error_title, format!("{e:#}")).await;
+                return;
+            }
+        };
+
+        let origin = match dev_container::dev_container_origin(
+            &options.container_id,
+            host.clone(),
+            options.use_podman,
+        )
+        .await
+        {
+            Ok(origin) => origin,
+            Err(e) => {
+                log::error!("Failed to determine dev container's local folder: {e}");
+                prompt_error(cx, error_title, &e).await;
+                return;
+            }
+        };
 
         let context = match workspace_handle.update(cx, |workspace, cx| {
-            DevContainerContext::for_local_directory(
+            context_on_host(
                 Arc::from(origin.local_folder.as_path()),
+                host.clone(),
                 workspace,
                 cx,
             )
@@ -495,8 +692,12 @@ fn reconnect_connected_dev_container(
         // handles teardown itself, and resume intentionally leaves a running
         // container running.
         if matches!(mode, ReconnectMode::Restart) {
-            if let Err(e) =
-                dev_container::stop_dev_container(&options.container_id, options.use_podman).await
+            if let Err(e) = dev_container::stop_dev_container(
+                &options.container_id,
+                host.clone(),
+                options.use_podman,
+            )
+            .await
             {
                 log::error!("Failed to stop dev container before restart: {e}");
                 dismiss_lifecycle_status(&workspace_handle, cx);
@@ -546,6 +747,28 @@ fn reconnect_connected_dev_container(
         }
     })
     .detach();
+}
+
+/// A build context for `project_directory` on `host`, for rebuilding a
+/// container Zed is (or was) connected to.
+///
+/// [`DevContainerContext::for_local_directory`] derives the host from the
+/// workspace's own connection, which for a dev container workspace is the
+/// container - so rebuilding from inside the container's own window would aim
+/// at the container rather than the machine whose engine owns it. The
+/// container's recorded host is the authority instead.
+fn context_on_host(
+    project_directory: Arc<Path>,
+    host: DevContainerHost,
+    workspace: &Workspace,
+    cx: &Context<Workspace>,
+) -> DevContainerContext {
+    let mut context = DevContainerContext::for_local_directory(project_directory, workspace, cx);
+    context.host = host;
+    // The workspace's remote client talks to the container, not to its host, so
+    // it cannot answer host-side requests such as reading the environment.
+    context.remote_client = None;
+    context
 }
 
 /// Shows the connection modal on `workspace` with `status`, giving feedback
@@ -604,6 +827,7 @@ fn dismiss_lifecycle_status(workspace_handle: &WeakEntity<Workspace>, cx: &mut A
 pub(crate) async fn rebuild_dev_container_connection(
     workspace: WeakEntity<Workspace>,
     options: &DockerConnectionOptions,
+    window: WindowHandle<MultiWorkspace>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<RemoteConnectionOptions> {
     let local_folder = options
@@ -617,8 +841,9 @@ pub(crate) async fn rebuild_dev_container_connection(
     let local_folder: Arc<Path> = Arc::from(PathBuf::from(&local_folder).as_path());
     let config = DevContainerConfig::from_recovered_paths(&local_folder, Path::new(&config_file));
 
+    let host = lifecycle_host(options, Some(window.into()), Some(&workspace), cx).await?;
     let context = workspace.update(cx, |workspace, cx| {
-        DevContainerContext::for_local_directory(local_folder.clone(), workspace, cx)
+        context_on_host(local_folder.clone(), host, workspace, cx)
     })?;
     let environment = context.environment(cx).await;
 
@@ -642,8 +867,14 @@ pub(crate) async fn rebuild_dev_container_connection(
 ///
 /// Like the other lifecycle side effects, this only runs on an explicit user
 /// action.
-pub(crate) async fn start_dev_container(options: &DockerConnectionOptions) -> anyhow::Result<()> {
-    dev_container::start_dev_container(&options.container_id, options.use_podman)
+pub(crate) async fn start_dev_container(
+    options: &DockerConnectionOptions,
+    window: WindowHandle<MultiWorkspace>,
+    workspace: WeakEntity<Workspace>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let host = lifecycle_host(options, Some(window.into()), Some(&workspace), cx).await?;
+    dev_container::start_dev_container(&options.container_id, host, options.use_podman)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
@@ -654,8 +885,87 @@ pub(crate) async fn start_dev_container(options: &DockerConnectionOptions) -> an
 ///
 /// This must only ever be invoked in response to an explicit user action:
 /// restarting a container is side-effecting and the user has to opt into it.
-pub(crate) async fn restart_dev_container(options: &DockerConnectionOptions) -> anyhow::Result<()> {
-    dev_container::restart_dev_container(&options.container_id, options.use_podman)
+pub(crate) async fn restart_dev_container(
+    options: &DockerConnectionOptions,
+    window: WindowHandle<MultiWorkspace>,
+    workspace: WeakEntity<Workspace>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let host = lifecycle_host(options, Some(window.into()), Some(&workspace), cx).await?;
+    dev_container::restart_dev_container(&options.container_id, host, options.use_podman)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DevContainerHost, lifecycle_host, saved_password};
+    use gpui::TestAppContext;
+    use remote::{
+        DockerConnectionOptions, DockerHost, RemoteClient, RemoteConnectionOptions,
+        SshConnectionOptions,
+    };
+
+    fn options(host: DockerHost) -> DockerConnectionOptions {
+        DockerConnectionOptions {
+            name: "zed-dev".to_string(),
+            container_id: "container-123".to_string(),
+            remote_user: "root".to_string(),
+            host,
+            ..Default::default()
+        }
+    }
+
+    /// A container built on another machine is managed over a connection to
+    /// that machine; running the lifecycle commands here would reach the wrong
+    /// daemon.
+    #[gpui::test]
+    async fn lifecycle_commands_target_the_daemons_machine(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (host_options, _server, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+        let RemoteConnectionOptions::Mock(host_options) = host_options else {
+            panic!("a fake server is a mock connection");
+        };
+        drop(connect_guard);
+
+        let local = lifecycle_host(&options(DockerHost::Local), None, None, &mut cx.to_async())
+            .await
+            .expect("a container on this machine needs no host connection");
+        assert!(matches!(local, DevContainerHost::Local));
+
+        let remote = lifecycle_host(
+            &options(DockerHost::Mock(host_options)),
+            None,
+            None,
+            &mut cx.to_async(),
+        )
+        .await
+        .expect("connecting to the container's host should succeed");
+        assert!(matches!(remote, DevContainerHost::Remote(_)));
+    }
+
+    /// A host whose password the user already gave Zed must not ask for it
+    /// again just because the connection is being made for a lifecycle command.
+    #[test]
+    fn a_hosts_saved_password_is_reused() {
+        assert!(saved_password(&DockerHost::Local).is_none());
+
+        let host = DockerHost::Ssh(SshConnectionOptions {
+            host: "example.com".into(),
+            ..Default::default()
+        });
+        assert!(
+            saved_password(&host).is_none(),
+            "a host with no saved password has nothing to reuse"
+        );
+
+        let host = DockerHost::Ssh(SshConnectionOptions {
+            host: "example.com".into(),
+            password: Some("hunter2".to_string()),
+            ..Default::default()
+        });
+        assert!(saved_password(&host).is_some());
+    }
 }

@@ -410,6 +410,21 @@ pub async fn connect(
     .map_err(|e| e.cloned())
 }
 
+/// Connects to the machine whose container engine owns a dev container, so
+/// that the container's lifecycle can be driven from its persisted options
+/// alone. `None` when the engine runs on this machine.
+///
+/// The connection comes from the same pool the container's own connection
+/// uses, so an already-open host connection is reused rather than
+/// authenticated a second time.
+pub async fn connect_docker_host(
+    host: &DockerHost,
+    delegate: Arc<dyn RemoteClientDelegate>,
+    cx: &mut AsyncApp,
+) -> Result<Option<Arc<dyn RemoteConnection>>> {
+    ConnectionPool::connect_docker_host(host, delegate, cx).await
+}
+
 /// Returns `true` if the global [`ConnectionPool`] already has a live
 /// connection for the given options. Callers can use this to decide
 /// whether to show interactive UI (e.g., a password modal) before

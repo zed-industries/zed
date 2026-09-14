@@ -10,7 +10,7 @@ pub use remote_client::OpenWslPath;
 pub use remote_client::{
     CommandTemplate, ConnectionIdentifier, ConnectionState, Interactive, RemoteArch, RemoteClient,
     RemoteClientDelegate, RemoteClientEvent, RemoteConnection, RemoteConnectionOptions, RemoteOs,
-    RemotePlatform, connect, has_active_connection,
+    RemotePlatform, connect, connect_docker_host, has_active_connection,
 };
 pub use remote_identity::{
     DockerIdentityKey, RemoteConnectionIdentity, remote_connection_identity,

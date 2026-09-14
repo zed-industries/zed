@@ -1395,10 +1395,19 @@ impl Sidebar {
             .iter()
             .map(|workspace| workspace.downgrade())
             .collect::<Vec<_>>();
+        // A stopped group has no workspace of its own, so progress and any
+        // credential prompt for the container's host belong to this window.
+        let ui_workspace = active_workspace.downgrade();
 
         cx.spawn_in(window, async move |this, cx| {
-            recent_projects::delete_dev_container_with_options(options, connected, reopen, cx)
-                .await;
+            recent_projects::delete_dev_container_with_options(
+                options,
+                ui_workspace,
+                connected,
+                reopen,
+                cx,
+            )
+            .await;
             this.update(cx, |sidebar, cx| sidebar.update_entries(cx))
                 .ok();
         })

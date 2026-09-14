@@ -400,6 +400,16 @@ async fn check_for_docker(context: &DevContainerContext) -> Result<(), DevContai
     }
 }
 
+/// The engine CLI wrapper for a container whose daemon runs on `host`.
+///
+/// Every lifecycle command has to reach the daemon that owns the container;
+/// running it against this machine's daemon would either miss the container
+/// entirely or hit an unrelated one with the same id.
+async fn engine(host: DevContainerHost, use_podman: bool) -> Docker {
+    let cli = if use_podman { "podman" } else { "docker" };
+    Docker::new(host, cli, None).await
+}
+
 /// The local (host) project directory and devcontainer config a running
 /// container was created from, recovered from the identifying
 /// `devcontainer.*` labels Zed stamps on every container it creates. This
@@ -414,16 +424,10 @@ pub struct DevContainerOrigin {
 
 pub async fn dev_container_origin(
     container_id: &str,
+    host: DevContainerHost,
     use_podman: bool,
 ) -> Result<DevContainerOrigin, DevContainerError> {
-    // ponytail: lifecycle commands always target the client's daemon. Route
-    // them through the container's `DockerHost` once a host connection can be
-    // rebuilt outside `remote_client`'s connection pool.
-    let docker = if use_podman {
-        Docker::new(DevContainerHost::Local, "podman", None).await
-    } else {
-        Docker::new(DevContainerHost::Local, "docker", None).await
-    };
+    let docker = engine(host, use_podman).await;
 
     let inspect = docker.inspect(&container_id.to_string()).await?;
     let labels = &inspect.config.labels;
@@ -452,16 +456,10 @@ pub async fn dev_container_origin(
 /// `start_dev_container_with_config`.
 pub async fn stop_dev_container(
     container_id: &str,
+    host: DevContainerHost,
     use_podman: bool,
 ) -> Result<(), DevContainerError> {
-    // ponytail: lifecycle commands always target the client's daemon. Route
-    // them through the container's `DockerHost` once a host connection can be
-    // rebuilt outside `remote_client`'s connection pool.
-    let docker = if use_podman {
-        Docker::new(DevContainerHost::Local, "podman", None).await
-    } else {
-        Docker::new(DevContainerHost::Local, "docker", None).await
-    };
+    let docker = engine(host, use_podman).await;
 
     docker.stop_container(container_id).await
 }
@@ -473,16 +471,10 @@ pub async fn stop_dev_container(
 /// one.
 pub async fn start_dev_container(
     container_id: &str,
+    host: DevContainerHost,
     use_podman: bool,
 ) -> Result<(), DevContainerError> {
-    // ponytail: lifecycle commands always target the client's daemon. Route
-    // them through the container's `DockerHost` once a host connection can be
-    // rebuilt outside `remote_client`'s connection pool.
-    let docker = if use_podman {
-        Docker::new(DevContainerHost::Local, "podman", None).await
-    } else {
-        Docker::new(DevContainerHost::Local, "docker", None).await
-    };
+    let docker = engine(host, use_podman).await;
 
     docker.start_container(container_id).await
 }
@@ -495,16 +487,10 @@ pub async fn start_dev_container(
 /// server. It is the in-place recovery counterpart to a full rebuild.
 pub async fn restart_dev_container(
     container_id: &str,
+    host: DevContainerHost,
     use_podman: bool,
 ) -> Result<(), DevContainerError> {
-    // ponytail: lifecycle commands always target the client's daemon. Route
-    // them through the container's `DockerHost` once a host connection can be
-    // rebuilt outside `remote_client`'s connection pool.
-    let docker = if use_podman {
-        Docker::new(DevContainerHost::Local, "podman", None).await
-    } else {
-        Docker::new(DevContainerHost::Local, "docker", None).await
-    };
+    let docker = engine(host, use_podman).await;
 
     docker.stop_container(container_id).await?;
     docker.start_container(container_id).await
@@ -517,16 +503,10 @@ pub async fn restart_dev_container(
 /// Container" lifecycle action to clean up without dropping to the CLI.
 pub async fn remove_dev_container(
     container_id: &str,
+    host: DevContainerHost,
     use_podman: bool,
 ) -> Result<(), DevContainerError> {
-    // ponytail: lifecycle commands always target the client's daemon. Route
-    // them through the container's `DockerHost` once a host connection can be
-    // rebuilt outside `remote_client`'s connection pool.
-    let docker = if use_podman {
-        Docker::new(DevContainerHost::Local, "podman", None).await
-    } else {
-        Docker::new(DevContainerHost::Local, "docker", None).await
-    };
+    let docker = engine(host, use_podman).await;
 
     docker.remove_container(container_id).await
 }

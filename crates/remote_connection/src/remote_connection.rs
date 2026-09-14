@@ -644,11 +644,17 @@ pub fn connect_reusing_pool(
     })
 }
 
-/// Delegate for remote connections that reuse an existing pooled
-/// connection. Password prompts are not expected (the SSH transport
-/// is already established), but server binary downloads are supported
-/// via [`AutoUpdater`].
-struct BackgroundRemoteClientDelegate;
+/// Delegate for remote connections made without interactive UI: those
+/// reusing an existing pooled connection, and the host connections dev
+/// container lifecycle commands are routed over. Password prompts are not
+/// expected (the transport is normally already established), but server
+/// binary downloads are supported via [`AutoUpdater`].
+pub struct BackgroundRemoteClientDelegate;
+
+/// A delegate for connecting without any UI to prompt over.
+pub fn background_delegate() -> Arc<dyn remote::RemoteClientDelegate> {
+    Arc::new(BackgroundRemoteClientDelegate)
+}
 
 impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
     fn ask_password(

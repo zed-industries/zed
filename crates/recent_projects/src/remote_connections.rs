@@ -271,20 +271,27 @@ async fn run_dev_container_recovery(
     show_connection_status(window, workspace, connection_options, op.status(), cx);
 
     let result = match op {
-        DevContainerRecoveryOp::Reconnect => {
-            crate::dev_container_lifecycle::start_dev_container(options)
-                .await
-                .map(|()| None)
-        }
-        DevContainerRecoveryOp::Restart => {
-            crate::dev_container_lifecycle::restart_dev_container(options)
-                .await
-                .map(|()| None)
-        }
+        DevContainerRecoveryOp::Reconnect => crate::dev_container_lifecycle::start_dev_container(
+            options,
+            window,
+            workspace.downgrade(),
+            cx,
+        )
+        .await
+        .map(|()| None),
+        DevContainerRecoveryOp::Restart => crate::dev_container_lifecycle::restart_dev_container(
+            options,
+            window,
+            workspace.downgrade(),
+            cx,
+        )
+        .await
+        .map(|()| None),
         DevContainerRecoveryOp::Rebuild => {
             crate::dev_container_lifecycle::rebuild_dev_container_connection(
                 workspace.downgrade(),
                 options,
+                window,
                 cx,
             )
             .await
