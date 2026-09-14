@@ -1103,6 +1103,10 @@ impl ProjectPanel {
     /// `contains_focused` answers from the last rendered frame's element tree. On the frame a
     /// context menu is deployed, its focus node is not part of that tree yet, so the menu has
     /// to be checked directly against the window's current focus.
+    ///
+    /// TODO: We really really should fix context menu focus to not have to deal with
+    /// this everywhere as this is not a proper fix here but a mere workaround. Yet
+    /// a fix would require some more time and thought to not break other users of this
     fn contains_focus(&self, window: &Window, cx: &App) -> bool {
         self.focus_handle.contains_focused(window, cx)
             || self
