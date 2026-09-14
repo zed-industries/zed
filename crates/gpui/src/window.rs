@@ -34,7 +34,7 @@ use collections::{FxHashMap, FxHashSet};
 use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use gpui_backend::__private::FrameSession;
+use gpui_engine_default::__private::FrameSession;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
 use itertools::FoldWhile::{Continue, Done};

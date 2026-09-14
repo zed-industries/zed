@@ -14,7 +14,7 @@ use collections::HashMap;
 use parking_lot::Mutex;
 use uuid::Uuid;
 
-use gpui_backend::{
+use gpui_engine_default::{
     AtlasKey, AtlasTextureId, AtlasTile, PlatformAtlas, Scene, SceneRenderer, TileId,
 };
 use gpui_platform::{

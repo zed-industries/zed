@@ -3,7 +3,7 @@
 //! Layout resolves fractional positions and sizes; painting them directly
 //! produces blurry edges. These helpers round in device-pixel space so painted
 //! edges land on physical pixel boundaries. They live in this leaf crate so the
-//! engine (`gpui_backend`) and the facade (`gpui`) snap identically.
+//! engine (`gpui_engine_default`) and the facade (`gpui`) snap identically.
 
 /// Rounds to the nearest integer with 0.5 ties toward zero.
 #[inline]

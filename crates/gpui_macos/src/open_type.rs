@@ -28,7 +28,7 @@ use core_text::{
     },
 };
 use font_kit::font::Font as FontKitFont;
-use gpui_backend::{FontFallbacks, FontFeatures};
+use gpui_engine_default::{FontFallbacks, FontFeatures};
 use std::ptr;
 
 pub fn apply_features_and_fallbacks(

@@ -4,7 +4,7 @@
 //! The scene representation and the engine's interface contracts live in
 //! [`gpui_engine`]; this crate holds the concrete implementations that depend on
 //! `taffy`. During the crate split it re-exports `gpui_engine`, so existing
-//! `gpui_backend::...` paths keep resolving.
+//! `gpui_engine_default::...` paths keep resolving.
 
 #![warn(missing_docs)]
 

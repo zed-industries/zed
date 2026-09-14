@@ -23,7 +23,7 @@ use cocoa::{
     },
 };
 use dispatch2::DispatchQueue;
-use gpui_backend::SceneRenderer;
+use gpui_engine_default::SceneRenderer;
 use gpui_platform::{
     BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload, ExternalPaths,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,

@@ -33,7 +33,7 @@ use font_kit::{
     source::SystemSource,
     sources::mem::MemSource,
 };
-use gpui_backend::{
+use gpui_engine_default::{
     Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
     GlyphId, LineLayout, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, ShapedGlyph,
     ShapedRun, TextRenderingMode,
@@ -282,7 +282,7 @@ impl MacTextSystemState {
         features: &FontFeatures,
         fallbacks: Option<&FontFallbacks>,
     ) -> Result<SmallVec<[FontId; 4]>> {
-        let name = gpui_backend::font_name_with_fallbacks(name, ".AppleSystemUIFont");
+        let name = gpui_engine_default::font_name_with_fallbacks(name, ".AppleSystemUIFont");
 
         let mut font_ids = SmallVec::new();
         let mut postscript_names_seen = HashSet::default();
@@ -771,7 +771,7 @@ mod lenient_font_attributes {
 mod tests {
     use crate::MacTextSystem;
     use gpui::font;
-    use gpui_backend::{FontRun, GlyphId, PlatformTextSystem};
+    use gpui_engine_default::{FontRun, GlyphId, PlatformTextSystem};
     use gpui_platform::px;
 
     #[test]

@@ -31,7 +31,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
-use gpui_backend::SceneRenderer;
+use gpui_engine_default::SceneRenderer;
 use gpui_platform::{
     Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload, GpuSpecs, Modifiers, Pixels,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,

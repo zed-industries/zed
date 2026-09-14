@@ -71,7 +71,7 @@ screen-capture = [
 ]
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram", "gpui_platform/profiler"]
-stacker = ["dep:stacksafe", "gpui_backend/stacker"]
+stacker = ["dep:stacksafe", "gpui_engine_default/stacker"]
 font-kit = ["dep:font-kit", "gpui_macos?/font-kit"]
 
 [lib]
@@ -93,7 +93,7 @@ etagere.workspace = true
 futures.workspace = true
 futures-concurrency.workspace = true
 gpui_macros.workspace = true
-gpui_backend.workspace = true
+gpui_engine_default.workspace = true
 gpui_platform.workspace = true
 gpui_shared_string.workspace = true
 gpui_types = { workspace = true, features = ["lyon"] }

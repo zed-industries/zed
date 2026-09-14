@@ -1,5 +1,5 @@
 [package]
-name = "gpui_backend"
+name = "gpui_engine_default"
 version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ license = "Apache-2.0"
 workspace = true
 
 [lib]
-path = "src/gpui_backend.rs"
+path = "src/gpui_engine_default.rs"
 doctest = false
 
 [features]

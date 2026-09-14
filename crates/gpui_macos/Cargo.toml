@@ -20,7 +20,7 @@ font-kit = ["dep:font-kit"]
 screen-capture = ["gpui_platform/screen-capture"]
 
 [dependencies]
-gpui_backend.workspace = true
+gpui_engine_default.workspace = true
 gpui_platform.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

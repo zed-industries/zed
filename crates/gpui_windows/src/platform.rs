@@ -37,7 +37,7 @@ use windows::{
 };
 
 use crate::*;
-use gpui_backend::{NoopTextSystem, PlatformTextSystem};
+use gpui_engine_default::{NoopTextSystem, PlatformTextSystem};
 use gpui_platform::*;
 
 pub struct WindowsPlatform {

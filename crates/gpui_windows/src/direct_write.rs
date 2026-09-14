@@ -24,7 +24,7 @@ use windows::{
 use windows_numerics::Vector2;
 
 use crate::*;
-use gpui_backend::{
+use gpui_engine_default::{
     Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
     GlyphId, LineLayout, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
     SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, TextRenderingMode,
@@ -474,7 +474,7 @@ impl DirectWriteState {
         let family = if family == SYSTEM_UI_FONT_NAME {
             system_ui_font_name
         } else {
-            gpui_backend::font_name_with_fallbacks_shared(&family, &system_ui_font_name)
+            gpui_engine_default::font_name_with_fallbacks_shared(&family, &system_ui_font_name)
         };
         let fontset = unsafe { collection.GetFontSet().log_err()? };
         let font_family_h = HSTRING::from(family.as_str());
@@ -1961,7 +1961,7 @@ mod tests {
     use crate::direct_write::ClusterAnalyzer;
     use crate::directx_devices::DirectXDevices;
     use anyhow::Result;
-    use gpui_backend::{Font, PlatformTextSystem, RenderGlyphParams};
+    use gpui_engine_default::{Font, PlatformTextSystem, RenderGlyphParams};
     use gpui_platform::{DevicePixels, Rgba, bounds, point, px, size};
     use std::ffi::c_void;
     use windows::Win32::Graphics::Direct3D11::{
