@@ -1222,6 +1222,17 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_indent_guides(false, cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
     commit_editor.set_placeholder_text(&placeholder, window, cx);
+    commit_editor.set_custom_context_menu(|editor, _point, window, cx| {
+        let has_selection = editor.has_non_empty_selection(&editor.display_snapshot(cx));
+        let focus_handle = editor.focus_handle(cx);
+
+        Some(ContextMenu::build(window, cx, |menu, _, _| {
+            menu.context(focus_handle)
+                .action_disabled_when(!has_selection, "Cut", Box::new(editor::actions::Cut))
+                .action_disabled_when(!has_selection, "Copy", Box::new(editor::actions::Copy))
+                .action("Paste", Box::new(editor::actions::Paste))
+        }))
+    });
     commit_editor
 }
 
@@ -13644,6 +13655,104 @@ mod tests {
             assert!(context.contains("menu"));
             assert!(!context.contains("CommitEditor"));
         })
+    }
+
+    #[gpui::test]
+    async fn test_commit_editor_context_menu_clipboard_actions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+
+        for in_panel in [true, false] {
+            let window_handle = cx.add_window(|window, cx| {
+                let buffer = cx.new(|cx| Buffer::local("commit message", cx));
+                commit_message_editor(buffer, None, project.clone(), in_panel, window, cx)
+            });
+            let editor = window_handle.root(cx).expect("commit editor should exist");
+            let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+            editor.update_in(cx, |editor, window, cx| {
+                editor.focus_handle(cx).focus(window, cx);
+                editor.select_all(&Default::default(), window, cx);
+            });
+            cx.run_until_parked();
+
+            let position = editor.read_with(cx, |editor, _| {
+                editor
+                    .last_bounds()
+                    .expect("editor should be rendered")
+                    .origin
+                    + gpui::point(px(10.), px(10.))
+            });
+            let open_menu = |cx: &mut VisualTestContext| {
+                cx.simulate_mouse_down(position, gpui::MouseButton::Right, Modifiers::none());
+                // MouseContextMenu waits two frames before focusing its deferred element.
+                for _ in 0..2 {
+                    cx.update(|window, cx| {
+                        window.simulate_next_frame(cx);
+                    });
+                }
+                editor.update_in(cx, |editor, window, cx| {
+                    assert!(editor.has_mouse_context_menu());
+                    assert!(editor.mouse_menu_is_focused(window, cx));
+                });
+            };
+            open_menu(cx);
+            editor.update_in(cx, |editor, window, cx| {
+                assert!(
+                    editor.mouse_menu_is_focused(window, cx),
+                    "menu should have focus"
+                );
+                assert!(
+                    editor.has_non_empty_selection(&editor.display_snapshot(cx)),
+                    "selection should remain"
+                );
+            });
+            cx.dispatch_action(menu::SelectFirst);
+            cx.dispatch_action(menu::SelectNext);
+            cx.dispatch_action(menu::Confirm);
+            assert!(
+                editor.read_with(cx, |editor, _| !editor.has_mouse_context_menu()),
+                "menu should close after Copy"
+            );
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some("commit message".to_string())
+            );
+
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("replacement".to_string()));
+            open_menu(cx);
+            cx.dispatch_action(menu::SelectLast);
+            cx.dispatch_action(menu::Confirm);
+            assert_eq!(
+                editor.read_with(cx, |editor, cx| editor.text(cx)),
+                "replacement"
+            );
+
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(" suffix".to_string()));
+            open_menu(cx);
+            cx.dispatch_action(menu::SelectFirst);
+            cx.dispatch_action(menu::Confirm);
+            assert_eq!(
+                editor.read_with(cx, |editor, cx| editor.text(cx)),
+                "replacement suffix",
+                "with no selection, menu navigation should skip disabled Cut and Copy and select Paste"
+            );
+            editor.update_in(cx, |editor, window, cx| {
+                editor.select_all(&Default::default(), window, cx);
+            });
+            open_menu(cx);
+            cx.dispatch_action(menu::SelectFirst);
+            cx.dispatch_action(menu::Confirm);
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some("replacement suffix".to_string())
+            );
+            assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), "");
+            assert!(editor.read_with(cx, |editor, _| !editor.has_mouse_context_menu()));
+            editor.update_in(cx, |editor, window, _| {
+                assert!(editor.is_focused(window));
+            });
+        }
     }
 
     #[gpui::test]

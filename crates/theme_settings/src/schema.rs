@@ -541,6 +541,10 @@ pub fn theme_colors_refinement(
             .editor_foreground
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        editor_code_lens_foreground: this
+            .editor_code_lens_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         editor_background: this
             .editor_background
             .as_ref()

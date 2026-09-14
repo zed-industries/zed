@@ -765,3 +765,101 @@ impl settings::Settings for ThemeSettings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn theme_with_colors(colors: ::settings::ThemeColorsContent) -> Theme {
+        crate::refine_theme(&crate::ThemeContent {
+            name: "Test".into(),
+            appearance: ::theme::AppearanceContent::Dark,
+            style: ::settings::ThemeStyleContent {
+                colors,
+                ..Default::default()
+            },
+        })
+    }
+
+    fn style_with_colors(colors: ::settings::ThemeColorsContent) -> ::settings::ThemeStyleContent {
+        ::settings::ThemeStyleContent {
+            colors,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn code_lens_foreground_from_theme_survives_text_muted_override() {
+        let magenta = ::theme::try_parse_color("#ff00ff").unwrap();
+        let green = ::theme::try_parse_color("#00ff00").unwrap();
+        let mut test_theme = theme_with_colors(::settings::ThemeColorsContent {
+            editor_code_lens_foreground: Some("#ff00ff".into()),
+            ..Default::default()
+        });
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &style_with_colors(::settings::ThemeColorsContent {
+                text_muted: Some("#00ff00".into()),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(
+            test_theme.styles.colors.editor_code_lens_foreground,
+            Some(magenta)
+        );
+        assert_eq!(test_theme.styles.colors.text_muted, green);
+    }
+
+    #[test]
+    fn code_lens_foreground_from_earlier_override_survives_later_muted_override() {
+        let magenta = ::theme::try_parse_color("#ff00ff").unwrap();
+        let green = ::theme::try_parse_color("#00ff00").unwrap();
+        let mut test_theme = theme_with_colors(Default::default());
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &style_with_colors(::settings::ThemeColorsContent {
+                editor_code_lens_foreground: Some("#ff00ff".into()),
+                ..Default::default()
+            }),
+        );
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &style_with_colors(::settings::ThemeColorsContent {
+                text_muted: Some("#00ff00".into()),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(
+            test_theme.styles.colors.editor_code_lens_foreground,
+            Some(magenta)
+        );
+        assert_eq!(test_theme.styles.colors.text_muted, green);
+    }
+
+    #[test]
+    fn code_lens_foreground_follows_effective_text_muted_without_explicit_color() {
+        let green = ::theme::try_parse_color("#00ff00").unwrap();
+        let mut test_theme = theme_with_colors(Default::default());
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &style_with_colors(::settings::ThemeColorsContent {
+                text_muted: Some("#00ff00".into()),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(test_theme.styles.colors.editor_code_lens_foreground, None);
+        assert_eq!(
+            test_theme
+                .styles
+                .colors
+                .color(::theme::ThemeColorField::EditorCodeLensForeground),
+            green
+        );
+    }
+}
