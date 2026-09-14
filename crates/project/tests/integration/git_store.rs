@@ -1231,24 +1231,91 @@ mod git_worktrees {
         let err = worktrees_directory_for_repo(work_dir, "", PathStyle::Unix).unwrap_err();
         assert!(err.to_string().contains("must not be empty"));
 
-        // Invalid: absolute path
-        let err =
-            worktrees_directory_for_repo(work_dir, "/tmp/worktrees", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
-        // Invalid: "/" is absolute on Unix
-        let err = worktrees_directory_for_repo(work_dir, "/", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
-        // Invalid: "///" is absolute
-        let err = worktrees_directory_for_repo(work_dir, "///", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
         assert_eq!(
             worktrees_directory_for_repo(work_dir, "../../other-project/wt", PathStyle::Unix)
                 .expect("worktrees can be outside the repository's parent"),
             PathBuf::from("/other-project/wt/my-project")
         );
+    }
+
+    #[test]
+    fn test_absolute_worktree_directories() {
+        for (setting, expected) in [
+            ("/tmp/worktrees", "/tmp/worktrees/agent"),
+            ("/tmp/worktrees/../checkouts/", "/tmp/checkouts/agent"),
+            ("/", "/agent"),
+            ("///", "/agent"),
+            ("/code/agent/worktrees", "/code/agent/worktrees"),
+            (
+                "/code/agent-other/worktrees",
+                "/code/agent-other/worktrees/agent",
+            ),
+        ] {
+            assert_eq!(
+                worktrees_directory_for_repo(Path::new("/code/agent"), setting, PathStyle::Unix)
+                    .expect("absolute worktree directory should resolve"),
+                PathBuf::from(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn test_home_relative_worktree_directories() {
+        let home = paths::home_dir();
+        let repository = home.join("Code/dovocode/agent");
+        for setting in ["~/Worktrees", "~/Worktrees/", "~/other/../Worktrees"] {
+            assert_eq!(
+                worktrees_directory_for_repo(&repository, setting, PathStyle::local())
+                    .expect("home-relative worktree directory should resolve"),
+                home.join("Worktrees/agent")
+            );
+        }
+        assert_eq!(
+            worktrees_directory_for_repo(&repository, "~", PathStyle::local())
+                .expect("home directory should resolve"),
+            home.join("agent")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(
+                &repository,
+                "~/Code/dovocode/agent/worktrees",
+                PathStyle::local()
+            )
+            .expect("directory inside the repository should remain project-scoped"),
+            repository.join("worktrees")
+        );
+        assert!(
+            worktrees_directory_for_repo(&repository, "~someone/Worktrees", PathStyle::local())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_windows_worktree_directories() {
+        let repository = Path::new(r"C:\Code/dovocode\agent");
+        for (setting, expected) in [
+            (r"D:\Worktrees", r"D:\Worktrees\agent"),
+            ("D:/Worktrees/../checkouts/", r"D:\checkouts\agent"),
+            (r"D:\", r"D:\agent"),
+            ("../../../Worktrees", r"C:\Worktrees\agent"),
+            (
+                r"\\server\share\Worktrees",
+                r"\\server\share\Worktrees\agent",
+            ),
+            (
+                r"C:\Code\dovocode\agent\worktrees",
+                r"C:\Code\dovocode\agent\worktrees",
+            ),
+        ] {
+            assert_eq!(
+                worktrees_directory_for_repo(repository, setting, PathStyle::Windows)
+                    .expect("absolute Windows worktree directory should resolve"),
+                PathBuf::from(expected)
+            );
+        }
+        for setting in [r"C:worktrees", r"\worktrees", "/worktrees", r"\\server"] {
+            assert!(worktrees_directory_for_repo(repository, setting, PathStyle::Windows).is_err());
+        }
     }
 
     #[test]
@@ -1334,6 +1401,23 @@ mod git_worktrees {
             repository_relative_path,
             PathBuf::from(path!("/zed/worktrees/plum-warbler/zed"))
         );
+        for setting in [
+            "~/Worktrees".to_string(),
+            paths::home_dir()
+                .join("Worktrees")
+                .to_string_lossy()
+                .into_owned(),
+        ] {
+            let worktree_path = repository.read_with(cx, |repository, _| {
+                repository
+                    .path_for_new_linked_worktree("feature/nested", &setting)
+                    .expect("absolute and home-relative paths should use the existing layout")
+            });
+            assert_eq!(
+                worktree_path,
+                paths::home_dir().join("Worktrees/zed/feature/nested/zed")
+            );
+        }
     }
 
     #[gpui::test]

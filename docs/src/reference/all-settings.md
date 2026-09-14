@@ -5899,7 +5899,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 
 ## Git Worktree Directory
 
-- Description: Directory where git worktrees are created, relative to the repository working directory.
+- Description: Folder where git worktrees are created. Supports absolute paths, `~/` paths relative to your home folder, and paths relative to the repository working directory.
 - Setting: `git.worktree_directory`
 - Default: `"../worktrees"`
 
@@ -5910,14 +5910,20 @@ When the resolved directory is inside the project root, no extra component is ad
 Relative paths can traverse any number of parent folders using `..`.
 For a repository at `~/Code/dovocode/agent`, setting `"../../../Worktrees"`
 creates worktrees at `~/Worktrees/agent/<worktree-name>/agent`.
+You can also use `"~/Worktrees"` for the same destination, regardless of how deeply
+the repository is nested. For remote projects, `~` refers to the remote home folder.
 
 **Examples**:
 
 - `"../worktrees"` — `~/code/worktrees/<project>/` (default)
 - `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
 - `"my-worktrees"` — `<project>/my-worktrees/`
+- `"~/Worktrees"` — `~/Worktrees/<project>/`
+- `"/mnt/worktrees"` — `/mnt/worktrees/<project>/`
+- `"D:\\Worktrees"` — `D:\Worktrees\<project>\` on Windows
 
-Trailing slashes are ignored.
+Trailing slashes are ignored. Named-user paths such as `~user/` are not supported.
+On Windows, absolute paths must include a drive letter or UNC share.
 
 ```json [settings]
 {

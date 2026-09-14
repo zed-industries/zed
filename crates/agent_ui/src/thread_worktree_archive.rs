@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
+use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AsyncApp, Entity, Task};
 use project::{
     LocalProjectFlags, Project, WorktreeId,
@@ -30,6 +31,7 @@ use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadId, ThreadMetadata
 /// them unavailable for the later async persist/remove steps.
 #[derive(Clone)]
 pub struct RootPlan {
+    remote_directory_check: Option<Shared<Task<Result<(), String>>>>,
     /// Absolute path of the git worktree on disk.
     pub root_path: PathBuf,
     /// Absolute path to the main git repository this worktree is linked to.
@@ -175,10 +177,41 @@ pub fn build_root_plan(
     // Only archive worktrees that live inside the Zed-managed worktrees
     // directory (configured via `git.worktree_directory`). Worktrees the
     // user created outside that directory should be left untouched.
-    let worktrees_base = worktrees_base_for_repo(&main_repo_path, linked_snapshot.path_style, cx)?;
-    if !path.starts_with(&worktrees_base) {
-        return None;
-    }
+    let path_style = linked_snapshot.path_style;
+    let remote_directory_check = if remote_connection.is_some()
+        && ProjectSettings::get_global(cx)
+            .git
+            .worktree_directory
+            .starts_with('~')
+    {
+        // Remote home expansion requires an RPC. Capture it while the project
+        // is still open and check the result before persisting or deleting anything.
+        let project = affected_projects.first()?.project.read(cx);
+        let setting = project.resolve_worktree_directory_setting(cx);
+        let main_repo_path = main_repo_path.clone();
+        let path = path.clone();
+        Some(
+            cx.background_spawn(async move {
+                let setting = setting.await.map_err(|error| format!("{error:#}"))?;
+                let base = worktrees_directory_for_repo(&main_repo_path, &setting, path_style)
+                    .map_err(|error| format!("{error:#}"))?;
+                if path_style.strip_prefix(&path, &base).is_none() {
+                    return Err(format!(
+                        "refusing to archive worktree outside git.worktree_directory: {}",
+                        path.display()
+                    ));
+                }
+                Ok(())
+            })
+            .shared(),
+        )
+    } else {
+        let worktrees_base = worktrees_base_for_repo(&main_repo_path, path_style, cx)?;
+        if path_style.strip_prefix(&path, &worktrees_base).is_none() {
+            return None;
+        }
+        None
+    };
 
     // Only archive worktrees that Zed explicitly created. The directory
     // check above constrains paths, but the database record is what
@@ -195,6 +228,7 @@ pub fn build_root_plan(
         .map(|branch| branch.name().to_string());
 
     Some(RootPlan {
+        remote_directory_check,
         root_path: path,
         main_repo_path,
         affected_projects,
@@ -214,6 +248,7 @@ pub fn build_root_plan(
 /// delete the worktree directory. If the git removal fails, the worktree
 /// is re-added to each project via [`rollback_root`].
 pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
+    verify_managed_directory(&root).await?;
     verify_created_by_zed(&root, cx).await?;
 
     let release_tasks: Vec<_> = root
@@ -249,6 +284,13 @@ pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
     .await
     .log_err();
 
+    Ok(())
+}
+
+async fn verify_managed_directory(root: &RootPlan) -> Result<()> {
+    if let Some(check) = &root.remote_directory_check {
+        check.clone().await.map_err(|error| anyhow!(error))?;
+    }
     Ok(())
 }
 
@@ -497,6 +539,7 @@ async fn rollback_root(root: &RootPlan, cx: &mut AsyncApp) {
 ///
 /// On success, returns the archived worktree DB row ID for rollback.
 pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Result<i64> {
+    verify_managed_directory(root).await?;
     let worktree_repo = root.worktree_repo.clone();
 
     let original_commit_hash = worktree_repo
@@ -1082,7 +1125,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        workspace.read_with(cx, |_workspace, cx| {
+        let mut plan = workspace.read_with(cx, |_workspace, cx| {
             // The linked worktree SHOULD produce a root plan.
             let plan = build_root_plan(
                 Path::new("/worktrees/project/feature/project"),
@@ -1113,7 +1156,30 @@ mod tests {
                 "build_root_plan should return None for the main worktree \
                  even when a linked worktree exists",
             );
+            plan
         });
+        plan.remote_directory_check =
+            Some(Task::ready(Err("remote home lookup failed".into())).shared());
+        let root_path = plan.root_path.clone();
+        cx.update(|cx| {
+            cx.spawn(async move |cx| {
+                let error = persist_worktree_state(&plan, cx)
+                    .await
+                    .expect_err("failed directory checks must prevent persistence");
+                assert!(error.to_string().contains("remote home lookup failed"));
+                let error = remove_root(plan, cx)
+                    .await
+                    .expect_err("failed directory checks must prevent deletion");
+                assert!(error.to_string().contains("remote home lookup failed"));
+            })
+        })
+        .await;
+        assert!(fs.is_dir(&root_path).await);
+        assert!(project.read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .any(|worktree| worktree.read(cx).abs_path().as_ref() == root_path.as_path())
+        }));
     }
 
     #[gpui::test]
@@ -1366,6 +1432,23 @@ mod tests {
                  the custom worktree_directory, even if it would match the default",
             );
         });
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git.get_or_insert_default().worktree_directory =
+                        Some("/custom-worktrees".into());
+                });
+            });
+        });
+        assert!(workspace.read_with(cx, |_workspace, cx| {
+            build_root_plan(
+                Path::new("/custom-worktrees/project/feature/project"),
+                None,
+                std::slice::from_ref(&workspace),
+                cx,
+            )
+            .is_some()
+        }));
     }
 
     #[gpui::test]

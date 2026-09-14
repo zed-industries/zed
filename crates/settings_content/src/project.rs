@@ -592,9 +592,11 @@ pub struct GitSettings {
     ///
     /// Default: true
     pub show_stage_restore_buttons: Option<bool>,
-    /// Directory where git worktrees are created, relative to the repository
-    /// working directory. Relative paths can traverse any number of parent
-    /// directories using `..`.
+    /// Directory where git worktrees are created. Supports absolute paths,
+    /// `~/` paths relative to the home folder, and paths relative to the
+    /// repository working directory. Relative paths can traverse any number
+    /// of parent directories using `..`. For remote projects, `~` uses the
+    /// remote home folder.
     ///
     /// When the resolved directory is outside the project root, the
     /// project's directory name is automatically appended so that
@@ -610,7 +612,9 @@ pub struct GitSettings {
     /// - `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
     /// - `"my-worktrees"` — `<project>/my-worktrees/`
     ///
-    /// Trailing slashes are ignored.
+    /// Absolute paths and `~/Worktrees` use the same subfolder layout.
+    /// Trailing slashes are ignored. Named-user paths such as `~user/`
+    /// are not supported.
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,

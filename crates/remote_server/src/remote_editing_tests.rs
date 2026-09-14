@@ -2558,6 +2558,41 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_remote_worktree_directory_setting(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let remote_home = PathBuf::from(shellexpand::tilde("~").into_owned());
+    fs.insert_tree(&remote_home, json!({})).await;
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+
+    for (setting, expected) in [
+        ("~/Worktrees", remote_home.join("Worktrees")),
+        ("~", remote_home.clone()),
+        (
+            path!("/other/Worktrees"),
+            PathBuf::from(path!("/other/Worktrees")),
+        ),
+    ] {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git.get_or_insert_default().worktree_directory = Some(setting.into());
+                });
+            });
+        });
+        let resolved = project
+            .read_with(cx, |project, cx| {
+                project.resolve_worktree_directory_setting(cx)
+            })
+            .await
+            .expect("worktree setting should resolve on the remote server");
+        assert_eq!(PathBuf::from(resolved), expected);
+    }
+}
+
+#[gpui::test]
 async fn test_remote_resolve_path_in_buffer(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

@@ -6467,6 +6467,56 @@ impl Project {
         self.git_store.read(cx).git_config(path, args, cx)
     }
 
+    pub fn resolve_worktree_directory_setting(&self, cx: &App) -> Task<Result<String>> {
+        let setting = ProjectSettings::get_global(cx)
+            .git
+            .worktree_directory
+            .clone();
+        if self.is_local() || !setting.starts_with('~') {
+            return Task::ready(Ok(setting));
+        }
+
+        let Some(remote_client) = self.remote_client.as_ref() else {
+            return Task::ready(Err(anyhow!(
+                "Cannot resolve git.worktree_directory on this remote project; use an absolute path"
+            )));
+        };
+        let path_style = self.path_style(cx);
+        if setting != "~"
+            && !setting
+                .strip_prefix('~')
+                .is_some_and(|relative| relative.starts_with(path_style.separators_ch()))
+        {
+            return Task::ready(Err(anyhow!(
+                "git.worktree_directory does not support ~user paths; use ~/ or an absolute path"
+            )));
+        }
+
+        let response = remote_client
+            .read(cx)
+            .proto_client()
+            .request(proto::GetPathMetadata {
+                project_id: REMOTE_SERVER_PROJECT_ID,
+                path: "~".into(),
+            });
+        cx.background_spawn(async move {
+            let home = response
+                .await
+                .context("failed to resolve the remote home directory")?;
+            anyhow::ensure!(
+                home.is_dir && path_style.is_absolute(&home.path),
+                "failed to resolve the remote home directory"
+            );
+            let relative = setting
+                .trim_start_matches('~')
+                .trim_start_matches(path_style.separators_ch());
+            Ok(path_style
+                .join_path(&home.path, relative)?
+                .to_string_lossy()
+                .into_owned())
+        })
+    }
+
     pub fn buffer_store(&self) -> &Entity<BufferStore> {
         &self.buffer_store
     }

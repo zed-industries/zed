@@ -985,12 +985,14 @@ async fn do_create_worktree(
             .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
             .collect()
     })?;
-    let worktree_directory_setting = cx.update(|_, cx| {
-        ProjectSettings::get_global(cx)
-            .git
-            .worktree_directory
-            .clone()
-    })?;
+    let worktree_directory_setting = workspace
+        .read_with(cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .resolve_worktree_directory_setting(cx)
+        })?
+        .await?;
 
     let mut existing_worktree_names = Vec::new();
     let mut existing_worktree_paths = HashSet::default();
