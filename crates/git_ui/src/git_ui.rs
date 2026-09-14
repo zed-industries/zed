@@ -1626,9 +1626,19 @@ impl PickerDelegate for GitCloneDelegate {
                 .w_full()
                 .px_2()
                 .py_1p5()
+                .gap_2()
+                .justify_between()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(status)
+                .child(
+                    Button::new("learn-more", "Learn More")
+                        .label_size(LabelSize::Small)
+                        .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
+                        .on_click(|_, _, cx| {
+                            cx.open_url("https://github.com/git-guides/git-clone");
+                        }),
+                )
                 .into_any_element(),
         )
     }
