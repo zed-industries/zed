@@ -1864,7 +1864,7 @@ impl ThreadView {
     fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
         let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
             match error {
-                ThreadError::PaymentRequired => (
+                ThreadError::ZedPaymentRequired => (
                     "payment_required",
                     None,
                     "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
@@ -11050,7 +11050,7 @@ impl ThreadView {
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
-            ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::ZedPaymentRequired => self.render_zed_payment_required_error(cx),
             ThreadError::RateLimitExceeded { provider } => self.render_error_callout(
                 "Rate Limit Reached",
                 format!(
@@ -11183,7 +11183,7 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
+    fn render_zed_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
         const ERROR_MESSAGE: &str =
             "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
 
