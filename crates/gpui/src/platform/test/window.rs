@@ -595,6 +595,15 @@ impl PlatformWindow for TestWindow {
 pub(crate) struct TestAtlasState {
     next_id: u32,
     tiles: HashMap<AtlasKey, AtlasTile>,
+    updates: Vec<TestAtlasUpdate>,
+    resource_generation: u64,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct TestAtlasUpdate {
+    key: AtlasKey,
+    bounds: Bounds<DevicePixels>,
+    bytes: Vec<u8>,
 }
 
 pub(crate) struct TestAtlas(Mutex<TestAtlasState>);
@@ -604,6 +613,8 @@ impl TestAtlas {
         TestAtlas(Mutex::new(TestAtlasState {
             next_id: 0,
             tiles: HashMap::default(),
+            updates: Vec::new(),
+            resource_generation: 0,
         }))
     }
 }
@@ -637,7 +648,7 @@ impl PlatformAtlas for TestAtlas {
             crate::AtlasTile {
                 texture_id: AtlasTextureId {
                     index: texture_id,
-                    kind: crate::AtlasTextureKind::Monochrome,
+                    kind: key.texture_kind(),
                 },
                 tile_id: TileId(tile_id),
                 padding: 0,
@@ -651,12 +662,97 @@ impl PlatformAtlas for TestAtlas {
         Ok(Some(state.tiles[key]))
     }
 
+    fn update(
+        &self,
+        key: &AtlasKey,
+        bounds: Bounds<DevicePixels>,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        let mut state = self.0.lock();
+        if state.tiles.contains_key(key) {
+            state.updates.push(TestAtlasUpdate {
+                key: key.clone(),
+                bounds,
+                bytes: bytes.to_vec(),
+            });
+        }
+        Ok(())
+    }
+
+    fn resource_generation(&self) -> u64 {
+        self.0.lock().resource_generation
+    }
+
     fn remove(&self, key: &AtlasKey) {
         let mut state = self.0.lock();
         state.tiles.remove(key);
+        state.updates.retain(|update| &update.key != key);
     }
 
     fn contains(&self, key: &AtlasKey) -> bool {
         self.0.lock().tiles.contains_key(key)
+    }
+}
+
+#[cfg(test)]
+mod dynamic_texture_tests {
+    use super::*;
+    use crate::{DynamicTextureId, DynamicTextureParams};
+    use std::borrow::Cow;
+
+    #[test]
+    fn test_atlas_records_dynamic_texture_updates_and_generation() {
+        let atlas = TestAtlas::new();
+        let key = AtlasKey::DynamicTexture(DynamicTextureParams {
+            texture_id: DynamicTextureId(11),
+        });
+        let texture_size = Size {
+            width: DevicePixels(4),
+            height: DevicePixels(3),
+        };
+        let mut build = || Ok(Some((texture_size, Cow::Owned(vec![0; 48]))));
+        let tile = atlas.get_or_insert_with(&key, &mut build).unwrap().unwrap();
+        let update_bounds = Bounds {
+            origin: Point {
+                x: DevicePixels(1),
+                y: DevicePixels(1),
+            },
+            size: Size {
+                width: DevicePixels(2),
+                height: DevicePixels(1),
+            },
+        };
+        let update_bytes = vec![7; 8];
+
+        atlas.update(&key, update_bounds, &update_bytes).unwrap();
+        atlas.0.lock().resource_generation = 3;
+
+        let state = atlas.0.lock();
+        assert_eq!(tile.texture_id.kind, crate::AtlasTextureKind::Polychrome);
+        assert_eq!(state.updates.len(), 1);
+        assert!(state.updates[0].key == key);
+        assert_eq!(state.updates[0].bounds, update_bounds);
+        assert_eq!(state.updates[0].bytes, update_bytes);
+        drop(state);
+        assert_eq!(atlas.resource_generation(), 3);
+    }
+
+    #[test]
+    fn test_atlas_ignores_updates_for_missing_entries() {
+        let atlas = TestAtlas::new();
+        let key = AtlasKey::DynamicTexture(DynamicTextureParams {
+            texture_id: DynamicTextureId(12),
+        });
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: DevicePixels(1),
+                height: DevicePixels(1),
+            },
+        };
+
+        atlas.update(&key, bounds, &[0; 4]).unwrap();
+
+        assert!(atlas.0.lock().updates.is_empty());
     }
 }

@@ -6,23 +6,24 @@ use crate::Inspector;
 use crate::profiler;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
-    Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    AsyncWindowContext, AtlasKey, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds,
+    BoxShadow, Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, DynamicTexture,
+    DynamicTextureParams, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
+    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
+    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1495,6 +1496,124 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
         (false, false) => display_bounds.origin,
     };
     window_bounds_ctor(Bounds::new(final_origin, base_size))
+}
+
+fn dynamic_texture_dimension(value: i32, label: &str) -> Result<usize> {
+    if value <= 0 {
+        return Err(anyhow!("dynamic texture {label} must be positive"));
+    }
+    usize::try_from(value).context("dynamic texture dimension does not fit usize")
+}
+
+fn dynamic_texture_byte_len(size: Size<DevicePixels>) -> Result<usize> {
+    let width = dynamic_texture_dimension(size.width.0, "width")?;
+    let height = dynamic_texture_dimension(size.height.0, "height")?;
+    width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .context("dynamic texture BGRA byte size overflow")
+}
+
+fn dynamic_texture_blank(size: Size<DevicePixels>) -> Result<Vec<u8>> {
+    let byte_len = dynamic_texture_byte_len(size)?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(byte_len)
+        .map_err(|_| anyhow!("dynamic texture of {byte_len} bytes is too large to allocate"))?;
+    bytes.resize(byte_len, 0);
+    Ok(bytes)
+}
+
+/// Rejects dynamic-texture sizes that the backend cannot allocate before any CPU
+/// buffer is created for them.
+fn validate_dynamic_texture_size(
+    atlas: &dyn PlatformAtlas,
+    size: Size<DevicePixels>,
+) -> Result<()> {
+    dynamic_texture_dimension(size.width.0, "width")?;
+    dynamic_texture_dimension(size.height.0, "height")?;
+    if let Some(max) = atlas.max_texture_size() {
+        if size.width > max.width || size.height > max.height {
+            return Err(anyhow!(
+                "dynamic texture size {}x{} exceeds the supported maximum {}x{}",
+                size.width.0,
+                size.height.0,
+                max.width.0,
+                max.height.0
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_dynamic_texture_update(
+    texture_size: Size<DevicePixels>,
+    bounds: Bounds<DevicePixels>,
+    bytes: &[u8],
+) -> Result<()> {
+    dynamic_texture_byte_len(texture_size)?;
+    let expected_len = dynamic_texture_byte_len(bounds.size)?;
+
+    if bounds.origin.x.0 < 0 || bounds.origin.y.0 < 0 {
+        return Err(anyhow!(
+            "dynamic texture update origin must not be negative"
+        ));
+    }
+
+    let right = bounds
+        .origin
+        .x
+        .0
+        .checked_add(bounds.size.width.0)
+        .context("dynamic texture update horizontal bounds overflow")?;
+    let bottom = bounds
+        .origin
+        .y
+        .0
+        .checked_add(bounds.size.height.0)
+        .context("dynamic texture update vertical bounds overflow")?;
+    if right > texture_size.width.0 || bottom > texture_size.height.0 {
+        return Err(anyhow!("dynamic texture update is outside texture bounds"));
+    }
+
+    if bytes.len() != expected_len {
+        return Err(anyhow!(
+            "dynamic texture update byte length mismatch: expected {expected_len}, got {}",
+            bytes.len()
+        ));
+    }
+
+    Ok(())
+}
+
+fn update_dynamic_texture_atlas(
+    atlas: &dyn PlatformAtlas,
+    key: &AtlasKey,
+    texture_size: Size<DevicePixels>,
+    bounds: Bounds<DevicePixels>,
+    bytes: &[u8],
+) -> Result<()> {
+    validate_dynamic_texture_size(atlas, texture_size)?;
+    let is_full_update = bounds.origin == Point::default() && bounds.size == texture_size;
+    let mut inserted = false;
+
+    atlas
+        .get_or_insert_with(key, &mut || {
+            inserted = true;
+            let initial_bytes = if is_full_update {
+                Cow::Borrowed(bytes)
+            } else {
+                Cow::Owned(dynamic_texture_blank(texture_size)?)
+            };
+            Ok(Some((texture_size, initial_bytes)))
+        })?
+        .expect("dynamic texture creation always returns an atlas entry");
+
+    if inserted && is_full_update {
+        Ok(())
+    } else {
+        atlas.update(key, bounds, bytes)
+    }
 }
 
 impl Window {
@@ -4890,6 +5009,74 @@ impl Window {
         });
     }
 
+    /// Uploads a BGRA region into a dynamic texture without replacing its stable identity.
+    ///
+    /// `bounds` is relative to the top-left corner of the dynamic texture and is
+    /// validated against the texture size. `bytes` must be tightly packed BGRA (four
+    /// bytes per pixel, no row padding), `width * height * 4` bytes long, with the
+    /// first byte being blue and the fourth alpha.
+    ///
+    /// The upload is queued and applied by the backend on the next rendered frame,
+    /// so the change is visible after the owning view requests another paint. A full
+    /// texture-sized update supersedes any queued update for the same texture, so a
+    /// producer that keeps pushing whole frames cannot grow backend memory without
+    /// bound.
+    pub fn update_dynamic_texture(
+        &mut self,
+        data: &DynamicTexture,
+        bounds: Bounds<DevicePixels>,
+        bytes: &[u8],
+    ) -> Result<()> {
+        validate_dynamic_texture_update(data.size(), bounds, bytes)?;
+
+        let key = DynamicTextureParams {
+            texture_id: data.id,
+        }
+        .into();
+        let size = data.size();
+        update_dynamic_texture_atlas(self.sprite_atlas.as_ref(), &key, size, bounds, bytes)
+    }
+
+    /// Paints a dynamic texture into the next frame as one polychrome sprite.
+    pub fn paint_dynamic_texture(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        data: Arc<DynamicTexture>,
+        grayscale: bool,
+    ) -> Result<()> {
+        self.invalidator.debug_assert_paint();
+
+        let bounds = self.snap_bounds(bounds);
+        let key = DynamicTextureParams {
+            texture_id: data.id,
+        }
+        .into();
+        let size = data.size();
+        validate_dynamic_texture_size(self.sprite_atlas.as_ref(), size)?;
+        let tile = self
+            .sprite_atlas
+            .get_or_insert_with(&key, &mut || {
+                Ok(Some((size, Cow::Owned(dynamic_texture_blank(size)?))))
+            })?
+            .expect("dynamic texture creation always returns an atlas entry");
+        let content_mask = self.snapped_content_mask();
+        let corner_radii = corner_radii.scale(self.scale_factor());
+        let opacity = self.element_opacity();
+
+        self.next_frame.scene.insert_primitive(PolychromeSprite {
+            order: 0,
+            pad: 0,
+            grayscale: grayscale.into(),
+            bounds,
+            content_mask,
+            corner_radii,
+            tile,
+            opacity,
+        });
+        Ok(())
+    }
+
     /// Removes an image from the sprite atlas.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
         for frame_index in 0..data.frame_count() {
@@ -4902,6 +5089,23 @@ impl Window {
         }
 
         Ok(())
+    }
+
+    /// Removes a dynamic texture from the platform atlas.
+    ///
+    /// Call this before painting the replacement texture. A texture must not be removed after it
+    /// has already been inserted into the current frame's scene.
+    pub fn drop_dynamic_texture(&mut self, data: Arc<DynamicTexture>) -> Result<()> {
+        let key = DynamicTextureParams {
+            texture_id: data.id,
+        };
+        self.sprite_atlas.remove(&key.into());
+        Ok(())
+    }
+
+    /// Returns the generation of renderer resources backing dynamic textures.
+    pub fn renderer_resource_generation(&self) -> u64 {
+        self.sprite_atlas.resource_generation()
     }
 
     /// Returns whether every frame of an image is present in the sprite atlas.
@@ -8640,5 +8844,219 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod dynamic_texture_tests {
+    use super::*;
+    use crate::{AtlasTextureId, AtlasTextureKind, AtlasTile, TileId};
+    use parking_lot::Mutex;
+
+    #[derive(Default)]
+    struct RecordingAtlasState {
+        tile: Option<AtlasTile>,
+        builds: Vec<Vec<u8>>,
+        updates: Vec<(Bounds<DevicePixels>, Vec<u8>)>,
+    }
+
+    #[derive(Default)]
+    struct RecordingAtlas(Mutex<RecordingAtlasState>);
+
+    impl PlatformAtlas for RecordingAtlas {
+        fn get_or_insert_with<'a>(
+            &self,
+            key: &AtlasKey,
+            build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+        ) -> Result<Option<AtlasTile>> {
+            let mut state = self.0.lock();
+            if let Some(tile) = state.tile {
+                return Ok(Some(tile));
+            }
+            drop(state);
+
+            let Some((texture_size, bytes)) = build()? else {
+                return Ok(None);
+            };
+            let tile = AtlasTile {
+                texture_id: AtlasTextureId {
+                    index: 1,
+                    kind: AtlasTextureKind::Polychrome,
+                },
+                tile_id: TileId(1),
+                padding: 0,
+                bounds: Bounds::new(Point::default(), texture_size),
+            };
+
+            let mut state = self.0.lock();
+            state.builds.push(bytes.into_owned());
+            state.tile = Some(tile);
+            assert!(matches!(key, AtlasKey::DynamicTexture(_)));
+            Ok(Some(tile))
+        }
+
+        fn update(
+            &self,
+            _key: &AtlasKey,
+            bounds: Bounds<DevicePixels>,
+            bytes: &[u8],
+        ) -> Result<()> {
+            self.0.lock().updates.push((bounds, bytes.to_vec()));
+            Ok(())
+        }
+
+        fn remove(&self, _key: &AtlasKey) {
+            self.0.lock().tile = None;
+        }
+
+        fn max_texture_size(&self) -> Option<Size<DevicePixels>> {
+            Some(size(DevicePixels(8), DevicePixels(8)))
+        }
+    }
+
+    fn test_dynamic_texture_key(id: usize) -> AtlasKey {
+        DynamicTextureParams {
+            texture_id: crate::DynamicTextureId(id),
+        }
+        .into()
+    }
+
+    #[test]
+    fn dynamic_texture_byte_length_is_strictly_bgra() {
+        assert_eq!(
+            dynamic_texture_byte_len(size(DevicePixels(3), DevicePixels(2))).unwrap(),
+            24
+        );
+        assert!(dynamic_texture_byte_len(size(DevicePixels(0), DevicePixels(2))).is_err());
+        assert!(dynamic_texture_byte_len(size(DevicePixels(3), DevicePixels(-1))).is_err());
+    }
+
+    #[test]
+    fn dynamic_texture_blank_rejects_unallocatable_size() {
+        // i32::MAX squared times four bytes passes the usize multiplication check
+        // but exceeds Vec's capacity limit; this must return an error, not panic.
+        let oversized = size(DevicePixels(i32::MAX), DevicePixels(i32::MAX));
+        assert!(dynamic_texture_blank(oversized).is_err());
+    }
+
+    #[test]
+    fn update_rejects_size_beyond_backend_limit_before_allocating() {
+        let atlas = RecordingAtlas::default();
+        let oversized = size(DevicePixels(9), DevicePixels(9));
+        let bounds = Bounds::new(Point::default(), oversized);
+        let bytes = vec![0; 9 * 9 * 4];
+
+        assert!(
+            update_dynamic_texture_atlas(
+                &atlas,
+                &test_dynamic_texture_key(2),
+                oversized,
+                bounds,
+                &bytes,
+            )
+            .is_err()
+        );
+        assert!(atlas.0.lock().builds.is_empty());
+    }
+
+    #[test]
+    fn dynamic_texture_update_accepts_a_valid_relative_region() {
+        let texture_size = size(DevicePixels(8), DevicePixels(6));
+        let bounds = Bounds::new(
+            point(DevicePixels(2), DevicePixels(1)),
+            size(DevicePixels(3), DevicePixels(2)),
+        );
+
+        assert!(validate_dynamic_texture_update(texture_size, bounds, &[0; 24]).is_ok());
+    }
+
+    #[test]
+    fn dynamic_texture_update_rejects_invalid_bounds_and_bytes() {
+        let texture_size = size(DevicePixels(8), DevicePixels(6));
+        let negative_origin = Bounds::new(
+            point(DevicePixels(-1), DevicePixels(0)),
+            size(DevicePixels(1), DevicePixels(1)),
+        );
+        let outside_texture = Bounds::new(
+            point(DevicePixels(7), DevicePixels(5)),
+            size(DevicePixels(2), DevicePixels(1)),
+        );
+        let overflowing_bounds = Bounds::new(
+            point(DevicePixels(i32::MAX), DevicePixels(0)),
+            size(DevicePixels(1), DevicePixels(1)),
+        );
+        let valid_bounds = Bounds::new(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(2), DevicePixels(2)),
+        );
+
+        assert!(validate_dynamic_texture_update(texture_size, negative_origin, &[0; 4]).is_err());
+        assert!(validate_dynamic_texture_update(texture_size, outside_texture, &[0; 8]).is_err());
+        assert!(
+            validate_dynamic_texture_update(texture_size, overflowing_bounds, &[0; 4]).is_err()
+        );
+        assert!(validate_dynamic_texture_update(texture_size, valid_bounds, &[0; 15]).is_err());
+    }
+
+    #[test]
+    fn first_full_dynamic_texture_update_is_the_initial_upload() {
+        let atlas = RecordingAtlas::default();
+        let texture_size = size(DevicePixels(2), DevicePixels(2));
+        let bounds = Bounds::new(Point::default(), texture_size);
+        let bytes = (0..16).collect::<Vec<_>>();
+
+        update_dynamic_texture_atlas(
+            &atlas,
+            &test_dynamic_texture_key(1),
+            texture_size,
+            bounds,
+            &bytes,
+        )
+        .unwrap();
+
+        let state = atlas.0.lock();
+        assert_eq!(state.builds, vec![bytes]);
+        assert!(state.updates.is_empty());
+    }
+
+    #[test]
+    fn first_partial_dynamic_texture_update_initializes_blank_then_updates() {
+        let atlas = RecordingAtlas::default();
+        let texture_size = size(DevicePixels(2), DevicePixels(2));
+        let bounds = Bounds::new(
+            point(DevicePixels(1), DevicePixels(1)),
+            size(DevicePixels(1), DevicePixels(1)),
+        );
+        let bytes = vec![1, 2, 3, 4];
+
+        update_dynamic_texture_atlas(
+            &atlas,
+            &test_dynamic_texture_key(2),
+            texture_size,
+            bounds,
+            &bytes,
+        )
+        .unwrap();
+
+        let state = atlas.0.lock();
+        assert_eq!(state.builds, vec![vec![0; 16]]);
+        assert_eq!(state.updates, vec![(bounds, bytes)]);
+    }
+
+    #[test]
+    fn existing_dynamic_texture_still_receives_full_updates() {
+        let atlas = RecordingAtlas::default();
+        let key = test_dynamic_texture_key(3);
+        let texture_size = size(DevicePixels(1), DevicePixels(1));
+        let bounds = Bounds::new(Point::default(), texture_size);
+        let first = vec![1, 2, 3, 4];
+        let second = vec![5, 6, 7, 8];
+
+        update_dynamic_texture_atlas(&atlas, &key, texture_size, bounds, &first).unwrap();
+        update_dynamic_texture_atlas(&atlas, &key, texture_size, bounds, &second).unwrap();
+
+        let state = atlas.0.lock();
+        assert_eq!(state.builds, vec![first]);
+        assert_eq!(state.updates, vec![(bounds, second)]);
     }
 }
