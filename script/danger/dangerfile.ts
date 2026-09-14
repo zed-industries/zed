@@ -36,8 +36,48 @@ if (!hasReleaseNotes) {
       "",
       "- N/A",
       "```",
+      "",
+      "If your change touches a `gpui`-related crate, you must also add an entry for the GPUI release notes:",
+      "```",
+      "Release Notes:",
+      "",
+      "- Added/Fixed/Improved ...",
+      "- [GPUI] Added/Fixed/Improved ...",
+      "```",
+      "",
+      'If the change is not user-facing for GPUI users, use "- [GPUI] N/A" for that entry.',
     ].join("\n"),
   );
+}
+
+const GPUI_RELEASE_NOTES_PATTERN = /^\s*- \[GPUI\]/im;
+
+const gpuiCrates = danger.git.fileMatch("crates/gpui*/**");
+
+if (gpuiCrates.edited || gpuiCrates.deleted) {
+  const releaseNotesSection = hasReleaseNotes ? body.split(/Release Notes:/)[1] : "";
+  if (!GPUI_RELEASE_NOTES_PATTERN.test(releaseNotesSection)) {
+    const { edited, deleted } = gpuiCrates.getKeyedPaths();
+    const touchedGpuiCratesStr = [...edited, ...deleted]
+      .map((file) => "`" + file.split("/")[1] + "`")
+      .filter((crate, index, self) => self.indexOf(crate) === index)
+      .join(", ");
+    fail(
+      [
+        `This PR modifies GPUI crates (${touchedGpuiCratesStr}), which requires a GPUI release notes entry.`,
+        "",
+        'Please add at least one entry prefixed with `[GPUI]` to the "Release Notes" section:',
+        "```",
+        "Release Notes:",
+        "",
+        "- Added/Fixed/Improved ...",
+        "- [GPUI] Added/Fixed/Improved ...",
+        "```",
+        "",
+        'If the change is not user-facing for GPUI users, use "- [GPUI] N/A" for that entry.',
+      ].join("\n"),
+    );
+  }
 }
 
 const ISSUE_LINK_PATTERN =
