@@ -3623,6 +3623,16 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_deserialize_failed_worktree_paths(cx: &mut gpui::TestAppContext) {
+        assert_deserialize_failed_paths(true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_failed_standalone_paths(cx: &mut gpui::TestAppContext) {
+        assert_deserialize_failed_paths(false, cx).await;
+    }
+
+    #[gpui::test]
     async fn test_split_pane_restore_preserves_colliding_editor_payloads(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -4349,7 +4359,11 @@ mod tests {
             .await;
         cx.run_until_parked();
 
-        let item_id = editor.entity_id().as_u64();
+        let item_id = workspace.update(cx, |workspace, cx| {
+            workspace
+                .serialization_id(Editor::serialized_item_kind(), editor.entity_id(), cx)
+                .expect("failed to associate editor")
+        });
         let database = cx.update(|_, cx| EditorDb::global(cx));
         let baseline = SerializedEditor {
             abs_path: Some(PathBuf::from(path!("/serialization/original.txt"))),
@@ -4471,16 +4485,6 @@ mod tests {
             persisted.mtime,
             buffer.read_with(cx, |buffer, _| buffer.saved_mtime())
         );
-    }
-
-    #[gpui::test]
-    async fn test_deserialize_failed_worktree_paths(cx: &mut gpui::TestAppContext) {
-        assert_deserialize_failed_paths(true, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_deserialize_failed_standalone_paths(cx: &mut gpui::TestAppContext) {
-        assert_deserialize_failed_paths(false, cx).await;
     }
 
     async fn assert_deserialize_failed_paths(with_worktree: bool, cx: &mut gpui::TestAppContext) {

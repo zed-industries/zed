@@ -29,6 +29,8 @@ use project::{
 };
 
 use language::{LanguageName, Toolchain, ToolchainScope};
+#[cfg(any(test, feature = "test-support"))]
+use remote::MockConnectionOptions;
 use remote::{
     DockerConnectionOptions, RemoteConnectionIdentity, RemoteConnectionOptions,
     SshConnectionOptions, WslConnectionOptions, remote_connection_identity,
@@ -352,12 +354,12 @@ pub fn read_serialized_multi_workspaces(
 
     window_groups
         .into_iter()
-        .filter_map(|group| {
-            let window_id = group.first().and_then(|sw| sw.window_id);
+        .filter_map(|mut group| {
+            let window_id = group.first()?.window_id;
             let state = window_id
                 .map(|wid| read_multi_workspace_state(wid, cx))
                 .unwrap_or_default();
-            let active_workspace = state
+            let active_index = state
                 .active_workspace_id
                 .and_then(|id| group.iter().position(|ws| ws.workspace_id == id))
                 // If the persisted active workspace can't be matched (e.g. its
@@ -367,10 +369,11 @@ pub fn read_serialized_multi_workspaces(
                 // restored as the focused window. Only if none have paths do we
                 // fall back to the first entry.
                 .or_else(|| group.iter().position(|ws| !ws.paths.is_empty()))
-                .or(Some(0))
-                .and_then(|index| group.into_iter().nth(index))?;
+                .unwrap_or(0);
+            let active_workspace = group.remove(active_index);
             Some(model::SerializedMultiWorkspace {
                 active_workspace,
+                remaining_workspaces: group,
                 state,
             })
         })
@@ -1930,6 +1933,12 @@ impl WorkspaceDb {
         }
     }
 
+    query! {
+        fn has_items(workspace_id: WorkspaceId) -> Result<bool> {
+            SELECT EXISTS(SELECT item_id FROM items WHERE workspace_id = ?)
+        }
+    }
+
     pub(crate) fn serialized_item_ids(
         &self,
         workspace_id: WorkspaceId,
@@ -2038,12 +2047,25 @@ impl WorkspaceDb {
                 distro_name: distro?,
                 user: user,
             })),
-            RemoteConnectionKind::Ssh => Some(RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: host?.into(),
-                port,
-                username: user,
-                ..Default::default()
-            })),
+            RemoteConnectionKind::Ssh => {
+                let host = host?;
+                #[cfg(any(test, feature = "test-support"))]
+                if port.is_none()
+                    && let Some(id) = host
+                        .strip_prefix("mock-")
+                        .and_then(|id| id.parse::<u64>().ok())
+                    && host == format!("mock-{id}")
+                    && user.as_deref() == Some(format!("mock-user-{id}").as_str())
+                {
+                    return Some(RemoteConnectionOptions::Mock(MockConnectionOptions { id }));
+                }
+                Some(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                    host: host.into(),
+                    port,
+                    username: user,
+                    ..SshConnectionOptions::default()
+                }))
+            }
             RemoteConnectionKind::Docker => {
                 let remote_env: BTreeMap<String, String> =
                     serde_json::from_str(&remote_env?).ok()?;
@@ -2232,7 +2254,10 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if paths.is_empty() || Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+            if paths.is_empty()
+                || self.has_items(workspace_id)?
+                || Self::all_paths_exist_with_a_directory(paths.paths(), fs).await
+            {
                 workspaces.push(SessionWorkspace {
                     workspace_id,
                     location: SerializedWorkspaceLocation::Local,
@@ -4324,6 +4349,74 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_last_session_admits_item_graphs_without_valid_roots(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/admission", json!({"directory": {}, "file": "contents"}))
+            .await;
+        let db =
+            WorkspaceDb::open_test_db("test_last_session_admits_item_graphs_without_valid_roots")
+                .await;
+        let cases: &[(&[&str], bool)] = &[
+            (&[], true),
+            (&["/admission/missing"], false),
+            (&["/admission/file"], false),
+            (&["/admission/directory"], true),
+            (&["/admission/directory", "/admission/missing"], false),
+            (&["/admission/directory", "/admission/file"], true),
+        ];
+        let mut expected = Vec::new();
+        for (paths, admitted_without_items) in cases {
+            let paths = paths.iter().map(Path::new).collect::<Vec<_>>();
+            for has_items in [false, true] {
+                let id = db.next_id().await.expect("allocate admission workspace");
+                let pane = if has_items {
+                    pane_with_items(&[1])
+                } else {
+                    empty_pane_group()
+                };
+                let saved = workspace_with(
+                    u64::try_from(id.0).expect("positive workspace ID"),
+                    &paths,
+                    pane,
+                    Some("admission"),
+                );
+                if has_items || *admitted_without_items {
+                    expected.push(SessionWorkspace {
+                        workspace_id: id,
+                        location: SerializedWorkspaceLocation::Local,
+                        paths: saved.paths.clone(),
+                        window_id: saved.window_id.map(WindowId::from),
+                    });
+                }
+                db.try_save_workspace(saved)
+                    .await
+                    .expect("save admission workspace");
+            }
+        }
+        let other_id = db
+            .next_id()
+            .await
+            .expect("allocate other-session workspace");
+        db.try_save_workspace(workspace_with(
+            u64::try_from(other_id.0).expect("positive workspace ID"),
+            &[Path::new("/admission/missing")],
+            pane_with_items(&[1]),
+            Some("other-session"),
+        ))
+        .await
+        .expect("save other-session workspace");
+        let mut actual = db
+            .last_session_workspace_locations("admission", None, fs.as_ref())
+            .await
+            .expect("read admitted session workspaces");
+        actual.sort_by_key(|workspace| workspace.workspace_id);
+        expected.sort_by_key(|workspace| workspace.workspace_id);
+        assert_eq!(actual, expected);
+    }
+
+    #[gpui::test]
     async fn test_last_session_workspace_locations_remote(cx: &mut gpui::TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor());
         let db =
@@ -4575,6 +4668,300 @@ mod tests {
             .into_iter()
             .collect::<HashMap<_, _>>(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_mock_remote_connection_round_trip() {
+        let db = WorkspaceDb::open_test_db("test_mock_remote_connection_round_trip").await;
+        let mut expected = HashMap::default();
+        for id in [0, 1, u64::MAX] {
+            let options = RemoteConnectionOptions::Mock(MockConnectionOptions { id });
+            let connection_id = db
+                .get_or_create_remote_connection(options.clone())
+                .await
+                .expect("failed to persist mock connection");
+            assert_eq!(
+                db.remote_connection(connection_id)
+                    .expect("failed to decode mock connection"),
+                options,
+            );
+            assert_eq!(
+                db.select_row_bound::<_, (String, String, Option<u16>, String)>(
+                    "SELECT kind, host, port, user FROM remote_connections WHERE id = ?",
+                )
+                .expect("failed to prepare mock row query")(connection_id.0)
+                .expect("failed to read mock row"),
+                Some((
+                    String::from("ssh"),
+                    format!("mock-{id}"),
+                    None,
+                    format!("mock-user-{id}")
+                )),
+            );
+            expected.insert(connection_id, options);
+        }
+        assert_eq!(
+            db.remote_connections().expect("failed to list connections"),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_mock_remote_connection_requires_canonical_ssh_row() {
+        for (host, port, user) in [
+            ("example.com", None, Some("mock-user-1")),
+            ("mock-1", Some(0), Some("mock-user-1")),
+            ("mock-1", Some(22), Some("mock-user-1")),
+            ("mock-1", Some(u16::MAX), Some("mock-user-1")),
+            ("mock-1", None, None),
+            ("mock-1", None, Some("mock-user-2")),
+            ("mock-1", None, Some("mock-user-01")),
+            ("mock-1", None, Some("mock-user-+1")),
+            ("mock-1", None, Some("mock-user-1 ")),
+            ("mock-01", None, Some("mock-user-1")),
+            ("mock-01", None, Some("mock-user-01")),
+            ("mock-+1", None, Some("mock-user-+1")),
+            ("mock--1", None, Some("mock-user--1")),
+            ("mock-1 ", None, Some("mock-user-1 ")),
+            ("mock-", None, Some("mock-user-")),
+            ("mock-١", None, Some("mock-user-١")),
+            (
+                "mock-18446744073709551616",
+                None,
+                Some("mock-user-18446744073709551616"),
+            ),
+        ] {
+            assert_eq!(
+                WorkspaceDb::remote_connection_from_row(
+                    String::from("ssh"),
+                    Some(String::from(host)),
+                    port,
+                    user.map(String::from),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                Some(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                    host: host.into(),
+                    port,
+                    username: user.map(String::from),
+                    ..SshConnectionOptions::default()
+                })),
+                "host={host:?}, port={port:?}, user={user:?}",
+            );
+        }
+        assert_eq!(
+            WorkspaceDb::remote_connection_from_row(
+                String::from("wsl"),
+                Some(String::from("mock-1")),
+                None,
+                Some(String::from("mock-user-1")),
+                Some(String::from("test-distro")),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: String::from("test-distro"),
+                user: Some(String::from("mock-user-1")),
+            })),
+        );
+    }
+
+    #[test]
+    fn test_mock_remote_connection_rejects_incomplete_rows() {
+        for (kind, host) in [("ssh", None), ("mock", Some("mock-1"))] {
+            assert_eq!(
+                WorkspaceDb::remote_connection_from_row(
+                    String::from(kind),
+                    host.map(String::from),
+                    None,
+                    Some(String::from("mock-user-1")),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                None,
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_read_serialized_multi_workspaces_preserves_all_session_workspaces(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let db = WorkspaceDb::open_test_db(
+            "test_read_serialized_multi_workspaces_preserves_all_session_workspaces",
+        )
+        .await;
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/folder", json!({})).await;
+        let window_id = WindowId::from(10u64);
+        for (id, paths) in [
+            (1, Vec::new()),
+            (3, vec![Path::new("/folder")]),
+            (2, Vec::new()),
+        ] {
+            let mut workspace = workspace_with(id, &paths, pane_with_items(&[id]), Some("session"));
+            workspace.window_id = Some(window_id.as_u64());
+            db.try_save_workspace(workspace)
+                .await
+                .expect("failed to save session workspace");
+        }
+        db.write(|connection| {
+            connection.exec(
+                "UPDATE workspaces SET timestamp = CASE workspace_id
+                    WHEN 1 THEN '2000-01-03 00:00:00'
+                    WHEN 3 THEN '2000-01-02 00:00:00'
+                    WHEN 2 THEN '2000-01-01 00:00:00'
+                END",
+            )?()
+        })
+        .await
+        .expect("failed to order session workspaces");
+        let session_workspaces = db
+            .last_session_workspace_locations("session", None, fs.as_ref())
+            .await
+            .expect("failed to read session workspaces");
+        assert_eq!(
+            session_workspaces,
+            vec![
+                SessionWorkspace {
+                    workspace_id: WorkspaceId(1),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::default(),
+                    window_id: Some(window_id),
+                },
+                SessionWorkspace {
+                    workspace_id: WorkspaceId(3),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::new(&["/folder"]),
+                    window_id: Some(window_id),
+                },
+                SessionWorkspace {
+                    workspace_id: WorkspaceId(2),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::default(),
+                    window_id: Some(window_id),
+                },
+            ]
+        );
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        for (active_id, expected_active, expected_remaining) in [
+            (Some(3), 3, vec![1, 2]),
+            (Some(99), 3, vec![1, 2]),
+            (None, 3, vec![1, 2]),
+            (Some(1), 1, vec![3, 2]),
+            (Some(2), 2, vec![1, 3]),
+        ] {
+            write_multi_workspace_state(
+                &kvp,
+                window_id,
+                model::MultiWorkspaceState {
+                    active_workspace_id: active_id.map(WorkspaceId),
+                    ..model::MultiWorkspaceState::default()
+                },
+            )
+            .await;
+            let results =
+                cx.update(|cx| read_serialized_multi_workspaces(session_workspaces.clone(), cx));
+            let [restored] = results.as_slice() else {
+                panic!("expected one restored window, got {results:?}");
+            };
+            assert_eq!(
+                restored.state.active_workspace_id,
+                active_id.map(WorkspaceId)
+            );
+            assert_eq!(
+                restored.active_workspace.workspace_id,
+                WorkspaceId(expected_active)
+            );
+            assert_eq!(
+                restored
+                    .remaining_workspaces
+                    .iter()
+                    .map(|workspace| workspace.workspace_id)
+                    .collect::<Vec<_>>(),
+                expected_remaining
+                    .into_iter()
+                    .map(WorkspaceId)
+                    .collect::<Vec<_>>()
+            );
+            for workspace in
+                std::iter::once(&restored.active_workspace).chain(&restored.remaining_workspaces)
+            {
+                assert_eq!(
+                    Some(workspace),
+                    session_workspaces
+                        .iter()
+                        .find(|original| original.workspace_id == workspace.workspace_id)
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_read_serialized_multi_workspaces_preserves_scratch_and_window_order(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        write_multi_workspace_state(
+            &kvp,
+            WindowId::from(10u64),
+            model::MultiWorkspaceState {
+                active_workspace_id: Some(WorkspaceId(99)),
+                ..model::MultiWorkspaceState::default()
+            },
+        )
+        .await;
+        let session_workspaces = [
+            (1, Some(10u64)),
+            (2, None),
+            (3, Some(20)),
+            (4, Some(10)),
+            (5, None),
+            (6, Some(20)),
+        ]
+        .into_iter()
+        .map(|(id, window_id)| SessionWorkspace {
+            workspace_id: WorkspaceId(id),
+            location: SerializedWorkspaceLocation::Local,
+            paths: PathList::default(),
+            window_id: window_id.map(WindowId::from),
+        })
+        .collect::<Vec<_>>();
+        let results = cx.update(|cx| read_serialized_multi_workspaces(session_workspaces, cx));
+        assert_eq!(
+            results
+                .iter()
+                .map(|window| {
+                    (
+                        window.active_workspace.workspace_id,
+                        window
+                            .remaining_workspaces
+                            .iter()
+                            .map(|workspace| workspace.workspace_id)
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                (WorkspaceId(1), vec![WorkspaceId(4)]),
+                (WorkspaceId(2), Vec::new()),
+                (WorkspaceId(3), vec![WorkspaceId(6)]),
+                (WorkspaceId(5), Vec::new()),
+            ]
+        );
+        cx.update(|cx| {
+            assert!(read_serialized_multi_workspaces(Vec::new(), cx).is_empty());
+        });
     }
 
     #[gpui::test]
@@ -4947,18 +5334,29 @@ mod tests {
         // Window 10: active_workspace_id = 2 picks workspace 2 (paths /b), sidebar open.
         let group_10 = &results[0];
         assert_eq!(group_10.active_workspace.workspace_id, WorkspaceId(2));
+        assert_eq!(
+            group_10.remaining_workspaces,
+            vec![SessionWorkspace {
+                workspace_id: WorkspaceId(1),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&["/a"]),
+                window_id: Some(window_10),
+            }]
+        );
         assert_eq!(group_10.state.active_workspace_id, Some(WorkspaceId(2)));
         assert_eq!(group_10.state.sidebar_open, true);
 
         // Window 20: active_workspace_id = 3 picks workspace 3 (paths /c), sidebar closed.
         let group_20 = &results[1];
         assert_eq!(group_20.active_workspace.workspace_id, WorkspaceId(3));
+        assert_eq!(group_20.remaining_workspaces, Vec::new());
         assert_eq!(group_20.state.active_workspace_id, Some(WorkspaceId(3)));
         assert_eq!(group_20.state.sidebar_open, false);
 
         // Orphan: no active_workspace_id, falls back to first workspace (id 4).
         let group_none = &results[2];
         assert_eq!(group_none.active_workspace.workspace_id, WorkspaceId(4));
+        assert_eq!(group_none.remaining_workspaces, Vec::new());
         assert_eq!(group_none.state.active_workspace_id, None);
         assert_eq!(group_none.state.sidebar_open, false);
     }
@@ -6689,12 +7087,16 @@ mod tests {
                 second.paths = first.paths.clone();
             }
             for workspace in [&first, &second] {
-                db.save_workspace(workspace.clone()).await;
+                db.try_save_workspace(workspace.clone())
+                    .await
+                    .expect("failed to save workspace");
             }
             assert_eq!(db.workspace_for_id(first.id), Some(first.clone()));
             assert_eq!(db.workspace_for_id(second.id), Some(second.clone()));
             second.paths = first.paths.clone();
-            db.save_workspace(second.clone()).await;
+            db.try_save_workspace(second.clone())
+                .await
+                .expect("failed to save colliding workspace");
             assert_eq!(db.workspace_for_id(first.id), Some(first.clone()));
             assert_eq!(db.workspace_for_id(second.id), Some(second.clone()));
 
@@ -6721,7 +7123,9 @@ mod tests {
                 .workspace_for_roots_internal(first.paths.paths(), remote_connection_id)
                 .expect("failed to reopen workspace");
             assert_eq!(reopened, second);
-            db.save_workspace(reopened).await;
+            db.try_save_workspace(reopened)
+                .await
+                .expect("failed to save reopened workspace");
             assert_eq!(db.workspace_for_id(first.id), Some(first));
             assert_eq!(db.workspace_for_id(second.id), Some(second));
             assert_eq!(

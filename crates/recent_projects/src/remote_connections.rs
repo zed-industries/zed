@@ -210,6 +210,17 @@ pub async fn open_remote_project(
         })?;
         (window, workspace)
     } else {
+        let window_id = if let Some(workspace_id) = open_options.restore_workspace_id {
+            cx.update(|cx| {
+                workspace::WorkspaceDb::global(cx).select_row_bound::<_, u64>(
+                    "SELECT window_id FROM workspaces WHERE workspace_id = ? AND window_id IS NOT NULL",
+                )?(workspace_id)
+            })
+            .context("fetching restored remote window ID from db")?
+            .map(gpui::WindowId::from)
+        } else {
+            None
+        };
         let workspace_position = cx
             .update(|cx| {
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
@@ -240,7 +251,7 @@ pub async fn open_remote_project(
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
             });
-            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+            cx.new(|cx| MultiWorkspace::new_with_window_id(workspace, window_id, window, cx))
         })?;
         let workspace = window.update(cx, |multi_workspace, _, _cx| {
             multi_workspace.workspace().clone()

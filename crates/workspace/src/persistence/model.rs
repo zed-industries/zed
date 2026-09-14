@@ -122,6 +122,7 @@ pub struct MultiWorkspaceState {
 #[derive(Debug, Clone)]
 pub struct SerializedMultiWorkspace {
     pub active_workspace: SessionWorkspace,
+    pub remaining_workspaces: Vec<SessionWorkspace>,
     pub state: MultiWorkspaceState,
 }
 

@@ -599,7 +599,8 @@ fn main() {
             Session::new(
                 session_id.clone(),
                 KeyValueStore::global(cx),
-                false,
+                WorkspaceSettings::get_global(cx).restore_on_startup
+                    == workspace::RestoreOnStartupBehavior::LastSession,
                 max_window_id,
             )
             .await
@@ -1472,7 +1473,19 @@ pub(crate) async fn restore_or_create_workspace(
                             connection_options,
                             paths,
                             app_state.clone(),
-                            workspace::OpenOptions::default(),
+                            workspace::OpenOptions {
+                                restore_workspace_id: Some(
+                                    multi_workspace.active_workspace.workspace_id,
+                                ),
+                                ..workspace::OpenOptions::default()
+                            },
+                            cx,
+                        )
+                        .await?;
+                        workspace::restore_remaining_workspaces(
+                            window,
+                            multi_workspace.remaining_workspaces,
+                            app_state.clone(),
                             cx,
                         )
                         .await?;

@@ -10360,29 +10360,15 @@ pub async fn restore_multiworkspace(
 ) -> anyhow::Result<WindowHandle<MultiWorkspace>> {
     let SerializedMultiWorkspace {
         active_workspace,
+        remaining_workspaces,
         state,
     } = multi_workspace;
 
-    let workspace_result = if active_workspace.paths.is_empty() {
-        cx.update(|cx| {
+    let workspace_result = cx
+        .update(|cx| {
             open_workspace_by_id(active_workspace.workspace_id, app_state.clone(), None, cx)
         })
-        .await
-    } else {
-        cx.update(|cx| {
-            Workspace::new_local(
-                active_workspace.paths.paths().to_vec(),
-                app_state.clone(),
-                None,
-                None,
-                None,
-                OpenMode::Add,
-                cx,
-            )
-        })
-        .await
-        .map(|result| result.window)
-    };
+        .await;
 
     let window_handle = match workspace_result {
         Ok(handle) => {
@@ -10429,6 +10415,8 @@ pub async fn restore_multiworkspace(
         }
     };
 
+    restore_remaining_workspaces(window_handle, remaining_workspaces, app_state.clone(), cx)
+        .await?;
     apply_restored_multiworkspace_state(window_handle, &state, app_state.fs.clone(), cx).await;
 
     window_handle
@@ -10438,6 +10426,39 @@ pub async fn restore_multiworkspace(
         .ok();
 
     Ok(window_handle)
+}
+
+pub async fn restore_remaining_workspaces(
+    window_handle: WindowHandle<MultiWorkspace>,
+    remaining_workspaces: Vec<SessionWorkspace>,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let active = window_handle.update(cx, |multi_workspace, _, _| {
+        multi_workspace.workspace().clone()
+    })?;
+    for workspace in remaining_workspaces {
+        if workspace.location != SerializedWorkspaceLocation::Local {
+            continue;
+        }
+        let restored = cx
+            .update(|cx| {
+                open_workspace_by_id(
+                    workspace.workspace_id,
+                    app_state.clone(),
+                    Some(window_handle),
+                    cx,
+                )
+            })
+            .await;
+        restored
+            .with_context(|| format!("restoring workspace {:?}", workspace.workspace_id))
+            .log_err();
+    }
+    window_handle.update(cx, |multi_workspace, window, cx| {
+        multi_workspace.activate(active, None, window, cx);
+    })?;
+    Ok(())
 }
 
 pub async fn apply_restored_multiworkspace_state(

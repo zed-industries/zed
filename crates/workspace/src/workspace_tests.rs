@@ -1387,6 +1387,84 @@ async fn test_window_close_preserves_hot_exit_when_another_window_opens(cx: &mut
     }
 }
 
+#[gpui::test]
+async fn test_remote_setup_failure_protects_saved_graph_before_restore(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    let (project, app_state) = workspace.read_with(cx, |workspace, _| {
+        (workspace.project().clone(), workspace.app_state().clone())
+    });
+    saved.id = database.next_id().await.expect("remote restore ID");
+    saved.window_bounds = None;
+    saved.display = None;
+    database
+        .try_save_workspace(saved.clone())
+        .await
+        .expect("seed remote restore");
+    database
+        .write(|connection| {
+            connection.exec("ALTER TABLE toolchains RENAME TO unavailable_toolchains")?()
+        })
+        .await
+        .expect("inject toolchain setup failure");
+    let guarded_before_attachment = Rc::new(Cell::new(false));
+    let _subscription = cx.update(|_, cx| {
+        let guarded_before_attachment = guarded_before_attachment.clone();
+        cx.observe_new::<Workspace>(move |workspace, _, _| {
+            guarded_before_attachment.set(workspace.restoring_workspace);
+        })
+    });
+    let window = cx.update(|window, _| {
+        window
+            .window_handle()
+            .downcast::<MultiWorkspace>()
+            .expect("window")
+    });
+    let workspace_id = saved.id;
+    let serialized_workspace = saved.clone();
+    let opening = cx.cx.spawn(async move |mut cx| {
+        crate::open_remote_project_inner(
+            project,
+            vec![PathBuf::from(path!("/project"))],
+            workspace_id,
+            Some(serialized_workspace),
+            app_state,
+            window,
+            None,
+            None,
+            &mut cx,
+        )
+        .await
+    });
+    assert_eq!(
+        opening
+            .await
+            .err()
+            .expect("toolchain setup failure")
+            .to_string(),
+        "select toolchains"
+    );
+    assert!(guarded_before_attachment.get());
+    database
+        .write(|connection| {
+            connection.exec("ALTER TABLE unavailable_toolchains RENAME TO toolchains")?()
+        })
+        .await
+        .expect("restore toolchain table");
+    let restoring = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("attached workspace");
+    restoring
+        .update_in(cx, |workspace, window, cx| {
+            assert!(workspace.restoring_workspace);
+            assert_eq!(workspace.database_id(), Some(workspace_id));
+            workspace.flush_serialization(window, cx)
+        })
+        .await;
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    assert_eq!(database.workspace_for_id(workspace_id), Some(saved));
+}
+
 struct PendingRemoteConnection {
     options: RemoteConnectionOptions,
     identifiers: Mutex<Vec<String>>,
