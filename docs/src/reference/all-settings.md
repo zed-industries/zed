@@ -5908,8 +5908,8 @@ When the resolved directory falls outside the project root, the project's direct
 When the resolved directory is inside the project root, no extra component is added (it's already project-scoped).
 
 Relative paths can traverse any number of parent folders using `..`.
-For a repository at `~/Code/dovocode/agent`, setting `"../../../Worktrees"`
-creates worktrees at `~/Worktrees/agent/<worktree-name>/agent`.
+For a repository at `~/Code/projects/zed`, setting `"../../../Worktrees"`
+creates worktrees at `~/Worktrees/zed/<worktree-name>/zed`.
 You can also use `"~/Worktrees"` for the same destination, regardless of how deeply
 the repository is nested. For remote projects, `~` refers to the remote home folder.
 

@@ -1241,18 +1241,15 @@ mod git_worktrees {
     #[test]
     fn test_absolute_worktree_directories() {
         for (setting, expected) in [
-            ("/tmp/worktrees", "/tmp/worktrees/agent"),
-            ("/tmp/worktrees/../checkouts/", "/tmp/checkouts/agent"),
-            ("/", "/agent"),
-            ("///", "/agent"),
-            ("/code/agent/worktrees", "/code/agent/worktrees"),
-            (
-                "/code/agent-other/worktrees",
-                "/code/agent-other/worktrees/agent",
-            ),
+            ("/tmp/worktrees", "/tmp/worktrees/zed"),
+            ("/tmp/worktrees/../checkouts/", "/tmp/checkouts/zed"),
+            ("/", "/zed"),
+            ("///", "/zed"),
+            ("/code/zed/worktrees", "/code/zed/worktrees"),
+            ("/code/zed-other/worktrees", "/code/zed-other/worktrees/zed"),
         ] {
             assert_eq!(
-                worktrees_directory_for_repo(Path::new("/code/agent"), setting, PathStyle::Unix)
+                worktrees_directory_for_repo(Path::new("/code/zed"), setting, PathStyle::Unix)
                     .expect("absolute worktree directory should resolve"),
                 PathBuf::from(expected)
             );
@@ -1262,23 +1259,23 @@ mod git_worktrees {
     #[test]
     fn test_home_relative_worktree_directories() {
         let home = paths::home_dir();
-        let repository = home.join("Code/dovocode/agent");
+        let repository = home.join("Code/projects/zed");
         for setting in ["~/Worktrees", "~/Worktrees/", "~/other/../Worktrees"] {
             assert_eq!(
                 worktrees_directory_for_repo(&repository, setting, PathStyle::local())
                     .expect("home-relative worktree directory should resolve"),
-                home.join("Worktrees/agent")
+                home.join("Worktrees/zed")
             );
         }
         assert_eq!(
             worktrees_directory_for_repo(&repository, "~", PathStyle::local())
                 .expect("home directory should resolve"),
-            home.join("agent")
+            home.join("zed")
         );
         assert_eq!(
             worktrees_directory_for_repo(
                 &repository,
-                "~/Code/dovocode/agent/worktrees",
+                "~/Code/projects/zed/worktrees",
                 PathStyle::local()
             )
             .expect("directory inside the repository should remain project-scoped"),
@@ -1292,19 +1289,16 @@ mod git_worktrees {
 
     #[test]
     fn test_windows_worktree_directories() {
-        let repository = Path::new(r"C:\Code/dovocode\agent");
+        let repository = Path::new(r"C:\Code/projects\zed");
         for (setting, expected) in [
-            (r"D:\Worktrees", r"D:\Worktrees\agent"),
-            ("D:/Worktrees/../checkouts/", r"D:\checkouts\agent"),
-            (r"D:\", r"D:\agent"),
-            ("../../../Worktrees", r"C:\Worktrees\agent"),
+            (r"D:\Worktrees", r"D:\Worktrees\zed"),
+            ("D:/Worktrees/../checkouts/", r"D:\checkouts\zed"),
+            (r"D:\", r"D:\zed"),
+            ("../../../Worktrees", r"C:\Worktrees\zed"),
+            (r"\\server\share\Worktrees", r"\\server\share\Worktrees\zed"),
             (
-                r"\\server\share\Worktrees",
-                r"\\server\share\Worktrees\agent",
-            ),
-            (
-                r"C:\Code\dovocode\agent\worktrees",
-                r"C:\Code\dovocode\agent\worktrees",
+                r"C:\Code\projects\zed\worktrees",
+                r"C:\Code\projects\zed\worktrees",
             ),
         ] {
             assert_eq!(
@@ -1320,17 +1314,17 @@ mod git_worktrees {
 
     #[test]
     fn test_worktree_directory_at_different_depths() {
-        let work_dir = Path::new("/home/user/Code/dovocode/agent");
+        let work_dir = Path::new("/home/user/Code/projects/zed");
 
         for (setting, expected) in [
-            ("../../../Worktrees", "/home/user/Worktrees/agent"),
+            ("../../../Worktrees", "/home/user/Worktrees/zed"),
             (
                 "../../../Worktrees/team/project",
-                "/home/user/Worktrees/team/project/agent",
+                "/home/user/Worktrees/team/project/zed",
             ),
             (
                 "./local/nested/worktrees",
-                "/home/user/Code/dovocode/agent/local/nested/worktrees",
+                "/home/user/Code/projects/zed/local/nested/worktrees",
             ),
         ] {
             assert_eq!(
