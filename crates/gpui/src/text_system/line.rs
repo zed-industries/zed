@@ -235,7 +235,6 @@ impl ShapedLine {
 /// [`ShapedLine::split_at`]. Byte-ordered glyphs are advanced in linear time,
 /// copying each glyph and byte at most once; visually reordered glyphs fall
 /// back to the existing split operation.
-
 pub struct ShapedLineCursor<'a> {
     line: &'a ShapedLine,
     /// Bidirectional shaping can put glyphs out of byte order.
