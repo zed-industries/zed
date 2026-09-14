@@ -3757,6 +3757,69 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_cursor_animation_remains_active_during_keyboard_autoscroll(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.cursor_animation.get_or_insert_default().enabled = Some(true);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(3, cx);
+        editor.set_cursor_shape(CursorShape::Block, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.0), 8.0 * line_height));
+
+    let text = (0..40)
+        .map(|row| format!("line {row}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    cx.set_state(&format!("ˇ{text}"));
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+
+    let mut previous_scroll_y = 0.0;
+    let mut observed_autoscroll = false;
+    for _ in 0..20 {
+        cx.update_editor(|editor, window, cx| {
+            editor.move_down(&Default::default(), window, cx);
+        });
+        cx.update(|window, cx| {
+            window.refresh();
+            let _ = window.draw(cx);
+        });
+
+        let (scroll_y, animation_active) = cx.update_editor(|editor, window, cx| {
+            (
+                editor.snapshot(window, cx).scroll_position().y,
+                editor.cursor_animations.has_active_animation(),
+            )
+        });
+        if scroll_y > previous_scroll_y {
+            assert!(
+                animation_active,
+                "cursor animation should remain active when keyboard movement autoscrolls"
+            );
+            observed_autoscroll = true;
+            break;
+        }
+        previous_scroll_y = scroll_y;
+    }
+
+    assert!(
+        observed_autoscroll,
+        "expected cursor movement to autoscroll"
+    );
+}
+
+#[gpui::test]
 async fn test_autoscroll_relative(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
