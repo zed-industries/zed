@@ -2598,12 +2598,13 @@ pub(crate) fn handle_lsp_show_document(
 mod tests {
     use crate::editor_tests::init_test;
     use fs::Fs;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, OpenMode, WorkspaceDb, WorkspaceMatching};
 
     use super::*;
     use fs::MTime;
     use gpui::{App, VisualTestContext};
     use language::{TestFile, language_settings::SoftWrap};
+    use multi_buffer::ToOffset as _;
     use project::FakeFs;
     use serde_json::json;
     use std::path::{Path, PathBuf};
@@ -3887,6 +3888,409 @@ mod tests {
                 assert!(editor.workspace.is_none());
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_independent_windows_start_fresh_and_preserve_source(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        assert_independent_windows_preserve_source(OpenMode::NewWindow, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_independent_cli_matching_none_starts_fresh(cx: &mut gpui::TestAppContext) {
+        assert_independent_windows_preserve_source(OpenMode::Activate, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_move_to_new_window_restores_dirty_editors_under_same_id(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let initial = ["moved untitled\0λ\n", "moved file recovery\n"];
+        let (source, _) = workspace_with_recovery_editors(initial, cx).await;
+        let (source_id, key) = source.workspace.read_with(cx, |workspace, cx| {
+            (
+                workspace.database_id().expect("source ID"),
+                workspace.project_group_key(cx),
+            )
+        });
+        source
+            .window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.open_project_group_in_new_window(&key, window, cx)
+            })
+            .expect("move window")
+            .await
+            .expect("move project");
+        let (window, moved) = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .find_map(|window| {
+                    let workspace = window
+                        .read(cx)
+                        .ok()?
+                        .workspaces()
+                        .find(|workspace| workspace.read(cx).database_id() == Some(source_id))?
+                        .clone();
+                    Some((window, workspace))
+                })
+                .expect("moved workspace")
+        });
+        assert_ne!(window, source.window);
+        assert_eq!(workspace_editor_texts(&moved, cx), initial);
+        assert_saved_workspace_editor_texts(source_id, initial, cx);
+    }
+
+    #[gpui::test]
+    async fn test_unowned_new_window_restores_dirty_editors_and_metadata(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let text = format!(
+            "λ0\nfold start\nfold end\n{}\n",
+            "scrollable text ".repeat(64)
+        )
+        .repeat(64);
+        let initial = [text.as_str(), text.as_str()];
+        let (source, app_state) = workspace_with_recovery_editors(initial, cx).await;
+        let source_id = source.workspace.read_with(cx, |workspace, _| {
+            workspace.database_id().expect("source ID")
+        });
+        let database = cx.update(|cx| EditorDb::global(cx));
+        let item_ids = cx.update(|cx| {
+            WorkspaceDb::global(cx)
+                .select_bound::<WorkspaceId, ItemId>("SELECT item_id FROM items WHERE workspace_id = ? AND kind = 'Editor' ORDER BY position")
+                .expect("prepare source editor IDs")(source_id)
+                .expect("source editor IDs")
+        });
+        assert_eq!(item_ids.len(), 2);
+        let selections = vec![(0, 2), (24, 28)];
+        let fold_text = text.get(4..23).expect("fold text").to_owned();
+        for item_id in item_ids.iter().copied() {
+            database
+                .save_editor_selections(item_id, source_id, selections.clone())
+                .await
+                .expect("seed selections");
+            database
+                .save_scroll_position(item_id, source_id, 4, 1.5, 0.25)
+                .await
+                .expect("seed scroll");
+        }
+        let untitled_id = *item_ids.first().expect("untitled ID");
+        let fingerprint = fold_text.clone();
+        database.write(move |connection| {
+            connection.exec_bound::<(ItemId, WorkspaceId, String, String)>(
+                "INSERT INTO editor_folds (editor_id, workspace_id, start, end, start_fingerprint, end_fingerprint)
+                 VALUES (?1, ?2, 4, 23, ?3, ?4)"
+            )?((untitled_id, source_id, fingerprint.clone(), fingerprint))
+        }).await.expect("seed untitled fold");
+        database
+            .save_file_folds(
+                source_id,
+                Arc::from(Path::new(path!("/project/file.txt"))),
+                vec![(4, 23, fold_text.clone(), fold_text)],
+            )
+            .await
+            .expect("seed file fold");
+        source
+            .window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("close source");
+        drop(source);
+        cx.run_until_parked();
+        let reopened = cx
+            .update(|cx| {
+                workspace::open_paths(
+                    &[PathBuf::from(path!("/project"))],
+                    app_state.clone(),
+                    OpenOptions {
+                        open_mode: OpenMode::NewWindow,
+                        workspace_matching: WorkspaceMatching::None,
+                        ..OpenOptions::default()
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("restore metadata");
+        let expected = vec![(selections, (4, 1.5, 0.25), vec![(4, 23)]); 2];
+        assert_eq!(workspace_editor_texts(&reopened.workspace, cx), initial);
+        assert_eq!(workspace_editor_metadata(&reopened.workspace, cx), expected);
+        assert_eq!(
+            reopened
+                .workspace
+                .read_with(cx, |workspace, _| workspace.database_id()),
+            Some(source_id)
+        );
+        reopened
+            .window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("close restored window");
+        drop(reopened);
+        cx.run_until_parked();
+        let window = cx
+            .update(|cx| workspace::open_workspace_by_id(source_id, app_state, None, cx))
+            .await
+            .expect("restart source");
+        let restored = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("restored workspace");
+        assert_eq!(workspace_editor_texts(&restored, cx), initial);
+        assert_eq!(workspace_editor_metadata(&restored, cx), expected);
+    }
+
+    async fn assert_independent_windows_preserve_source(
+        open_mode: OpenMode,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let initial = ["untitled recovery\0λ\n  \n", "file recovery\n"];
+        let (first, app_state) = workspace_with_recovery_editors(initial, cx).await;
+        let first_id = first.workspace.read_with(cx, |workspace, _| {
+            workspace.database_id().expect("source ID")
+        });
+        let second = cx
+            .update(|cx| {
+                workspace::open_paths(
+                    &[PathBuf::from(path!("/project"))],
+                    app_state.clone(),
+                    OpenOptions {
+                        open_mode,
+                        workspace_matching: WorkspaceMatching::None,
+                        ..OpenOptions::default()
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("independent window");
+        let second_id = second.workspace.read_with(cx, |workspace, _| {
+            workspace.database_id().expect("destination ID")
+        });
+        assert_ne!(first_id, second_id);
+        assert_ne!(first.window, second.window);
+        assert_ne!(
+            first
+                .workspace
+                .read_with(cx, |workspace, _| workspace.project().entity_id()),
+            second
+                .workspace
+                .read_with(cx, |workspace, _| workspace.project().entity_id()),
+        );
+        assert_eq!(workspace_editor_texts(&first.workspace, cx), initial);
+        assert_saved_workspace_editor_texts(first_id, initial, cx);
+        assert_eq!(
+            workspace_editor_texts(&second.workspace, cx),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            cx.update(|cx| EditorDb::global(cx).get_serialized_item_ids(second_id))
+                .expect("fresh payload IDs"),
+            Vec::<ItemId>::new()
+        );
+        let first_texts = ["first window\0λ\n", "first file edits\n"];
+        let second_texts = ["second window\n", "second file edits\0λ\n"];
+        add_recovery_editors(&second, second_texts, cx).await;
+        for (opened, texts) in [(&first, first_texts), (&second, second_texts)] {
+            opened
+                .window
+                .update(cx, |_, window, cx| {
+                    opened.workspace.update(cx, |workspace, cx| {
+                        let editors = workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>();
+                        assert_eq!(editors.len(), texts.len());
+                        for (editor, text) in editors.into_iter().zip(texts) {
+                            editor.update(cx, |editor, cx| {
+                                editor
+                                    .buffer()
+                                    .read(cx)
+                                    .as_singleton()
+                                    .expect("singleton")
+                                    .update(cx, |buffer, cx| buffer.set_text(text, cx));
+                            });
+                        }
+                        workspace.flush_serialization(window, cx)
+                    })
+                })
+                .expect("write window")
+                .await;
+            cx.run_until_parked();
+        }
+        assert_eq!(workspace_editor_texts(&first.workspace, cx), first_texts);
+        assert_eq!(workspace_editor_texts(&second.workspace, cx), second_texts);
+        assert_saved_workspace_editor_texts(first_id, first_texts, cx);
+        assert_saved_workspace_editor_texts(second_id, second_texts, cx);
+        for opened in [&first, &second] {
+            opened
+                .window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close window");
+        }
+        drop(first);
+        drop(second);
+        cx.run_until_parked();
+        for (workspace_id, texts) in [(first_id, first_texts), (second_id, second_texts)] {
+            let window = cx
+                .update(|cx| {
+                    workspace::open_workspace_by_id(workspace_id, app_state.clone(), None, cx)
+                })
+                .await
+                .expect("reopen independent workspace");
+            let workspace = window
+                .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                .expect("reopened workspace");
+            assert_eq!(workspace_editor_texts(&workspace, cx), texts);
+            assert_saved_workspace_editor_texts(first_id, first_texts, cx);
+            assert_saved_workspace_editor_texts(second_id, second_texts, cx);
+        }
+    }
+
+    async fn workspace_with_recovery_editors(
+        texts: [&str; 2],
+        cx: &mut gpui::TestAppContext,
+    ) -> (workspace::OpenResult, Arc<workspace::AppState>) {
+        init_test(cx, |_| {});
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let app_state = cx.update(workspace::AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({"file.txt": "disk text\n"}))
+            .await;
+        let opened = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    vec![PathBuf::from(path!("/project"))],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::NewWindow,
+                    cx,
+                )
+            })
+            .await
+            .expect("source workspace");
+        add_recovery_editors(&opened, texts, cx).await;
+        (opened, app_state)
+    }
+
+    async fn add_recovery_editors(
+        opened: &workspace::OpenResult,
+        texts: [&str; 2],
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let project = opened
+            .workspace
+            .read_with(cx, |workspace, _| workspace.project().clone());
+        let untitled = project
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
+            .await
+            .expect("untitled buffer");
+        let file = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(Path::new(path!("/project/file.txt")), cx)
+            })
+            .await
+            .expect("file buffer");
+        opened
+            .window
+            .update(cx, |_, window, cx| {
+                opened.workspace.update(cx, |workspace, cx| {
+                    for (buffer, text) in [untitled, file].into_iter().zip(texts) {
+                        buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+                        let editor = cx.new(|cx| {
+                            let mut editor =
+                                Editor::for_buffer(buffer, Some(project.clone()), window, cx);
+                            editor.set_should_serialize(true, cx);
+                            editor
+                        });
+                        workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                    }
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .expect("seed source workspace")
+            .await;
+        cx.run_until_parked();
+        let workspace_id = opened.workspace.read_with(cx, |workspace, _| {
+            workspace.database_id().expect("workspace ID")
+        });
+        assert_saved_workspace_editor_texts(workspace_id, texts, cx);
+    }
+
+    fn workspace_editor_metadata(
+        workspace: &Entity<Workspace>,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<(Vec<(usize, usize)>, (u32, f64, f64), Vec<(usize, usize)>)> {
+        let editors = workspace.read_with(cx, |workspace, cx| {
+            workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+        });
+        editors
+            .into_iter()
+            .map(|editor| {
+                editor.update(cx, |editor, cx| {
+                    let snapshot = editor.display_snapshot(cx);
+                    let selections = editor
+                        .selections
+                        .all::<MultiBufferOffset>(&snapshot)
+                        .into_iter()
+                        .map(|selection| (selection.start.0, selection.end.0))
+                        .collect();
+                    let scroll = editor
+                        .scroll_manager
+                        .scroll_anchor_entity()
+                        .read(cx)
+                        .scroll_anchor;
+                    let folds = snapshot
+                        .folds_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len())
+                        .map(|fold| {
+                            (
+                                fold.range.start.to_offset(snapshot.buffer_snapshot()).0,
+                                fold.range.end.to_offset(snapshot.buffer_snapshot()).0,
+                            )
+                        })
+                        .collect();
+                    (
+                        selections,
+                        (
+                            scroll.anchor.to_point(snapshot.buffer_snapshot()).row,
+                            scroll.offset.x,
+                            scroll.offset.y,
+                        ),
+                        folds,
+                    )
+                })
+            })
+            .collect()
+    }
+
+    fn workspace_editor_texts(
+        workspace: &Entity<Workspace>,
+        cx: &gpui::TestAppContext,
+    ) -> Vec<String> {
+        workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .items_of_type::<Editor>(cx)
+                .map(|editor| editor.read(cx).text(cx))
+                .collect()
+        })
+    }
+
+    fn assert_saved_workspace_editor_texts(
+        workspace_id: WorkspaceId,
+        expected: [&str; 2],
+        cx: &gpui::TestAppContext,
+    ) {
+        cx.read(|cx| {
+            let item_ids = WorkspaceDb::global(cx)
+                .select_bound::<WorkspaceId, ItemId>("SELECT item_id FROM items WHERE workspace_id = ? AND kind = 'Editor' ORDER BY position")
+                .expect("prepare editor graph query")(workspace_id).expect("read editor graph");
+            let database = EditorDb::global(cx);
+            let texts = item_ids.into_iter().map(|item_id| {
+                database.get_serialized_editor(item_id, workspace_id).expect("read editor payload")
+                    .expect("editor payload").contents.expect("dirty contents")
+            }).collect::<Vec<_>>();
+            assert_eq!(texts, expected);
+        });
     }
 
     async fn assert_serialization_order(

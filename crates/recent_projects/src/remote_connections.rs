@@ -129,9 +129,12 @@ pub async fn open_remote_project(
     connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
-    open_options: workspace::OpenOptions,
+    mut open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<WindowHandle<MultiWorkspace>> {
+    if open_options.restore_workspace_id.is_some() {
+        open_options.workspace_matching = workspace::WorkspaceMatching::None;
+    }
     let created_new_window = open_options.requesting_window.is_none();
 
     let (existing, open_visible) = find_existing_workspace(
@@ -356,6 +359,7 @@ pub async fn open_remote_project(
                     delegate.clone(),
                     app_state.clone(),
                     paths.clone(),
+                    open_options.restore_workspace_id,
                     cx,
                 )
             })
@@ -411,8 +415,37 @@ pub async fn open_remote_project(
                 });
             }
 
-            Ok((_, items)) => {
-                navigate_to_positions(&window, items, &paths_with_positions, cx);
+            Ok(Some(opened)) => {
+                if created_new_window && opened.window != window {
+                    window.update(cx, |multi_workspace, window, cx| {
+                        if multi_workspace.workspaces().count() == 1
+                            && multi_workspace.workspace() == &initial_workspace
+                            && initial_workspace.read(cx).items(cx).next().is_none()
+                            && initial_workspace
+                                .read(cx)
+                                .project()
+                                .read(cx)
+                                .worktrees(cx)
+                                .next()
+                                .is_none()
+                        {
+                            window.remove_window();
+                        }
+                    })?;
+                }
+                let items = opened
+                    .opened_items
+                    .into_iter()
+                    .map(|item| item.transpose())
+                    .collect::<Result<Vec<_>>>()?;
+                navigate_to_positions(&opened.window, items, &paths_with_positions, cx);
+                return Ok(opened.window);
+            }
+            Ok(None) => {
+                if created_new_window {
+                    window.update(cx, |_, window, _| window.remove_window())?;
+                }
+                anyhow::bail!("remote project opening was cancelled");
             }
         }
 
@@ -715,6 +748,29 @@ mod tests {
             still_first_window, first_window,
             "The window handle should be the same after reuse"
         );
+        let workspace_id = first_window
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .database_id()
+                    .expect("remote ID")
+            })
+            .expect("owner workspace");
+        let restored_window = open_remote_project(
+            opts,
+            vec![PathBuf::from(path!("/project"))],
+            app_state,
+            workspace::OpenOptions {
+                restore_workspace_id: Some(workspace_id),
+                ..workspace::OpenOptions::default()
+            },
+            &mut async_cx,
+        )
+        .await
+        .expect("explicit owner restore");
+        assert_eq!(restored_window, first_window);
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
     }
 
     #[gpui::test]

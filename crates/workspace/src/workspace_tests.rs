@@ -1,6 +1,6 @@
 use crate::{
-    CloseIntent, ItemHandle, ItemId, MultiWorkspace, SerializableItemRegistry, SerializedItemIds,
-    Workspace, WorkspaceDb, WorkspaceId,
+    CloseIntent, ItemHandle, ItemId, MultiWorkspace, OpenMode, SerializableItemRegistry,
+    SerializedItemIds, Workspace, WorkspaceDb, WorkspaceId,
     item::test::TestItem,
     persistence::{
         SerializedAxis,
@@ -10,25 +10,40 @@ use crate::{
     tests::init_test,
 };
 use anyhow::{Result, anyhow};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use fs::FakeFs;
-use futures::{FutureExt as _, channel::oneshot, future::Shared};
-use gpui::{AppContext, Axis, Entity, EntityId, Global, Task, TestAppContext, VisualTestContext};
+use futures::{
+    Future, FutureExt as _,
+    channel::{mpsc, oneshot},
+    future::Shared,
+};
+use gpui::{
+    App, AppContext, AsyncApp, Axis, Entity, EntityId, Global, Task, TestAppContext,
+    VisualTestContext,
+};
 use project::{
     Project,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
+};
+use remote::{
+    CommandTemplate, Interactive, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
+    RemotePlatform,
 };
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    pin::Pin,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
-use util::path;
+use util::{
+    path,
+    paths::{PathStyle, RemotePathBuf},
+};
 
 #[test]
 fn test_serialized_item_ids_unsigned_boundaries() {
@@ -606,6 +621,676 @@ async fn test_hot_exit_graph_failure_close_prompts(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_hot_exit_graph_failure_quit_prompts(cx: &mut TestAppContext) {
     assert_hot_exit_graph_failure_prompts(CloseIntent::Quit, cx).await;
+}
+
+#[gpui::test]
+async fn test_open_workspace_by_id_reuses_owner_after_concurrent_restore(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    saved.id = database.next_id().await.expect("unowned workspace ID");
+    database
+        .try_save_workspace(saved.clone())
+        .await
+        .expect("seed unowned workspace");
+    let workspace_id = saved.id;
+    let (first, second) = cx.update(|_, cx| {
+        (
+            crate::open_workspace_by_id(workspace_id, app_state.clone(), None, cx),
+            crate::open_workspace_by_id(workspace_id, app_state.clone(), None, cx),
+        )
+    });
+    let (first, second) = futures::join!(first, second);
+    let first = first.expect("first restore");
+    assert_eq!(first, second.expect("concurrent restore"));
+    let restored = first
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("restored workspace");
+    restored.read_with(cx, |workspace, cx| {
+        assert_eq!(workspace.database_id(), Some(workspace_id));
+        assert_eq!(workspace.items(cx).count(), 2);
+    });
+    let reused = cx
+        .update(|_, cx| crate::open_workspace_by_id(workspace_id, app_state, None, cx))
+        .await
+        .expect("reuse live owner");
+    assert_eq!(reused, first);
+    assert_eq!(cx.update(|_, cx| cx.windows().len()), 2);
+}
+
+#[gpui::test]
+async fn test_new_window_starts_fresh_when_saved_identity_is_owned(cx: &mut TestAppContext) {
+    let (workspace, database, saved, cx) = restore_fixture(cx).await;
+    cx.update(|_, cx| {
+        let descriptor = cx
+            .global_mut::<SerializableItemRegistry>()
+            .descriptors_by_kind
+            .get_mut("TestItem")
+            .expect("TestItem descriptor");
+        descriptor.deserialize =
+            |_, _, _, _, _, _| panic!("independent open must not read source items");
+        descriptor.cleanup = |_, _, _, _| panic!("independent open must not clean source items");
+    });
+    let independent = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_workspace_for_paths(
+                OpenMode::NewWindow,
+                vec![PathBuf::from(path!("/project"))],
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("independent window");
+    let independent_id = independent.read_with(cx, |workspace, cx| {
+        assert_eq!(workspace.items(cx).count(), 0);
+        assert!(!workspace.is_restoring());
+        workspace.database_id().expect("independent ID")
+    });
+    assert_ne!(independent_id, saved.id);
+    independent
+        .update_in(cx, |workspace, window, cx| {
+            workspace.flush_serialization(window, cx)
+        })
+        .await;
+    assert_eq!(cx.update(|_, cx| cx.windows().len()), 2);
+    assert_eq!(database.workspace_for_id(saved.id), Some(saved.clone()));
+    let independent_graph = database
+        .workspace_for_id(independent_id)
+        .expect("independent graph");
+    assert_eq!(independent_graph.paths, saved.paths);
+    assert!(independent_graph.bookmarks.is_empty());
+    assert!(independent_graph.breakpoints.is_empty());
+    assert!(independent_graph.recent_navigation_history.is_empty());
+}
+
+#[gpui::test]
+async fn test_new_window_propagates_allocation_failure(cx: &mut TestAppContext) {
+    let (workspace, database, saved, cx) = restore_fixture(cx).await;
+    database
+        .write(|connection| {
+            connection.exec(
+                "CREATE TRIGGER fail_fork_id BEFORE INSERT ON workspaces
+             BEGIN SELECT RAISE(ABORT, 'injected fork allocation failure'); END;",
+            )?()
+        })
+        .await
+        .expect("inject allocation failure");
+    let result = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_workspace_for_paths(
+                OpenMode::NewWindow,
+                vec![PathBuf::from(path!("/project"))],
+                window,
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(
+        result
+            .err()
+            .expect("allocation must fail")
+            .root_cause()
+            .to_string(),
+        "Sqlite call failed with code 1811 and message: Some(\"injected fork allocation failure\")",
+    );
+    assert_eq!(cx.update(|_, cx| cx.windows().len()), 1);
+    assert_eq!(database.workspace_for_id(saved.id), Some(saved));
+}
+
+#[gpui::test]
+async fn test_concurrent_local_opens_recheck_ownership_before_attachment(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    saved.id = database.next_id().await.expect("unowned workspace ID");
+    database
+        .try_save_workspace(saved.clone())
+        .await
+        .expect("seed unowned workspace");
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    let (first, second) = cx.update(|_, cx| {
+        let open = |cx: &mut gpui::App| {
+            Workspace::new_local(
+                vec![PathBuf::from(path!("/project"))],
+                app_state.clone(),
+                None,
+                None,
+                None,
+                OpenMode::Activate,
+                cx,
+            )
+        };
+        (open(cx), open(cx))
+    });
+    let (first, second) = futures::join!(first, second);
+    let first = first.expect("first open");
+    let second = second.expect("concurrent open");
+    let ids = [&first.workspace, &second.workspace].map(|workspace| {
+        workspace.read_with(cx, |workspace, cx| {
+            let workspace_id = workspace.database_id().expect("durable ID");
+            assert_eq!(
+                workspace.items(cx).count(),
+                if workspace_id == saved.id { 2 } else { 0 }
+            );
+            workspace_id
+        })
+    });
+    assert_ne!(ids[0], ids[1]);
+    assert!(ids[0] == saved.id || ids[1] == saved.id);
+    assert_eq!(cx.update(|_, cx| cx.windows().len()), 3);
+}
+
+#[gpui::test]
+async fn test_unowned_new_window_restores_saved_identity(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    saved.id = database.next_id().await.expect("unowned ID");
+    database
+        .try_save_workspace(saved.clone())
+        .await
+        .expect("seed unowned workspace");
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    let opened = cx
+        .update(|_, cx| {
+            Workspace::new_local(
+                vec![PathBuf::from(path!("/project"))],
+                app_state,
+                None,
+                None,
+                None,
+                OpenMode::NewWindow,
+                cx,
+            )
+        })
+        .await
+        .expect("restore unowned workspace");
+    opened.workspace.read_with(cx, |workspace, cx| {
+        assert_eq!(workspace.database_id(), Some(saved.id));
+        assert_eq!(workspace.items(cx).count(), 2);
+    });
+}
+
+#[gpui::test]
+async fn test_local_open_preserves_saved_and_independent_root_order(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/roots"), json!({"A": {}, "B": {}}))
+        .await;
+    let requested = vec![
+        PathBuf::from(path!("/roots/A")),
+        PathBuf::from(path!("/roots/B")),
+    ];
+    let saved_order = vec![
+        PathBuf::from(path!("/roots/B")),
+        PathBuf::from(path!("/roots/A")),
+    ];
+    saved.id = database.next_id().await.expect("unowned ID");
+    saved.paths = crate::PathList::new(&saved_order);
+    saved.bookmarks.clear();
+    saved.breakpoints.clear();
+    saved.recent_navigation_history.clear();
+    database
+        .try_save_workspace(saved.clone())
+        .await
+        .expect("seed reversed roots");
+    let mut opened_workspaces = Vec::new();
+    for expected in [&saved_order, &requested] {
+        let opened = cx
+            .update(|_, cx| {
+                Workspace::new_local(
+                    requested.clone(),
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::NewWindow,
+                    cx,
+                )
+            })
+            .await
+            .expect("open ordered roots");
+        let workspace_id = opened.workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .root_paths(cx)
+                    .iter()
+                    .map(|path| path.to_path_buf())
+                    .collect::<Vec<_>>(),
+                *expected
+            );
+            assert_eq!(workspace.project().read(cx).worktrees(cx).count(), 2);
+            let workspace_id = workspace.database_id().expect("opened ID");
+            assert_eq!(
+                workspace.items(cx).count(),
+                if workspace_id == saved.id { 2 } else { 0 }
+            );
+            workspace_id
+        });
+        if opened_workspaces.is_empty() {
+            assert_eq!(workspace_id, saved.id);
+        } else {
+            assert_ne!(workspace_id, saved.id);
+        }
+        opened
+            .window
+            .update(cx, |_, window, cx| {
+                opened.workspace.update(cx, |workspace, cx| {
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .expect("flush ordered roots")
+            .await;
+        assert_eq!(
+            database
+                .workspace_for_id(workspace_id)
+                .expect("persisted roots")
+                .paths
+                .ordered_paths()
+                .cloned()
+                .collect::<Vec<_>>(),
+            *expected
+        );
+        opened_workspaces.push((opened, workspace_id, expected.clone()));
+    }
+    for (opened, workspace_id, expected) in opened_workspaces {
+        opened
+            .window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("close ordered roots");
+        drop(opened);
+        cx.run_until_parked();
+        let reopened = cx
+            .update(|_, cx| crate::open_workspace_by_id(workspace_id, app_state.clone(), None, cx))
+            .await
+            .expect("reopen ordered roots");
+        reopened
+            .read_with(cx, |multi_workspace, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                assert_eq!(workspace.database_id(), Some(workspace_id));
+                assert_eq!(
+                    workspace
+                        .root_paths(cx)
+                        .iter()
+                        .map(|path| path.to_path_buf())
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+                assert_eq!(workspace.project().read(cx).worktrees(cx).count(), 2);
+            })
+            .expect("reopened roots");
+        assert_eq!(
+            database
+                .workspace_for_id(workspace_id)
+                .expect("reopened persisted roots")
+                .paths
+                .ordered_paths()
+                .cloned()
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_pending_workspace_owner_is_joined_by_id(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    let requested = vec![
+        PathBuf::from(path!("/roots/A")),
+        PathBuf::from(path!("/roots/B")),
+    ];
+    saved.paths = crate::PathList::new(&[
+        PathBuf::from(path!("/roots/B")),
+        PathBuf::from(path!("/roots/A")),
+    ]);
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/roots"), json!({"A": {}, "B": {}}))
+        .await;
+    saved.id = database.next_id().await.expect("unowned ID");
+    database
+        .try_save_workspace(saved.clone())
+        .await
+        .expect("seed workspace");
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    let mut async_cx = cx.cx.to_async();
+    let crate::WorkspaceOpen::Claimed(claim) =
+        crate::claim_workspace_open(saved.id, false, &mut async_cx)
+            .await
+            .expect("claim")
+    else {
+        panic!("unowned workspace must be claimed")
+    };
+    let opening =
+        cx.update(|_, cx| crate::open_workspace_by_id(saved.id, app_state.clone(), None, cx));
+    cx.run_until_parked();
+    assert!(!opening.is_ready());
+    let independent = cx
+        .update(|_, cx| {
+            Workspace::new_local(
+                requested.clone(),
+                app_state,
+                None,
+                None,
+                None,
+                OpenMode::NewWindow,
+                cx,
+            )
+        })
+        .await
+        .expect("independent contender");
+    let independent_id = independent.workspace.read_with(cx, |workspace, cx| {
+        assert_ne!(workspace.database_id(), Some(saved.id));
+        assert_eq!(workspace.items(cx).count(), 0);
+        assert_eq!(
+            workspace
+                .root_paths(cx)
+                .iter()
+                .map(|path| path.to_path_buf())
+                .collect::<Vec<_>>(),
+            requested
+        );
+        assert_eq!(workspace.project().read(cx).worktrees(cx).count(), 2);
+        workspace.database_id().expect("independent ID")
+    });
+    independent
+        .window
+        .update(cx, |_, window, cx| {
+            independent.workspace.update(cx, |workspace, cx| {
+                workspace.flush_serialization(window, cx)
+            })
+        })
+        .expect("flush pending contender")
+        .await;
+    assert_eq!(
+        database
+            .workspace_for_id(independent_id)
+            .expect("independent persisted roots")
+            .paths
+            .ordered_paths()
+            .cloned()
+            .collect::<Vec<_>>(),
+        requested
+    );
+    workspace.update(cx, |workspace, _| workspace.set_database_id(saved.id));
+    let owner_window = cx.update(|window, _| {
+        window
+            .window_handle()
+            .downcast::<MultiWorkspace>()
+            .expect("owner window")
+    });
+    claim.complete();
+    assert_eq!(opening.await.expect("joined owner"), owner_window);
+    assert_eq!(cx.update(|_, cx| cx.windows().len()), 2);
+    assert!(cx.update(|_, cx| {
+        cx.global::<crate::WorkspaceOpenClaims>()
+            .0
+            .borrow()
+            .is_empty()
+    }));
+}
+
+#[gpui::test]
+async fn test_cancelled_workspace_claim_is_released(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    saved.id = database.next_id().await.expect("unowned ID");
+    database
+        .try_save_workspace(saved.clone())
+        .await
+        .expect("seed workspace");
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    let mut async_cx = cx.cx.to_async();
+    let crate::WorkspaceOpen::Claimed(claim) =
+        crate::claim_workspace_open(saved.id, false, &mut async_cx)
+            .await
+            .expect("claim")
+    else {
+        panic!("unowned workspace must be claimed")
+    };
+    let opening =
+        cx.update(|_, cx| crate::open_workspace_by_id(saved.id, app_state.clone(), None, cx));
+    cx.run_until_parked();
+    assert!(!opening.is_ready());
+    drop(claim);
+    assert_eq!(
+        opening
+            .await
+            .err()
+            .expect("pending owner cancelled")
+            .to_string(),
+        "pending workspace open failed or was cancelled"
+    );
+    let window = cx
+        .update(|_, cx| crate::open_workspace_by_id(saved.id, app_state, None, cx))
+        .await
+        .expect("retry after cancellation");
+    window
+        .read_with(cx, |multi_workspace, cx| {
+            assert_eq!(
+                multi_workspace.workspace().read(cx).database_id(),
+                Some(saved.id)
+            );
+        })
+        .expect("restored owner");
+}
+
+#[gpui::test]
+async fn test_remote_pending_opens_claim_distinct_server_identities(cx: &mut TestAppContext) {
+    let (workspace, database, mut saved, cx) = restore_fixture(cx).await;
+    cx.update(|_, cx| release_channel::init("0.0.0".parse().expect("test version"), cx));
+    let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+    let options = remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+        host: "pending.test".into(),
+        ..remote::SshConnectionOptions::default()
+    });
+    saved.id = database.next_id().await.expect("remote ID");
+    saved.window_bounds = None;
+    saved.display = None;
+    saved.location = crate::SerializedWorkspaceLocation::Remote(options.clone());
+    database
+        .try_save_workspace(saved.clone())
+        .await
+        .expect("seed remote workspace");
+    assert_eq!(database.workspace_for_id(saved.id), Some(saved.clone()));
+    let connection = Arc::new(PendingRemoteConnection {
+        options,
+        identifiers: std::sync::Mutex::new(Vec::new()),
+    });
+    let window = cx.update(|window, _| {
+        window
+            .window_handle()
+            .downcast::<MultiWorkspace>()
+            .expect("window")
+    });
+    let (cancel_first, first_cancelled) = oneshot::channel();
+    let (cancel_second, second_cancelled) = oneshot::channel();
+    let (_cancel_join, join_cancelled) = oneshot::channel();
+    let first = cx.update(|_, cx| {
+        crate::open_remote_project_with_new_connection(
+            window,
+            connection.clone(),
+            first_cancelled,
+            Arc::new(remote::MockDelegate),
+            app_state.clone(),
+            vec![PathBuf::from(path!("/project"))],
+            None,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert_eq!(connection.identifiers.lock().expect("identifiers").len(), 1);
+    let second = cx.update(|_, cx| {
+        crate::open_remote_project_with_new_connection(
+            window,
+            connection.clone(),
+            second_cancelled,
+            Arc::new(remote::MockDelegate),
+            app_state.clone(),
+            vec![PathBuf::from(path!("/project"))],
+            None,
+            cx,
+        )
+    });
+    let joined = cx.update(|_, cx| {
+        crate::open_remote_project_with_new_connection(
+            window,
+            connection.clone(),
+            join_cancelled,
+            Arc::new(remote::MockDelegate),
+            app_state.clone(),
+            vec![PathBuf::from(path!("/project"))],
+            Some(saved.id),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(!first.is_ready());
+    assert!(!second.is_ready());
+    assert!(!joined.is_ready());
+    let identities = connection.identifiers.lock().expect("identifiers").clone();
+    assert_eq!(identities.len(), 2);
+    assert_ne!(identities[0], identities[1]);
+    assert_eq!(
+        identities[0]
+            .rsplit_once('-')
+            .expect("server ID")
+            .1
+            .parse::<i64>()
+            .expect("numeric ID"),
+        i64::from(saved.id)
+    );
+    cancel_first.send(()).expect("cancel first RPC");
+    assert!(first.await.expect("cancelled RPC").is_none());
+    assert_eq!(
+        joined.await.err().expect("owner cancelled").to_string(),
+        "pending workspace open failed or was cancelled"
+    );
+    drop(second);
+    drop(cancel_second);
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| {
+        cx.global::<crate::WorkspaceOpenClaims>()
+            .0
+            .borrow()
+            .is_empty()
+    }));
+    let (cancel_retry, retry_cancelled) = oneshot::channel();
+    let retry = cx.update(|_, cx| {
+        crate::open_remote_project_with_new_connection(
+            window,
+            connection.clone(),
+            retry_cancelled,
+            Arc::new(remote::MockDelegate),
+            app_state,
+            vec![PathBuf::from(path!("/project"))],
+            Some(saved.id),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        connection
+            .identifiers
+            .lock()
+            .expect("identifiers")
+            .as_slice(),
+        &[
+            identities[0].clone(),
+            identities[1].clone(),
+            identities[0].clone()
+        ]
+    );
+    cancel_retry.send(()).expect("cancel retry");
+    assert!(retry.await.expect("cancelled retry").is_none());
+    assert_eq!(database.workspace_for_id(saved.id), Some(saved));
+}
+
+struct PendingRemoteConnection {
+    options: RemoteConnectionOptions,
+    identifiers: Mutex<Vec<String>>,
+}
+
+impl RemoteConnection for PendingRemoteConnection {
+    fn start_proxy(
+        &self,
+        unique_identifier: String,
+        _reconnect: bool,
+        incoming: mpsc::UnboundedSender<client::proto::Envelope>,
+        outgoing: mpsc::UnboundedReceiver<client::proto::Envelope>,
+        activity: mpsc::Sender<()>,
+        _delegate: Arc<dyn RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<i32>> {
+        self.identifiers
+            .lock()
+            .expect("identifiers")
+            .push(unique_identifier);
+        cx.background_spawn(async move {
+            let result = futures::future::pending().await;
+            drop((incoming, outgoing, activity));
+            result
+        })
+    }
+
+    fn upload_directory(&self, _: PathBuf, _: RemotePathBuf, _: &App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("unexpected upload")))
+    }
+
+    fn kill<'life0, 'async_trait>(
+        &'life0 self,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn has_been_killed(&self) -> bool {
+        false
+    }
+
+    fn build_command(
+        &self,
+        _: Option<String>,
+        _: &[String],
+        _: &HashMap<String, String>,
+        _: Option<String>,
+        _: Option<(u16, String, u16)>,
+        _: Interactive,
+    ) -> Result<CommandTemplate> {
+        Err(anyhow!("unexpected command"))
+    }
+
+    fn build_forward_ports_command(&self, _: Vec<(u16, String, u16)>) -> Result<CommandTemplate> {
+        Err(anyhow!("unexpected port forwarding"))
+    }
+
+    fn connection_options(&self) -> RemoteConnectionOptions {
+        self.options.clone()
+    }
+    fn path_style(&self) -> PathStyle {
+        PathStyle::Unix
+    }
+    fn remote_platform(&self) -> RemotePlatform {
+        RemotePlatform {
+            os: remote::RemoteOs::Linux,
+            arch: remote::RemoteArch::X86_64,
+        }
+    }
+    fn remote_os_version(&self) -> Option<String> {
+        None
+    }
+    fn shell(&self) -> String {
+        "sh".to_owned()
+    }
+    fn default_system_shell(&self) -> String {
+        "sh".to_owned()
+    }
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
 }
 
 struct ItemIdProvider {

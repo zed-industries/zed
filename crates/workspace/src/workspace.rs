@@ -2220,10 +2220,31 @@ impl Workspace {
                 }
             }
 
-            let serialized_workspace = db.workspace_for_roots(paths_to_open.as_slice());
+            let saved_workspace_id = db
+                .workspace_for_roots(paths_to_open.as_slice())
+                .map(|workspace| workspace.id);
 
-            if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
-                paths_to_open = paths.ordered_paths().cloned().collect();
+            let candidate_id = if let Some(workspace_id) = saved_workspace_id {
+                workspace_id
+            } else {
+                db.next_id().await?
+            };
+            let WorkspaceOpen::Claimed(claim) =
+                claim_workspace_open(candidate_id, false, cx).await?
+            else {
+                unreachable!()
+            };
+            let workspace_id = claim.workspace_id;
+            let serialized_workspace = if Some(workspace_id) == saved_workspace_id {
+                Some(
+                    db.workspace_for_id(workspace_id)
+                        .with_context(|| format!("Workspace {workspace_id:?} not found"))?,
+                )
+            } else {
+                None
+            };
+            if let Some(saved) = &serialized_workspace {
+                paths_to_open = saved.paths.ordered_paths().cloned().collect();
             }
 
             // Get project paths for all of the abs_paths
@@ -2243,12 +2264,6 @@ impl Workspace {
                     project_paths.push((path, None));
                 }
             }
-
-            let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
-                serialized_workspace.id
-            } else {
-                db.next_id().await.unwrap_or_else(|_| Default::default())
-            };
 
             let toolchains = db.toolchains(workspace_id).await?;
 
@@ -2466,6 +2481,7 @@ impl Workspace {
                 })
                 .log_err();
 
+            claim.complete();
             Ok(OpenResult {
                 window,
                 workspace,
@@ -11163,6 +11179,7 @@ pub struct OpenOptions {
     pub add_dirs_to_sidebar: bool,
     pub wait: bool,
     pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
+    pub restore_workspace_id: Option<WorkspaceId>,
     pub open_mode: OpenMode,
     pub env: Option<HashMap<String, String>>,
     pub open_in_dev_container: bool,
@@ -11177,6 +11194,7 @@ impl Default for OpenOptions {
             add_dirs_to_sidebar: true,
             wait: false,
             requesting_window: None,
+            restore_workspace_id: None,
             open_mode: OpenMode::default(),
             env: None,
             open_in_dev_container: false,
@@ -11225,11 +11243,40 @@ pub fn open_workspace_by_id(
     let db = WorkspaceDb::global(cx);
     let kvp = db::kvp::KeyValueStore::global(cx);
     cx.spawn(async move |cx| {
+        let claim = match claim_workspace_open(workspace_id, true, cx).await? {
+            WorkspaceOpen::Existing(window, workspace) => {
+                window.update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.activate(workspace, None, window, cx);
+                    window.activate_window();
+                })?;
+                return Ok(window);
+            }
+            WorkspaceOpen::Claimed(claim) => claim,
+        };
+
         let serialized_workspace = db
             .workspace_for_id(workspace_id)
             .with_context(|| format!("Workspace {workspace_id:?} not found"))?;
 
+        for path in serialized_workspace.paths.ordered_paths() {
+            cx.update(|cx| {
+                Workspace::project_path_for_path(project_handle.clone(), path, true, cx)
+            })
+            .await
+            .with_context(|| format!("restoring workspace root {}", path.display()))
+            .log_err();
+        }
+        let serialized_workspace = db
+            .workspace_for_id(workspace_id)
+            .with_context(|| format!("Workspace {workspace_id:?} not found"))?;
         let centered_layout = serialized_workspace.centered_layout;
+        project_handle.update(cx, |project, cx| {
+            for (scope, toolchains) in &serialized_workspace.user_toolchains {
+                for toolchain in toolchains {
+                    project.add_toolchain(toolchain.clone(), scope.clone(), cx);
+                }
+            }
+        });
 
         let (window, workspace) = if let Some(window) = requesting_window {
             let workspace = window.update(cx, |multi_workspace, window, cx| {
@@ -11320,6 +11367,7 @@ pub fn open_workspace_by_id(
             });
         })?;
 
+        claim.complete();
         Ok(window)
     })
 }
@@ -11607,12 +11655,58 @@ pub fn open_remote_project_with_new_connection(
     delegate: Arc<dyn RemoteClientDelegate>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
+    restore_workspace_id: Option<WorkspaceId>,
     cx: &mut App,
-) -> Task<Result<(Option<Entity<Workspace>>, Vec<Option<Box<dyn ItemHandle>>>)>> {
+) -> Task<Result<Option<OpenResult>>> {
     cx.spawn(async move |cx| {
-        let (workspace_id, serialized_workspace) =
-            deserialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
-                .await?;
+        let (candidate_id, restore_saved) = if let Some(workspace_id) = restore_workspace_id {
+            (workspace_id, true)
+        } else {
+            let (workspace_id, saved) = deserialize_remote_project(
+                remote_connection.connection_options(),
+                paths.clone(),
+                cx,
+            )
+            .await?;
+            (workspace_id, saved.is_some())
+        };
+        let mut cancel_rx = cancel_rx;
+        let claimed = match futures::future::select(
+            Box::pin(claim_workspace_open(
+                candidate_id,
+                restore_workspace_id.is_some(),
+                cx,
+            )),
+            &mut cancel_rx,
+        )
+        .await
+        {
+            futures::future::Either::Left((claimed, _)) => claimed?,
+            futures::future::Either::Right(_) => return Ok(None),
+        };
+        let claim = match claimed {
+            WorkspaceOpen::Existing(owner_window, workspace) => {
+                owner_window.update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.activate(workspace.clone(), None, window, cx);
+                    window.activate_window();
+                })?;
+                return Ok(Some(OpenResult {
+                    window: owner_window,
+                    workspace,
+                    opened_items: Vec::new(),
+                }));
+            }
+            WorkspaceOpen::Claimed(claim) => claim,
+        };
+        let workspace_id = claim.workspace_id;
+        let serialized_workspace = if workspace_id == candidate_id && restore_saved {
+            Some(
+                cx.update(|cx| WorkspaceDb::global(cx).workspace_for_id(workspace_id))
+                    .with_context(|| format!("Workspace {workspace_id:?} not found"))?,
+            )
+        } else {
+            None
+        };
 
         let session = match cx
             .update(|cx| {
@@ -11627,7 +11721,7 @@ pub fn open_remote_project_with_new_connection(
             .await?
         {
             Some(result) => result,
-            None => return Ok((None, Vec::new())),
+            None => return Ok(None),
         };
 
         let project = cx.update(|cx| {
@@ -11655,7 +11749,12 @@ pub fn open_remote_project_with_new_connection(
             cx,
         )
         .await?;
-        Ok((Some(workspace), items))
+        claim.complete();
+        Ok(Some(OpenResult {
+            window,
+            workspace,
+            opened_items: items.into_iter().map(|item| item.map(Ok)).collect(),
+        }))
     })
 }
 
@@ -11670,10 +11769,20 @@ pub fn open_remote_project_with_existing_connection(
     cx: &mut AsyncApp,
 ) -> Task<Result<(Entity<Workspace>, Vec<Option<Box<dyn ItemHandle>>>)>> {
     cx.spawn(async move |cx| {
-        let (workspace_id, serialized_workspace) =
+        let (candidate_id, saved) =
             deserialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
+        let WorkspaceOpen::Claimed(claim) = claim_workspace_open(candidate_id, false, cx).await?
+        else {
+            unreachable!()
+        };
+        let workspace_id = claim.workspace_id;
+        let serialized_workspace = if workspace_id == candidate_id {
+            saved
+        } else {
+            None
+        };
 
-        open_remote_project_inner(
+        let result = open_remote_project_inner(
             project,
             paths,
             workspace_id,
@@ -11684,7 +11793,9 @@ pub fn open_remote_project_with_existing_connection(
             source_workspace,
             cx,
         )
-        .await
+        .await?;
+        claim.complete();
+        Ok(result)
     })
 }
 
@@ -11722,6 +11833,16 @@ async fn open_remote_project_inner(
         return Err(project_path_errors.pop().context("no paths given")?);
     }
 
+    let db = cx.update(|cx| WorkspaceDb::global(cx));
+    let serialized_workspace = if serialized_workspace.is_some() {
+        Some(
+            db.workspace_for_id(workspace_id)
+                .with_context(|| format!("Workspace {workspace_id:?} not found"))?,
+        )
+    } else {
+        None
+    };
+
     let workspace = window.update(cx, |multi_workspace, window, cx| {
         let new_workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(
@@ -11732,6 +11853,7 @@ async fn open_remote_project_inner(
                 cx,
             );
             workspace.restoring_workspace = serialized_workspace.is_some();
+
             workspace.update_history(cx);
 
             if let Some(ref serialized) = serialized_workspace {
@@ -11754,7 +11876,6 @@ async fn open_remote_project_inner(
         new_workspace
     })?;
 
-    let db = cx.update(|cx| WorkspaceDb::global(cx));
     let toolchains = db.toolchains(workspace_id).await?;
     for (toolchain, worktree_path, path) in toolchains {
         project
@@ -11808,6 +11929,88 @@ async fn open_remote_project_inner(
         workspace,
         items.into_iter().map(|item| item?.ok()).collect(),
     ))
+}
+
+#[derive(Default)]
+struct WorkspaceOpenClaims(Rc<RefCell<HashMap<WorkspaceId, Shared<oneshot::Receiver<()>>>>>);
+
+impl Global for WorkspaceOpenClaims {}
+
+enum WorkspaceOpen {
+    Existing(WindowHandle<MultiWorkspace>, Entity<Workspace>),
+    Claimed(WorkspaceOpenClaim),
+}
+
+struct WorkspaceOpenClaim {
+    workspace_id: WorkspaceId,
+    claims: Rc<RefCell<HashMap<WorkspaceId, Shared<oneshot::Receiver<()>>>>>,
+    completion: Option<oneshot::Sender<()>>,
+}
+
+impl WorkspaceOpenClaim {
+    fn complete(mut self) {
+        if let Some(completion) = self.completion.take()
+            && completion.send(()).is_err()
+        {
+            log::debug!("workspace open waiter was dropped");
+        }
+    }
+}
+
+impl Drop for WorkspaceOpenClaim {
+    fn drop(&mut self) {
+        self.claims.borrow_mut().remove(&self.workspace_id);
+    }
+}
+
+async fn claim_workspace_open(
+    mut workspace_id: WorkspaceId,
+    reuse_existing: bool,
+    cx: &mut AsyncApp,
+) -> Result<WorkspaceOpen> {
+    loop {
+        let claims = cx.update(|cx| cx.default_global::<WorkspaceOpenClaims>().0.clone());
+        let pending = claims.borrow().get(&workspace_id).cloned();
+        if let Some(pending) = pending {
+            if reuse_existing {
+                pending
+                    .await
+                    .context("pending workspace open failed or was cancelled")?;
+                continue;
+            }
+        } else if let Some((window, workspace)) =
+            cx.update(|cx| find_open_workspace_by_id(workspace_id, cx))
+        {
+            if reuse_existing {
+                return Ok(WorkspaceOpen::Existing(window, workspace));
+            }
+        } else {
+            let (completion, receiver) = oneshot::channel();
+            claims.borrow_mut().insert(workspace_id, receiver.shared());
+            return Ok(WorkspaceOpen::Claimed(WorkspaceOpenClaim {
+                workspace_id,
+                claims,
+                completion: Some(completion),
+            }));
+        }
+        workspace_id = cx.update(|cx| WorkspaceDb::global(cx)).next_id().await?;
+    }
+}
+
+fn find_open_workspace_by_id(
+    workspace_id: WorkspaceId,
+    cx: &App,
+) -> Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> {
+    cx.windows().into_iter().find_map(|window| {
+        let window = window.downcast::<MultiWorkspace>()?;
+        let workspace = window
+            .read(cx)
+            .ok()?
+            .workspaces()
+            .find(|workspace| workspace.read(cx).database_id() == Some(workspace_id))?
+            .clone();
+        Some((window, workspace))
+    })
 }
 
 fn deserialize_remote_project(
