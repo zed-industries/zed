@@ -38,6 +38,7 @@ gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
