@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
-    RequestBuilderExt,
+    RequestBuilderExt, StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -364,6 +364,51 @@ pub async fn get_models(
     Ok(response.models)
 }
 
+/// Outcome of probing the server's API key against an auth-enforcing endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiKeyCheck {
+    /// The server accepted the key.
+    Valid,
+    /// The server rejected the key as unauthorized.
+    Invalid,
+    /// The key could not be validated: the server returned an unexpected status
+    /// (for example, an older build without the probed endpoint). Callers should
+    /// fall back to a reachability check rather than treating the key as bad.
+    Unknown,
+}
+
+/// Checks whether the server accepts the given API key.
+///
+/// `GET /api/ps` is used because Ollama Cloud enforces authentication on it,
+/// unlike `/api/tags` and `/api/version`, which are served without a key. Local
+/// and self-hosted servers also implement it, so a valid key is distinguishable
+/// from an expired or revoked one without sending a chat request.
+pub async fn check_api_key(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    extra_headers: &CustomHeaders,
+) -> Result<ApiKeyCheck> {
+    let uri = format!("{api_url}/api/ps");
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Accept", "application/json")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::default())?;
+
+    let response = client.send(request).await?;
+    let status = response.status();
+    Ok(if status.is_success() {
+        ApiKeyCheck::Valid
+    } else if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+        ApiKeyCheck::Invalid
+    } else {
+        ApiKeyCheck::Unknown
+    })
+}
+
 /// Fetch details of a model, used to determine model capabilities
 pub async fn show_model(
     client: &dyn HttpClient,
@@ -402,6 +447,63 @@ pub async fn show_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_api_key_maps_response_status_to_outcome() {
+        let cases = [
+            (200, ApiKeyCheck::Valid),
+            // Ollama Cloud rejects a missing or expired key as unauthorized.
+            (401, ApiKeyCheck::Invalid),
+            (403, ApiKeyCheck::Invalid),
+            // Servers that predate `/api/ps` must not be read as a rejected key.
+            (404, ApiKeyCheck::Unknown),
+        ];
+
+        for (status, expected) in cases {
+            let client = http_client::FakeHttpClient::create(move |_| async move {
+                Ok(http_client::Response::builder()
+                    .status(status)
+                    .body(http_client::AsyncBody::from(r#"{"models":[]}"#))
+                    .unwrap())
+            });
+
+            let result = futures::executor::block_on(check_api_key(
+                client.as_ref(),
+                "https://ollama.com",
+                "some-key",
+                &CustomHeaders::default(),
+            ))
+            .unwrap();
+
+            assert_eq!(result, expected, "unexpected outcome for status {status}");
+        }
+    }
+
+    #[test]
+    fn check_api_key_sends_authorization_header() {
+        let client = http_client::FakeHttpClient::create(|request| async move {
+            let authorization = request
+                .headers()
+                .get("Authorization")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
+            let path = request.uri().path().to_string();
+            assert_eq!(path, "/api/ps");
+            assert_eq!(authorization.as_deref(), Some("Bearer secret"));
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::default())
+                .unwrap())
+        });
+
+        futures::executor::block_on(check_api_key(
+            client.as_ref(),
+            "https://ollama.com",
+            "secret",
+            &CustomHeaders::default(),
+        ))
+        .unwrap();
+    }
 
     #[test]
     fn parse_completion() {
