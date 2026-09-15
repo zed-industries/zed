@@ -72,7 +72,29 @@ You can connect both local and remote MCP servers from **Settings → AI → MCP
 }
 ```
 
-> Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
+> **Note:** Remote MCP servers can allow anonymous connections. Without a configured `"Authorization"` header, Zed uses the standard MCP OAuth flow when the server requires authentication.
+
+#### Anonymous Remote Servers {#anonymous-remote-servers}
+
+For example, [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) provides `web_search` and `web_fetch` without a Parallel account or API key. Free access is rate limited.
+
+In **Settings → AI → MCP Servers**, choose **Add Server → Add Remote Server**, enter `parallel-search` as the name and `https://search.parallel.ai/mcp` as the URL, and leave the headers empty.
+
+Or merge this entry into `context_servers` in your settings file:
+
+```json [settings]
+{
+  "context_servers": {
+    "parallel-search": {
+      "url": "https://search.parallel.ai/mcp"
+    }
+  }
+}
+```
+
+Once connected, the agent can use these tools subject to your [tool permissions](./tool-permissions.md). Tool calls send queries, requested URLs, and any supplied objectives or context to Parallel. Zed's existing `User-Agent` identifies the application and its version, allowing Parallel to measure aggregate usage from Zed.
+
+To disconnect, remove the `parallel-search` entry from your settings file. Adding this server does not change your built-in tools or other configured servers.
 
 ## Using MCP Servers
 
