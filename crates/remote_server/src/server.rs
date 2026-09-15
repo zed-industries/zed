@@ -1097,7 +1097,7 @@ fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), S
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    crate::windows::shell_execute_from_explorer(&binary_path, &parameters, &directory)
+    crate::windows::spawn_process_detached(&binary_path, &parameters, &directory)
         .map_err(|e| SpawnServerError::ProcessStatus(std::io::Error::other(e)))?;
 
     Ok(())
