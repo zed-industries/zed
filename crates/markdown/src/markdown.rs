@@ -12,7 +12,8 @@ use language::LanguageName;
 
 use log::Level;
 use mermaid::{
-    MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
+    MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams,
+    render_mermaid_code_container, render_mermaid_diagram,
 };
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
@@ -2612,6 +2613,7 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
+        let mut rendered_mermaid_code_block = false;
         let mut rendered_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
@@ -2633,6 +2635,18 @@ impl Element for MarkdownElement {
                 if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
                     rendered_mermaid_block = false;
                 }
+                continue;
+            }
+
+            if rendered_mermaid_code_block
+                && matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock))
+            {
+                builder.trim_trailing_newline();
+                builder.pop_div();
+                builder.pop_code_block();
+                builder.pop_text_style();
+                builder.pop_div();
+                rendered_mermaid_code_block = false;
                 continue;
             }
 
@@ -2745,6 +2759,33 @@ impl Element for MarkdownElement {
                                     } => *copy_button_visibility,
                                     _ => CopyButtonVisibility::VisibleOnHover,
                                 };
+                                if showing_code
+                                    && mermaid_state.has_rendered_diagram(&mermaid_diagram.contents)
+                                {
+                                    builder.push_div(
+                                        render_mermaid_code_container(
+                                            &self.style,
+                                            self.markdown.clone(),
+                                            range.start,
+                                            mermaid_diagram.contents.contents.to_string(),
+                                            copy_button_visibility,
+                                        ),
+                                        range,
+                                        markdown_end,
+                                    );
+                                    builder.push_text_style(self.style.code_block.text.to_owned());
+                                    builder.push_code_block(None);
+                                    builder.push_div(
+                                        div()
+                                            .id(("mermaid-code-block", range.start))
+                                            .rounded_lg()
+                                            .w_full(),
+                                        range,
+                                        markdown_end,
+                                    );
+                                    rendered_mermaid_code_block = true;
+                                    continue;
+                                }
                                 builder.push_sourced_element(
                                     mermaid_diagram.content_range.clone(),
                                     render_mermaid_diagram(

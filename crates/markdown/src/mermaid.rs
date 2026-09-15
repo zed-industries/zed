@@ -15,7 +15,9 @@ use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 
-use super::{CopyButtonVisibility, Markdown, MarkdownStyle, MermaidZoomCallback, ParsedMarkdown};
+use super::{
+    AnyDiv, CopyButtonVisibility, Markdown, MarkdownStyle, MermaidZoomCallback, ParsedMarkdown,
+};
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
@@ -57,6 +59,16 @@ struct CachedMermaidDiagram {
 }
 
 impl MermaidState {
+    pub(crate) fn has_rendered_diagram(
+        &self,
+        contents: &ParsedMarkdownMermaidDiagramContents,
+    ) -> bool {
+        self.cache
+            .get(contents)
+            .and_then(|cached| cached.render_image.get())
+            .is_some_and(Result::is_ok)
+    }
+
     pub(crate) fn clear(&mut self, cx: &mut App) {
         for cached in self.cache.values() {
             cached.drop_images(cx);
@@ -814,6 +826,36 @@ fn render_mermaid_tab_header(
                     });
                 }),
         )
+}
+
+pub(crate) fn render_mermaid_code_container(
+    style: &MarkdownStyle,
+    markdown: Entity<Markdown>,
+    source_offset: usize,
+    code: String,
+    copy_button_visibility: CopyButtonVisibility,
+) -> AnyDiv {
+    let show_interactive = copy_button_visibility != CopyButtonVisibility::Hidden;
+    let mut container = div().group("code_block").relative().w_full().rounded_lg();
+    container.style().refine(&style.code_block);
+    container
+        .when(show_interactive, |container| {
+            container.child(render_mermaid_tab_header(
+                source_offset,
+                true,
+                markdown.clone(),
+            ))
+        })
+        .when(show_interactive, |container| {
+            container.child(render_mermaid_overlay_controls(
+                source_offset,
+                code,
+                None,
+                markdown,
+                None,
+            ))
+        })
+        .into()
 }
 
 /// The overlay controls anchored to the top-right corner of a diagram: an
@@ -1809,14 +1851,14 @@ mod tests {
 
         let rendered_text = draw_markdown_element(markdown.clone(), cx);
 
-        let mermaid_diagram = markdown.update(cx, |markdown, _| {
-            markdown
+        let (source_offset, mermaid_diagram) = markdown.update(cx, |markdown, _| {
+            let (source_offset, diagram) = markdown
                 .parsed_markdown
                 .mermaid_diagrams
-                .values()
+                .iter()
                 .next()
-                .unwrap()
-                .clone()
+                .unwrap();
+            (*source_offset, diagram.clone())
         });
         assert!(
             rendered_text
@@ -1827,6 +1869,24 @@ mod tests {
             rendered_text
                 .position_for_source_index(mermaid_diagram.content_range.end.saturating_sub(1))
                 .is_some()
+        );
+
+        markdown.update(cx, |markdown, _| {
+            markdown.toggle_mermaid_tab(source_offset);
+        });
+        let rendered_code = draw_markdown_element(markdown, cx);
+        assert_eq!(
+            rendered_code.text_for_range(mermaid_diagram.content_range.clone()),
+            "graph TD;"
+        );
+        assert!(
+            !rendered_code
+                .bounds_for_source_range(
+                    mermaid_diagram.content_range.start
+                        ..mermaid_diagram.content_range.end.saturating_sub(1)
+                )
+                .is_empty(),
+            "code tab text must expose selectable hit regions"
         );
     }
 }
