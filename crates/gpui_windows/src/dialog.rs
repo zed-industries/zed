@@ -1,8 +1,8 @@
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     rc::Rc,
     sync::{
-        Arc, Weak,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -31,107 +31,82 @@ use crate::SafeHwnd;
 
 pub(crate) struct DialogOwner {
     hwnd: HWND,
-    closed: Cell<bool>,
-    pending: Cell<usize>,
+    closed: Arc<AtomicBool>,
     serialization: Mutex<()>,
-    cancellations: RefCell<Vec<Weak<AtomicBool>>>,
-    idle_waiters: RefCell<Vec<oneshot::Sender<()>>>,
 }
 
 impl DialogOwner {
     pub(crate) fn new(hwnd: HWND) -> Rc<Self> {
         Rc::new(Self {
             hwnd,
-            closed: Cell::new(false),
-            pending: Cell::new(0),
+            closed: Arc::new(AtomicBool::new(false)),
             serialization: Mutex::new(()),
-            cancellations: RefCell::new(Vec::new()),
-            idle_waiters: RefCell::new(Vec::new()),
         })
     }
 
-    fn lease(self: &Rc<Self>, cancellation: &Arc<AtomicBool>) -> Result<DialogLease> {
-        anyhow::ensure!(!self.closed.get(), "dialog owner has closed");
-        self.pending.set(self.pending.get() + 1);
-        let mut cancellations = self.cancellations.borrow_mut();
-        cancellations.retain(|cancellation| cancellation.strong_count() != 0);
-        cancellations.push(Arc::downgrade(cancellation));
-        Ok(DialogLease(self.clone()))
-    }
-
     pub(crate) fn close(&self) {
-        self.closed.set(true);
-        for cancellation in self.cancellations.borrow_mut().drain(..) {
-            if let Some(cancellation) = cancellation.upgrade() {
-                cancellation.store(true, Ordering::Release);
-            }
-        }
+        self.closed.store(true, Ordering::Release);
     }
 
-    pub(crate) fn when_idle(&self) -> oneshot::Receiver<()> {
-        let (sender, receiver) = oneshot::channel();
-        if self.pending.get() == 0 {
-            sender.send(()).ok();
-        } else {
-            self.idle_waiters.borrow_mut().push(sender);
-        }
-        receiver
+    pub(crate) async fn when_idle(&self) {
+        // After close(), queued requests cannot start a native dialog. Only the
+        // active dialog can still use the HWND, and it holds this lock until exit.
+        let _guard = self.serialization.lock().await;
     }
 }
 
-struct DialogLease(Rc<DialogOwner>);
+#[derive(Clone, Default)]
+struct Cancellation {
+    requested: Arc<AtomicBool>,
+    owner_closed: Option<Arc<AtomicBool>>,
+}
 
-impl Drop for DialogLease {
-    fn drop(&mut self) {
-        let owner = &self.0;
-        owner.pending.set(owner.pending.get() - 1);
-        if owner.pending.get() == 0 {
-            for waiter in owner.idle_waiters.borrow_mut().drain(..) {
-                waiter.send(()).ok();
-            }
+impl Cancellation {
+    fn new(owner: Option<&DialogOwner>) -> Self {
+        Self {
+            owner_closed: owner.map(|owner| owner.closed.clone()),
+            ..Self::default()
         }
+    }
+
+    fn is_requested(&self) -> bool {
+        self.requested.load(Ordering::Acquire)
+            || self
+                .owner_closed
+                .as_ref()
+                .is_some_and(|closed| closed.load(Ordering::Acquire))
     }
 }
 
 /// Native modal loops may synchronously message their owner, so the foreground
 /// thread must keep pumping messages rather than waiting for the dialog thread.
-/// The lifetime lease also delays destruction of the owner HWND until the native
-/// loop exits; an Rc alone would not prevent WindowsWindow::drop destroying it.
+/// Holding the owner's lock through native completion also allows window
+/// destruction to wait for the dialog without blocking the foreground thread.
 pub(crate) fn show_dialog<T: Send + 'static>(
     owner: Option<Rc<DialogOwner>>,
     executor: &ForegroundExecutor,
     dialog: impl FnOnce(HWND) -> Result<T> + Send + 'static,
 ) -> oneshot::Receiver<Result<T>> {
     let (mut sender, receiver) = oneshot::channel();
-    let cancellation = Arc::new(AtomicBool::new(false));
+    let cancellation = Cancellation::new(owner.as_deref());
+    if cancellation.is_requested() {
+        sender.send(Err(anyhow!("dialog owner has closed"))).ok();
+        return receiver;
+    }
     let hwnd = owner.as_ref().map(|owner| SafeHwnd::from(owner.hwnd));
-    let lease = if let Some(owner) = owner {
-        match owner.lease(&cancellation) {
-            Ok(lease) => Some(lease),
-            Err(error) => {
-                sender.send(Err(error)).ok();
-                return receiver;
-            }
-        }
-    } else {
-        None
-    };
     executor
         .spawn(async move {
             // Let Windows manage enabling and activating the owner. Overlapping
             // modal loops could otherwise re-enable it while another dialog is open.
-            let serialization = if let Some(lease) = lease.as_ref() {
-                match select(lease.0.serialization.lock(), sender.cancellation()).await {
+            let serialization = if let Some(owner) = owner.as_ref() {
+                match select(owner.serialization.lock(), sender.cancellation()).await {
                     Either::Left((guard, _)) => Some(guard),
                     Either::Right(((), _)) => return,
                 }
             } else {
                 None
             };
-            if sender.is_canceled()
-                || cancellation.load(Ordering::Acquire)
-                || lease.as_ref().is_some_and(|lease| lease.0.closed.get())
-            {
+            if sender.is_canceled() || cancellation.is_requested() {
                 return;
             }
             let (result_sender, mut result_receiver) = oneshot::channel();
@@ -143,11 +118,11 @@ pub(crate) fn show_dialog<T: Send + 'static>(
                         let result = (|| {
                             let _apartment = Apartment::new()?;
                             let _timer = CancellationTimer::new(cancellation.clone())?;
-                            if cancellation.load(Ordering::Acquire) {
+                            if cancellation.is_requested() {
                                 return Err(anyhow!("dialog cancelled"));
                             }
                             let result = dialog(hwnd.map(|hwnd| hwnd.as_raw()).unwrap_or_default());
-                            if cancellation.load(Ordering::Acquire) {
+                            if cancellation.is_requested() {
                                 return Err(anyhow!("dialog cancelled"));
                             }
                             result
@@ -157,21 +132,19 @@ pub(crate) fn show_dialog<T: Send + 'static>(
                 });
             if let Err(error) = thread {
                 drop(serialization);
-                drop(lease);
                 sender.send(Err(error.into())).ok();
                 return;
             }
             let result = match select(&mut result_receiver, sender.cancellation()).await {
                 Either::Left((result, _)) => result,
                 Either::Right(((), _)) => {
-                    cancellation.store(true, Ordering::Release);
+                    cancellation.requested.store(true, Ordering::Release);
                     result_receiver.await
                 }
             };
             // Neither launch another dialog nor destroy the owner until the
             // native loop exits, even if the caller no longer wants its result.
             drop(serialization);
-            drop(lease);
             sender
                 .send(result.unwrap_or_else(|error| Err(error.into())))
                 .ok();
@@ -196,13 +169,13 @@ impl Drop for Apartment {
 }
 
 thread_local! {
-    static CANCELLATION: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+    static CANCELLATION: RefCell<Option<Cancellation>> = const { RefCell::new(None) };
 }
 
 struct CancellationTimer(usize);
 
 impl CancellationTimer {
-    fn new(cancellation: Arc<AtomicBool>) -> Result<Self> {
+    fn new(cancellation: Cancellation) -> Result<Self> {
         let timer = unsafe { SetTimer(None, 0, 100, Some(cancel_dialog)) };
         if timer == 0 {
             return Err(windows::core::Error::from_thread())
@@ -234,7 +207,7 @@ fn cancellation_requested() -> bool {
     CANCELLATION.with(|slot| {
         slot.borrow()
             .as_ref()
-            .is_some_and(|cancellation| cancellation.load(Ordering::Acquire))
+            .is_some_and(Cancellation::is_requested)
     })
 }
 
@@ -273,13 +246,16 @@ unsafe extern "system" fn close_dialog(hwnd: HWND, _: LPARAM) -> BOOL {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt as _;
 
     #[test]
     fn task_dialog_cancellation_requires_cancel_button_or_internal_request() {
-        let cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation = Cancellation::default();
         CANCELLATION.with(|slot| slot.replace(Some(cancellation.clone())));
         for internally_cancelled in [false, true] {
-            cancellation.store(internally_cancelled, Ordering::Release);
+            cancellation
+                .requested
+                .store(internally_cancelled, Ordering::Release);
             for has_cancel_button in [false, true] {
                 for button in [IDCANCEL.0, IDOK.0, -1] {
                     let result = unsafe {
@@ -303,84 +279,62 @@ mod tests {
     #[test]
     fn closing_owner_cancels_every_outstanding_dialog() {
         let owner = DialogOwner::new(HWND::default());
-        let first = Arc::new(AtomicBool::new(false));
-        let second = Arc::new(AtomicBool::new(false));
-        let _first_lease = owner.lease(&first).expect("owner is open");
-        let _second_lease = owner.lease(&second).expect("owner is open");
+        let first = Cancellation::new(Some(&owner));
+        let second = Cancellation::new(Some(&owner));
+        assert!(!first.is_requested());
+        assert!(!second.is_requested());
 
         owner.close();
         owner.close();
 
-        assert!(owner.closed.get());
-        assert!(first.load(Ordering::Acquire));
-        assert!(second.load(Ordering::Acquire));
-        assert!(owner.cancellations.borrow().is_empty());
-        assert!(owner.lease(&Arc::new(AtomicBool::new(false))).is_err());
+        assert!(first.is_requested());
+        assert!(second.is_requested());
+        assert!(Cancellation::new(Some(&owner)).is_requested());
     }
 
     #[test]
-    fn dialog_leases_outlive_closed_owner_without_touching_its_handle() {
+    fn closed_owner_waits_for_active_dialog_but_queued_requests_stay_cancelled() {
         let owner = DialogOwner::new(HWND::default());
-        let first = owner
-            .lease(&Arc::new(AtomicBool::new(false)))
-            .expect("owner is open");
-        let second = owner
-            .lease(&Arc::new(AtomicBool::new(false)))
-            .expect("owner is open");
-        let mut idle = owner.when_idle();
+        let active = owner.serialization.try_lock().expect("first dialog");
+        let queued = Cancellation::new(Some(&owner));
 
         owner.close();
-        assert_eq!(idle.try_recv().expect("idle receiver is connected"), None);
-        drop(first);
-        assert_eq!(owner.pending.get(), 1);
-        assert_eq!(idle.try_recv().expect("idle receiver is connected"), None);
-        drop(second);
-        assert_eq!(owner.pending.get(), 0);
-        assert_eq!(
-            idle.try_recv().expect("idle receiver is connected"),
-            Some(())
-        );
+        assert!(owner.when_idle().now_or_never().is_none());
+        drop(active);
+        assert!(owner.when_idle().now_or_never().is_some());
+
+        let _guard = owner.serialization.try_lock().expect("queued request");
+        assert!(queued.is_requested());
     }
 
     #[test]
-    fn dropping_last_lease_notifies_idle() {
+    fn cancelling_one_request_does_not_cancel_its_owner_or_other_requests() {
         let owner = DialogOwner::new(HWND::default());
-        let lease = owner
-            .lease(&Arc::new(AtomicBool::new(false)))
-            .expect("owner is open");
-        let mut idle = owner.when_idle();
-        drop(lease);
-        assert_eq!(owner.pending.get(), 0);
-        assert_eq!(
-            idle.try_recv().expect("idle receiver is connected"),
-            Some(())
-        );
+        let first = Cancellation::new(Some(&owner));
+        let second = Cancellation::new(Some(&owner));
+        first.requested.store(true, Ordering::Release);
+        assert!(first.is_requested());
+        assert!(!second.is_requested());
+        assert!(!owner.closed.load(Ordering::Acquire));
     }
 
     #[test]
-    fn dialogs_serialize_per_owner_while_queued_leases_keep_owner_alive() {
+    fn dialogs_serialize_per_owner() {
         let owner = DialogOwner::new(HWND::default());
         let other_owner = DialogOwner::new(HWND::default());
-        let active = owner
-            .lease(&Arc::new(AtomicBool::new(false)))
-            .expect("owner is open");
-        let queued = owner
-            .lease(&Arc::new(AtomicBool::new(false)))
-            .expect("owner is open");
-        let guard = active.0.serialization.try_lock().expect("first dialog");
-        let mut idle = owner.when_idle();
+        let guard = owner.serialization.try_lock().expect("first dialog");
 
-        assert!(queued.0.serialization.try_lock().is_none());
+        assert!(owner.serialization.try_lock().is_none());
         assert!(other_owner.serialization.try_lock().is_some());
         drop(guard);
-        drop(active);
-        assert_eq!(idle.try_recv().expect("idle receiver is connected"), None);
-        let guard = queued.0.serialization.try_lock().expect("next dialog");
-        drop(guard);
-        drop(queued);
-        assert_eq!(
-            idle.try_recv().expect("idle receiver is connected"),
-            Some(())
-        );
+        assert!(owner.serialization.try_lock().is_some());
+    }
+
+    #[test]
+    fn ownerless_request_can_be_cancelled_without_a_window() {
+        let cancellation = Cancellation::new(None);
+        assert!(!cancellation.is_requested());
+        cancellation.requested.store(true, Ordering::Release);
+        assert!(cancellation.is_requested());
     }
 }
