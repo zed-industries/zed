@@ -2377,6 +2377,15 @@ impl Workspace {
                         .map(|w| w.centered_layout)
                         .unwrap_or(false);
                     let restoring_workspace = serialized_workspace.is_some();
+                    let preferred_window_id = serialized_workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.window_id)
+                        .map(WindowId::from);
+                    let window_id = cx.update(|cx| {
+                        app_state.session.update(cx, |session, _| {
+                            session.reserve_window_id(preferred_window_id)
+                        })
+                    })?;
                     let window = cx.open_window(options, {
                         let app_state = app_state.clone();
                         let project_handle = project_handle.clone();
@@ -2399,7 +2408,7 @@ impl Workspace {
 
                                 workspace
                             });
-                            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+                            cx.new(|cx| MultiWorkspace::new(workspace, window_id, window, cx))
                         }
                     })?;
                     let workspace =
@@ -11324,6 +11333,12 @@ pub fn open_workspace_by_id(
                 options.window_bounds = window_bounds;
                 options
             });
+            let preferred_window_id = serialized_workspace.window_id.map(WindowId::from);
+            let window_id = cx.update(|cx| {
+                app_state.session.update(cx, |session, _| {
+                    session.reserve_window_id(preferred_window_id)
+                })
+            })?;
 
             let window = cx.open_window(options, {
                 let app_state = app_state.clone();
@@ -11341,7 +11356,7 @@ pub fn open_workspace_by_id(
                         workspace.restoring_workspace = true;
                         workspace
                     });
-                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+                    cx.new(|cx| MultiWorkspace::new(workspace, window_id, window, cx))
                 }
             })?;
 
@@ -12162,11 +12177,14 @@ pub fn join_in_room_project(
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
+                let window_id = app_state
+                    .session
+                    .update(cx, |session, _| session.reserve_window_id(None))?;
                 cx.open_window(options, |window, cx| {
                     let workspace = cx.new(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), window, cx)
                     });
-                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+                    cx.new(|cx| MultiWorkspace::new(workspace, window_id, window, cx))
                 })
             })?
         };

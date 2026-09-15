@@ -116,7 +116,7 @@ async fn test_host_disconnect(
                 cx,
             )
         });
-        MultiWorkspace::new(workspace, window, cx)
+        MultiWorkspace::test_from_workspace(workspace, window, cx)
     });
     let cx_b = &mut VisualTestContext::from_window(*window_b, cx_b);
     let workspace_b = window_b

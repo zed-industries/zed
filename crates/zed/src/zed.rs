@@ -8228,6 +8228,13 @@ mod tests {
         flush_workspace_serialization(&window, cx).await;
         drop(selected);
         let database = cx.read(|cx| workspace::WorkspaceDb::global(cx));
+        let saved_window_id = database
+            .select_row_bound::<_, u64>("SELECT window_id FROM workspaces WHERE workspace_id = ?")
+            .expect("prepare saved logical window ID query")(
+            selected_id
+        )
+        .expect("read saved logical window ID")
+        .expect("saved logical window ID");
         database.write(move |connection| {
             connection.exec_bound(
                 "UPDATE workspaces SET session_id = NULL, window_id = NULL, timestamp = '9999-12-31 23:59:59' WHERE workspace_id = ?",
@@ -8264,10 +8271,7 @@ mod tests {
                     selected_id
                 )
                 .expect("failed to read restored remote binding"),
-                Some((
-                    original_window_id.as_u64(),
-                    String::from("remote-colliding-original")
-                )),
+                Some((saved_window_id, String::from("remote-colliding-original"))),
             );
             assert!(!cx.has_pending_prompt());
         }

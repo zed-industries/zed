@@ -3533,7 +3533,7 @@ mod tests {
             let workspace = cx.new(|cx| {
                 Workspace::new(Some(workspace_id), project.clone(), app_state, window, cx)
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
@@ -3652,7 +3652,7 @@ mod tests {
                 workspace.set_restoring_workspace(true);
                 workspace
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
@@ -4325,7 +4325,7 @@ mod tests {
             let workspace = cx.new(|cx| {
                 Workspace::new(Some(workspace_id), project.clone(), app_state, window, cx)
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
         let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
         let buffer = project
@@ -4522,7 +4522,7 @@ mod tests {
             let workspace = cx.new(|cx| {
                 Workspace::new(Some(workspace_id), project.clone(), app_state, window, cx)
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());

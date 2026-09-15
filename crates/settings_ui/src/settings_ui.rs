@@ -5887,7 +5887,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
 
         let (_multi_workspace2, cx) = cx.add_window_view(|window, cx| {
@@ -5900,7 +5900,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
 
         let workspace2_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
@@ -6032,7 +6032,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
 
         let workspace1_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
@@ -6082,7 +6082,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
 
         cx.run_until_parked();
@@ -6245,7 +6245,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
         let workspace_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
 
@@ -6355,7 +6355,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
         let workspace_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
 
@@ -6447,7 +6447,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
 
         cx.run_until_parked();

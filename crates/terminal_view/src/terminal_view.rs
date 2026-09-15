@@ -2753,7 +2753,7 @@ mod tests {
                         cx,
                     )
                 });
-                MultiWorkspace::new(workspace, window, cx)
+                MultiWorkspace::test_from_workspace(workspace, window, cx)
             }
         });
         let workspace = window_handle

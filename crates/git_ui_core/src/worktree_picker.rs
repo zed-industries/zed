@@ -1630,6 +1630,11 @@ pub async fn open_remote_worktree(
     let mut options =
         cx.update(|_, cx| (app_state.build_window_options)(workspace_position.display, cx))?;
     options.window_bounds = workspace_position.window_bounds;
+    let window_id = cx.update(|_, cx| {
+        app_state
+            .session
+            .update(cx, |session, _| session.reserve_window_id(None))
+    })??;
 
     let new_window = cx.open_window(options, |window, cx| {
         let workspace = cx.new(|cx| {
@@ -1638,7 +1643,7 @@ pub async fn open_remote_worktree(
             workspace.centered_layout = workspace_position.centered_layout;
             workspace
         });
-        cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+        cx.new(|cx| MultiWorkspace::new(workspace, window_id, window, cx))
     })?;
 
     workspace::open_remote_project_with_existing_connection(

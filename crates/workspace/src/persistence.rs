@@ -1950,10 +1950,12 @@ impl WorkspaceDb {
     }
 
     pub fn max_window_id(&self) -> Result<Option<u64>> {
-        Ok(
-            self.select_row::<Option<u64>>(sql!(SELECT MAX(window_id) FROM workspaces))?()?
-                .flatten(),
-        )
+        self.select_row(sql!(
+            SELECT window_id FROM workspaces
+            WHERE window_id IS NOT NULL
+            ORDER BY (window_id < 0) DESC, window_id DESC
+            LIMIT 1
+        ))?()
     }
 
     query! {
@@ -3357,6 +3359,54 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(test_text_1, "test-text-1");
+    }
+
+    #[gpui::test]
+    async fn test_max_window_id_uses_unsigned_order() {
+        let database = WorkspaceDb::open_test_db("test_max_window_id_uses_unsigned_order").await;
+        for (window_ids, expected) in [
+            (Vec::new(), None),
+            (vec![None], None),
+            (vec![None, Some(0)], Some(0)),
+            (
+                vec![Some(4_294_967_297), Some(18_446_744_073_709_551_614)],
+                Some(18_446_744_073_709_551_614),
+            ),
+            (
+                vec![Some(18_446_744_073_709_551_614), Some(4_294_967_297)],
+                Some(18_446_744_073_709_551_614),
+            ),
+            (vec![Some(i64::MAX as u64), Some(1 << 63)], Some(1 << 63)),
+            (vec![Some(1 << 63), Some(u64::MAX - 1)], Some(u64::MAX - 1)),
+            (
+                vec![
+                    Some(u64::MAX),
+                    None,
+                    Some(0),
+                    Some(u64::MAX - 1),
+                    Some(u64::MAX),
+                ],
+                Some(u64::MAX),
+            ),
+        ] {
+            database
+                .write(move |connection| {
+                    connection.exec("DELETE FROM workspaces")?()?;
+                    let mut insert = connection.exec_bound::<Option<u64>>(sql!(
+                        INSERT INTO workspaces(window_id) VALUES (?)
+                    ))?;
+                    for window_id in window_ids {
+                        insert(window_id)?;
+                    }
+                    anyhow::Ok(())
+                })
+                .await
+                .expect("seed window IDs");
+            assert_eq!(
+                database.max_window_id().expect("read maximum window ID"),
+                expected
+            );
+        }
     }
 
     #[gpui::test]

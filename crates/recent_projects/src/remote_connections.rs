@@ -239,6 +239,11 @@ pub async fn open_remote_project(
         let mut options =
             cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
         options.window_bounds = workspace_position.window_bounds;
+        let window_id = cx.update(|cx| {
+            app_state
+                .session
+                .update(cx, |session, _| session.reserve_window_id(window_id))
+        })?;
 
         let window = cx.open_window(options, |window, cx| {
             let project = project::Project::local(
@@ -259,7 +264,7 @@ pub async fn open_remote_project(
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
             });
-            cx.new(|cx| MultiWorkspace::new_with_window_id(workspace, window_id, window, cx))
+            cx.new(|cx| MultiWorkspace::new(workspace, window_id, window, cx))
         })?;
         let workspace = window.update(cx, |multi_workspace, _, _cx| {
             multi_workspace.workspace().clone()

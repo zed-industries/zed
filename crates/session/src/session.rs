@@ -1,7 +1,11 @@
 use anyhow::Context as _;
 use db::kvp::KeyValueStore;
 use gpui::{App, AppContext as _, Context, Subscription, Task, WindowId};
-use std::collections::HashMap;
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 use util::ResultExt;
 
 pub struct Session {
@@ -80,9 +84,32 @@ impl Session {
     }
 }
 
+pub struct WindowIdReservation {
+    window_id: WindowId,
+    preferred: bool,
+    reservations: Rc<RefCell<HashSet<WindowId>>>,
+}
+
+impl WindowIdReservation {
+    pub fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
+    pub fn is_preferred(&self) -> bool {
+        self.preferred
+    }
+}
+
+impl Drop for WindowIdReservation {
+    fn drop(&mut self) {
+        self.reservations.borrow_mut().remove(&self.window_id);
+    }
+}
+
 pub struct AppSession {
     session: Session,
     window_ids: HashMap<WindowId, WindowId>,
+    window_id_reservations: Rc<RefCell<HashSet<WindowId>>>,
     pending_window_ids: Vec<WindowId>,
     max_window_id: u64,
     _serialization_task: Task<()>,
@@ -142,6 +169,7 @@ impl AppSession {
             max_window_id: session.max_window_id,
             session,
             window_ids: HashMap::new(),
+            window_id_reservations: Rc::default(),
             pending_window_ids,
             _subscriptions,
             _serialization_task,
@@ -182,31 +210,45 @@ impl AppSession {
         self.session.old_window_ids.clone()
     }
 
-    pub fn register_window(
+    pub fn reserve_window_id(
+        &mut self,
+        preferred_id: Option<WindowId>,
+    ) -> anyhow::Result<WindowIdReservation> {
+        let window_id = if let Some(preferred_id) = preferred_id.filter(|preferred| {
+            !self
+                .window_ids
+                .values()
+                .any(|window_id| window_id == preferred)
+                && !self.window_id_reservations.borrow().contains(preferred)
+        }) {
+            preferred_id
+        } else {
+            WindowId::from(
+                self.max_window_id
+                    .checked_add(1)
+                    .context("serialized window IDs exhausted")?,
+            )
+        };
+        self.max_window_id = self.max_window_id.max(window_id.as_u64());
+        self.window_id_reservations.borrow_mut().insert(window_id);
+        Ok(WindowIdReservation {
+            window_id,
+            preferred: preferred_id == Some(window_id),
+            reservations: self.window_id_reservations.clone(),
+        })
+    }
+
+    pub fn bind_window(
         &mut self,
         runtime_id: WindowId,
-        preferred_id: Option<WindowId>,
+        reservation: WindowIdReservation,
     ) -> WindowId {
-        if let Some(window_id) = self.window_ids.get(&runtime_id) {
-            return *window_id;
-        }
-        let window_id = preferred_id
-            .filter(|preferred| {
-                !self
-                    .window_ids
-                    .values()
-                    .any(|window_id| window_id == preferred)
-            })
-            .unwrap_or_else(|| {
-                WindowId::from(
-                    runtime_id.as_u64().max(
-                        self.max_window_id
-                            .checked_add(1)
-                            .expect("serialized window IDs exhausted"),
-                    ),
-                )
-            });
-        self.max_window_id = self.max_window_id.max(window_id.as_u64());
+        assert!(Rc::ptr_eq(
+            &self.window_id_reservations,
+            &reservation.reservations
+        ));
+        assert!(!self.window_ids.contains_key(&runtime_id));
+        let window_id = reservation.window_id;
         self.pending_window_ids
             .retain(|pending| *pending != window_id);
         self.window_ids.insert(runtime_id, window_id);
@@ -235,12 +277,43 @@ impl AppSession {
     }
 
     fn serialized_window_stack(&self, windows: impl IntoIterator<Item = WindowId>) -> Vec<u64> {
-        windows
+        let windows = windows
             .into_iter()
             .filter_map(|window| self.window_ids.get(&window))
-            .chain(&self.pending_window_ids)
             .map(WindowId::as_u64)
-            .collect()
+            .collect::<Vec<_>>();
+        if self.pending_window_ids.is_empty() {
+            return windows;
+        }
+
+        let current_window_ids = windows.iter().copied().collect::<HashSet<_>>();
+        let mut available_window_ids = current_window_ids.clone();
+        available_window_ids.extend(self.pending_window_ids.iter().map(WindowId::as_u64));
+        let saved_windows = self
+            .session
+            .old_window_ids
+            .iter()
+            .flatten()
+            .map(WindowId::as_u64)
+            .filter(|window_id| available_window_ids.remove(window_id))
+            .collect::<Vec<_>>();
+        let saved_window_ids = saved_windows.iter().copied().collect::<HashSet<_>>();
+        let mut saved_windows = saved_windows.into_iter();
+        let mut stack = Vec::new();
+        for window_id in windows {
+            if saved_window_ids.contains(&window_id) {
+                for saved_window_id in saved_windows.by_ref() {
+                    stack.push(saved_window_id);
+                    if current_window_ids.contains(&saved_window_id) {
+                        break;
+                    }
+                }
+            } else {
+                stack.push(window_id);
+            }
+        }
+        stack.extend(saved_windows);
+        stack
     }
 }
 
@@ -279,11 +352,11 @@ mod tests {
             let session = cx.new(|cx| AppSession::new(interrupted, cx));
             let stack = session.update(cx, |session, _| {
                 for index in 0..restored_count {
+                    let reservation = session
+                        .reserve_window_id(Some(WindowId::from(saved_windows[1 - index])))
+                        .expect("reserve restored window ID");
                     assert_eq!(
-                        session.register_window(
-                            WindowId::from(saved_windows[index]),
-                            Some(WindowId::from(saved_windows[1 - index])),
-                        ),
+                        session.bind_window(WindowId::from(saved_windows[index]), reservation),
                         WindowId::from(saved_windows[1 - index]),
                     );
                 }
@@ -295,14 +368,7 @@ mod tests {
                         .map(WindowId::from),
                 )
             });
-            assert_eq!(
-                stack,
-                if restored_count == 0 {
-                    vec![4_294_967_297, 4_294_967_298]
-                } else {
-                    vec![4_294_967_298, 4_294_967_297]
-                },
-            );
+            assert_eq!(stack, vec![4_294_967_297, 4_294_967_298]);
             store_window_stack(db.clone(), &stack).await;
             drop(session);
 
@@ -316,6 +382,13 @@ mod tests {
             .expect("failed to resume interrupted session");
             assert_eq!(resumed.id(), "original");
             assert_eq!(resumed.old_session_id.as_deref(), Some("original"));
+            assert_eq!(
+                resumed.old_window_ids,
+                Some(vec![
+                    WindowId::from(4_294_967_297),
+                    WindowId::from(4_294_967_298),
+                ]),
+            );
             assert_eq!(
                 db.read_kvp(SESSION_ID_KEY)
                     .expect("failed to read session ID"),
@@ -346,11 +419,10 @@ mod tests {
         let session = cx.new(|cx| AppSession::new(session, cx));
         session.update(cx, |session, _| {
             assert_eq!(session.serialized_window_stack([]), Vec::<u64>::new());
+            let reservation = session.reserve_window_id(None).expect("reserve fresh ID");
             assert_eq!(
-                session
-                    .register_window(WindowId::from(4_294_967_297), None)
-                    .as_u64(),
-                4_294_967_301,
+                session.bind_window(WindowId::from(4_294_967_297), reservation),
+                WindowId::from(4_294_967_301),
             );
         });
     }
@@ -359,32 +431,270 @@ mod tests {
     fn test_restored_window_mapping_and_fresh_ids(cx: &mut TestAppContext) {
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         session.update(cx, |session, _| {
-            let fresh = WindowId::from(4_294_967_300);
-            assert_eq!(session.register_window(fresh, None), fresh);
             let first = WindowId::from(4_294_967_297);
             let second = WindowId::from(4_294_967_298);
             let third = WindowId::from(4_294_967_299);
-            assert_eq!(session.register_window(first, Some(second)), second);
-            assert_eq!(session.register_window(second, Some(first)), first);
-            assert_eq!(session.register_window(first, None), second);
+            let reservation = session
+                .reserve_window_id(Some(second))
+                .expect("reserve first restored ID");
+            assert_eq!(
+                session.bind_window(first, reservation),
+                WindowId::from(4_294_967_298)
+            );
+            let reservation = session
+                .reserve_window_id(Some(first))
+                .expect("reserve second restored ID");
+            assert_eq!(
+                session.bind_window(second, reservation),
+                WindowId::from(4_294_967_297)
+            );
             assert_eq!(
                 session.serialized_window_stack([first, second, third]),
                 vec![4_294_967_298, 4_294_967_297],
             );
-            assert_eq!(session.register_window(third, None).as_u64(), 4_294_967_301);
+            let reservation = session.reserve_window_id(None).expect("reserve fresh ID");
             assert_eq!(
-                session
-                    .register_window(WindowId::from(4_294_967_301), Some(first))
-                    .as_u64(),
-                4_294_967_302,
-            );
-            assert_eq!(
-                session
-                    .register_window(WindowId::from(4_294_967_400), None)
-                    .as_u64(),
-                4_294_967_400,
+                session.bind_window(third, reservation),
+                WindowId::from(4_294_967_299)
             );
             assert_eq!(session.serialized_window_stack([]), Vec::<u64>::new());
+        });
+    }
+
+    #[gpui::test]
+    fn test_window_id_reservations_exclude_overlapping_preferred_ids(cx: &mut TestAppContext) {
+        for preferred_id in [
+            4_294_967_296,
+            4_294_967_297,
+            0x8000_0001_0000_0000,
+            u64::MAX - 2,
+        ] {
+            for bind_preferred_first in [false, true] {
+                let session = cx.new(|cx| AppSession::new(Session::test(), cx));
+                session.update(cx, |session, _| {
+                    let preferred = WindowId::from(preferred_id);
+                    let first = session
+                        .reserve_window_id(Some(preferred))
+                        .expect("reserve preferred ID");
+                    let second = session
+                        .reserve_window_id(Some(preferred))
+                        .expect("reserve while preferred ID is held");
+                    assert_eq!(first.window_id(), preferred);
+                    assert_eq!(first.window_id().as_u64(), preferred_id);
+                    assert!(first.is_preferred());
+                    assert_eq!(second.window_id().as_u64(), preferred_id + 1);
+                    assert!(!second.is_preferred());
+                    assert_eq!(session.serialized_window_stack([]), Vec::<u64>::new());
+                    let first_runtime = WindowId::from(100);
+                    let second_runtime = WindowId::from(101);
+                    if bind_preferred_first {
+                        assert_eq!(session.bind_window(first_runtime, first), preferred);
+                        assert_eq!(
+                            session.bind_window(second_runtime, second).as_u64(),
+                            preferred_id + 1,
+                        );
+                    } else {
+                        assert_eq!(
+                            session.bind_window(second_runtime, second).as_u64(),
+                            preferred_id + 1,
+                        );
+                        assert_eq!(session.bind_window(first_runtime, first), preferred);
+                    }
+                    assert!(session.window_id_reservations.borrow().is_empty());
+                    let third = session
+                        .reserve_window_id(Some(preferred))
+                        .expect("reserve while preferred ID is bound");
+                    assert_eq!(third.window_id().as_u64(), preferred_id + 2);
+                    assert!(!third.is_preferred());
+                    let third_runtime = WindowId::from(102);
+                    assert_eq!(
+                        session.bind_window(third_runtime, third).as_u64(),
+                        preferred_id + 2,
+                    );
+                    assert_eq!(
+                        session.serialized_window_stack([
+                            first_runtime,
+                            second_runtime,
+                            third_runtime,
+                        ]),
+                        vec![preferred_id, preferred_id + 1, preferred_id + 2],
+                    );
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_window_id_reservation_cancellation_allows_reuse(cx: &mut TestAppContext) {
+        for preferred_id in [None, Some(WindowId::from(4_294_967_303))] {
+            let session = cx.new(|cx| {
+                let mut session = Session::test();
+                session.old_session_id = Some(session.session_id.clone());
+                session.old_window_ids = Some(vec![WindowId::from(4_294_967_303)]);
+                session.max_window_id = 4_294_967_303;
+                AppSession::new(session, cx)
+            });
+            session.update(cx, |session, _| {
+                let expected = preferred_id.unwrap_or(WindowId::from(4_294_967_304));
+                let reservation = session
+                    .reserve_window_id(preferred_id)
+                    .expect("reserve cancellable ID");
+                assert_eq!(reservation.window_id(), expected);
+                assert_eq!(session.serialized_window_stack([]), vec![4_294_967_303]);
+                drop(reservation);
+                assert!(session.window_id_reservations.borrow().is_empty());
+                assert!(session.window_ids.is_empty());
+                assert_eq!(
+                    session.max_window_id,
+                    if preferred_id.is_some() {
+                        4_294_967_303
+                    } else {
+                        4_294_967_304
+                    },
+                );
+                assert_eq!(
+                    session.pending_window_ids,
+                    vec![WindowId::from(4_294_967_303)]
+                );
+                let reused = session
+                    .reserve_window_id(Some(expected))
+                    .expect("reuse cancelled reservation");
+                assert_eq!(reused.window_id(), expected);
+                assert!(reused.is_preferred());
+                assert_eq!(session.bind_window(WindowId::from(1), reused), expected);
+                assert!(session.window_id_reservations.borrow().is_empty());
+                assert_eq!(
+                    session.serialized_window_stack([WindowId::from(1)]),
+                    if preferred_id.is_some() {
+                        vec![4_294_967_303]
+                    } else {
+                        vec![4_294_967_304, 4_294_967_303]
+                    },
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn test_binding_window_id_reservation_consumes_one_fresh_id(cx: &mut TestAppContext) {
+        let session = cx.new(|cx| {
+            let mut session = Session::test();
+            session.max_window_id = 4_294_967_337;
+            AppSession::new(session, cx)
+        });
+        let first = session.update(cx, |session, _| {
+            session.reserve_window_id(None).expect("reserve first ID")
+        });
+        assert_eq!(first.window_id().as_u64(), 4_294_967_338);
+        assert!(!first.is_preferred());
+        let first_window = cx.add_window(|window, cx| {
+            session.update(cx, |session, _| {
+                assert_eq!(
+                    session
+                        .bind_window(window.window_handle().window_id(), first)
+                        .as_u64(),
+                    4_294_967_338,
+                );
+                assert_eq!(session.max_window_id, 4_294_967_338);
+            });
+            Empty
+        });
+        let second = session.update(cx, |session, _| {
+            session.reserve_window_id(None).expect("reserve second ID")
+        });
+        assert_eq!(second.window_id().as_u64(), 4_294_967_339);
+        let second_window = cx.add_window(|window, cx| {
+            session.update(cx, |session, _| {
+                assert_eq!(
+                    session
+                        .bind_window(window.window_handle().window_id(), second)
+                        .as_u64(),
+                    4_294_967_339,
+                );
+                assert_eq!(session.max_window_id, 4_294_967_339);
+            });
+            Empty
+        });
+        assert_eq!(
+            session.read_with(cx, |session, _| {
+                session
+                    .serialized_window_stack([first_window.window_id(), second_window.window_id()])
+            }),
+            vec![4_294_967_338, 4_294_967_339],
+        );
+    }
+
+    #[gpui::test]
+    fn test_window_id_reservation_exhaustion_preserves_state(cx: &mut TestAppContext) {
+        let session = cx.new(|cx| {
+            let mut session = Session::test();
+            session.old_session_id = Some(session.session_id.clone());
+            session.old_window_ids = Some(vec![WindowId::from(4_294_967_303)]);
+            session.max_window_id = u64::MAX - 1;
+            AppSession::new(session, cx)
+        });
+        session.update(cx, |session, _| {
+            let reservation = session
+                .reserve_window_id(None)
+                .expect("reserve final fresh ID");
+            assert_eq!(reservation.window_id(), WindowId::from(u64::MAX));
+            let reservations = session.window_id_reservations.borrow().clone();
+            for preferred_id in [None, Some(WindowId::from(u64::MAX))] {
+                let error = session
+                    .reserve_window_id(preferred_id)
+                    .err()
+                    .expect("overlapping reservation must report exhaustion");
+                assert_eq!(error.to_string(), "serialized window IDs exhausted");
+                assert_eq!(*session.window_id_reservations.borrow(), reservations);
+                assert!(session.window_ids.is_empty());
+                assert_eq!(
+                    session.pending_window_ids,
+                    vec![WindowId::from(4_294_967_303)]
+                );
+                assert_eq!(session.max_window_id, u64::MAX);
+            }
+            drop(reservation);
+            let reused = session
+                .reserve_window_id(Some(WindowId::from(u64::MAX)))
+                .expect("reuse cancelled final ID");
+            assert!(reused.is_preferred());
+            assert_eq!(
+                session.bind_window(WindowId::from(4_294_967_297), reused),
+                WindowId::from(u64::MAX),
+            );
+            for preferred_id in [None, Some(WindowId::from(u64::MAX))] {
+                let error = session
+                    .reserve_window_id(preferred_id)
+                    .err()
+                    .expect("bound final ID must report exhaustion");
+                assert_eq!(error.to_string(), "serialized window IDs exhausted");
+                assert!(session.window_id_reservations.borrow().is_empty());
+                assert_eq!(session.max_window_id, u64::MAX);
+                assert_eq!(session.window_ids.len(), 1);
+                assert_eq!(
+                    session.pending_window_ids,
+                    vec![WindowId::from(4_294_967_303)]
+                );
+                assert_eq!(
+                    session.serialized_window_stack([WindowId::from(4_294_967_297)]),
+                    vec![u64::MAX, 4_294_967_303],
+                );
+            }
+            let restored = session
+                .reserve_window_id(Some(WindowId::from(4_294_967_303)))
+                .expect("reserve unused preferred ID after exhaustion");
+            assert_eq!(
+                session.bind_window(WindowId::from(4_294_967_298), restored),
+                WindowId::from(4_294_967_303),
+            );
+            assert_eq!(session.pending_window_ids, Vec::<WindowId>::new());
+            assert_eq!(
+                session.serialized_window_stack([
+                    WindowId::from(4_294_967_297),
+                    WindowId::from(4_294_967_298),
+                ]),
+                vec![u64::MAX, 4_294_967_303],
+            );
         });
     }
 
@@ -402,16 +712,25 @@ mod tests {
             session.max_window_id = saved[2].as_u64();
             AppSession::new(session, cx)
         });
-        let first = cx.add_window(|_, _| Empty);
-        let second = cx.add_window(|_, _| Empty);
-        session.update(cx, |session, _| {
-            session.register_window(first.window_id(), Some(saved[2]));
-            session.register_window(second.window_id(), Some(saved[0]));
-            assert_eq!(
-                session.serialized_window_stack([first.window_id(), second.window_id()]),
-                vec![4_294_967_299, 4_294_967_297, 4_294_967_298],
-            );
+        let [first, second] = [saved[2], saved[0]].map(|preferred_id| {
+            let reservation = session.update(cx, |session, _| {
+                session
+                    .reserve_window_id(Some(preferred_id))
+                    .expect("reserve restored ID")
+            });
+            cx.add_window(|window, cx| {
+                session.update(cx, |session, _| {
+                    session.bind_window(window.window_handle().window_id(), reservation)
+                });
+                Empty
+            })
         });
+        assert_eq!(
+            session.read_with(cx, |session, _| {
+                session.serialized_window_stack([first.window_id(), second.window_id()])
+            }),
+            vec![4_294_967_297, 4_294_967_298, 4_294_967_299],
+        );
         first
             .update(cx, |_, window, _| window.remove_window())
             .expect("failed to close restored window");
@@ -426,22 +745,163 @@ mod tests {
             }),
             vec![4_294_967_297, 4_294_967_298],
         );
-        let third = cx.add_window(|_, _| Empty);
-        session.update(cx, |session, _| {
-            session.register_window(third.window_id(), Some(saved[1]));
+        let reservation = session.update(cx, |session, _| {
+            session
+                .reserve_window_id(Some(saved[1]))
+                .expect("reserve pending ID")
+        });
+        let third = cx.add_window(|window, cx| {
+            session.update(cx, |session, _| {
+                session.bind_window(window.window_handle().window_id(), reservation)
+            });
+            Empty
+        });
+        session.read_with(cx, |session, _| {
             assert_eq!(session.pending_window_ids, Vec::<WindowId>::new());
             assert_eq!(
                 session.serialized_window_stack([third.window_id(), second.window_id()]),
                 vec![4_294_967_298, 4_294_967_297],
             );
         });
-        let fourth = cx.add_window(|_, _| Empty);
-        assert_eq!(
+        let reservation = session.update(cx, |session, _| {
+            session
+                .reserve_window_id(Some(saved[2]))
+                .expect("reserve closed window ID")
+        });
+        cx.add_window(|window, cx| {
             session.update(cx, |session, _| {
-                session.register_window(fourth.window_id(), Some(saved[2]))
-            }),
-            saved[2],
-        );
+                assert_eq!(
+                    session.bind_window(window.window_handle().window_id(), reservation),
+                    WindowId::from(4_294_967_299),
+                );
+            });
+            Empty
+        });
+    }
+
+    #[gpui::test]
+    fn test_incomplete_restoration_merges_current_and_pending_windows(cx: &mut TestAppContext) {
+        let session = cx.new(|cx| {
+            let mut session = Session::test();
+            session.old_session_id = Some(session.session_id.clone());
+            session.old_window_ids = Some(vec![
+                WindowId::from(4_294_967_307),
+                WindowId::from(4_294_967_318),
+                WindowId::from(4_294_967_329),
+            ]);
+            session.max_window_id = 4_294_967_329;
+            AppSession::new(session, cx)
+        });
+        session.update(cx, |session, _| {
+            let first = WindowId::from(4_294_967_297);
+            let second = WindowId::from(4_294_967_298);
+            let third = WindowId::from(4_294_967_299);
+            let fourth = WindowId::from(4_294_967_300);
+            let unknown = WindowId::from(4_294_967_301);
+            for (runtime_id, preferred_id) in [
+                (first, Some(4_294_967_329)),
+                (second, Some(4_294_967_307)),
+                (third, None),
+                (fourth, None),
+            ] {
+                let reservation = session
+                    .reserve_window_id(preferred_id.map(WindowId::from))
+                    .expect("reserve window ID");
+                session.bind_window(runtime_id, reservation);
+            }
+            for (current, expected) in [
+                (Vec::new(), vec![4_294_967_318]),
+                (vec![first], vec![4_294_967_318, 4_294_967_329]),
+                (vec![second], vec![4_294_967_307, 4_294_967_318]),
+                (
+                    vec![first, second],
+                    vec![4_294_967_307, 4_294_967_318, 4_294_967_329],
+                ),
+                (
+                    vec![second, first],
+                    vec![4_294_967_307, 4_294_967_318, 4_294_967_329],
+                ),
+                (
+                    vec![third, first, fourth, second, unknown],
+                    vec![
+                        4_294_967_330,
+                        4_294_967_307,
+                        4_294_967_331,
+                        4_294_967_318,
+                        4_294_967_329,
+                    ],
+                ),
+                (
+                    vec![first, third, second, fourth],
+                    vec![
+                        4_294_967_307,
+                        4_294_967_330,
+                        4_294_967_318,
+                        4_294_967_329,
+                        4_294_967_331,
+                    ],
+                ),
+                (
+                    vec![first, third],
+                    vec![4_294_967_318, 4_294_967_329, 4_294_967_330],
+                ),
+                (
+                    vec![third, fourth],
+                    vec![4_294_967_330, 4_294_967_331, 4_294_967_318],
+                ),
+                (vec![unknown], vec![4_294_967_318]),
+            ] {
+                assert_eq!(
+                    session.serialized_window_stack(current.iter().copied()),
+                    expected,
+                    "current windows: {current:?}",
+                );
+            }
+            let reservation = session
+                .reserve_window_id(Some(WindowId::from(4_294_967_318)))
+                .expect("reserve final pending ID");
+            session.bind_window(unknown, reservation);
+            assert_eq!(
+                session.serialized_window_stack([first, second, unknown, third]),
+                vec![4_294_967_329, 4_294_967_307, 4_294_967_318, 4_294_967_330],
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_high_bit_window_ids_seed_allocator(cx: &mut TestAppContext) {
+        for (from_stack, database_name) in [
+            (false, "high-bit-window-ids-database"),
+            (true, "high-bit-window-ids-stack"),
+        ] {
+            let db = session_database(
+                database_name,
+                if from_stack {
+                    &[0x8000_0001_0000_0000]
+                } else {
+                    &[]
+                },
+            )
+            .await;
+            let session = Session::new(
+                String::from("resumed"),
+                db,
+                true,
+                (!from_stack).then_some(0x8000_0001_0000_0000),
+            )
+            .await
+            .expect("resume high-bit session");
+            let session = cx.new(|cx| AppSession::new(session, cx));
+            session.update(cx, |session, _| {
+                let reservation = session
+                    .reserve_window_id(None)
+                    .expect("reserve after high-bit ID");
+                assert_eq!(
+                    session.bind_window(WindowId::from(4_294_967_297), reservation),
+                    WindowId::from(0x8000_0001_0000_0001),
+                );
+            });
+        }
     }
 
     #[gpui::test]

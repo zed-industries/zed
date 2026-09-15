@@ -9,6 +9,7 @@ use gpui::{
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
 use remote::RemoteConnectionOptions;
+use session::WindowIdReservation;
 use settings::Settings;
 pub use settings::SidebarSide;
 use std::cell::Cell;
@@ -340,25 +341,21 @@ impl MultiWorkspace {
         }
     }
 
-    pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let preferred_window_id = workspace.read(cx).serialized_window_id;
-        Self::new_with_window_id(workspace, preferred_window_id, window, cx)
-    }
-
-    pub fn new_with_window_id(
+    pub fn new(
         workspace: Entity<Workspace>,
-        preferred_window_id: Option<WindowId>,
+        window_id: WindowIdReservation,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let preferred = window_id.is_preferred();
         let session = workspace.read(cx).app_state().session.clone();
         let (window_id, reuse_previous) = session.update(cx, |session, _| {
             (
-                session.register_window(window.window_handle().window_id(), preferred_window_id),
+                session.bind_window(window.window_handle().window_id(), window_id),
                 session.last_session_id() == Some(session.id()),
             )
         });
-        let state = if reuse_previous && preferred_window_id == Some(window_id) {
+        let state = if reuse_previous && preferred {
             crate::persistence::read_multi_workspace_state(window_id, cx)
         } else {
             MultiWorkspaceState::default()
@@ -1678,7 +1675,24 @@ impl MultiWorkspace {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-        Self::new(workspace, window, cx)
+        Self::test_from_workspace(workspace, window, cx)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_from_workspace(
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let preferred = workspace.read(cx).serialized_window_id;
+        let window_id = workspace
+            .read(cx)
+            .app_state()
+            .session
+            .clone()
+            .update(cx, |session, _| session.reserve_window_id(preferred))
+            .unwrap();
+        Self::new(workspace, window_id, window, cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2300,7 +2314,7 @@ mod tests {
             workspace.update(cx, |workspace, _| {
                 workspace.serialized_window_id = Some(saved_window_id);
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
         multi_workspace.update_in(visual_cx, |multi_workspace, window, cx| {
             assert_eq!(multi_workspace.window_id, saved_window_id);
@@ -2373,7 +2387,7 @@ mod tests {
                 workspace.set_database_id(workspace_id);
                 workspace.serialized_window_id = Some(saved_window_id);
             });
-            MultiWorkspace::new(workspace, window, cx)
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
         });
         window
             .update(cx, |multi_workspace, _, cx| {

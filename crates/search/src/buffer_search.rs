@@ -3378,7 +3378,8 @@ mod tests {
             .unwrap();
             cx.bind_keys(default_key_bindings);
             let workspace = cx.new(|cx| Workspace::test_new(project.clone(), window, cx));
-            let multi_workspace = MultiWorkspace::new(workspace.clone(), window, cx);
+            let multi_workspace =
+                MultiWorkspace::test_from_workspace(workspace.clone(), window, cx);
             let buffer_search_bar = cx.new(|cx| BufferSearchBar::new(None, window, cx));
             workspace.update(cx, |workspace, cx| {
                 workspace.active_pane().update(cx, |pane, cx| {

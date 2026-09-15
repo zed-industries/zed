@@ -1473,7 +1473,7 @@ async fn test_window_close_preserves_hot_exit_when_another_window_opens(cx: &mut
     let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
     cx.cx.add_window(|window, cx| {
         let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-        MultiWorkspace::new(workspace, window, cx)
+        MultiWorkspace::test_from_workspace(workspace, window, cx)
     });
     release.send(()).expect("release hot-exit payload");
     assert!(closing.await.expect("accepted close"));
@@ -2423,7 +2423,7 @@ async fn close_fixture(
             workspace.serialized_window_id = Some(saved_window_id);
             workspace
         });
-        MultiWorkspace::new(workspace, window, cx)
+        MultiWorkspace::test_from_workspace(workspace, window, cx)
     });
     let first =
         multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
