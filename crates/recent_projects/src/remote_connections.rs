@@ -882,6 +882,25 @@ mod tests {
                 .to_string(),
             format!("Workspace {workspace_id:?} does not match the remote connection")
         );
+        owner.update(cx, |workspace, _| workspace.set_restoring_workspace(true));
+        let incomplete = open_remote_project(
+            opts.clone(),
+            Vec::new(),
+            app_state.clone(),
+            workspace::OpenOptions {
+                restore_workspace_id: Some(workspace_id),
+                ..workspace::OpenOptions::default()
+            },
+            &mut async_cx,
+        )
+        .await;
+        assert_eq!(
+            incomplete
+                .expect_err("incomplete owner must not report success")
+                .to_string(),
+            "workspace restoration has not completed"
+        );
+        owner.update(cx, |workspace, _| workspace.set_restoring_workspace(false));
         let (_cancel, cancelled) = oneshot::channel();
         let remote_connection = remote_client.read_with(cx, |client, _| {
             client.remote_connection().expect("live connection")

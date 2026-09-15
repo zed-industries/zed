@@ -685,6 +685,10 @@ impl SerializableItem for ImageView {
         "ImageView"
     }
 
+    fn is_serializable(&self, cx: &App) -> bool {
+        self.image_item.read(cx).abs_path(cx).is_some()
+    }
+
     fn serialized_item_ids(workspace_id: WorkspaceId, cx: &App) -> anyhow::Result<Vec<ItemId>> {
         ImageViewerDb::global(cx).select_bound::<WorkspaceId, ItemId>(
             "SELECT item_id FROM image_viewers WHERE workspace_id = ?",

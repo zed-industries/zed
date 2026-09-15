@@ -1,7 +1,10 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
-    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
-    multi_workspace::SerializedProjectGroupState, path_list::PathList,
+    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
+    invalid_item_view::{InvalidItemView, SerializedItemReference},
+    item::ItemHandle,
+    multi_workspace::SerializedProjectGroupState,
+    path_list::PathList,
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -10,7 +13,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
+use gpui::{AppContext, AsyncWindowContext, Entity, WeakEntity, WindowId};
 
 use language::{Toolchain, ToolchainScope};
 use project::{
@@ -364,7 +367,23 @@ impl SerializedPane {
         let mut preview_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
+            let payload_present = workspace.update(cx, |workspace, cx| {
+                Ok::<_, anyhow::Error>(
+                    workspace
+                        .serialized_item_id_namespace(cx)?
+                        .payload_ids
+                        .get(&item.kind)
+                        .map(|ids| ids.contains(&item.item_id)),
+                )
+            })??;
             item_tasks.push(pane.update_in(cx, |_, window, cx| {
+                if payload_present == Some(false) {
+                    return gpui::Task::ready(Err(anyhow::anyhow!(
+                        "Saved {} payload {} is missing",
+                        item.kind,
+                        item.item_id
+                    )));
+                }
                 SerializableItemRegistry::deserialize(
                     &item.kind,
                     project,
@@ -384,27 +403,13 @@ impl SerializedPane {
         }
 
         let mut items = Vec::new();
-        let mut first_error = None;
+
         for (serialized_item, item_handle) in self
             .children
             .iter()
             .zip(futures::future::join_all(item_tasks).await)
         {
-            let item_handle = match item_handle {
-                Ok(item_handle) => Some(item_handle),
-                Err(error) => {
-                    first_error.get_or_insert_with(|| {
-                        error.context(format!(
-                            "Could not deserialize {} item {}",
-                            serialized_item.kind, serialized_item.item_id
-                        ))
-                    });
-                    None
-                }
-            };
-            items.push(item_handle.clone());
-
-            if let Some(item_handle) = item_handle {
+            let item_handle = item_handle.and_then(|item_handle| {
                 workspace.update(cx, |workspace, cx| {
                     let serializable = item_handle
                         .to_serializable_item_handle(cx)
@@ -421,10 +426,37 @@ impl SerializedPane {
                         cx,
                     )
                 })??;
-                pane.update_in(cx, |pane, window, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, window, cx);
-                })?;
-            }
+                Ok(item_handle)
+            });
+            let item_handle = match item_handle {
+                Ok(item_handle) => item_handle,
+                Err(error) => pane.update_in(cx, |_, window, cx| {
+                    Box::new(cx.new(|cx| {
+                        InvalidItemView::for_serialized_item(
+                            SerializedItemReference {
+                                workspace_id,
+                                kind: serialized_item.kind.clone(),
+                                item_id: serialized_item.item_id,
+                            },
+                            workspace.clone(),
+                            &error,
+                            window,
+                            cx,
+                        )
+                    })) as Box<dyn ItemHandle>
+                })?,
+            };
+            items.push(Some(item_handle.clone()));
+            pane.update_in(cx, |pane, window, cx| {
+                pane.add_restored_item(
+                    item_handle,
+                    false,
+                    false,
+                    Some(pane.items_len()),
+                    window,
+                    cx,
+                );
+            })?;
         }
 
         if let Some(active_item) = active_item_index.and_then(|index| items.get(index)?.clone()) {
@@ -435,28 +467,20 @@ impl SerializedPane {
             })?;
         }
 
-        if let Some(preview_item) = preview_item_index.and_then(|index| items.get(index)?.clone()) {
+        if let Some(preview_item) = preview_item_index.and_then(|index| items.get(index)?.clone())
+            && preview_item.downcast::<InvalidItemView>().is_none()
+        {
             pane.update(cx, |pane, cx| {
                 pane.set_preview_item_id(Some(preview_item.item_id()), cx);
             })?;
         }
 
-        // `items` keeps a `None` for every item that failed to deserialize, and those
-        // were never added to the pane. Counting them would leave the pinned count
-        // pointing past the pinned tabs and pin unpinned ones in their place.
-        let pinned_count = items
-            .iter()
-            .take(self.pinned_count)
-            .filter(|item| item.is_some())
-            .count();
+        let pinned_count = items.len().min(self.pinned_count);
         pane.update(cx, |pane, _| {
             pane.set_pinned_count(pinned_count);
         })?;
 
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(items),
-        }
+        Ok(items)
     }
 }
 

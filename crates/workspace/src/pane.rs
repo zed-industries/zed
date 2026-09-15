@@ -6,8 +6,8 @@ use crate::{
     invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
-        PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
-        TabContentParams, TabTooltipContent, WeakItemHandle,
+        PreviewTabsSettings, ProjectItemKind, SaveDisposition, SaveOptions, ShowCloseButton,
+        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -1234,12 +1234,60 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.insert_item(
+            item,
+            activate_pane,
+            focus_item,
+            activate,
+            destination_index,
+            true,
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn add_restored_item(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        activate: bool,
+        focus: bool,
+        destination_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active_item_id = self.active_item().map(|item| item.item_id());
+        self.insert_item(
+            item,
+            focus,
+            focus,
+            activate,
+            destination_index,
+            false,
+            window,
+            cx,
+        );
+        if !activate && let Some(index) = active_item_id.and_then(|id| self.index_for_item_id(id)) {
+            self.active_item_index = index;
+        }
+    }
+
+    fn insert_item(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        activate_pane: bool,
+        focus_item: bool,
+        activate: bool,
+        destination_index: Option<usize>,
+        deduplicate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let item_already_exists = self
             .items
             .iter()
             .any(|existing_item| existing_item.item_id() == item.item_id());
 
-        if !item_already_exists {
+        if !item_already_exists && deduplicate {
             self.close_items_on_item_open(window, cx);
         }
 
@@ -1283,7 +1331,7 @@ impl Pane {
         let existing_item_index = self.items.iter().position(|existing_item| {
             if existing_item.item_id() == item.item_id() {
                 true
-            } else if existing_item.buffer_kind(cx) == ItemBufferKind::Singleton {
+            } else if deduplicate && existing_item.buffer_kind(cx) == ItemBufferKind::Singleton {
                 existing_item
                     .project_entry_ids(cx)
                     .first()
@@ -1432,7 +1480,7 @@ impl Pane {
         self.index_for_item_id(item.item_id())
     }
 
-    fn index_for_item_id(&self, item_id: EntityId) -> Option<usize> {
+    pub(crate) fn index_for_item_id(&self, item_id: EntityId) -> Option<usize> {
         self.items.iter().position(|i| i.item_id() == item_id)
     }
 
@@ -1901,6 +1949,9 @@ impl Pane {
     // save it. That said, if you still have the buffer open in a different pane
     // we can close this one without fear of losing data.
     pub fn skip_save_on_close(item: &dyn ItemHandle, workspace: &Workspace, cx: &App) -> bool {
+        if item.save_disposition(cx) == SaveDisposition::DiscardOnly {
+            return false;
+        }
         let mut dirty_project_item_ids = Vec::new();
         item.for_each_project_item(cx, &mut |project_item_id, project_item| {
             if project_item.is_dirty() {
@@ -1930,6 +1981,9 @@ impl Pane {
     ) -> String {
         let mut file_names = BTreeSet::default();
         for item in items {
+            if item.save_disposition(cx) == SaveDisposition::DiscardOnly {
+                file_names.insert(item.tab_content_text(0, cx).to_string());
+            }
             item.for_each_project_item(cx, &mut |_, project_item| {
                 if !project_item.is_dirty() {
                     return;
@@ -2007,8 +2061,7 @@ impl Pane {
                 match answer.await {
                     Ok(0) => save_intent = SaveIntent::SaveAll,
                     Ok(1) => save_intent = SaveIntent::Skip,
-                    Ok(2) => return Ok(()),
-                    _ => {}
+                    _ => return Ok(()),
                 }
             }
 
@@ -2253,6 +2306,42 @@ impl Pane {
         const CONFLICT_MESSAGE: &str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
         const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
+
+        if cx.update(|_, cx| item.save_disposition(cx) == SaveDisposition::DiscardOnly)? {
+            let discard = match save_intent {
+                SaveIntent::Skip => true,
+                SaveIntent::Close => {
+                    let answer = pane.update_in(cx, |_, window, cx| {
+                        window.prompt(
+                            PromptLevel::Warning,
+                            "Discard this unrecovered saved item?",
+                            Some("Its saved reference will be removed. Cancel and retry the tab to recover it."),
+                            &["Discard", "Cancel"],
+                            cx,
+                        )
+                    })?.await;
+                    answer.ok() == Some(0)
+                }
+                _ => {
+                    pane.update_in(cx, |_, window, cx| {
+                        window.prompt(
+                            PromptLevel::Warning,
+                            "Cannot save an unrecovered item",
+                            Some("Retry the failed tab before saving. Its saved reference has been kept."),
+                            &["OK"],
+                            cx,
+                        )
+                    })?.await.log_err();
+                    false
+                }
+            };
+            if discard {
+                pane.update_in(cx, |pane, window, cx| {
+                    pane.remove_item(item.item_id(), false, pane.close_pane_if_empty, window, cx);
+                })?;
+            }
+            return Ok(discard);
+        }
 
         let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
         if save_intent == SaveIntent::Skip {
@@ -3858,6 +3947,10 @@ impl Pane {
         }
     }
 
+    pub(crate) fn can_accept_item(&self, item: &dyn ItemHandle, cx: &App) -> bool {
+        item.can_move_to(&self.workspace, self.in_center_group, cx)
+    }
+
     pub fn handle_tab_drop(
         &mut self,
         dragged_tab: &DraggedTab,
@@ -3866,6 +3959,10 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.can_accept_item(dragged_tab.item.as_ref(), cx) {
+            crate::prompt_failed_item_move(window, cx);
+            return;
+        }
         if is_pane_target
             && ix == self.active_item_index
             && let Some(active_item) = self.active_item()
@@ -3887,6 +3984,18 @@ impl Pane {
         self.workspace
             .update(cx, |_, cx| {
                 cx.defer_in(window, move |workspace, window, cx| {
+                    let Some(item) = from_pane
+                        .read(cx)
+                        .items()
+                        .find(|item| item.item_id() == item_id)
+                        .cloned()
+                    else {
+                        return;
+                    };
+                    if !to_pane.read(cx).can_accept_item(item.as_ref(), cx) {
+                        crate::prompt_failed_item_move(window, cx);
+                        return;
+                    }
                     if let Some(split_direction) = split_direction {
                         to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
                     }

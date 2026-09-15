@@ -2903,6 +2903,7 @@ mod tests {
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle, WorkspaceId,
+        invalid_item_view::InvalidItemView,
         item::SaveOptions,
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
@@ -7993,17 +7994,29 @@ mod tests {
             .expect("inject unknown item kind");
         let read_source = || {
             (
-                database.select_bound::<_, (u64, u64, String, i64, bool)>(
-                    "SELECT item_id, pane_id, kind, position, active FROM items WHERE workspace_id = ? ORDER BY item_id",
+                database.select_bound::<_, (u64, String, i64, bool, bool)>(
+                    "SELECT item_id, kind, items.position, items.active, panes.active FROM items JOIN panes USING (pane_id) WHERE items.workspace_id = ?1 AND panes.workspace_id = ?1 ORDER BY item_id",
                 ).expect("prepare source items")(remote_id).expect("read source items"),
-                database.select_bound::<_, (u64, bool, Option<u64>, Option<u64>)>(
-                    "SELECT panes.pane_id, active, parent_group_id, position FROM panes JOIN center_panes USING (pane_id) WHERE workspace_id = ? ORDER BY panes.pane_id",
+                database.select_bound::<_, (bool, Option<u64>, Option<u64>, usize)>(
+                    "SELECT active, parent_group_id, position, pinned_count FROM panes JOIN center_panes USING (pane_id) WHERE workspace_id = ? ORDER BY panes.pane_id",
                 ).expect("prepare source panes")(remote_id).expect("read source panes"),
             )
         };
         let source = read_source();
-        assert_eq!(source.0.len(), 1);
         let item_id = source.0.first().expect("source item").0;
+        assert_eq!(
+            source,
+            (
+                vec![(
+                    item_id,
+                    String::from("unavailable-test-item"),
+                    0,
+                    true,
+                    true
+                )],
+                vec![(true, None, None, 0)]
+            )
+        );
         for launch_id in ["failed-active-second", "failed-active-third"] {
             let (_, headless) = start_test_recovery_remote_server(
                 Some(&connection_options),
@@ -8012,34 +8025,23 @@ mod tests {
                 server_cx,
             );
             start_test_recovery_session(&app_state, launch_id, cx).await;
-            let restore = cx.spawn({
-                let app_state = app_state.clone();
-                async move |mut cx| crate::restore_or_create_workspace(app_state, &mut cx).await
-            });
+            crate::restore_or_create_workspace(app_state.clone(), &mut cx.to_async())
+                .await
+                .expect("restore failed tab and healthy member");
             cx.run_until_parked();
-            assert_eq!(
-                cx.pending_prompt(),
-                Some((
-                    String::from("Failed to connect to mock server"),
-                    format!(
-                        "Could not deserialize pane: Could not deserialize unavailable-test-item item {item_id}: cannot deserialize unavailable-test-item, descriptor not found"
-                    ),
-                ))
-            );
-            let failed_window = cx.windows().first().copied().expect("failed member window");
-            cx.simulate_prompt_answer("Cancel");
-            restore.await.expect("recover healthy member");
-            cx.run_until_parked();
-            assert_eq!(cx.windows(), vec![failed_window]);
-            assert!(!cx.has_pending_prompt());
-            let window = failed_window
+            assert_eq!(cx.pending_prompt(), None);
+            let windows = cx.windows();
+            assert_eq!(windows.len(), 1);
+            let window = windows
+                .first()
+                .expect("restored member window")
                 .downcast::<MultiWorkspace>()
                 .expect("workspace window");
             window
                 .read_with(cx, |multi_workspace, cx| {
                     assert_eq!(
                         multi_workspace.workspace().read(cx).database_id(),
-                        Some(scratch_id)
+                        Some(remote_id)
                     );
                     let mut members = multi_workspace
                         .workspaces()
@@ -8050,10 +8052,28 @@ mod tests {
                     let failed = multi_workspace
                         .workspaces()
                         .find(|workspace| workspace.read(cx).database_id() == Some(remote_id))
-                        .expect("guarded remote member");
-                    assert!(failed.read(cx).is_restoring());
-                    let scratch = multi_workspace.workspace().read(cx);
+                        .expect("remote member with failed tab")
+                        .read(cx);
+                    assert!(!failed.is_restoring());
+                    assert_eq!(failed.active_pane().read(cx).items_len(), 1);
+                    let failed_item = failed
+                        .active_item_as::<InvalidItemView>(cx)
+                        .expect("visible failed item");
+                    assert_eq!(
+                        failed_item.read(cx).abs_path.as_ref(),
+                        Path::new(&format!("unavailable-test-item {item_id}"))
+                    );
+                    assert_eq!(
+                        failed_item.read(cx).error.as_ref(),
+                        "cannot deserialize unavailable-test-item, descriptor not found"
+                    );
+                    let scratch = multi_workspace
+                        .workspaces()
+                        .find(|workspace| workspace.read(cx).database_id() == Some(scratch_id))
+                        .expect("healthy scratch member")
+                        .read(cx);
                     assert!(!scratch.is_restoring());
+                    assert_eq!(scratch.active_pane().read(cx).items_len(), 1);
                     assert_eq!(
                         scratch
                             .active_item_as::<Editor>(cx)

@@ -167,6 +167,12 @@ pub enum ItemBufferKind {
     None,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveDisposition {
+    Normal,
+    DiscardOnly,
+}
+
 pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     type Event;
 
@@ -261,6 +267,14 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn set_nav_history(&mut self, _: ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
 
+    fn can_move_to(
+        &self,
+        _workspace: &WeakEntity<Workspace>,
+        _in_center_group: bool,
+        _cx: &App,
+    ) -> bool {
+        true
+    }
     fn can_split(&self) -> bool {
         false
     }
@@ -290,6 +304,9 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     }
     fn has_conflict(&self, _: &App) -> bool {
         false
+    }
+    fn save_disposition(&self, _cx: &App) -> SaveDisposition {
+        SaveDisposition::Normal
     }
     fn can_save(&self, _cx: &App) -> bool {
         false
@@ -409,6 +426,10 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 pub trait SerializableItem: Item {
     fn serialized_item_kind() -> &'static str;
 
+    fn is_serializable(&self, _cx: &App) -> bool {
+        true
+    }
+
     fn serialized_item_ids(workspace_id: WorkspaceId, cx: &App) -> Result<Vec<ItemId>> {
         WorkspaceDb::global(cx).serialized_item_ids(workspace_id, Self::serialized_item_kind())
     }
@@ -442,6 +463,7 @@ pub trait SerializableItem: Item {
 
 pub trait SerializableItemHandle: ItemHandle {
     fn serialized_item_kind(&self) -> &'static str;
+    fn is_serializable(&self, cx: &App) -> bool;
     fn serialize(
         &self,
         workspace: &mut Workspace,
@@ -459,13 +481,17 @@ where
         T::serialized_item_kind()
     }
 
+    fn is_serializable(&self, cx: &App) -> bool {
+        self.read(cx).is_serializable(cx)
+    }
+
     fn serialize(
         &self,
         workspace: &mut Workspace,
         closing: bool,
         cx: &mut App,
     ) -> Option<Task<Result<()>>> {
-        if workspace.is_restoring() {
+        if workspace.is_restoring() || !self.is_serializable(cx) {
             return None;
         }
         let item_id =
@@ -473,9 +499,16 @@ where
                 Ok(item_id) => item_id,
                 Err(error) => return Some(Task::ready(Err(error))),
             };
-        self.update(cx, |this, cx| {
+        workspace.track_serialized_item(self.downgrade_item());
+        let task = self.update(cx, |this, cx| {
             this.serialize(workspace, item_id, closing, cx)
-        })
+        })?;
+        let item = self.clone();
+        Some(cx.foreground_executor().spawn(async move {
+            let result = task.await;
+            drop(item);
+            result
+        }))
     }
 
     fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool {
@@ -517,6 +550,12 @@ pub trait ItemHandle: 'static + Send {
     );
     fn buffer_kind(&self, cx: &App) -> ItemBufferKind;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
+    fn can_move_to(
+        &self,
+        workspace: &WeakEntity<Workspace>,
+        in_center_group: bool,
+        cx: &App,
+    ) -> bool;
     fn can_split(&self, cx: &App) -> bool;
     fn clone_on_split(
         &self,
@@ -542,6 +581,7 @@ pub trait ItemHandle: 'static + Send {
     fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
+    fn save_disposition(&self, cx: &App) -> SaveDisposition;
     fn can_save(&self, cx: &App) -> bool;
     fn can_save_as(&self, cx: &App) -> bool;
     fn save(
@@ -1047,6 +1087,15 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.clone().into()
     }
 
+    fn can_move_to(
+        &self,
+        workspace: &WeakEntity<Workspace>,
+        in_center_group: bool,
+        cx: &App,
+    ) -> bool {
+        self.read(cx).can_move_to(workspace, in_center_group, cx)
+    }
+
     fn is_dirty(&self, cx: &App) -> bool {
         self.read(cx).is_dirty(cx)
     }
@@ -1067,6 +1116,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn has_conflict(&self, cx: &App) -> bool {
         self.read(cx).has_conflict(cx)
+    }
+
+    fn save_disposition(&self, cx: &App) -> SaveDisposition {
+        self.read(cx).save_disposition(cx)
     }
 
     fn can_save(&self, cx: &App) -> bool {
@@ -1466,6 +1519,7 @@ pub mod test {
         pub save_as_count: usize,
         pub reload_count: usize,
         pub is_dirty: bool,
+        pub serializable: bool,
         pub save_error: Option<String>,
         pub buffer_kind: ItemBufferKind,
         pub has_conflict: bool,
@@ -1559,6 +1613,7 @@ pub mod test {
                 save_as_count: 0,
                 reload_count: 0,
                 is_dirty: false,
+                serializable: true,
                 save_error: None,
                 has_conflict: false,
                 has_deleted_file: false,
@@ -1767,6 +1822,7 @@ pub mod test {
                     reload_count: self.reload_count,
                     is_dirty: self.is_dirty,
                     save_error: self.save_error.clone(),
+                    serializable: self.serializable,
                     buffer_kind: self.buffer_kind,
                     has_conflict: self.has_conflict,
                     has_deleted_file: self.has_deleted_file,
@@ -1862,6 +1918,10 @@ pub mod test {
     }
 
     impl SerializableItem for TestItem {
+        fn is_serializable(&self, _: &App) -> bool {
+            self.serializable
+        }
+
         fn serialized_item_kind() -> &'static str {
             "TestItem"
         }

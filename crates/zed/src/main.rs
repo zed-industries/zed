@@ -1464,24 +1464,22 @@ pub(crate) async fn restore_or_create_workspace(
                         } else {
                             restore_session_workspace(member, window, app_state.clone(), cx).await?
                         };
-                        let restored =
-                            restored_window.update(cx, |multi_workspace, window, cx| {
-                                let restored = multi_workspace
-                                    .workspaces()
-                                    .find(|workspace| {
-                                        workspace.read(cx).database_id()
-                                            == Some(member.workspace_id)
-                                    })
-                                    .cloned()
-                                    .unwrap_or_else(|| multi_workspace.workspace().clone());
-                                anyhow::ensure!(
-                                    !restored.read(cx).is_restoring(),
-                                    "Workspace {:?} did not finish restoring",
-                                    member.workspace_id
-                                );
-                                multi_workspace.add(restored.clone(), window, cx);
-                                anyhow::Ok(restored)
-                            })??;
+                        let restored = restored_window.update(cx, |multi_workspace, _, cx| {
+                            multi_workspace
+                                .workspaces()
+                                .find(|workspace| {
+                                    workspace.read(cx).database_id() == Some(member.workspace_id)
+                                })
+                                .cloned()
+                                .unwrap_or_else(|| multi_workspace.workspace().clone())
+                        })?;
+                        restored
+                            .read_with(cx, |workspace, _| workspace.wait_for_restoration())
+                            .await
+                            .map_err(|error| anyhow::anyhow!(error))?;
+                        restored_window.update(cx, |multi_workspace, window, cx| {
+                            multi_workspace.add(restored.clone(), window, cx);
+                        })?;
                         anyhow::Ok((restored_window, restored))
                     }
                     .await;

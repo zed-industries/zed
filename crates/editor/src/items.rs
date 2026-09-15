@@ -1272,6 +1272,12 @@ impl Item for Editor {
 }
 
 impl SerializableItem for Editor {
+    fn is_serializable(&self, cx: &App) -> bool {
+        self.buffer_serialization.is_some()
+            && self.project.is_some()
+            && self.buffer.read(cx).as_singleton().is_some()
+    }
+
     fn serialized_item_kind() -> &'static str {
         "Editor"
     }
@@ -4078,6 +4084,88 @@ mod tests {
             .expect("restored workspace");
         assert_eq!(workspace_editor_texts(&restored, cx), initial);
         assert_eq!(workspace_editor_metadata(&restored, cx), expected);
+    }
+
+    #[gpui::test]
+    async fn test_restore_omits_nonserializable_editors(cx: &mut gpui::TestAppContext) {
+        let expected = ["ordinary untitled\0λ", "ordinary file"];
+        let (opened, app_state) = workspace_with_recovery_editors(expected, cx).await;
+        let workspace_id = opened.workspace.read_with(cx, |workspace, _| {
+            workspace.database_id().expect("workspace ID")
+        });
+        opened
+            .window
+            .update(cx, |_, window, cx| {
+                opened.workspace.update(cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    for excerpt_count in [0, 1, 2] {
+                        let buffer = cx.new(|cx| {
+                            let mut buffer = MultiBuffer::new(Capability::ReadWrite);
+                            for index in 0..excerpt_count {
+                                let excerpt = cx.new(|cx| Buffer::local("excluded", cx));
+                                buffer.set_excerpts_for_path(
+                                    PathKey::sorted(index),
+                                    excerpt,
+                                    [Point::new(0, 0)..Point::new(0, 8)],
+                                    0,
+                                    cx,
+                                );
+                            }
+                            buffer
+                        });
+                        let editor = cx.new(|cx| {
+                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx)
+                        });
+                        assert!(!editor.read(cx).is_serializable(cx));
+                        workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                    }
+                    for has_project in [false, true] {
+                        let buffer = cx.new(|cx| Buffer::local("excluded singleton", cx));
+                        let editor = cx.new(|cx| {
+                            let mut editor = Editor::for_buffer(
+                                buffer,
+                                has_project.then(|| project.clone()),
+                                window,
+                                cx,
+                            );
+                            if has_project {
+                                editor.set_should_serialize(false, cx);
+                            }
+                            editor
+                        });
+                        assert!(!editor.read(cx).is_serializable(cx));
+                        workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                    }
+                    let ordinary = workspace
+                        .items_of_type::<Editor>(cx)
+                        .next()
+                        .expect("ordinary editor");
+                    ordinary.update(cx, |editor, cx| {
+                        editor.buffer_serialization = Some(BufferSerialization::NonDirtyBuffers);
+                        assert!(editor.is_serializable(cx));
+                        editor.buffer_serialization = Some(BufferSerialization::All);
+                    });
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .expect("serialize mixed workspace")
+            .await;
+        cx.run_until_parked();
+        assert_saved_workspace_editor_texts(workspace_id, expected, cx);
+        opened
+            .window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("close workspace");
+        drop(opened);
+        cx.run_until_parked();
+        let window = cx
+            .update(|cx| workspace::open_workspace_by_id(workspace_id, app_state, None, cx))
+            .await
+            .expect("restore mixed workspace");
+        let restored = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("restored workspace");
+        assert_eq!(workspace_editor_texts(&restored, cx), expected);
     }
 
     #[gpui::test]

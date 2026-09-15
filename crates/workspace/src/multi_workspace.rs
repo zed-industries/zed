@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result};
 use fs::Fs;
+use futures::{FutureExt as _, channel::oneshot};
 
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
@@ -1076,29 +1077,67 @@ impl MultiWorkspace {
 
         let app_state = self.workspace().read(cx).app_state().clone();
 
-        let workspaces: Vec<_> = self.workspaces_for_project_group(key, cx);
-        let mut serialization_tasks = Vec::new();
-        for workspace in &workspaces {
-            serialization_tasks.push(workspace.update(cx, |workspace, inner_cx| {
-                workspace.flush_serialization(window, inner_cx)
-            }));
-        }
+        let workspaces = self
+            .workspaces()
+            .filter(|workspace| workspace.read(cx).project_group_key(cx) == *key)
+            .cloned()
+            .collect::<Vec<_>>();
+        let workspace_id = self
+            .last_active_workspace_for_group(key, cx)
+            .or_else(|| workspaces.first().cloned())
+            .and_then(|workspace| workspace.read(cx).database_id());
+        let key = key.clone();
 
-        let remove_task = self.remove_project_group(key, window, cx);
-
-        cx.spawn(async move |_this, cx| {
-            futures::future::join_all(serialization_tasks).await;
-
-            let removed = remove_task.await?;
+        cx.spawn_in(window, async move |this, cx| {
+            for workspace in &workspaces {
+                workspace
+                    .read_with(cx, |workspace, _| workspace.wait_for_restoration())
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error))?;
+            }
+            let serialization_tasks = workspaces
+                .iter()
+                .map(|workspace| {
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        workspace.serialize_workspace_internal(window, cx)
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            for result in futures::future::join_all(serialization_tasks).await {
+                result.map_err(|error| anyhow::anyhow!(error))?;
+            }
+            let removed = this
+                .update_in(cx, |this, window, cx| {
+                    this.remove_project_group(&key, window, cx)
+                })?
+                .await?;
             if !removed {
                 return Ok(());
             }
-
-            cx.update(|cx| {
-                Workspace::new_local(paths, app_state, None, None, None, OpenMode::NewWindow, cx)
-            })
-            .await?;
-
+            for workspace in &workspaces {
+                if let Some(detachment) = workspace.read_with(cx, |workspace, _| {
+                    workspace.pending_workspace_detachment.clone()
+                }) {
+                    detachment.await.map_err(|error| anyhow::anyhow!(error))?;
+                }
+            }
+            if let Some(workspace_id) = workspace_id {
+                cx.update(|_, cx| crate::open_workspace_by_id(workspace_id, app_state, None, cx))?
+                    .await?;
+            } else {
+                cx.update(|_, cx| {
+                    Workspace::new_local(
+                        paths,
+                        app_state,
+                        None,
+                        None,
+                        None,
+                        OpenMode::NewWindow,
+                        cx,
+                    )
+                })?
+                .await?;
+            }
             Ok(())
         })
     }
@@ -1451,34 +1490,61 @@ impl MultiWorkspace {
     /// group key, and emits `WorkspaceRemoved`. The DB row is preserved
     /// so the workspace still appears in the recent-projects list.
     fn detach_workspace(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
-        if let Some(index) = self.held_index(workspace) {
-            assert_ne!(
-                index,
-                self.displayed_index(),
-                "the displayed workspace must be re-pointed before it is detached"
-            );
-            self.held.remove(index);
-        }
+        let Some(index) = self.held_index(workspace) else {
+            return;
+        };
+        assert_ne!(
+            index,
+            self.displayed_index(),
+            "the displayed workspace must be re-pointed before it is detached"
+        );
+        self.held.remove(index);
         cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
-        let pending_serialization = workspace.update(cx, |workspace, _cx| {
+        let (pending_serialization, restoration) = workspace.update(cx, |workspace, _cx| {
+            workspace.serialization_detached = true;
             workspace.session_id.take();
             workspace.serialized_window_id.take();
             workspace._schedule_serialize_workspace.take();
-            workspace.pending_workspace_serialization.clone()
+            (
+                workspace.pending_workspace_serialization.clone(),
+                workspace.wait_for_restoration(),
+            )
         });
 
         if let Some(workspace_id) = workspace.read(cx).database_id() {
+            let claim = crate::WorkspaceRemovalClaim::new(workspace_id, cx);
             let db = crate::persistence::WorkspaceDb::global(cx);
-            self.pending_removal_tasks.retain(|task| !task.is_ready());
-            self.pending_removal_tasks
-                .push(cx.background_spawn(async move {
-                    if let Some(serialization) = pending_serialization {
-                        serialization.await.log_err();
-                    }
-                    db.set_session_binding(workspace_id, None, None)
+            let (completion, receiver) = oneshot::channel();
+            cx.spawn(async move |_, _| {
+                restoration.await.log_err();
+                if let Some(serialization) = pending_serialization {
+                    serialization.await.log_err();
+                }
+                let result = db
+                    .set_session_binding(workspace_id, None, None)
+                    .await
+                    .map_err(std::sync::Arc::new);
+                result.as_ref().log_err();
+                drop(claim);
+                if let Err(result) = completion.send(result) {
+                    result.log_err();
+                }
+            })
+            .detach();
+            let detachment = cx
+                .spawn(async move |_, _| {
+                    receiver
                         .await
-                        .log_err();
-                }));
+                        .map_err(|error| std::sync::Arc::new(anyhow::anyhow!(error)))?
+                })
+                .shared();
+            workspace.update(cx, |workspace, _| {
+                workspace.pending_workspace_detachment = Some(detachment.clone());
+            });
+            self.pending_removal_tasks.retain(|task| !task.is_ready());
+            self.pending_removal_tasks.push(cx.spawn(async move |_, _| {
+                detachment.await.log_err();
+            }));
         }
     }
 
@@ -2045,18 +2111,24 @@ impl MultiWorkspace {
             })
         } else {
             let workspace = self.workspace().clone();
-            cx.spawn_in(window, async move |_this, cx| {
+            cx.spawn_in(window, async move |this, cx| {
                 let should_continue = workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.prepare_to_close(crate::CloseIntent::ReplaceWindow, window, cx)
                     })?
                     .await?;
                 if should_continue {
-                    workspace
+                    let replacement = workspace
                         .update_in(cx, |workspace, window, cx| {
                             workspace.open_workspace_for_paths(open_mode, paths, window, cx)
                         })?
-                        .await
+                        .await?;
+                    this.update(cx, |this, cx| {
+                        if this.workspace() == &replacement && replacement != workspace {
+                            this.detach_workspace(&workspace, cx);
+                        }
+                    })?;
+                    Ok(replacement)
                 } else {
                     Ok(workspace)
                 }

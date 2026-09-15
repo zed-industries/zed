@@ -645,6 +645,10 @@ impl SerializableItem for BranchDiff {
         "BranchDiff"
     }
 
+    fn is_serializable(&self, cx: &App) -> bool {
+        matches!(self.diff_base(cx), DiffBase::Merge { .. })
+    }
+
     fn serialized_item_ids(
         workspace_id: workspace::WorkspaceId,
         cx: &App,

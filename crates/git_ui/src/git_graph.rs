@@ -4191,6 +4191,10 @@ impl workspace::SerializableItem for GitGraph {
         "GitGraph"
     }
 
+    fn is_serializable(&self, cx: &App) -> bool {
+        self.get_repository(cx).is_some()
+    }
+
     fn serialized_item_ids(
         workspace_id: workspace::WorkspaceId,
         cx: &App,
