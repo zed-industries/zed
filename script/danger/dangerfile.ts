@@ -1,4 +1,4 @@
-import { danger, message, warn, fail, schedule } from "danger";
+import { danger, message, fail, schedule } from "danger";
 import { releaseNotesSection, releaseNotesEntries } from "../lib/release-notes";
 
 const { prHygiene } = require("danger-plugin-pr-hygiene");
@@ -16,10 +16,11 @@ prHygiene({
 
 const body = danger.github.pr.body;
 const releaseNotes = releaseNotesSection(body);
+const entries = releaseNotesEntries(releaseNotes);
 const hasReleaseNotes = releaseNotes !== "";
 
 if (!hasReleaseNotes) {
-  warn(
+  fail(
     [
       "This PR is missing release notes.",
       "",
@@ -49,6 +50,19 @@ if (!hasReleaseNotes) {
       'If the change is not user-facing for GPUI users, use "- [GPUI] N/A" for that entry.',
     ].join("\n"),
   );
+} else if (
+  entries.some((entry) => {
+    const description = entry.replace(/^-\s*(?:\[GPUI\]\s*)?/i, "").trim();
+    return description === "" || /^(?:N\/A\s+or\s+)?Added\/Fixed\/Improved\s*(?:\.{3}|…)$/i.test(description);
+  })
+) {
+  fail(
+    [
+      "This PR has no proper release notes.",
+      "",
+      'Please replace them with "N/A" or a description of the changes.',
+    ].join("\n"),
+  );
 }
 
 const GPUI_RELEASE_NOTES_PATTERN = /^- \[GPUI\]/im;
@@ -56,7 +70,7 @@ const GPUI_RELEASE_NOTES_PATTERN = /^- \[GPUI\]/im;
 const gpuiCrates = danger.git.fileMatch("crates/gpui*/**");
 
 if (gpuiCrates.edited || gpuiCrates.deleted) {
-  if (!releaseNotesEntries(releaseNotes).some((entry) => GPUI_RELEASE_NOTES_PATTERN.test(entry))) {
+  if (!entries.some((entry) => GPUI_RELEASE_NOTES_PATTERN.test(entry))) {
     const { edited, deleted } = gpuiCrates.getKeyedPaths();
     const touchedGpuiCratesStr = [...edited, ...deleted]
       .map((file) => "`" + file.split("/")[1] + "`")
