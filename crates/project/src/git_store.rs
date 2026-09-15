@@ -5350,7 +5350,7 @@ impl BufferGitState {
         }
         let head_text = self.head_text.clone();
         let buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(head_text.as_deref().unwrap_or(""), cx);
+            let mut buffer = Buffer::local_unparsed(head_text.as_deref().unwrap_or(""), cx);
             buffer.set_capability(Capability::ReadOnly, cx);
             buffer
         });
@@ -5375,7 +5375,7 @@ impl BufferGitState {
         }
         let index_text = self.index_text.clone();
         let buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(index_text.as_deref().unwrap_or(""), cx);
+            let mut buffer = Buffer::local_unparsed(index_text.as_deref().unwrap_or(""), cx);
             if let Some(file) = file {
                 buffer.file_updated(file, cx);
             }

@@ -1613,7 +1613,7 @@ impl BufferDiff {
         cx: &mut App,
     ) -> Self {
         let base_text = cx.new(|cx| {
-            let mut base_buffer = language::Buffer::local("", cx);
+            let mut base_buffer = language::Buffer::local_unparsed("", cx);
             base_buffer.set_capability(Capability::ReadOnly, cx);
             if let Some(language_registry) = language_registry {
                 base_buffer.set_language_registry(language_registry);
@@ -1655,7 +1655,7 @@ impl BufferDiff {
     ) -> Self {
         let base_text = buffer.text();
         let base_text = cx.new(|cx| {
-            let mut base_buffer = language::Buffer::local(base_text, cx);
+            let mut base_buffer = language::Buffer::local_unparsed(base_text, cx);
             base_buffer.set_capability(Capability::ReadOnly, cx);
             if let Some(language_registry) = language_registry {
                 base_buffer.set_language_registry(language_registry);
@@ -2209,6 +2209,14 @@ impl BufferDiff {
                 secondary_diff: None,
             }
         });
+        let base_buffer = self.base_text_buffer.read(cx);
+        if base_buffer.remote_id() == snapshot.base_text.remote_id()
+            && base_buffer.version() == *snapshot.base_text.version()
+            && base_buffer.non_text_state_update_count()
+                != snapshot.base_text.non_text_state_update_count()
+        {
+            snapshot.base_text = base_buffer.snapshot();
+        }
         snapshot.secondary_diff = self.secondary_diff.as_ref().map(|diff| {
             debug_assert!(diff.read(cx).secondary_diff.is_none());
             Arc::new(diff.read(cx).snapshot(cx))

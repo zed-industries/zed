@@ -46552,6 +46552,372 @@ async fn test_lsp_show_document_unsupported_uri(cx: &mut TestAppContext) {
     assert_eq!(response, lsp::ShowDocumentResult { success: false });
 }
 
+#[gpui::test]
+async fn test_large_file_parsing_requires_visible_singleton(cx: &mut TestAppContext) {
+    let (workspace, [small, large, _], mut cx) = large_file_parsing_test_workspace(cx).await;
+    assert!(!small.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert!(!large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    let small_editor =
+        cx.new_window_entity(|window, cx| Editor::for_buffer(small.clone(), None, window, cx));
+    let large_editor =
+        cx.new_window_entity(|window, cx| Editor::for_buffer(large.clone(), None, window, cx));
+    let pane = workspace.read_with(&cx, |workspace, _| workspace.active_pane().clone());
+    pane.update_in(&mut cx, |pane, window, cx| {
+        pane.add_item(Box::new(small_editor), true, true, None, window, cx);
+        pane.add_item_inner(
+            Box::new(large_editor),
+            false,
+            false,
+            false,
+            None,
+            window,
+            cx,
+        );
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    assert!(small.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert!(!large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+
+    cx.update(|window, cx| {
+        pane.update(cx, |pane, cx| pane.activate_item(1, true, true, window, cx));
+        window.refresh();
+        window.draw(cx).clear(cx);
+        pane.update(cx, |pane, cx| pane.activate_item(0, true, true, window, cx));
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+    assert!(!large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+
+    pane.update_in(&mut cx, |pane, window, cx| {
+        pane.activate_item(1, true, true, window, cx)
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    let notification_id =
+        NotificationId::composite::<LargeFileParsingNotification>(("buffer", large.entity_id()));
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        vec![notification_id.clone()]
+    );
+    let notification = workspace.read_with(&cx, |workspace, _| {
+        workspace.notification_views().into_iter().next().unwrap()
+    });
+    workspace.update_in(&mut cx, |workspace, window, cx| {
+        let split = workspace.split_pane(pane, SplitDirection::Right, window, cx);
+        let editor = cx.new(|cx| Editor::for_buffer(large.clone(), None, window, cx));
+        split.update(cx, |pane, cx| {
+            pane.add_item(Box::new(editor), true, true, None, window, cx)
+        });
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        vec![notification_id]
+    );
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| {
+            workspace
+                .notification_views()
+                .into_iter()
+                .map(|view| view.entity_id())
+                .collect::<Vec<_>>()
+        }),
+        vec![notification.entity_id()]
+    );
+    notification
+        .downcast::<MessageNotification>()
+        .unwrap()
+        .update(&mut cx, |notification, cx| notification.dismiss(cx));
+    draw_large_file_parsing_test_window(&mut cx);
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+    assert!(!large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+}
+
+#[gpui::test]
+async fn test_large_file_parsing_visible_excerpts_do_not_prompt(cx: &mut TestAppContext) {
+    let (workspace, [small, large, offscreen], mut cx) =
+        large_file_parsing_test_workspace(cx).await;
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        for (index, buffer) in [small.clone(), large.clone(), offscreen.clone()]
+            .into_iter()
+            .enumerate()
+        {
+            let end = buffer.read(cx).max_point();
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(index as u64),
+                buffer,
+                [Point::new(0, 0)..end],
+                0,
+                cx,
+            );
+        }
+        multi_buffer
+    });
+    let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+        let editor = cx.new(|cx| Editor::for_multibuffer(multi_buffer, None, window, cx));
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        editor
+    });
+    cx.simulate_resize(gpui::size(px(800.), px(600.)));
+    draw_large_file_parsing_test_window(&mut cx);
+    assert!(small.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert_eq!(
+        small.read_with(&cx, |buffer, _| {
+            buffer
+                .snapshot()
+                .syntax_layers()
+                .map(|layer| layer.node().to_sexp())
+                .collect::<Vec<_>>()
+        }),
+        vec![
+            "(source_file (function_item name: (identifier) parameters: (parameters) body: (block)))"
+        ]
+    );
+    assert!(!large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert_eq!(
+        large.read_with(&cx, |buffer, _| buffer.snapshot().syntax_layers().count()),
+        0
+    );
+    assert!(!offscreen.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert_eq!(
+        offscreen.read_with(&cx, |buffer, _| buffer.snapshot().syntax_layers().count()),
+        0
+    );
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+
+    editor.update_in(&mut cx, |editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let scroll_top = (snapshot.max_point().row().as_f64()
+            - editor
+                .visible_line_count()
+                .expect("editor should have visible lines")
+            + 1.)
+            .max(0.);
+        editor.set_scroll_position(gpui::point(0., scroll_top), window, cx);
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    assert!(offscreen.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert_eq!(
+        offscreen.read_with(&cx, |buffer, _| {
+            buffer
+                .snapshot()
+                .syntax_layers()
+                .map(|layer| layer.node().to_sexp())
+                .collect::<Vec<_>>()
+        }),
+        vec![
+            "(source_file (function_item name: (identifier) parameters: (parameters) body: (block)))"
+        ]
+    );
+    assert!(!large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert_eq!(
+        large.read_with(&cx, |buffer, _| buffer.snapshot().syntax_layers().count()),
+        0
+    );
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+
+    workspace.update_in(&mut cx, |workspace, window, cx| {
+        let editor = cx.new(|cx| Editor::for_buffer(large.clone(), None, window, cx));
+        workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        vec![NotificationId::composite::<LargeFileParsingNotification>((
+            "buffer",
+            large.entity_id()
+        ))]
+    );
+}
+
+#[gpui::test]
+async fn test_large_file_parsing_in_split_editors(cx: &mut TestAppContext) {
+    let (workspace, [small, large, base], mut cx) = large_file_parsing_test_workspace(cx).await;
+    let diff = cx.new(|cx| {
+        BufferDiff::new_with_base_text_buffer(&small.read(cx).text_snapshot(), base.clone(), cx)
+    });
+    diff.update(&mut cx, |diff, cx| {
+        let text = Arc::from(base.read(cx).text());
+        diff.set_base_text(Some(text), small.read(cx).text_snapshot(), cx)
+    })
+    .await;
+    let large_diff = cx.new(|cx| {
+        BufferDiff::new_unchanged(&large.read(cx).text_snapshot(), Some(rust_lang()), None, cx)
+    });
+    let large_base = large_diff.read_with(&cx, |diff, _| diff.base_text_buffer().clone());
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        for (index, buffer) in [small.clone(), large.clone()].into_iter().enumerate() {
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(index as u64),
+                buffer,
+                [Point::new(0, 0)..Point::new(1, 0)],
+                0,
+                cx,
+            );
+        }
+        multi_buffer.add_diff(diff, cx);
+        multi_buffer.add_diff(large_diff, cx);
+        multi_buffer
+    });
+    let split = cx.new_window_entity(|window, cx| {
+        SplittableEditor::new(
+            DiffViewStyle::Split,
+            multi_buffer,
+            workspace.read(cx).project().clone(),
+            workspace.clone(),
+            window,
+            cx,
+        )
+    });
+    split.update_in(&mut cx, |split, window, cx| split.split(window, cx));
+    workspace.update_in(&mut cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(split), None, true, window, cx);
+    });
+    cx.simulate_resize(gpui::size(px(1600.), px(900.)));
+    draw_large_file_parsing_test_window(&mut cx);
+    assert!(small.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert!(base.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert!(!large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert!(!large_base.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+}
+
+#[gpui::test]
+async fn test_large_file_parsing_language_detected_after_display(cx: &mut TestAppContext) {
+    let (workspace, [small, large, _], mut cx) = large_file_parsing_test_workspace(cx).await;
+    large.update(&mut cx, |buffer, cx| buffer.set_language(None, cx));
+    workspace.update_in(&mut cx, |workspace, window, cx| {
+        let editor = cx.new(|cx| Editor::for_buffer(large.clone(), None, window, cx));
+        workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+    cx.update(|window, cx| {
+        large.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+        window.refresh();
+        window.draw(cx).clear(cx);
+        large.update(cx, |buffer, cx| buffer.set_language(None, cx));
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+    large.update(&mut cx, |buffer, cx| {
+        buffer.set_language(Some(rust_lang()), cx)
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        vec![NotificationId::composite::<LargeFileParsingNotification>((
+            "buffer",
+            large.entity_id()
+        ))]
+    );
+    assert!(!large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    workspace.update_in(&mut cx, |workspace, window, cx| {
+        let editor = cx.new(|cx| Editor::for_buffer(small.clone(), None, window, cx));
+        workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    let notification = workspace
+        .read_with(&cx, |workspace, _| {
+            workspace.notification_views().into_iter().next().unwrap()
+        })
+        .downcast::<MessageNotification>()
+        .unwrap();
+    let notification_window =
+        cx.add_window(|_, _| LargeFileParsingNotificationTestView(notification));
+    let mut notification_cx = VisualTestContext::from_window(*notification_window, &cx);
+    draw_large_file_parsing_test_window(&mut notification_cx);
+    let bounds = notification_cx
+        .debug_bounds("parsing-notification")
+        .unwrap();
+    let button_position = notification_cx.update(|window, _| {
+        let padding = gpui::rems(0.75).to_pixels(window.rem_size()) + px(1.);
+        let button_height = ui::ButtonSize::Default.rems().to_pixels(window.rem_size());
+        gpui::point(
+            bounds.left() + padding + px(1.),
+            bounds.bottom() - padding - button_height / 2.,
+        )
+    });
+    notification_cx.simulate_click(button_position, Modifiers::none());
+    assert!(large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+}
+
+#[gpui::test]
+async fn test_file_parsing_without_workspace_requires_visible_display(cx: &mut TestAppContext) {
+    let (workspace, [small, large, _], mut cx) = large_file_parsing_test_workspace(cx).await;
+    let small_editor =
+        cx.new_window_entity(|window, cx| Editor::for_buffer(small.clone(), None, window, cx));
+    let large_editor =
+        cx.new_window_entity(|window, cx| Editor::for_buffer(large.clone(), None, window, cx));
+    cx.simulate_resize(gpui::size(px(800.), px(600.)));
+    cx.draw(
+        gpui::point(px(0.), px(-10000.)),
+        gpui::size(px(800.), px(600.)),
+        |_, _| small_editor.clone().into_any_element(),
+    );
+    cx.run_until_parked();
+    assert!(!small.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    cx.draw(
+        gpui::point(px(0.), px(0.)),
+        gpui::size(px(800.), px(600.)),
+        |_, _| small_editor.into_any_element(),
+    );
+    cx.run_until_parked();
+    assert!(small.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    cx.draw(
+        gpui::point(px(0.), px(0.)),
+        gpui::size(px(800.), px(600.)),
+        |_, _| large_editor.clone().into_any_element(),
+    );
+    cx.run_until_parked();
+    assert!(!large.read_with(&cx, |buffer, _| buffer.parsing_enabled()));
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        Vec::new()
+    );
+    workspace.update_in(&mut cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(large_editor), None, true, window, cx);
+    });
+    draw_large_file_parsing_test_window(&mut cx);
+    assert_eq!(
+        workspace.read_with(&cx, |workspace, _| workspace.notification_ids()),
+        vec![NotificationId::composite::<LargeFileParsingNotification>((
+            "buffer",
+            large.entity_id()
+        ))]
+    );
+}
+
 async fn register_document_highlight_capability(
     lsp: &lsp::FakeLanguageServer,
     registration_id: &str,
@@ -46581,4 +46947,67 @@ fn document_highlight_count(cx: &mut EditorLspTestContext) -> usize {
             .get(&HighlightKey::DocumentHighlightRead)
             .map_or(0, |(_, ranges)| ranges.len())
     })
+}
+
+async fn large_file_parsing_test_workspace(
+    cx: &mut TestAppContext,
+) -> (Entity<Workspace>, [Entity<Buffer>; 3], VisualTestContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tree_sitter_max_file_size_mib = Some(1);
+        settings.defaults.prompt_for_large_file_parsing = Some(true);
+    });
+    let fs = FakeFs::new(cx.executor());
+    let padding = format!("{}\n", " ".repeat(1024)).repeat(1024);
+    fs.insert_tree(
+        path!("/parsing"),
+        json!({
+            "small.rs": "fn small() {}\n",
+            "large.rs": format!("{}/*{padding}*/\n", "fn large() {}\n".repeat(200)),
+            "offscreen.rs": "fn offscreen() {}\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/parsing").as_ref()], cx).await;
+    project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+    let mut buffers = Vec::new();
+    for path in [
+        path!("/parsing/small.rs"),
+        path!("/parsing/large.rs"),
+        path!("/parsing/offscreen.rs"),
+    ] {
+        buffers.push(
+            project
+                .update(cx, |project, cx| project.open_local_buffer(path, cx))
+                .await
+                .unwrap(),
+        );
+    }
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = VisualTestContext::from_window(*window, cx);
+    cx.run_until_parked();
+    (workspace, buffers.try_into().unwrap(), cx)
+}
+
+fn draw_large_file_parsing_test_window(cx: &mut VisualTestContext) {
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    cx.run_until_parked();
+}
+
+struct LargeFileParsingNotificationTestView(Entity<MessageNotification>);
+
+impl Render for LargeFileParsingNotificationTestView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        v_flex().w(px(500.)).child(
+            div()
+                .debug_selector(|| "parsing-notification".to_owned())
+                .child(self.0.clone()),
+        )
+    }
 }

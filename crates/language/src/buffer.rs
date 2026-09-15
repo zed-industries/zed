@@ -121,6 +121,7 @@ pub struct Buffer {
     wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Option<Duration>,
+    parsing_permission: ParsingPermission,
     syntax_map: Mutex<SyntaxMap>,
     reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
@@ -182,6 +183,14 @@ impl TreeSitterData {
 pub enum ParseStatus {
     Idle,
     Parsing,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ParsingPermission {
+    Deferred,
+    Pending,
+    Enabled,
+    Disabled,
 }
 
 struct BufferBranchState {
@@ -994,6 +1003,12 @@ impl Buffer {
         )
     }
 
+    pub fn local_unparsed(base_text: impl Into<String>, cx: &mut Context<Self>) -> Self {
+        let mut buffer = Self::local(base_text, cx);
+        buffer.parsing_permission = ParsingPermission::Deferred;
+        buffer
+    }
+
     /// Create a new buffer with the given base text that has proper line endings and other normalization applied.
     pub fn local_normalized(
         base_text_normalized: Rope,
@@ -1158,6 +1173,11 @@ impl Buffer {
             has_unsaved_edits: Cell::new((buffer.version(), false)),
             text: buffer,
             branch_state: None,
+            parsing_permission: if file.is_some() {
+                ParsingPermission::Deferred
+            } else {
+                ParsingPermission::Enabled
+            },
             file,
             capability,
             syntax_map,
@@ -1353,6 +1373,7 @@ impl Buffer {
                     merged_operations: Default::default(),
                 }),
                 language: self.language.clone(),
+                parsing_permission: self.parsing_permission,
                 content_language_detection_enabled: self.content_language_detection_enabled,
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
@@ -1377,7 +1398,7 @@ impl Buffer {
         cx: &App,
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
-        let language = self.language().cloned();
+        let language = self.language().filter(|_| self.parsing_enabled()).cloned();
         let old_snapshot = self.text.snapshot().clone();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
@@ -1867,6 +1888,58 @@ impl Buffer {
         self.non_text_state_update_count
     }
 
+    pub fn needs_parsing(&self) -> bool {
+        self.parsing_permission == ParsingPermission::Deferred
+            || self.parsing_permission == ParsingPermission::Pending
+    }
+
+    pub fn request_parsing(&mut self, cx: &mut Context<Self>) {
+        if self.parsing_permission == ParsingPermission::Deferred {
+            self.parsing_permission = ParsingPermission::Pending;
+        }
+        if self.parsing_permission == ParsingPermission::Pending {
+            self.reparse(cx, false);
+        }
+    }
+
+    pub fn request_parsing_and_wait(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        self.request_parsing(cx);
+        self.parsing_idle()
+    }
+
+    pub fn claim_large_file_parsing_prompt(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.parsing_permission != ParsingPermission::Pending
+            || self
+                .language
+                .as_ref()
+                .is_none_or(|language| language.grammar().is_none())
+        {
+            return false;
+        }
+        let settings = LanguageSettings::resolve(Some(self), None, cx);
+        if settings.tree_sitter_max_file_size_mib == 0
+            || (self.len() as u64).div_ceil(1024 * 1024) <= settings.tree_sitter_max_file_size_mib
+        {
+            return false;
+        }
+        self.parsing_permission = ParsingPermission::Disabled;
+        settings.prompt_for_large_file_parsing
+    }
+
+    pub fn enable_parsing(&mut self, cx: &mut Context<Self>) {
+        if !self.parsing_enabled() {
+            self.parsing_permission = ParsingPermission::Enabled;
+            self.reparse(cx, false);
+        }
+    }
+
+    pub fn parsing_enabled(&self) -> bool {
+        self.parsing_permission == ParsingPermission::Enabled
+    }
+
     /// Whether the buffer is being parsed in the background.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
@@ -1924,6 +1997,27 @@ impl Buffer {
     /// parsing in the background.
     #[ztracing::instrument(skip_all)]
     pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
+        if self.parsing_permission == ParsingPermission::Pending
+            && self
+                .language
+                .as_ref()
+                .is_some_and(|language| language.grammar().is_some())
+        {
+            let settings = LanguageSettings::resolve(Some(self), None, cx);
+            if settings.tree_sitter_max_file_size_mib == 0
+                || (self.len() as u64).div_ceil(1024 * 1024)
+                    <= settings.tree_sitter_max_file_size_mib
+            {
+                self.parsing_permission = ParsingPermission::Enabled;
+            }
+        }
+        if !self.parsing_enabled() {
+            self.autoindent_requests.clear();
+            for sender in self.wait_for_autoindent_txs.drain(..) {
+                sender.send(()).ok();
+            }
+            return;
+        }
         if self.text.version() != *self.tree_sitter_data.version() {
             Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, self.text.snapshot());
         }
@@ -3535,7 +3629,7 @@ impl Buffer {
         let mut snapshot = self.snapshot();
         let text = snapshot.text.clone();
         let mut syntax = snapshot.syntax.clone();
-        let language = self.language().cloned();
+        let language = self.language().filter(|_| self.parsing_enabled()).cloned();
         let registry = self.language_registry();
         let new_text = self.text.snapshot_with_edits(edits);
         cx.background_spawn(async move {
@@ -6092,7 +6186,7 @@ impl File for TestFile {
     }
 
     fn disk_state(&self) -> DiskState {
-        unimplemented!()
+        DiskState::New
     }
 
     fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a str {

@@ -512,6 +512,7 @@ struct DiffState {
     diff: Entity<BufferDiff>,
     main_buffer: Option<Entity<language::Buffer>>,
     _subscription: gpui::Subscription,
+    _base_buffer_subscription: gpui::Subscription,
 }
 
 impl DiffState {
@@ -613,6 +614,11 @@ fn remove_diff_state(diffs: &mut SumTree<DiffStateSnapshot>, buffer_id: BufferId
 impl DiffState {
     fn new(diff: Entity<BufferDiff>, cx: &mut Context<MultiBuffer>) -> Self {
         DiffState {
+            _base_buffer_subscription: Self::subscribe_to_base_buffer(
+                &diff,
+                diff.read(cx).buffer_id,
+                cx,
+            ),
             _subscription: cx.subscribe(&diff, |this, diff, event, cx| match event {
                 BufferDiffEvent::DiffChanged(DiffChanged {
                     changed_range,
@@ -643,6 +649,11 @@ impl DiffState {
     ) -> Self {
         let weak_main_buffer = main_buffer.downgrade();
         DiffState {
+            _base_buffer_subscription: Self::subscribe_to_base_buffer(
+                &diff,
+                diff.read(cx).base_text_buffer().read(cx).remote_id(),
+                cx,
+            ),
             _subscription: cx.subscribe(&diff, {
                 move |this, diff, event, cx| {
                     let Some(main_buffer) = weak_main_buffer.upgrade() else {
@@ -670,6 +681,36 @@ impl DiffState {
             diff,
             main_buffer: Some(main_buffer),
         }
+    }
+
+    fn subscribe_to_base_buffer(
+        diff: &Entity<BufferDiff>,
+        buffer_id: BufferId,
+        cx: &mut Context<MultiBuffer>,
+    ) -> gpui::Subscription {
+        let base_buffer = diff.read(cx).base_text_buffer().clone();
+        cx.subscribe(&base_buffer, move |multibuffer, base_buffer, event, cx| {
+            if let language::BufferEvent::Reparsed = event {
+                let snapshot = multibuffer.snapshot.get_mut();
+                let Some(diff) = find_diff_state(&snapshot.diffs, buffer_id) else {
+                    return;
+                };
+                let base_text = base_buffer.read(cx).snapshot();
+                if base_text.remote_id() != diff.base_text().remote_id()
+                    || base_text.version() != diff.base_text().version()
+                {
+                    return;
+                }
+                let Some(diff) = multibuffer.diffs.get(&buffer_id) else {
+                    return;
+                };
+                snapshot
+                    .diffs
+                    .insert_or_replace(diff.snapshot(buffer_id, cx), ());
+                snapshot.non_text_state_update_count += 1;
+                cx.notify();
+            }
+        })
     }
 }
 

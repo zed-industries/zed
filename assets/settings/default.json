@@ -1384,6 +1384,13 @@
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
+  // Maximum file size in whole MiB for automatic Tree-sitter parsing.
+  // One MiB is 1,048,576 decoded, line-ending-normalized UTF-8 bytes.
+  // Set to 0 to disable the size limit.
+  "tree_sitter_max_file_size_mib": 10,
+  // Whether to ask before enabling Tree-sitter parsing above the size limit.
+  // When false, parsing stays disabled without a notification.
+  "prompt_for_large_file_parsing": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
   // Whether to perform linked edits of associated ranges, if the language server supports it.
