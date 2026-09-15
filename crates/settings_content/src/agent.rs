@@ -214,10 +214,18 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the threads sidebar.
+    /// Where to position the sidebar holding the threads list and the agent panel.
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
+    /// Default width in pixels for the Threads Sidebar.
+    ///
+    /// Values range from 200 to 800, matching the widths the sidebar can be
+    /// dragged to. Values outside that range are clamped into it.
+    ///
+    /// Default: 300
+    #[schemars(range(min = 200, max = 800))]
+    pub threads_sidebar_default_width: Option<crate::PixelSetting>,
     /// Default fixed width in pixels when the agent panel is docked to the left or right and
     /// `flexible` is false.
     ///
