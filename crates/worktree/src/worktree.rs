@@ -4688,6 +4688,13 @@ impl BackgroundScanner {
             })
             .collect::<Vec<_>>();
 
+        let metadata = self.metadata_for_paths(&abs_paths).await;
+
+        // Runs before `reload_entries_for_paths` re-inserts the entries; its
+        // changes merge into the same deduplicated `changed_paths`, so a single diff.
+        self.rescan_requested_directories(&request.relative_paths, &metadata)
+            .await;
+
         {
             let mut state = self.state.lock().await;
             let is_idle = state.snapshot.completed_scan_id == state.snapshot.scan_id;
@@ -4703,10 +4710,48 @@ impl BackgroundScanner {
             &request.relative_paths,
             abs_paths,
             None,
+            Some(metadata),
         )
         .await;
 
         self.send_status_update(scanning, request.done, &[]).await
+    }
+
+    /// Reads metadata (and canonical path) for each of the given absolute paths.
+    async fn metadata_for_paths(
+        &self,
+        abs_paths: &[PathBuf],
+    ) -> Vec<Result<Option<(fs::Metadata, Arc<SanitizedPath>)>>> {
+        futures::future::join_all(
+            abs_paths
+                .iter()
+                .map(|abs_path| async move {
+                    let metadata = self.fs.metadata(abs_path).await?;
+                    if let Some(metadata) = metadata {
+                        let canonical_path = self.fs.canonicalize(abs_path).await?;
+
+                        // If we're on a case-insensitive filesystem (default on macOS), we want
+                        // to only ignore metadata for non-symlink files if their absolute-path matches
+                        // the canonical-path.
+                        // Because if not, this might be a case-only-renaming (`mv test.txt TEST.TXT`)
+                        // and we want to ignore the metadata for the old path (`test.txt`) so it's
+                        // treated as removed.
+                        if !self.fs_case_sensitive && !metadata.is_symlink {
+                            let canonical_file_name = canonical_path.file_name();
+                            let file_name = abs_path.file_name();
+                            if canonical_file_name != file_name {
+                                return Ok(None);
+                            }
+                        }
+
+                        anyhow::Ok(Some((metadata, SanitizedPath::new_arc(&canonical_path))))
+                    } else {
+                        Ok(None)
+                    }
+                })
+                .collect::<Vec<_>>(),
+        )
+        .await
     }
 
     fn normalized_events_for_worktree(
@@ -5175,6 +5220,7 @@ impl BackgroundScanner {
                 .map(|event| event.path)
                 .collect::<Vec<_>>(),
             Some(scan_job_tx.clone()),
+            None,
         )
         .await;
 
@@ -5230,6 +5276,63 @@ impl BackgroundScanner {
         .await;
         self.scan_dirs(false, scan_job_rx).await;
         self.send_status_update(false, SmallVec::new(), &[]).await;
+    }
+
+    /// Rescans requested directories that exist on disk but have no children in
+    /// the snapshot — the state left behind when a dir is removed and recreated
+    /// externally. "Empty" and "stale" are indistinguishable without reading the
+    /// dir, so genuinely empty dirs pay one cheap `read_dir` per rescan request.
+    async fn rescan_requested_directories(
+        &self,
+        paths: &[Arc<RelPath>],
+        metadata: &[Result<Option<(fs::Metadata, Arc<SanitizedPath>)>>],
+    ) {
+        let mut directories_to_rescan = Vec::new();
+        {
+            let state = self.state.lock().await;
+            let root_path = state.snapshot.abs_path.clone();
+            for (index, path) in paths.iter().enumerate().filter(|(_, p)| !p.is_empty()) {
+                if let Some(Ok(Some((metadata, _)))) = metadata.get(index)
+                    && metadata.is_dir
+                    && state.snapshot.entry_for_path(path).is_some_and(|entry| {
+                        entry.kind == EntryKind::Dir
+                            && state.snapshot.child_entries(path).next().is_none()
+                    })
+                {
+                    directories_to_rescan.push((path.clone(), root_path.join(path.as_std_path())));
+                }
+            }
+        }
+
+        let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
+        {
+            // The entry may have changed between the candidate pass and now (e.g.
+            // a concurrent fs event re-inserted it); `scan_dir` re-reads from disk
+            // regardless, so scanning against the latest entry is always correct.
+            let state = self.state.lock().await;
+            for (path, abs_path) in &directories_to_rescan {
+                if let Some(entry) = state.snapshot.entry_for_path(path) {
+                    // Re-establish the watch before scanning: drop any leftover
+                    // registration and immediately re-add, so there is no window
+                    // where the recreated dir is unwatched. `scan_dir`'s later
+                    // add then no-ops on the existing key.
+                    self.watcher.remove(abs_path).log_err();
+                    self.watcher.add(abs_path).log_err();
+                    state
+                        .enqueue_scan_dir(
+                            abs_path.clone().into(),
+                            entry,
+                            &scan_job_tx,
+                            self.fs.as_ref(),
+                        )
+                        .await;
+                }
+            }
+            drop(scan_job_tx);
+        }
+        while let Ok(job) = scan_job_rx.recv().await {
+            self.scan_dir(&job).await.log_err();
+        }
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<RelPath>]) -> bool {
@@ -5675,38 +5778,12 @@ impl BackgroundScanner {
         relative_paths: &[Arc<RelPath>],
         abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
+        metadata: Option<Vec<Result<Option<(fs::Metadata, Arc<SanitizedPath>)>>>>,
     ) {
-        // grab metadata for all requested paths
-        let metadata = futures::future::join_all(
-            abs_paths
-                .iter()
-                .map(|abs_path| async move {
-                    let metadata = self.fs.metadata(abs_path).await?;
-                    if let Some(metadata) = metadata {
-                        let canonical_path = self.fs.canonicalize(abs_path).await?;
-
-                        // If we're on a case-insensitive filesystem (default on macOS), we want
-                        // to only ignore metadata for non-symlink files if their absolute-path matches
-                        // the canonical-path.
-                        // Because if not, this might be a case-only-renaming (`mv test.txt TEST.TXT`)
-                        // and we want to ignore the metadata for the old path (`test.txt`) so it's
-                        // treated as removed.
-                        if !self.fs_case_sensitive && !metadata.is_symlink {
-                            let canonical_file_name = canonical_path.file_name();
-                            let file_name = abs_path.file_name();
-                            if canonical_file_name != file_name {
-                                return Ok(None);
-                            }
-                        }
-
-                        anyhow::Ok(Some((metadata, SanitizedPath::new_arc(&canonical_path))))
-                    } else {
-                        Ok(None)
-                    }
-                })
-                .collect::<Vec<_>>(),
-        )
-        .await;
+        let metadata = match metadata {
+            Some(metadata) => metadata,
+            None => self.metadata_for_paths(&abs_paths).await,
+        };
 
         let mut new_ancestor_repo =
             if self.track_git_repositories && relative_paths.iter().any(|path| path.is_empty()) {

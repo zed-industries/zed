@@ -1679,6 +1679,118 @@ async fn test_subtree_rescan_reports_unchanged_descendants_as_updated(cx: &mut T
     });
 }
 
+// Reproduces an external script removing a directory and recreating it with
+// files: the watcher batch collapses to `[dir Removed]` after `process_events`
+// dedups, so the dir is re-inserted and scanned while still empty. A rescan
+// request for such a path (e.g. the user expanding the folder) must rescan it.
+#[gpui::test]
+async fn test_recreated_directory_is_rescanned_on_refresh(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir": {
+                "a.txt": "a",
+                "b.txt": "b",
+            }
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("dir")).is_some());
+        assert!(tree.entry_for_path(rel_path("dir/a.txt")).is_some());
+        assert!(tree.entry_for_path(rel_path("dir/b.txt")).is_some());
+    });
+
+    // Reproduce an external delete/recreate: ops run paused so the scan finds the
+    // dir empty, their own events are dropped, and we emit the [Removed, Created]
+    // pair that `process_events` dedups to a single event.
+    fs.pause_events();
+    fs.remove_dir(
+        "/root/dir".as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    fs.create_dir(Path::new("/root/dir")).await.unwrap();
+    fs.clear_buffered_events();
+    fs.emit_fs_event("/root/dir", Some(PathEventKind::Removed));
+    fs.emit_fs_event("/root/dir", Some(PathEventKind::Created));
+    fs.unpause_events_and_flush();
+    tree.flush_fs_events(cx).await;
+
+    // After the batch: the dir is back in the snapshot (re-inserted by the
+    // reload), but its children are not — the scan ran while the dir was empty.
+    tree.read_with(cx, |tree, _| {
+        let entry = tree
+            .entry_for_path(rel_path("dir"))
+            .expect("dir should be re-inserted");
+        assert_eq!(entry.kind, EntryKind::Dir);
+        assert!(
+            tree.child_entries(rel_path("dir")).count() == 0,
+            "dir must be empty at this point (scanned before the script wrote files)"
+        );
+    });
+
+    // Suppress these writes' events so the explicit refresh below is the only
+    // recovery path (otherwise watcher delivery would race it).
+    fs.pause_events();
+    fs.insert_file("/root/dir/a.txt", b"a".to_vec()).await;
+    fs.insert_file("/root/dir/b.txt", b"b".to_vec()).await;
+    fs.clear_buffered_events();
+    fs.unpause_events_and_flush();
+
+    // The user expands the folder in the sidebar: Path R fires for the dir.
+    let mut refresh = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("dir").into()])
+    });
+    refresh.recv().await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("dir/a.txt")).is_some(),
+            "a.txt never appeared after the dir was removed and recreated"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("dir/b.txt")).is_some(),
+            "b.txt never appeared after the dir was removed and recreated"
+        );
+    });
+
+    // A further write must arrive via the watcher alone (no manual refresh),
+    // proving the recreated dir's watch is live.
+    fs.insert_file("/root/dir/c.txt", b"c".to_vec()).await;
+    tree.flush_fs_events(cx).await;
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("dir/c.txt")).is_some(),
+            "c.txt did not appear via the watcher after the dir was recreated"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     init_test(cx);
