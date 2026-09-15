@@ -3311,6 +3311,42 @@ impl Window<'_> {
         // This ensures that multiple test Apps have isolated arenas.
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
+        self.begin_frame(cx);
+        self.restore_input_handler();
+        if !cx.mode.skip_drawing() {
+            self.draw_roots(cx);
+            #[cfg(feature = "profiler")]
+            {
+                let viewport_size = self.core.viewport_size;
+                let scale_factor = self.scale_factor();
+                self.core.debug_frame_overlay.paint(
+                    &mut self.frame_state.next_frame.scene,
+                    viewport_size,
+                    scale_factor,
+                );
+            }
+        }
+        self.finish_frame(cx);
+        let focus_before_listeners = self.complete_frame(cx);
+        self.end_frame(cx, focus_before_listeners);
+
+        #[cfg(feature = "profiler")]
+        {
+            let draw_duration = self
+                .core
+                .window_profiler
+                .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+            self.core.debug_frame_overlay.record_frame(draw_duration);
+        }
+
+        // Exit the scope to obtain the arena-clear token this draw owes; the
+        // scope's teardown itself happens in `ElementArenaScope::drop`.
+        arena_scope.exit(&cx.element_arena)
+    }
+
+    /// Opens a frame: samples the platform window, resets the scratch state a
+    /// frame rebuilds, and takes ownership of the invalidations this frame owes.
+    fn begin_frame(&mut self, cx: &mut App) {
         if self.core.platform_window.prepare_frame() {
             self.refresh();
         }
@@ -3320,11 +3356,13 @@ impl Window<'_> {
         debug_assert!(self.frame_state.rendered_entity_stack.is_empty());
         self.core.invalidator.set_dirty(false);
         self.frame_state.requested_autoscroll = None;
+    }
 
-        // Restore the previously-used input handler.
-        // Place it back into a None slot (left by a previous .take()) so that
-        // cached paint_range indices in reuse_paint find the handler at the
-        // expected position.
+    /// Returns the platform's input handler to the frame it was taken from.
+    ///
+    /// It goes back into an empty slot rather than being pushed, so that the
+    /// paint ranges `reuse_paint` cached still find it where they expect.
+    fn restore_input_handler(&mut self) {
         if let Some(input_handler) = self.core.platform_window.take_input_handler() {
             if let Some(slot) = self
                 .frame_state
@@ -3342,23 +3380,15 @@ impl Window<'_> {
                     .push(Some(input_handler));
             }
         }
-        if !cx.mode.skip_drawing() {
-            self.draw_roots(cx);
-            #[cfg(feature = "profiler")]
-            {
-                let viewport_size = self.core.viewport_size;
-                let scale_factor = self.scale_factor();
-                self.core.debug_frame_overlay.paint(
-                    &mut self.frame_state.next_frame.scene,
-                    viewport_size,
-                    scale_factor,
-                );
-            }
-        }
+    }
+
+    /// Finishes the painted frame: notes the views it touched, records whether
+    /// the window is active, and hands the platform the input handler the frame
+    /// asked for.
+    fn finish_frame(&mut self, cx: &mut App) {
         self.frame_state.dirty_views.clear();
         self.frame_state.next_frame.window_active = self.core.active.get();
 
-        // Register requested input handler with the platform window.
         // Use .take() instead of .pop() to preserve Vec length, so that cached
         // paint_range indices remain valid for reuse_paint on the next frame.
         // Search backwards to find the last Some entry, since reuse_paint may
@@ -3394,7 +3424,14 @@ impl Window<'_> {
         self.frame_state
             .next_frame
             .finish(&mut self.frame_state.rendered_frame);
+    }
 
+    /// Retires the painted frame, swaps it in, and dispatches the focus changes
+    /// the swap produced.
+    ///
+    /// Returns the focus that was current before the listeners ran: they may
+    /// move it, and the caller has to tell those moves apart from its own.
+    fn complete_frame(&mut self, cx: &mut App) -> Option<FocusId> {
         self.core.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.frame_state.rendered_frame.focus_path();
         let previous_window_active = self.frame_state.rendered_frame.window_active;
@@ -3442,6 +3479,11 @@ impl Window<'_> {
                 .retain(&(), |listener| listener(&event, self, cx));
         }
 
+        focus_before_listeners
+    }
+
+    /// Closes the frame out and marks it ready to present.
+    fn end_frame(&mut self, cx: &mut App, focus_before_listeners: Option<FocusId>) {
         debug_assert!(self.frame_state.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
@@ -3455,21 +3497,7 @@ impl Window<'_> {
             self.refresh();
         }
         self.core.needs_present.set(true);
-
-        #[cfg(feature = "profiler")]
-        {
-            let draw_duration = self
-                .core
-                .window_profiler
-                .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
-            self.core.debug_frame_overlay.record_frame(draw_duration);
-        }
-
-        // Exit the scope to obtain the arena-clear token this draw owes; the
-        // scope's teardown itself happens in `ElementArenaScope::drop`.
-        arena_scope.exit(&cx.element_arena)
     }
-
     fn record_entities_accessed(&mut self, cx: &mut App) {
         let mut entities_ref = cx.entities.accessed_entities.get_mut();
         let mut entities = mem::take(entities_ref.deref_mut());
