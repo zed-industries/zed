@@ -402,6 +402,7 @@ impl DiffMultibuffer {
                 if !editor.focus_handle(cx).contains_focused(window, cx) {
                     return;
                 }
+                cx.emit(event.clone());
                 let Some(project_path) = self.active_project_path(cx) else {
                     return;
                 };
@@ -720,12 +721,17 @@ impl DiffMultibuffer {
 
     pub(crate) fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         let editor = self.editor.read(cx).focused_editor().read(cx);
-        let multibuffer = editor.buffer().read(cx);
+        let focused_multibuffer = editor.buffer().read(cx);
         let position = editor.selections.newest_anchor().head();
+        let focused_snapshot = focused_multibuffer.snapshot(cx);
+        let (focused_anchor, _) = focused_snapshot.anchor_to_buffer_anchor(position)?;
+        let path = focused_snapshot.path_for_buffer(focused_anchor.buffer_id)?;
+
+        let multibuffer = self.multibuffer.read(cx);
+        let position = multibuffer.location_for_path(path, cx)?;
         let snapshot = multibuffer.snapshot(cx);
         let (text_anchor, _) = snapshot.anchor_to_buffer_anchor(position)?;
         let buffer = multibuffer.buffer(text_anchor.buffer_id)?;
-
         let file = buffer.read(cx).file()?;
         Some(ProjectPath {
             worktree_id: file.worktree_id(cx),

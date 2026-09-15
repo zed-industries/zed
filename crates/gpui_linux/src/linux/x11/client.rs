@@ -2847,7 +2847,9 @@ mod tests {
     }
 
     fn test_keymap_with_variant(layouts: &str, variant: &str) -> xkbc::Keymap {
-        let context = new_xkb_context().expect("test XKB context should initialize");
+        // These fixtures compile layout names from local files, unlike server keymaps.
+        let context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        assert!(!context.get_raw_ptr().is_null());
         xkbc::Keymap::new_from_names(
             &context,
             "",
