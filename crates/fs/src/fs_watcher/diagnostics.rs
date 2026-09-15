@@ -100,17 +100,9 @@ struct RecordingState {
 #[derive(Default)]
 pub(super) struct DiagnosticRecorder {
     recordings: Mutex<Vec<Weak<Mutex<RecordingState>>>>,
-    rescan_history: Mutex<RescanHistory>,
 }
 
 impl DiagnosticRecorder {
-    pub(super) fn log_rescan(&self, backend: OsWatcherKind, event: &notify::Event) {
-        let report = self.rescan_history.lock().record(event);
-        if let Some(report) = report {
-            log::error!("{backend:?} filesystem watcher requested rescan: {report}");
-        }
-    }
-
     pub(super) fn record(&self, event: impl FnOnce() -> WatchDiagnosticEvent) {
         let mut recordings = self.recordings.lock();
         // Formatting raw events and allocating paths must not happen when
@@ -132,12 +124,12 @@ impl DiagnosticRecorder {
 }
 
 #[derive(Default)]
-struct RescanHistory {
+pub(super) struct RescanHistory {
     paths: VecDeque<PathBuf>,
 }
 
 impl RescanHistory {
-    fn record(&mut self, event: &notify::Event) -> Option<String> {
+    pub(super) fn record(&mut self, event: &notify::Event) -> Option<String> {
         let report = event.need_rescan().then(|| {
             // Capture before inserting the rescan so the report includes all ten
             // preceding paths, even when this is the start of an overflow burst.
@@ -346,9 +338,6 @@ mod tests {
         poll_sink(Err(
             notify::Error::generic("read failed").add_path(util::path!("/root/file").into())
         ));
-
-        assert!(native.diagnostics.rescan_history.lock().paths.is_empty());
-        assert!(poll.diagnostics.rescan_history.lock().paths.is_empty());
 
         let snapshot = recording.snapshot();
         assert_eq!(snapshot.events.len(), 4);

@@ -913,8 +913,9 @@ impl OsWatcher {
         let dispatch_task = executor.spawn({
             let state = state.clone();
             async move {
+                let mut rescan_history = diagnostics::RescanHistory::default();
                 while let Ok(first) = event_rx.recv().await {
-                    dispatch_batch(kind, &state, first, &event_rx);
+                    dispatch_batch(kind, &state, &mut rescan_history, first, &event_rx);
                 }
             }
         });
@@ -938,9 +939,6 @@ impl OsWatcher {
         let diagnostics = self.diagnostics.clone();
         let kind = self.kind;
         move |event| {
-            if let Ok(event) = &event {
-                diagnostics.log_rescan(kind, event);
-            }
             diagnostics.record(|| match &event {
                 Ok(event) => WatchDiagnosticEvent::from_notify_event(kind, event),
                 Err(error) => WatchDiagnosticEvent::new(
@@ -1035,7 +1033,13 @@ impl OsWatcher {
         first: notify::Result<notify::Event>,
         event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
     ) {
-        dispatch_batch(self.kind, &self.state, first, event_rx);
+        dispatch_batch(
+            self.kind,
+            &self.state,
+            &mut diagnostics::RescanHistory::default(),
+            first,
+            event_rx,
+        );
     }
 
     fn start_native_watch_limit_cooldown(&self, path: &Path) {
@@ -1224,6 +1228,7 @@ fn dispatch(
 fn dispatch_batch(
     kind: OsWatcherKind,
     state: &Mutex<WatcherState>,
+    rescan_history: &mut diagnostics::RescanHistory,
     first: notify::Result<notify::Event>,
     event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
 ) {
@@ -1244,6 +1249,12 @@ fn dispatch_batch(
             rescan_dispatched = true;
         }
 
+        // Log writes can block, so keep them off the native watcher reader.
+        if let Ok(event) = &event
+            && let Some(report) = rescan_history.record(event)
+        {
+            log::error!("{kind:?} filesystem watcher requested rescan: {report}");
+        }
         dispatch(kind, state, event);
     }
 }
