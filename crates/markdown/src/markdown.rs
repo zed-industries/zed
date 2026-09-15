@@ -3876,11 +3876,7 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
-        // Set the mode before `modify_current_div`, which flushes any pending text: the text
-        // preceding the image must be flushed knowing it will become a flex item.
-        if let Some(entry) = self.div_stack.last_mut() {
-            entry.line_break_mode = LineBreakMode::FlexWrap;
-        }
+        self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
         self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
         self.append_child(child.into_any_element());
     }
