@@ -5,6 +5,7 @@ use std::{
 
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
+use collab::rpc::RECONNECT_TIMEOUT;
 use collections::HashMap;
 use git::{
     Oid,
@@ -202,10 +203,10 @@ async fn load_commit_data_batch(
     commit_data
 }
 
-fn branch_list_snapshot(
+fn repository_head_snapshot(
     project: &gpui::Entity<project::Project>,
     cx: &mut TestAppContext,
-) -> (Option<String>, Vec<String>) {
+) -> (Option<String>, Vec<String>, bool) {
     project.read_with(cx, |project, cx| {
         let repos = project.repositories(cx);
         assert_eq!(repos.len(), 1, "project should have exactly 1 repository");
@@ -221,6 +222,7 @@ fn branch_list_snapshot(
                 .iter()
                 .map(|branch| branch.ref_name.to_string())
                 .collect(),
+            snapshot.is_detached_head,
         )
     })
 }
@@ -937,7 +939,7 @@ async fn test_branch_list_sync(
     let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
     executor.run_until_parked();
 
-    let host_snapshot = branch_list_snapshot(&project_a, cx_a);
+    let host_snapshot = repository_head_snapshot(&project_a, cx_a);
     assert_eq!(host_snapshot.0.as_deref(), Some("main"));
     assert_eq!(
         host_snapshot.1,
@@ -978,7 +980,7 @@ async fn test_branch_list_sync(
 
     executor.run_until_parked();
 
-    let host_snapshot_after_update = branch_list_snapshot(&project_a, cx_a);
+    let host_snapshot_after_update = repository_head_snapshot(&project_a, cx_a);
     assert_eq!(
         host_snapshot_after_update.0.as_deref(),
         Some("totally-new-branch")
@@ -993,8 +995,91 @@ async fn test_branch_list_sync(
         ]
     );
 
-    let guest_snapshot_after_update = branch_list_snapshot(&project_b, cx_b);
+    let guest_snapshot_after_update = repository_head_snapshot(&project_b, cx_b);
     assert_eq!(guest_snapshot_after_update, host_snapshot_after_update);
+}
+
+#[gpui::test]
+async fn test_detached_head_sync(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    let fs = client_a.fs();
+    fs.insert_tree(
+        path!("/project"),
+        json!({ ".git": {}, "file.txt": "content" }),
+    )
+    .await;
+    fs.set_branch_name(Path::new(path!("/project/.git")), Some("main"));
+    fs.insert_branches(Path::new(path!("/project/.git")), &["feature"]);
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/project/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/detached-worktree")),
+            ref_name: None,
+            sha: "aaa111".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+
+    let (project_a, _) = client_a
+        .build_local_project(path!("/detached-worktree"), cx_a)
+        .await;
+    executor.run_until_parked();
+    assert!(repository_head_snapshot(&project_a, cx_a).2);
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+    assert!(repository_head_snapshot(&project_b, cx_b).2);
+
+    let project_c = client_c.join_remote_project(project_id, cx_c).await;
+    executor.run_until_parked();
+    assert!(repository_head_snapshot(&project_c, cx_c).2);
+
+    server.disconnect_client(
+        client_b
+            .peer_id()
+            .expect("client B should have a peer id before disconnecting"),
+    );
+    // Make the database scan newer than client B's so rejoin returns repository state.
+    fs.with_git_state(Path::new(path!("/project/.git")), true, |_| {})
+        .expect("git state should exist");
+    executor.run_until_parked();
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.run_until_parked();
+    assert!(client_b.status().borrow().is_connected());
+    assert!(repository_head_snapshot(&project_b, cx_b).2);
+
+    fs.insert_file(
+        path!("/project/.git/worktrees/detached-worktree/HEAD"),
+        b"ref: refs/heads/feature".to_vec(),
+    )
+    .await;
+    fs.with_git_state(Path::new(path!("/project/.git")), true, |_| {})
+        .unwrap();
+    executor.run_until_parked();
+
+    assert!(!repository_head_snapshot(&project_a, cx_a).2);
+    assert!(!repository_head_snapshot(&project_b, cx_b).2);
+    assert!(!repository_head_snapshot(&project_c, cx_c).2);
 }
 
 #[gpui::test]
@@ -1157,9 +1242,10 @@ async fn test_linked_worktrees_sync(
         .remove_worktree_for_repo(
             Path::new(path!("/project/.git")),
             true,
-            "refs/heads/bugfix-branch",
+            Path::new(path!("/worktrees/bugfix-branch")),
         )
-        .await;
+        .await
+        .unwrap();
 
     executor.run_until_parked();
 

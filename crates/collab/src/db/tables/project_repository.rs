@@ -28,6 +28,7 @@ pub struct Model {
     pub common_dir_abs_path: Option<String>,
     // JSON array of linked worktree objects
     pub linked_worktrees: Option<String>,
+    pub is_detached_head: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
