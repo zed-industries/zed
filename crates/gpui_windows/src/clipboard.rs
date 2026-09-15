@@ -36,6 +36,8 @@ static CLIPBOARD_PNG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("PNG")));
 static CLIPBOARD_JPG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("JFIF")));
+static CLIPBOARD_HTML_FORMAT: LazyLock<u32> =
+    LazyLock::new(|| register_clipboard_format(windows::core::w!("HTML Format")));
 
 static IMAGE_FORMATS_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(|| {
     let mut map = FxHashMap::default();
@@ -78,6 +80,7 @@ pub(crate) fn write_to_clipboard(item: ClipboardItem) {
             match entry {
                 ClipboardEntry::String(string) => write_string(string)?,
                 ClipboardEntry::Image(image) => write_image(image)?,
+                ClipboardEntry::Html(html) => write_html(html)?,
                 ClipboardEntry::ExternalPaths(_) => {}
             }
         }
@@ -211,6 +214,27 @@ fn write_image(item: &Image) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn write_html(html: &str) -> Result<()> {
+    // Windows CF_HTML requires a specific ASCII header with byte offsets.
+    // All offsets are zero-padded to 10 digits and measured from the start of the full string.
+    let pre_fragment = "<html><body>\r\n<!--StartFragment-->";
+    let post_fragment = "<!--EndFragment-->\r\n</body></html>";
+
+    // Build a placeholder header first to measure its byte length.
+    let placeholder_header = "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\n";
+    let start_html = placeholder_header.len();
+    let start_fragment = start_html + pre_fragment.len();
+    let end_fragment = start_fragment + html.len();
+    let end_html = end_fragment + post_fragment.len();
+
+    let header = format!(
+        "Version:0.9\r\nStartHTML:{:010}\r\nEndHTML:{:010}\r\nStartFragment:{:010}\r\nEndFragment:{:010}\r\n",
+        start_html, end_html, start_fragment, end_fragment
+    );
+    let full = format!("{}{}{}{}", header, pre_fragment, html, post_fragment);
+    set_clipboard_bytes(full.as_bytes(), *CLIPBOARD_HTML_FORMAT)
 }
 
 fn convert_to_png(bytes: &[u8], format: ImageFormat) -> Option<Vec<u8>> {
