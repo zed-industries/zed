@@ -1492,6 +1492,7 @@ mod tests {
 
     /// An `execute_result` used to be rewritten as `display_data`, losing its
     /// `execution_count`, because the saved form was re-derived from the view.
+    /// https://github.com/zed-industries/zed/pull/63064
     #[gpui::test]
     async fn test_execute_result_keeps_its_output_type(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1517,6 +1518,7 @@ mod tests {
     }
 
     /// A `stderr` stream used to be relabelled `stdout` on save.
+    /// https://github.com/zed-industries/zed/pull/63064
     #[gpui::test]
     async fn test_stream_keeps_its_name(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1536,6 +1538,7 @@ mod tests {
 
     /// Saving used to append a newline to every line of every cell, rewriting the
     /// whole file the first time a notebook was saved.
+    /// https://github.com/zed-industries/zed/pull/63064
     #[gpui::test]
     async fn test_source_lines_do_not_gain_a_trailing_newline(cx: &mut TestAppContext) {
         init_test(cx);
