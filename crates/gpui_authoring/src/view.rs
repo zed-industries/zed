@@ -546,3 +546,88 @@ fn paint_component(
         element.as_mut().unwrap().paint(window, cx);
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, rc::Rc};
+
+    use crate::{
+        AnyWindowHandle, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
+        StyleRefinement, Styled as _, TestAppContext, Window, div, green, px, size,
+    };
+
+    /// Counts the frames it renders in, so a test can tell a cache hit from a
+    /// rebuild.
+    struct CountedView {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for CountedView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div().w(px(10.)).h(px(10.)).bg(green())
+        }
+    }
+
+    struct CachedViewHost {
+        view: Entity<CountedView>,
+    }
+
+    impl Render for CachedViewHost {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                self.view
+                    .clone()
+                    .cached(StyleRefinement::default().size_full()),
+            )
+        }
+    }
+
+    /// Draws the window, returning how many quads the frame painted.
+    fn draw(cx: &mut TestAppContext, window: AnyWindowHandle) -> usize {
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.frame_state.rendered_frame.scene.quads.len()
+        })
+        .unwrap()
+    }
+
+    #[gpui::test]
+    fn a_cached_view_reuses_its_subtree_until_it_is_notified_or_resized(cx: &mut TestAppContext) {
+        let renders = Rc::new(Cell::new(0));
+        let view = cx.new({
+            let renders = renders.clone();
+            move |_| CountedView { renders }
+        });
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let view = view.clone();
+                move |_, _| CachedViewHost { view }
+            })
+            .into();
+
+        let first = draw(cx, window);
+        assert_eq!(renders.get(), 1, "the first frame renders the view");
+        assert!(first > 0, "the view's content is painted");
+
+        let second = draw(cx, window);
+        assert_eq!(renders.get(), 1, "a clean cached view is not re-rendered");
+        assert_eq!(
+            second, first,
+            "the reused subtree is still painted into the scene"
+        );
+
+        view.update(cx, |_, cx| cx.notify());
+        draw(cx, window);
+        assert!(renders.get() > 1, "notifying the view re-renders it");
+
+        // The view is clean again, but the bounds it is drawn at changed.
+        let renders_before_resize = renders.get();
+        cx.simulate_window_resize(window, size(px(400.), px(300.)));
+        draw(cx, window);
+        assert!(
+            renders.get() > renders_before_resize,
+            "resizing the window re-renders the cached view"
+        );
+    }
+}
