@@ -5947,6 +5947,12 @@ impl Workspace {
         }
     }
 
+    pub fn transpose_active_pane_group(&mut self, cx: &mut Context<Self>) {
+        if self.center.transpose_pane_axis(&self.active_pane, cx) {
+            cx.notify();
+        }
+    }
+
     pub fn resize_pane(
         &mut self,
         axis: gpui::Axis,
@@ -8185,6 +8191,11 @@ impl Workspace {
             .on_action(cx.listener(|workspace, _: &MovePaneDown, _, cx| {
                 workspace.move_pane_to_border(SplitDirection::Down, cx)
             }))
+            .on_action(
+                cx.listener(|workspace, _: &pane::TransposePaneGroup, _, cx| {
+                    workspace.transpose_active_pane_group(cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
                 this.toggle_dock(DockPosition::Left, window, cx);
             }))
@@ -14555,6 +14566,65 @@ mod tests {
             assert_eq!(*top.flexes.lock(), vec![1.0; top.members.len()]);
             assert_eq!(*nested.flexes.lock(), vec![1.0; nested.members.len()]);
         });
+    }
+
+    #[gpui::test]
+    async fn test_transpose_active_pane_group(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Down,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+        });
+
+        fn immediate_parent_axis(workspace: &Workspace) -> Axis {
+            let active = workspace.active_pane().clone();
+            fn find_axis(member: &Member, pane: &Entity<Pane>) -> Option<Axis> {
+                let Member::Axis(axis) = member else {
+                    return None;
+                };
+                let contains = axis.members.iter().any(|child| child.contains_pane(pane));
+                if !contains {
+                    return None;
+                }
+                axis.members.iter().find_map(|child| match child {
+                    Member::Pane(p) if p == pane => Some(axis.axis),
+                    Member::Axis(_) => find_axis(child, pane),
+                    _ => None,
+                })
+            }
+            find_axis(&workspace.center.root, &active)
+                .expect("expected the active pane to be nested in an axis")
+        }
+
+        let before_axis = workspace.read_with(cx, |workspace, _| immediate_parent_axis(workspace));
+        cx.dispatch_action(pane::TransposePaneGroup);
+        let after_axis = workspace.read_with(cx, |workspace, _| immediate_parent_axis(workspace));
+        assert_ne!(before_axis, after_axis);
+
+        cx.dispatch_action(pane::TransposePaneGroup);
+        let restored_axis =
+            workspace.read_with(cx, |workspace, _| immediate_parent_axis(workspace));
+        assert_eq!(restored_axis, before_axis);
     }
 
     #[gpui::test]
