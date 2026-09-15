@@ -1122,6 +1122,7 @@ pub struct Editor {
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
     buffer_serialization: Option<BufferSerialization>,
+    recovery_title: Option<String>,
     pending_serialization: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
@@ -1887,6 +1888,7 @@ impl Editor {
         clone
             .scroll_manager
             .clone_state(&self.scroll_manager, &my_snapshot, &clone_snapshot, cx);
+        clone.recovery_title = self.recovery_title.clone();
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
         clone.buffers_with_disabled_indent_guides =
@@ -2504,6 +2506,7 @@ impl Editor {
                 )
             }),
             pending_serialization: None,
+            recovery_title: None,
             blame: None,
             blame_subscription: None,
             pending_blame_hover_observation: None,
@@ -3109,6 +3112,15 @@ impl Editor {
     }
 
     pub fn title<'a>(&self, cx: &'a App) -> Cow<'a, str> {
+        if let Some(title) = self.recovery_title.as_ref()
+            && self
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .is_some_and(|buffer| buffer.read(cx).file().is_none())
+        {
+            return Cow::Owned(title.clone());
+        }
         self.buffer().read(cx).title(cx)
     }
 
