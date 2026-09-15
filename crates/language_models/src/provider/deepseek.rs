@@ -366,6 +366,7 @@ pub fn into_deepseek(
     model: &deepseek::Model,
     max_output_tokens: Option<u64>,
 ) -> Result<deepseek::Request> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request.contains_custom_tool_input() {
         anyhow::bail!("DeepSeek does not support custom tools");
     }
@@ -664,5 +665,26 @@ impl DeepSeekEventMapper {
         }
 
         events
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_output_limits_reach_deepseek_payloads() -> Result<()> {
+        for (limit, expected) in [(None, 4096), (Some(1024), 1024), (Some(8192), 4096)] {
+            let request = into_deepseek(
+                LanguageModelRequest {
+                    max_output_tokens: limit,
+                    ..Default::default()
+                },
+                &deepseek::Model::V4Pro,
+                Some(4096),
+            )?;
+            assert_eq!(serde_json::to_value(request)?["max_tokens"], expected);
+        }
+        Ok(())
     }
 }
