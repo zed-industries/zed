@@ -53,7 +53,6 @@ anyhow.workspace = true
 arc-swap.workspace = true
 async-task.workspace = true
 backtrace = { workspace = true, optional = true }
-bitflags.workspace = true
 collections.workspace = true
 criterion = { workspace = true, optional = true }
 ctor.workspace = true
@@ -65,7 +64,6 @@ gpui_engine.workspace = true
 gpui_engine_default.workspace = true
 gpui_macros.workspace = true
 gpui_platform.workspace = true
-gpui_shared_string.workspace = true
 gpui_types = { workspace = true, features = ["lyon"] }
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
@@ -76,8 +74,6 @@ inventory.workspace = true
 itertools.workspace = true
 log.workspace = true
 lyon = "1.0"
-num_cpus = "1.13"
-parking = "2.0.0"
 parking_lot.workspace = true
 pin-project = "1.1.10"
 pollster.workspace = true
@@ -91,14 +87,12 @@ regex.workspace = true
 resvg.workspace = true
 scheduler.workspace = true
 schemars.workspace = true
-seahash = "4.1"
 serde.workspace = true
 serde_json.workspace = true
 slotmap.workspace = true
 smallvec.workspace = true
 spin = "0.10.0"
 stacksafe = { workspace = true, optional = true }
-strum.workspace = true
 sum_tree.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

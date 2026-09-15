@@ -73,6 +73,9 @@ doctest = false
 
 [dependencies]
 gpui_authoring.workspace = true
+# Not named in this crate's source: the `wayland`, `x11`, and `screen-capture`
+# features forward to it. Those features belong to the platform layer, and the
+# façade is the only crate that pulls in the platform backends.
 gpui_platform.workspace = true
 gpui_runtime.workspace = true
 
