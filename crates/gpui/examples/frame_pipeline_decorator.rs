@@ -125,8 +125,8 @@ impl<P: FramePipeline> FramePipeline for ThrottledPipeline<P> {
         // Frames land on refresh boundaries, so a cap at an exact multiple of the
         // refresh period (30 fps on a 60 Hz display) sits on a knife's edge:
         // without tolerance, delivery jitter drops it to the next-lower multiple.
-        // Allow a frame up to an eighth of the interval early to absorb that.
-        let min_interval = self.min_interval - self.min_interval / 8;
+        // Allow a frame up to a quarter of the interval early to absorb that.
+        let min_interval = self.min_interval - self.min_interval / 4;
         if let Some(last) = self.last_render
             && now.duration_since(last) < min_interval
         {
