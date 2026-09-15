@@ -28,8 +28,10 @@ pub fn run_gpui() -> Result<()> {
     for package in crates.packages(DependencyDirection::Reverse) {
         println!("{} ({})", package.name(), package.source());
         for link in package.direct_links().filter(|link| !link.dev_only()) {
-            if crates.contains(link.to().id())? {
-                println!("  -> {}", link.to().name());
+            match crates.contains(link.to().id()) {
+                Ok(true) => println!("  -> {}", link.to().name()),
+                Ok(false) => {}
+                Err(e) => eprintln!("  error checking dependency {}: {}", link.to().name(), e),
             }
         }
     }
