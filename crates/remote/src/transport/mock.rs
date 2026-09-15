@@ -292,14 +292,21 @@ impl RemoteConnection for MockRemoteConnection {
     ) -> Task<Result<i32>> {
         let server = {
             let mut servers = self.servers.lock();
-            if let Some(server) = servers.assigned.get(&unique_identifier) {
+            if reconnect {
+                let Some(server) = servers.assigned.get(&unique_identifier) else {
+                    return Task::ready(Err(anyhow!(
+                        "Unknown mock server identifier: {unique_identifier}"
+                    )));
+                };
                 server.clone()
-            } else if reconnect {
-                return Task::ready(Err(anyhow!(
-                    "Unknown mock server identifier: {unique_identifier}"
-                )));
             } else if let Some(server) = servers.queued.pop_front() {
-                servers.assigned.insert(unique_identifier, server.clone());
+                if let Some(previous) = servers.assigned.insert(unique_identifier, server.clone()) {
+                    let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
+                    let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
+                    previous
+                        .channel
+                        .reconnect(incoming_rx, outgoing_tx, &previous.cx.get(cx));
+                }
                 server
             } else {
                 return Task::ready(Err(anyhow!(
@@ -506,6 +513,67 @@ mod tests {
         assert_test_proxy_round_trip(&server, &mut proxy, 2).await;
         assert_eq!(connection.servers.lock().queued.len(), 0);
         assert_eq!(connection.servers.lock().assigned.len(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_mock_fresh_start_replaces_same_identifier_endpoint(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (options, first_server, guard) = MockConnection::new(cx, server_cx);
+        let second_server = MockConnection::queue_server(&options, cx, server_cx);
+        drop(guard);
+        let connection = cx
+            .update(|cx| {
+                cx.default_global::<MockConnectionRegistry>()
+                    .take(&options)
+                    .expect("missing mock connection")
+            })
+            .await;
+        let mut first = start_test_proxy(&connection, "same", false, cx);
+        assert_test_proxy_started(&mut first).await;
+        assert_test_proxy_round_trip(&first_server, &mut first, 11).await;
+        let first_endpoint = connection
+            .servers
+            .lock()
+            .assigned
+            .get("same")
+            .unwrap()
+            .clone();
+        let mut second = start_test_proxy(&connection, "same", false, cx);
+        assert_test_proxy_started(&mut second).await;
+        assert_eq!(first.task.await.unwrap(), 1);
+        assert_eq!(first.incoming.next().await, None);
+        assert_test_proxy_round_trip(&second_server, &mut second, 22).await;
+        let second_endpoint = connection
+            .servers
+            .lock()
+            .assigned
+            .get("same")
+            .unwrap()
+            .clone();
+        assert!(!Arc::ptr_eq(&first_endpoint, &second_endpoint));
+        assert_eq!(connection.servers.lock().assigned.len(), 1);
+        assert_eq!(connection.servers.lock().queued.len(), 0);
+        let exhausted = start_test_proxy(&connection, "same", false, cx);
+        assert_eq!(
+            exhausted
+                .task
+                .await
+                .expect_err("fresh start reused an assigned endpoint")
+                .to_string(),
+            "No queued mock server for identifier: same"
+        );
+        assert_test_proxy_round_trip(&second_server, &mut second, 33).await;
+        connection.simulate_disconnect(&cx.to_async());
+        assert_eq!(second.task.await.unwrap(), 1);
+        let mut reconnected = start_test_proxy(&connection, "same", true, cx);
+        assert_test_proxy_started(&mut reconnected).await;
+        assert_test_proxy_round_trip(&second_server, &mut reconnected, 44).await;
+        assert!(Arc::ptr_eq(
+            &second_endpoint,
+            connection.servers.lock().assigned.get("same").unwrap()
+        ));
     }
 
     struct TestProxy {
