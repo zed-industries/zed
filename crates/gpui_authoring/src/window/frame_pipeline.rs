@@ -4,7 +4,8 @@
 //! [`StandardImmediatePipeline`], re-evaluates the view tree, lays it out and
 //! paints what it finds — the immediate-mode loop described in the
 //! [authoring guide](crate::_authoring). Installing a different one is how a
-//! window renders some other way without knowing about it.
+//! window renders some other way without knowing about it; see the
+//! [frame pipeline guide](crate::_frame_pipeline).
 //!
 //! Every phase falls back to the `Window` method that implements it, so a
 //! pipeline can override one phase and leave the rest alone.
@@ -16,9 +17,14 @@ use crate::{
 /// The phases of drawing one frame, in the order [`FramePipeline::draw`] runs
 /// them.
 ///
-/// Implementations belong to this crate: driving a frame means reaching into the
-/// window's frame state, which is not public. A phase that is not overridden
-/// behaves exactly as [`StandardImmediatePipeline`] does.
+/// A frame starts with [`should_render`](Self::should_render), which decides
+/// whether the frame's work happens at all. The rest are the passes it is made
+/// of, and each one falls back to the [`Window`] method implementing it, so a
+/// pipeline overrides only what it wants to change and a pass that is not
+/// overridden behaves exactly as [`StandardImmediatePipeline`] does.
+///
+/// See the [frame pipeline guide](crate::_frame_pipeline) for what each pass is
+/// for, how far a pipeline outside this crate can go, and how to install one.
 pub trait FramePipeline: 'static {
     /// Whether the frame the application is about to draw should be drawn.
     ///

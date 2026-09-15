@@ -9,7 +9,9 @@
 //! painted with a concrete [`Window`] and [`App`], so both tiers described in the
 //! [authoring guide](crate::_authoring) live here. What *is* swappable sits
 //! underneath, behind [`LayoutEngine`], [`SceneRenderer`] and [`Platform`], or
-//! rides along in [`Style::custom`].
+//! rides along in [`Style::custom`]. How a frame itself is built and paced is
+//! swappable too, through the [`FramePipeline`] a window draws with — see the
+//! [frame pipeline guide](crate::_frame_pipeline).
 //!
 //! Above this crate sits `gpui_runtime`, which holds `Application` — how a host
 //! program builds, configures and starts an app — and above that, the `gpui`
@@ -73,6 +75,8 @@ pub use proptest;
 pub mod _accessibility;
 /// Authoring guide: the two public tiers of the UI API.
 pub mod _authoring;
+/// Frame pipeline guide: how to write and install one.
+pub mod _frame_pipeline;
 /// How GPUI's ownership and data-flow model works.
 pub mod _ownership_and_data_flow;
 
