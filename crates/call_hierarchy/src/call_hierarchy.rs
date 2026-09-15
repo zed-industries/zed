@@ -11,8 +11,8 @@ use editor::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, HighlightStyle, ParentElement, Point, Render, Styled, StyledText,
-    Subscription, Task, TextRun, WeakEntity, Window,
+    FocusHandle, Focusable, Global, HighlightStyle, ParentElement, Point, Render, Styled,
+    StyledText, Subscription, Task, TextRun, WeakEntity, Window,
 };
 use language::{
     Buffer, CodeLabel, File as _, Language, Location, Rope, ToOffset, ToPoint, lsp_to_symbol_kind,
@@ -67,16 +67,35 @@ const BASE_MODAL_WIDTH: Rems = Rems(42.0);
 
 #[derive(Debug, Clone, Copy, PartialEq, settings::RegisterSetting)]
 pub struct CallHierarchySettings {
+    pub display: settings::CallHierarchyDisplay,
     pub modal_max_width: settings::ModalWidthContent,
 }
 
 impl Settings for CallHierarchySettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
-        let call_hierarchy = content.call_hierarchy.as_ref().unwrap();
+        let call_hierarchy = content.call_hierarchy.as_ref();
         Self {
-            modal_max_width: call_hierarchy.modal_max_width.unwrap(),
+            display: call_hierarchy
+                .and_then(|settings| settings.display)
+                .unwrap_or_default(),
+            modal_max_width: call_hierarchy
+                .and_then(|settings| settings.modal_max_width)
+                .unwrap_or(settings::ModalWidthContent::Medium),
         }
     }
+}
+
+pub struct CallHierarchyPanelOpener(
+    pub fn(Entity<Editor>, CallHierarchyMode, &mut Window, &mut App) -> bool,
+);
+
+impl Global for CallHierarchyPanelOpener {}
+
+pub fn register_panel_opener(
+    opener: fn(Entity<Editor>, CallHierarchyMode, &mut Window, &mut App) -> bool,
+    cx: &mut App,
+) {
+    cx.set_global(CallHierarchyPanelOpener(opener));
 }
 
 pub async fn fetch_calls(
@@ -849,6 +868,13 @@ fn toggle_call_hierarchy(
     window: &mut Window,
     cx: &mut App,
 ) {
+    if CallHierarchySettings::get_global(cx).display == settings::CallHierarchyDisplay::Panel
+        && let Some(opener) = cx.try_global::<CallHierarchyPanelOpener>()
+        && opener.0(editor.clone(), mode, window, cx)
+    {
+        return;
+    }
+
     let Some(workspace) = editor.read(cx).workspace() else {
         log::error!("call hierarchy: editor has no workspace");
         return;
@@ -869,6 +895,26 @@ fn item_location(item: &CallHierarchyItem) -> Location {
         buffer: item.buffer.clone(),
         range: item.selection_range.clone(),
     }
+}
+
+pub async fn make_call(
+    item: CallHierarchyItem,
+    target: Location,
+    project: &Entity<Project>,
+    cx: &mut AsyncWindowContext,
+) -> Call {
+    let mut call = Call {
+        item,
+        target,
+        site_count: 1,
+        label: None,
+        display: CallDisplay::default(),
+    };
+    attach_labels(std::slice::from_mut(&mut call), project, cx).await;
+    if let Ok(display) = cx.update(|_, cx| compute_call_display(&call, cx)) {
+        call.display = display;
+    }
+    call
 }
 
 async fn attach_labels(calls: &mut [Call], project: &Entity<Project>, cx: &mut AsyncWindowContext) {
@@ -1179,7 +1225,7 @@ fn shaped_width(
         .width
 }
 
-fn render_item(
+pub fn render_item(
     call_item: &Call,
     match_ranges: impl IntoIterator<Item = Range<usize>>,
     cx: &App,
@@ -1604,6 +1650,74 @@ mod tests {
             assert_eq!(delegate.calls[0].item.name, "helper");
             assert_eq!(delegate.calls[0].site_count, 1);
         });
+    }
+
+    static PANEL_OPENED: AtomicBool = AtomicBool::new(false);
+
+    fn open_test_panel(
+        _editor: Entity<Editor>,
+        _mode: CallHierarchyMode,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> bool {
+        PANEL_OPENED.store(true, Ordering::SeqCst);
+        true
+    }
+
+    #[gpui::test]
+    async fn test_call_hierarchy_panel_display_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, _fake_server, _test_uri, cx) = setup_modal_test("fn main() {}\n", cx).await;
+
+        PANEL_OPENED.store(false, Ordering::SeqCst);
+        cx.update(|_, cx| {
+            register_panel_opener(open_test_panel, cx);
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.call_hierarchy.get_or_insert_default().display =
+                        Some(settings::CallHierarchyDisplay::Panel);
+                });
+            });
+        });
+
+        cx.dispatch_action(ShowOutgoingCalls);
+        cx.executor().run_until_parked();
+
+        assert!(PANEL_OPENED.load(Ordering::SeqCst));
+        assert!(
+            workspace
+                .update(cx, |workspace, cx| workspace
+                    .active_modal::<CallHierarchyView>(cx))
+                .is_none()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_call_hierarchy_picker_display_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, fake_server, _test_uri, cx) = setup_modal_test("fn main() {}\n", cx).await;
+
+        fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>(|_, _| async {
+            Ok(None)
+        });
+        cx.update(|_, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.call_hierarchy.get_or_insert_default().display =
+                        Some(settings::CallHierarchyDisplay::Picker);
+                });
+            });
+        });
+
+        cx.dispatch_action(ShowOutgoingCalls);
+        cx.executor().run_until_parked();
+
+        assert!(
+            workspace
+                .update(cx, |workspace, cx| workspace
+                    .active_modal::<CallHierarchyView>(cx))
+                .is_some()
+        );
     }
 
     #[gpui::test]

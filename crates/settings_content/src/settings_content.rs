@@ -195,6 +195,8 @@ pub struct SettingsContent {
 
     pub call_hierarchy: Option<CallHierarchySettingsContent>,
 
+    pub call_hierarchy_panel: Option<CallHierarchyPanelSettingsContent>,
+
     pub git_panel: Option<GitPanelSettingsContent>,
 
     pub tabs: Option<ItemSettingsContent>,
@@ -399,7 +401,7 @@ impl SettingsContent {
 fallible_options::flattened_deserialize!(SettingsContent {
     sections: { project, theme, extension, workspace, editor, remote },
     options: {
-        call_hierarchy, file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent,
+        call_hierarchy, call_hierarchy_panel, file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent,
         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
@@ -1014,10 +1016,62 @@ impl ModalWidthContent {
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct CallHierarchySettingsContent {
+    /// Determines where call hierarchy results are displayed.
+    ///
+    /// Default: picker
+    pub display: Option<CallHierarchyDisplay>,
     /// Determines how much space the call hierarchy picker can take up in relation to the available window width.
     ///
     /// Default: medium
     pub modal_max_width: Option<ModalWidthContent>,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CallHierarchyDisplay {
+    /// Show call hierarchy results in a modal picker.
+    #[default]
+    Picker,
+    /// Show call hierarchy results in a docked panel.
+    Panel,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct CallHierarchyPanelSettingsContent {
+    /// Whether to show the call hierarchy panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Customize the default width, in pixels, of the call hierarchy panel.
+    ///
+    /// Default: 320
+    pub default_width: Option<PixelSetting>,
+    /// The position of the call hierarchy panel.
+    ///
+    /// Default: left
+    pub dock: Option<DockSide>,
+    /// Amount of indentation, in pixels, for nested items.
+    ///
+    /// Default: 20
+    pub indent_size: Option<PixelSetting>,
+    /// Settings related to indent guides in the call hierarchy panel.
+    pub indent_guides: Option<IndentGuidesSettingsContent>,
+    /// Scrollbar-related settings.
+    pub scrollbar: Option<ScrollbarSettings>,
 }
 
 #[with_fallible_options]

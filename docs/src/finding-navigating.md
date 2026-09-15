@@ -45,10 +45,10 @@ Jump to where a symbol is defined with {#kb editor::GoToDefinition} (or `Cmd+Cli
 ## Call Hierarchy
 
 With the cursor on a function, {#action call_hierarchy::ShowIncomingCalls} ({#kb call_hierarchy::ShowIncomingCalls}) lists the functions that call it, and {#action call_hierarchy::ShowOutgoingCalls} lists the functions it calls.
-Both open a picker; selecting an entry jumps to the call site, and the secondary confirm opens it in an adjacent pane.
-While the picker is open, {#action call_hierarchy::ToggleDirection} switches between callers and callees, {#action menu::SelectChild} re-roots the hierarchy at the selected function to explore one level deeper, and {#action menu::SelectParent} steps back up; the picker's footer shows the corresponding key bindings.
+By default, both open a picker; selecting an entry jumps to the call site, and the secondary confirm opens it in an adjacent pane. Set `call_hierarchy.display` to `"panel"` to show results in the docked Call Hierarchy Panel instead.
+While the picker is open, {#action call_hierarchy::ToggleDirection} switches between callers and callees, {#action menu::SelectChild} re-roots the hierarchy at the selected function to explore one level deeper, and {#action menu::SelectParent} steps back up; the picker's footer shows the corresponding key bindings. In the panel, clicking an entry jumps to its call site, while clicking its chevron expands or collapses the next level.
 Both actions are also available in the editor's right-click menu.
-The modal's width can be changed via the `call_hierarchy.modal_max_width` setting.
+The picker's width can be changed via the `call_hierarchy.modal_max_width` setting. Panel appearance is configured with `call_hierarchy_panel` settings.
 This requires the language server to support call hierarchy.
 
 ## Outline Panel

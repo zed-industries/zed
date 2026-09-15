@@ -3665,6 +3665,17 @@ Examples:
 
 ## Call Hierarchy
 
+### Display
+
+- Description: Where to display call hierarchy results.
+- Setting: `display`
+- Default: `"picker"`
+
+**Options**
+
+- `"picker"`: Show results in the call hierarchy picker.
+- `"panel"`: Show results in the docked Call Hierarchy Panel.
+
 ### Modal Max Width
 
 - Description: Max-width of the call hierarchy modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
@@ -5976,6 +5987,29 @@ You can define these in user or project settings; project settings are merged on
       "show": null
     },
     "multi_buffer_hide_symbols": false
+  }
+}
+```
+
+## Call Hierarchy Panel
+
+- Description: Customize the docked Call Hierarchy Panel. The panel is used when `call_hierarchy.display` is set to `"panel"`.
+- Setting: `call_hierarchy_panel`
+- Default:
+
+```json [settings]
+{
+  "call_hierarchy_panel": {
+    "button": true,
+    "default_width": 320,
+    "dock": "left",
+    "indent_size": 20,
+    "indent_guides": {
+      "show": "always"
+    },
+    "scrollbar": {
+      "show": null
+    }
   }
 }
 ```
