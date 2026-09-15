@@ -10,6 +10,7 @@ use std::{
 };
 
 const EVENT_CAPACITY: usize = 10_000;
+const RESCAN_PATH_HISTORY_CAPACITY: usize = 10;
 
 /// An opt-in recording. Watchers hold only weak references to its buffer, so
 /// dropping this value stops collection without changing any watches.
@@ -99,9 +100,17 @@ struct RecordingState {
 #[derive(Default)]
 pub(super) struct DiagnosticRecorder {
     recordings: Mutex<Vec<Weak<Mutex<RecordingState>>>>,
+    rescan_history: Mutex<RescanHistory>,
 }
 
 impl DiagnosticRecorder {
+    pub(super) fn log_rescan(&self, backend: OsWatcherKind, event: &notify::Event) {
+        let report = self.rescan_history.lock().record(event);
+        if let Some(report) = report {
+            log::error!("{backend:?} filesystem watcher requested rescan: {report}");
+        }
+    }
+
     pub(super) fn record(&self, event: impl FnOnce() -> WatchDiagnosticEvent) {
         let mut recordings = self.recordings.lock();
         // Formatting raw events and allocating paths must not happen when
@@ -119,6 +128,37 @@ impl DiagnosticRecorder {
             recording.events.push_back((*event).clone());
             true
         });
+    }
+}
+
+#[derive(Default)]
+struct RescanHistory {
+    paths: VecDeque<PathBuf>,
+}
+
+impl RescanHistory {
+    fn record(&mut self, event: &notify::Event) -> Option<String> {
+        let report = event.need_rescan().then(|| {
+            // Capture before inserting the rescan so the report includes all ten
+            // preceding paths, even when this is the start of an overflow burst.
+            format!(
+                "reason={:?}, paths={:?}, recent_paths={:?}",
+                event.info().unwrap_or("unspecified"),
+                event.paths,
+                self.paths,
+            )
+        });
+        let first_path = event
+            .paths
+            .len()
+            .saturating_sub(RESCAN_PATH_HISTORY_CAPACITY);
+        for path in event.paths.iter().skip(first_path) {
+            if self.paths.len() == RESCAN_PATH_HISTORY_CAPACITY {
+                self.paths.pop_front();
+            }
+            self.paths.push_back(path.clone());
+        }
+        report
     }
 }
 
@@ -203,6 +243,31 @@ mod tests {
     use notify::{Event, EventKind, event::Flag};
     use std::path::Path;
 
+    #[test]
+    fn rescan_report_contains_ten_preceding_paths_and_reason() {
+        let mut history = RescanHistory::default();
+        for range in [0..12, 12..13] {
+            let mut event = Event::new(EventKind::Create(notify::event::CreateKind::File));
+            event.paths = range
+                .map(|index| PathBuf::from(format!("file-{index}")))
+                .collect();
+            assert!(history.record(&event).is_none());
+        }
+        let rescan = Event::new(EventKind::Other)
+            .set_flag(Flag::Rescan)
+            .set_info("rescan: kernel dropped")
+            .add_path("root".into());
+        let report = history
+            .record(&rescan)
+            .expect("the first rescan should produce a report");
+
+        assert_eq!(
+            report,
+            r#"reason="rescan: kernel dropped", paths=["root"], recent_paths=["file-3", "file-4", "file-5", "file-6", "file-7", "file-8", "file-9", "file-10", "file-11", "file-12"]"#
+        );
+        assert_eq!(history.paths.len(), RESCAN_PATH_HISTORY_CAPACITY);
+    }
+
     struct Backend;
 
     impl WatchBackend for Backend {
@@ -281,6 +346,9 @@ mod tests {
         poll_sink(Err(
             notify::Error::generic("read failed").add_path(util::path!("/root/file").into())
         ));
+
+        assert!(native.diagnostics.rescan_history.lock().paths.is_empty());
+        assert!(poll.diagnostics.rescan_history.lock().paths.is_empty());
 
         let snapshot = recording.snapshot();
         assert_eq!(snapshot.events.len(), 4);

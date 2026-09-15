@@ -695,10 +695,6 @@ fn push_notify_event(
         .collect::<Vec<_>>();
 
     if event.need_rescan() {
-        if !watcher_logging_rate_limited() {
-            log::warn!("filesystem watcher lost sync for {watched_root:?}; scheduling rescan");
-        }
-
         // A rescan event names the subtrees that lost sync (FSEvents
         // `MustScanSubDirs`); only a pathless one (inotify queue overflow) means
         // the whole watched root is suspect.
@@ -715,28 +711,6 @@ fn push_notify_event(
     }
     log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
-}
-
-fn watcher_logging_rate_limited() -> bool {
-    static LAST_WARN: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
-    let Some((ref mut started, ref mut emitted)) = *LAST_WARN.lock() else {
-        *LAST_WARN.lock() = Some((Instant::now(), 0));
-        return false;
-    };
-
-    if started.elapsed().as_secs() < 1 {
-        if *emitted < 20 {
-            log::warn!("filesystem watcher lost sync for many files, not logging more");
-            return true;
-        } else {
-            *emitted += 1;
-        }
-    } else {
-        *emitted = 0;
-        *started = Instant::now()
-    }
-
-    true
 }
 
 fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
@@ -964,6 +938,9 @@ impl OsWatcher {
         let diagnostics = self.diagnostics.clone();
         let kind = self.kind;
         move |event| {
+            if let Ok(event) = &event {
+                diagnostics.log_rescan(kind, event);
+            }
             diagnostics.record(|| match &event {
                 Ok(event) => WatchDiagnosticEvent::from_notify_event(kind, event),
                 Err(error) => WatchDiagnosticEvent::new(
@@ -1219,16 +1196,11 @@ fn dispatch(
     let callbacks = {
         let state = state.lock();
         if event.need_rescan() {
-            let callbacks = state
+            state
                 .watchers
                 .values()
                 .map(|registration| registration.callback.clone())
-                .collect::<Vec<_>>();
-            log::warn!(
-                "{kind:?} filesystem watcher lost sync; scheduling rescans for {} registrations",
-                callbacks.len()
-            );
-            callbacks
+                .collect::<Vec<_>>()
         } else {
             let mut ids = Vec::new();
             for path in &event.paths {
