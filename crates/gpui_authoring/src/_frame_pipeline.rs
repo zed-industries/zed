@@ -61,8 +61,8 @@
 //! ## Where an implementation lives
 //!
 //! Anywhere above this crate. `gpui_runtime`'s `InstrumentedPipeline` is a worked
-//! example: it times the root passes and draws the standard frame otherwise, using
-//! nothing but this crate's public surface.
+//! example: it times the root passes of the pipeline it wraps and forwards
+//! everything else, using nothing but this crate's public surface.
 //!
 //! ## Composing pipelines
 //!
@@ -70,8 +70,9 @@
 //! to the [`Window`](crate::Window) method implementing it, so independent concerns
 //! compose as decorators: a pipeline wraps another, changes the one pass it cares
 //! about, and forwards the rest. `gpui_runtime`'s `ThrottledPipeline` caps a frame
-//! rate this way, and the `frame_pipeline_decorator` example in the `gpui` crate
-//! writes the same pattern from an application, entirely outside the framework.
+//! rate and its `InstrumentedPipeline` times the root passes this way, and the
+//! `frame_pipeline_decorator` example in the `gpui` crate writes the same pattern
+//! from an application, entirely outside the framework.
 //!
 //! ## Installing one
 //!

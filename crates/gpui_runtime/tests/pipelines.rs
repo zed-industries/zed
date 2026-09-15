@@ -12,10 +12,10 @@ use std::{
 
 use gpui_authoring::{
     AnyWindowHandle, App, AppContext as _, Context, Entity, EntitySlotExt as _, FocusId,
-    FramePipeline, IntoElement, ParentElement as _, PreparedRoots, Render, Styled as _,
-    TestAppContext, Window, WindowMetrics, div, px,
+    FramePipeline, IntoElement, ParentElement as _, PreparedRoots, Render,
+    StandardImmediatePipeline, Styled as _, TestAppContext, Window, WindowMetrics, div, px,
 };
-use gpui_runtime::{FramePipelineExt, InstrumentedPipeline, PhaseMetrics};
+use gpui_runtime::{FramePipelineExt, PhaseMetrics};
 
 struct Counter(usize);
 
@@ -46,7 +46,7 @@ fn an_instrumented_pipeline_measures_the_root_passes() {
         let metrics = metrics.clone();
         move |cx| {
             cx.set_frame_pipeline_factory(Rc::new(move |_| {
-                Box::new(InstrumentedPipeline::new(metrics.clone()))
+                Box::new(StandardImmediatePipeline.instrumented(metrics.clone()))
             }));
         }
     });
@@ -153,7 +153,11 @@ fn a_throttled_pipeline_defers_a_frame_that_arrives_too_soon() {
             cx.set_frame_pipeline_factory(Rc::new(move |_| {
                 // One frame a second: a frame that follows another one within a
                 // test is always too soon to draw again.
-                Box::new(InstrumentedPipeline::new(metrics.clone()).max_fps(1))
+                Box::new(
+                    StandardImmediatePipeline
+                        .max_fps(1)
+                        .instrumented(metrics.clone()),
+                )
             }));
         }
     });
@@ -255,7 +259,7 @@ fn a_decorator_written_outside_the_framework_can_cap_a_frame_rate() {
                 // One frame a second: a frame that follows another one within a
                 // test is always too soon to draw again.
                 Box::new(OutOfTreeThrottle::max_fps(
-                    InstrumentedPipeline::new(metrics.clone()),
+                    StandardImmediatePipeline.instrumented(metrics.clone()),
                     1,
                 ))
             }));

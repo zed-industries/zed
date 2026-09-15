@@ -61,6 +61,13 @@ pub trait FramePipelineExt: FramePipeline + Sized {
     fn max_fps(self, max_fps: u32) -> ThrottledPipeline<Self> {
         ThrottledPipeline::new(self, max_fps)
     }
+
+    /// Times this pipeline's root passes, recording into `metrics`.
+    ///
+    /// See [`InstrumentedPipeline`].
+    fn instrumented(self, metrics: Rc<RefCell<PhaseMetrics>>) -> InstrumentedPipeline<Self> {
+        InstrumentedPipeline::new(self, metrics)
+    }
 }
 
 impl<P: FramePipeline> FramePipelineExt for P {}
@@ -157,48 +164,58 @@ impl<P: FramePipeline> FramePipeline for ThrottledPipeline<P> {
     }
 }
 
-/// Draws frames the way [`StandardImmediatePipeline`][std] does, timing each of
-/// the root passes as it goes.
+/// Times the root passes of the pipeline it wraps, recording into the
+/// [`PhaseMetrics`] the caller holds.
 ///
-/// [std]: gpui_authoring::StandardImmediatePipeline
-///
-/// Install it with [`Application::with_frame_pipeline`][app], which builds one per
-/// window from the factory:
+/// Wrap the standard pipeline to time the standard frame, or wrap another
+/// decorator — `.max_fps(30).instrumented(metrics)` stacks a rate cap under the
+/// timings, in either order.
 ///
 /// ```no_run
 /// # use std::{cell::RefCell, rc::Rc};
-/// # use gpui_runtime::{Application, InstrumentedPipeline, PhaseMetrics};
+/// # use gpui_authoring::StandardImmediatePipeline;
+/// # use gpui_runtime::{Application, FramePipelineExt, PhaseMetrics};
 /// # fn example(application: Application) -> Application {
 /// let metrics = Rc::new(RefCell::new(PhaseMetrics::default()));
 /// application.with_frame_pipeline({
 ///     let metrics = metrics.clone();
-///     move |_window_id| Box::new(InstrumentedPipeline::new(metrics.clone()))
+///     move |_window_id| Box::new(StandardImmediatePipeline.instrumented(metrics.clone()))
 /// })
 /// # }
 /// ```
 ///
 /// [app]: crate::Application::with_frame_pipeline
-pub struct InstrumentedPipeline {
+pub struct InstrumentedPipeline<P> {
+    inner: P,
     metrics: Rc<RefCell<PhaseMetrics>>,
 }
 
-impl InstrumentedPipeline {
-    /// A pipeline that records into `metrics`, which the caller keeps in order to
-    /// read what it measures.
-    pub fn new(metrics: Rc<RefCell<PhaseMetrics>>) -> Self {
-        Self { metrics }
+impl<P> InstrumentedPipeline<P> {
+    /// Wraps `inner`, recording its root passes into `metrics`, which the caller
+    /// keeps in order to read what it measures.
+    pub fn new(inner: P, metrics: Rc<RefCell<PhaseMetrics>>) -> Self {
+        Self { inner, metrics }
+    }
+
+    /// The pipeline this one wraps.
+    pub fn inner(&self) -> &P {
+        &self.inner
     }
 }
 
-impl FramePipeline for InstrumentedPipeline {
+impl<P: FramePipeline> FramePipeline for InstrumentedPipeline<P> {
+    fn should_render(&mut self, is_dirty: bool, metrics: &WindowMetrics) -> bool {
+        self.inner.should_render(is_dirty, metrics)
+    }
+
     fn begin_frame(&mut self, window: &mut Window<'_>, cx: &mut App) {
         self.metrics.borrow_mut().frames += 1;
-        window.begin_frame(cx);
+        self.inner.begin_frame(window, cx);
     }
 
     fn evaluate_roots(&mut self, window: &mut Window<'_>, cx: &mut App) -> PreparedRoots {
         let start = Instant::now();
-        let roots = window.evaluate_roots(cx);
+        let roots = self.inner.evaluate_roots(window, cx);
         let mut metrics = self.metrics.borrow_mut();
         metrics.evaluate += start.elapsed();
         metrics.evaluate_passes += 1;
@@ -207,7 +224,7 @@ impl FramePipeline for InstrumentedPipeline {
 
     fn layout_roots(&mut self, window: &mut Window<'_>, roots: &mut PreparedRoots, cx: &mut App) {
         let start = Instant::now();
-        window.layout_roots(roots, cx);
+        self.inner.layout_roots(window, roots, cx);
         let mut metrics = self.metrics.borrow_mut();
         metrics.layout += start.elapsed();
         metrics.layout_passes += 1;
@@ -215,9 +232,21 @@ impl FramePipeline for InstrumentedPipeline {
 
     fn paint_roots(&mut self, window: &mut Window<'_>, roots: PreparedRoots, cx: &mut App) {
         let start = Instant::now();
-        window.paint_roots(roots, cx);
+        self.inner.paint_roots(window, roots, cx);
         let mut metrics = self.metrics.borrow_mut();
         metrics.paint += start.elapsed();
         metrics.paint_passes += 1;
+    }
+
+    fn finish_frame(&mut self, window: &mut Window<'_>, cx: &mut App) {
+        self.inner.finish_frame(window, cx);
+    }
+
+    fn complete_frame(&mut self, window: &mut Window<'_>, cx: &mut App) -> Option<FocusId> {
+        self.inner.complete_frame(window, cx)
+    }
+
+    fn end_frame(&mut self, window: &mut Window<'_>, cx: &mut App, focus: Option<FocusId>) {
+        self.inner.end_frame(window, cx, focus);
     }
 }
