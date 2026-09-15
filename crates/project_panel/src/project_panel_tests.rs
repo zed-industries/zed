@@ -7,7 +7,7 @@ use git::{
     repository::{InitialGraphCommitData, LogSource, RepoPath},
 };
 use gpui::{
-    AnyWindowHandle, Empty, Entity, InputEvent as _, KeyDownEvent, Keystroke, TestAppContext,
+    AnyWindowHandle, Empty, Entity, InputEvent as _, KeyDownEvent, Keystroke, Size, TestAppContext,
     VisualTestContext,
 };
 use language::{
@@ -3996,6 +3996,276 @@ async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
             "        > nested_dir  <== selected",
             "      file_1.py",
         ]
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_selected_entry_scrolls_into_view(cx: &mut TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "docs": {
+                "api.md": "",
+                "guide.md": "",
+                "setup.md": "",
+            },
+            "src": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+            },
+            "tests": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+            }
+        }),
+        size(px(800.), px(160.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+    toggle_expand_dir(&panel, "root/docs", cx);
+    toggle_expand_dir(&panel, "root/tests", cx);
+    let parent_id = find_project_entry(&panel, "root/src", cx).expect("src exists");
+
+    for sticky_scroll in [false, true] {
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    sticky_scroll,
+                    ..settings
+                },
+                cx,
+            );
+        });
+        toggle_expand_dir(&panel, "root/src", cx);
+        select_path(&panel, "root/src/f.rs", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.scroll_cursor_center(&ScrollCursorCenter, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+            &[
+                "v root",
+                "    v docs",
+                "          api.md",
+                "          guide.md",
+                "          setup.md",
+                "    v src",
+                "          a.rs",
+                "          b.rs",
+                "          c.rs",
+                "          d.rs",
+                "          e.rs",
+                "          f.rs  <== selected",
+                "    v tests",
+                "          a.rs",
+                "          b.rs",
+                "          c.rs",
+                "          d.rs",
+                "          e.rs",
+                "          f.rs",
+            ]
+        );
+        let sticky_height = panel.read_with(cx, |panel, _| {
+            let parent_bounds = entry_row_bounds(panel, parent_id);
+            let viewport = panel.scroll_handle.viewport();
+            assert!(
+                parent_bounds.bottom() < viewport.top(),
+                "src must start above the viewport: {parent_bounds:?}, {viewport:?}"
+            );
+            parent_bounds.size.height * panel.sticky_items_count
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+            &[
+                "v root",
+                "    v docs",
+                "          api.md",
+                "          guide.md",
+                "          setup.md",
+                "    > src  <== selected",
+                "    v tests",
+                "          a.rs",
+                "          b.rs",
+                "          c.rs",
+                "          d.rs",
+                "          e.rs",
+                "          f.rs",
+            ]
+        );
+        panel.read_with(cx, |panel, _| {
+            let parent_bounds = entry_row_bounds(panel, parent_id);
+            let viewport = panel.scroll_handle.viewport();
+            assert!(
+                parent_bounds.top() >= viewport.top() + sticky_height,
+                "src must be below the sticky rows: {parent_bounds:?}, {sticky_height:?}"
+            );
+            assert!(
+                parent_bounds.bottom() <= viewport.bottom(),
+                "src must fit in the viewport: {parent_bounds:?}, {viewport:?}"
+            );
+            assert_eq!(
+                parent_bounds.center().y,
+                viewport.center().y + sticky_height / 2.,
+                "src should be centered below the sticky rows (sticky_scroll={sticky_scroll})"
+            );
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_collapse_selected_entry_does_not_scroll_visible_parent(cx: &mut TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "docs": {
+                "api.md": "",
+                "guide.md": "",
+                "setup.md": "",
+            },
+            "src": {
+                "main.rs": "",
+            },
+            "tests": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+            }
+        }),
+        size(px(800.), px(160.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+    toggle_expand_dir(&panel, "root/docs", cx);
+    toggle_expand_dir(&panel, "root/tests", cx);
+    toggle_expand_dir(&panel, "root/src", cx);
+    let parent_id = find_project_entry(&panel, "root/src", cx).expect("src exists");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.scroll_cursor_bottom(&ScrollCursorBottom, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+        &[
+            "v root",
+            "    v docs",
+            "          api.md",
+            "          guide.md",
+            "          setup.md",
+            "    v src  <== selected",
+            "          main.rs",
+            "    v tests",
+            "          a.rs",
+            "          b.rs",
+            "          c.rs",
+            "          d.rs",
+            "          e.rs",
+            "          f.rs",
+        ]
+    );
+    let offset_before = panel.read_with(cx, |panel, _| {
+        let parent_bounds = entry_row_bounds(panel, parent_id);
+        let viewport = panel.scroll_handle.viewport();
+        assert_eq!(
+            parent_bounds.bottom(),
+            viewport.bottom(),
+            "src should start at the bottom of the viewport"
+        );
+        assert_ne!(
+            panel.scroll_handle.offset().y,
+            Pixels::ZERO,
+            "the list must be scrolled so that recentering src would move it"
+        );
+        panel.scroll_handle.offset()
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+        &[
+            "v root",
+            "    v docs",
+            "          api.md",
+            "          guide.md",
+            "          setup.md",
+            "    > src  <== selected",
+            "    v tests",
+            "          a.rs",
+            "          b.rs",
+            "          c.rs",
+            "          d.rs",
+            "          e.rs",
+            "          f.rs",
+        ]
+    );
+    panel.read_with(cx, |panel, _| {
+        assert_eq!(
+            panel.scroll_handle.offset(),
+            offset_before,
+            "collapsing the already-visible src must not scroll the list"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_collapse_selected_entry_preserves_selection_during_refresh(cx: &mut TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "src": {
+                "main.rs": "",
+            }
+        }),
+        size(px(800.), px(600.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+    toggle_expand_dir(&panel, "root/src", cx);
+    select_path(&panel, "root/src/main.rs", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..usize::MAX, cx).join("\n"),
+        "v root
+    v src
+          main.rs  <== selected"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..usize::MAX, cx).join("\n"),
+        "v root
+    > src  <== selected"
     );
 }
 
@@ -12460,4 +12730,46 @@ fn assert_drag_state_cleared(panel: &ProjectPanel) {
     assert!(panel.hover_scroll_task.is_none());
     assert!(panel.hover_expand_task.is_none());
     assert_eq!(panel.previous_drag_position, None);
+}
+
+async fn open_panel_with_tree(
+    tree: serde_json::Value,
+    window_size: Size<Pixels>,
+    cx: &mut TestAppContext,
+) -> (Entity<ProjectPanel>, VisualTestContext) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), tree).await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let window = cx.open_window(window_size, |window, cx| {
+        MultiWorkspace::test_new(project.clone(), window, cx)
+    });
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("window is open");
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        panel
+    });
+    cx.run_until_parked();
+    (panel, cx)
+}
+
+fn entry_row_bounds(panel: &ProjectPanel, entry_id: ProjectEntryId) -> Bounds<Pixels> {
+    let row_index = panel
+        .state
+        .visible_entries
+        .iter()
+        .flat_map(|worktree| &worktree.entries)
+        .position(|entry| entry.id == entry_id)
+        .expect("entry has a row in the list");
+    let row_height = panel.entry_row_height().expect("list is laid out");
+    let viewport = panel.scroll_handle.viewport();
+    let row_top = viewport.top() + panel.scroll_handle.offset().y + row_height * row_index;
+    Bounds::new(
+        point(viewport.left(), row_top),
+        size(viewport.size.width, row_height),
+    )
 }
