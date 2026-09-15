@@ -243,7 +243,7 @@ impl Render for PlatformTitleBar {
                     )
             })
             .map(|this| {
-                let show_left_controls = !(sidebar.open && sidebar.side == SidebarSide::Left);
+                let show_left_controls = !(sidebar.visible && sidebar.side == SidebarSide::Left);
 
                 if window.is_fullscreen() || window.is_simple_fullscreen() {
                     this.pl_2()
@@ -269,12 +269,12 @@ impl Render for PlatformTitleBar {
                 Decorations::Client { tiling, .. } => el
                     .when(
                         !(tiling.top || tiling.right)
-                            && !(sidebar.open && sidebar.side == SidebarSide::Right),
+                            && !(sidebar.visible && sidebar.side == SidebarSide::Right),
                         |el| el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     .when(
                         !(tiling.top || tiling.left)
-                            && !(sidebar.open && sidebar.side == SidebarSide::Left),
+                            && !(sidebar.visible && sidebar.side == SidebarSide::Left),
                         |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     // this border is to avoid a transparent gap in the rounded corners
@@ -299,7 +299,8 @@ impl Render for PlatformTitleBar {
             .when(
                 !window.is_fullscreen() && !window.is_simple_fullscreen(),
                 |title_bar| {
-                    let show_right_controls = !(sidebar.open && sidebar.side == SidebarSide::Right);
+                    let show_right_controls =
+                        !(sidebar.visible && sidebar.side == SidebarSide::Right);
 
                     let title_bar = title_bar.children(
                         show_right_controls
