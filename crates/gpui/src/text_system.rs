@@ -58,7 +58,6 @@ const UNDERLINE_DESCENT_OFFSET_FACTOR: f32 = 0.618;
 pub fn underline_y_offset(line_height: Pixels, ascent: Pixels, descent: Pixels) -> Pixels {
     let padding_top = (line_height - ascent - descent) / 2.;
     padding_top + ascent + descent * UNDERLINE_DESCENT_OFFSET_FACTOR
-
 }
 
 const MAX_REPORTED_MISSING_GLYPHS: usize = 1024;
