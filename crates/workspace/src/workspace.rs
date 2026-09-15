@@ -3002,6 +3002,7 @@ impl Workspace {
         Ok(item_id)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn assigned_serialized_item_ids(&self, kind: &str) -> Vec<ItemId> {
         self.serialized_item_ids
             .iter()

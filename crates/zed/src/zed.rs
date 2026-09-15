@@ -8716,6 +8716,96 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_reload_preserves_empty_inactive_terminal_panel(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+        let root = Path::new(path!("/reload-empty-terminal"));
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(root, json!({"note.txt": "keep this tab\n"}))
+            .await;
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+        let window =
+            open_test_project_window_with_tabs(&app_state, root, &[rel_path("note.txt")], cx).await;
+        cx.run_until_parked();
+        let (workspace_id, original_panel) = window
+            .read_with(cx, |multi_workspace, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                assert_empty_inactive_terminal_panel(workspace, cx);
+                (
+                    workspace.database_id().expect("workspace ID"),
+                    workspace
+                        .panel::<TerminalPanel>(cx)
+                        .expect("terminal panel")
+                        .downgrade(),
+                )
+            })
+            .expect("workspace window");
+
+        let restart = cx.expect_restart();
+        cx.update(workspace::reload);
+        assert_eq!(
+            restart.await.expect("restart requested"),
+            (None, Vec::new())
+        );
+        let key = format!("\"TerminalPanel\"-\"{}\"", i64::from(workspace_id));
+        let kvp = cx.read(|cx| KeyValueStore::global(cx));
+        let saved = kvp
+            .read_kvp(&key)
+            .expect("read saved terminal panel")
+            .expect("pre-close flush saved the empty terminal panel");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&saved).expect("saved terminal graph"),
+            json!({
+                "items": {"Pane": {
+                    "active": true,
+                    "children": [],
+                    "active_item": null,
+                    "pinned_count": 0
+                }},
+                "active_item_id": null
+            })
+        );
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("close original window");
+        cx.run_until_parked();
+        assert!(original_panel.upgrade().is_none());
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _| {
+                app_session.replace_session_for_test(Session::test_with_old_session(session_id));
+            });
+        });
+        crate::restore_or_create_workspace(app_state, &mut cx.to_async())
+            .await
+            .expect("restore workspace");
+        cx.run_until_parked();
+        assert_eq!(cx.pending_prompt(), None);
+        let windows = cx.windows();
+        assert_eq!(windows.len(), 1);
+        windows
+            .first()
+            .expect("restored window")
+            .downcast::<MultiWorkspace>()
+            .expect("restored workspace window")
+            .read_with(cx, |multi_workspace, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                assert_eq!(workspace.database_id(), Some(workspace_id));
+                assert_empty_inactive_terminal_panel(workspace, cx);
+                assert_eq!(
+                    workspace
+                        .active_item_as::<Editor>(cx)
+                        .expect("restored editor")
+                        .read(cx)
+                        .text(cx),
+                    "keep this tab\n"
+                );
+            })
+            .expect("read restored workspace");
+    }
+
+    #[gpui::test]
     async fn test_restored_project_groups_survive_workspace_key_change(cx: &mut TestAppContext) {
         use session::Session;
         use util::path_list::PathList;
@@ -9990,6 +10080,22 @@ mod tests {
                 workspace_ids.iter().map(|id| (*id, window_id.as_u64(), String::from(session_id))).collect::<Vec<_>>(),
             );
         });
+    }
+
+    fn assert_empty_inactive_terminal_panel(workspace: &Workspace, cx: &App) {
+        assert!(!workspace.bottom_dock().read(cx).is_open());
+        let panel = workspace
+            .panel::<TerminalPanel>(cx)
+            .expect("terminal panel");
+        assert_eq!(
+            panel
+                .read(cx)
+                .panes()
+                .into_iter()
+                .map(|pane| pane.read(cx).items_len())
+                .collect::<Vec<_>>(),
+            vec![0]
+        );
     }
 
     fn has_view_item(cx: &mut App, item_name: &str) -> bool {

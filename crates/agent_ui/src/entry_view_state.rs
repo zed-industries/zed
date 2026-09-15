@@ -642,7 +642,6 @@ fn create_terminal(
         let mut view = TerminalView::new(
             terminal.read(cx).inner().clone(),
             workspace,
-            None,
             project,
             window,
             cx,

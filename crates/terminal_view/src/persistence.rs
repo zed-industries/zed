@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
 use collections::HashSet;
 use futures::future::join_all;
@@ -7,7 +7,6 @@ use project::Project;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use ui::{App, Context, Window};
-use util::ResultExt as _;
 
 use db::{
     kvp::KeyValueStore,
@@ -25,15 +24,83 @@ use crate::{
     terminal_panel::{TerminalPanel, new_terminal_pane},
 };
 
+pub(crate) struct TerminalSerializationAdmission {
+    unknown_item_ids: Vec<(bool, HashSet<ItemId>)>,
+}
+
+impl TerminalSerializationAdmission {
+    pub(crate) fn new(
+        workspace: &mut Workspace,
+        workspace_id: WorkspaceId,
+        recovery: bool,
+        known_item_ids: HashSet<ItemId>,
+        cx: &App,
+    ) -> Result<Self> {
+        workspace.refresh_serialized_item_ids(workspace_id, "Terminal", cx)?;
+        let db = TerminalDb::global(cx);
+        let mut unknown_item_ids = Vec::new();
+        for saved_recovery in [false, true] {
+            let saved = match db.saved_panel(workspace_id, saved_recovery) {
+                Ok(Some(saved)) => saved,
+                Ok(None) => continue,
+                Err(error) if !saved_recovery && recovery && error.is::<serde_json::Error>() => {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            saved.validate_child_item_ids()?;
+            let mut item_ids = saved.item_ids();
+            item_ids.extend(saved.primary_item_ids);
+            workspace.reserve_serialized_item_ids(workspace_id, "Terminal", &item_ids, cx)?;
+            unknown_item_ids.push((
+                saved_recovery,
+                item_ids
+                    .into_iter()
+                    .filter(|item_id| !known_item_ids.contains(item_id))
+                    .collect(),
+            ));
+        }
+        Ok(Self { unknown_item_ids })
+    }
+
+    pub(crate) fn validate(&self, live_ids: &HashSet<ItemId>) -> Result<()> {
+        for (saved_recovery, item_ids) in &self.unknown_item_ids {
+            let mut conflicts = live_ids
+                .iter()
+                .copied()
+                .filter(|item_id| item_ids.contains(item_id))
+                .collect::<Vec<_>>();
+            conflicts.sort_unstable();
+            let layout = if *saved_recovery {
+                "Recovery layout"
+            } else {
+                "Saved layout"
+            };
+            anyhow::ensure!(
+                conflicts.is_empty(),
+                "{layout} references conflict with new terminal IDs {conflicts:?}; repair the saved references before retrying"
+            );
+        }
+        Ok(())
+    }
+}
+
 pub(crate) fn serialize_pane_group(
     pane_group: &PaneGroup,
     active_pane: &Entity<Pane>,
     workspace: &mut Workspace,
+    admission: &TerminalSerializationAdmission,
     cx: &mut App,
 ) -> Result<(SerializedPaneGroup, Vec<Task<Result<()>>>)> {
     let mut tasks = Vec::new();
-    let group =
-        build_serialized_pane_group(&pane_group.root, active_pane, workspace, &mut tasks, cx)?;
+    let group = build_serialized_pane_group(
+        &pane_group.root,
+        active_pane,
+        workspace,
+        admission,
+        &mut tasks,
+        cx,
+    )?;
     Ok((group, tasks))
 }
 
@@ -41,6 +108,7 @@ fn build_serialized_pane_group(
     pane_group: &Member,
     active_pane: &Entity<Pane>,
     workspace: &mut Workspace,
+    admission: &TerminalSerializationAdmission,
     tasks: &mut Vec<Task<Result<()>>>,
     cx: &mut App,
 ) -> Result<SerializedPaneGroup> {
@@ -55,7 +123,14 @@ fn build_serialized_pane_group(
             children: members
                 .iter()
                 .map(|member| {
-                    build_serialized_pane_group(member, active_pane, workspace, tasks, cx)
+                    build_serialized_pane_group(
+                        member,
+                        active_pane,
+                        workspace,
+                        admission,
+                        tasks,
+                        cx,
+                    )
                 })
                 .collect::<Result<Vec<_>>>()?,
             flexes: Some(flexes.lock().clone()),
@@ -64,6 +139,7 @@ fn build_serialized_pane_group(
             pane_handle,
             pane_handle == active_pane,
             workspace,
+            admission,
             tasks,
             cx,
         )?),
@@ -74,20 +150,28 @@ fn serialize_pane(
     pane: &Entity<Pane>,
     active: bool,
     workspace: &mut Workspace,
+    admission: &TerminalSerializationAdmission,
     tasks: &mut Vec<Task<Result<()>>>,
     cx: &mut App,
 ) -> Result<SerializedPane> {
     let pane = pane.read(cx);
     let active_runtime_id = pane.active_item().map(|item| item.item_id());
-    let pinned_count = pane.pinned_count();
     let terminals = pane
         .items()
-        .filter_map(|item| item.act_as::<TerminalView>(cx))
-        .filter(|terminal| terminal.read(cx).terminal().read(cx).task().is_none())
+        .enumerate()
+        .filter_map(|(index, item)| {
+            item.act_as::<TerminalView>(cx)
+                .map(|terminal| (index, terminal))
+        })
+        .filter(|(_, terminal)| terminal.read(cx).terminal().read(cx).task().is_none())
         .collect::<Vec<_>>();
+    let pinned_count = terminals
+        .iter()
+        .take_while(|(index, _)| *index < pane.pinned_count())
+        .count();
     let mut children = Vec::new();
     let mut active_item = None;
-    for terminal in terminals {
+    for (_, terminal) in terminals {
         let item_id = workspace.serialization_id(
             TerminalView::serialized_item_kind(),
             terminal.entity_id(),
@@ -97,7 +181,7 @@ fn serialize_pane(
             active_item = Some(item_id);
         }
         if let Some(task) = terminal.update(cx, |terminal, cx| {
-            terminal.serialize(workspace, item_id, false, cx)
+            terminal.serialize_with_admission(workspace, item_id, Some(admission), cx)
         }) {
             tasks.push(task);
         }
@@ -121,6 +205,33 @@ pub(crate) fn deserialize_terminal_panel(
     cx: &mut App,
 ) -> Task<anyhow::Result<usize>> {
     window.spawn(cx, async move |cx| {
+        serialized_panel.validate_child_item_ids()?;
+        let known_items = terminal_panel.read_with(cx, |panel, cx| {
+            panel
+                .center
+                .panes()
+                .into_iter()
+                .flat_map(|pane| {
+                    pane.read(cx)
+                        .items_of_type::<TerminalView>()
+                        .filter_map(|view| view.read(cx).serialization_identity())
+                        .filter_map(|(workspace_id, item_id)| {
+                            (workspace_id == database_id).then_some(item_id)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<HashSet<_>>()
+        })?;
+        let primary_item_ids = serialized_panel.primary_item_ids.clone();
+        let Some(serialized_panel) = serialized_panel
+            .without_items(&known_items)
+            .filter(|panel| !panel.item_ids().is_empty())
+        else {
+            terminal_panel.update(cx, |panel, _| {
+                panel.primary_item_ids.extend(primary_item_ids);
+            })?;
+            return Ok(0);
+        };
         let restored_items = match &serialized_panel.items {
             SerializedItems::NoSplits(item_ids) => {
                 let items = deserialize_terminal_views(
@@ -130,10 +241,11 @@ pub(crate) fn deserialize_terminal_panel(
                     item_ids.as_slice(),
                     cx,
                 )
-                .await;
+                .await?;
                 let restored_items = items.len();
                 let active_item = serialized_panel.active_item_id;
                 terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+                    terminal_panel.primary_item_ids.extend(primary_item_ids);
                     terminal_panel.active_pane.update(cx, |pane, cx| {
                         populate_pane_items(pane, items, active_item, window, cx);
                     });
@@ -141,17 +253,20 @@ pub(crate) fn deserialize_terminal_panel(
                 restored_items
             }
             SerializedItems::WithSplits(serialized_pane_group) => {
+                let mut prepared_panes = Vec::new();
                 let center_pane = deserialize_pane_group(
                     workspace,
                     project,
                     terminal_panel.clone(),
                     database_id,
                     serialized_pane_group,
+                    &mut prepared_panes,
                     cx,
                 )
-                .await;
+                .await?;
                 if let Some((center_group, active_pane)) = center_pane {
                     terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+                        terminal_panel.primary_item_ids.extend(primary_item_ids);
                         let interim_panes = terminal_panel
                             .center
                             .panes()
@@ -163,6 +278,28 @@ pub(crate) fn deserialize_terminal_panel(
                             .iter()
                             .find(|pane| pane.read(cx).has_focus(window, cx))
                             .cloned();
+                        for prepared in prepared_panes {
+                            prepared.pane.update(cx, |pane, cx| {
+                                populate_pane_items(
+                                    pane,
+                                    prepared.items,
+                                    prepared.active_item,
+                                    window,
+                                    cx,
+                                );
+                                pane.set_pinned_count(prepared.pinned_count);
+                                if let Some(terminal) = prepared.default_terminal {
+                                    pane.add_item(
+                                        Box::new(terminal),
+                                        true,
+                                        false,
+                                        None,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            });
+                        }
                         terminal_panel.center = PaneGroup::with_root(center_group);
                         terminal_panel.active_pane =
                             active_pane.unwrap_or_else(|| terminal_panel.center.first_pane());
@@ -196,6 +333,14 @@ pub(crate) fn deserialize_terminal_panel(
     })
 }
 
+struct PreparedTerminalPane {
+    pane: Entity<Pane>,
+    items: Vec<(ItemId, Entity<TerminalView>)>,
+    active_item: Option<ItemId>,
+    pinned_count: usize,
+    default_terminal: Option<Entity<TerminalView>>,
+}
+
 fn populate_pane_items(
     pane: &mut Pane,
     items: Vec<(ItemId, Entity<TerminalView>)>,
@@ -227,9 +372,10 @@ async fn deserialize_pane_group(
     panel: WeakEntity<TerminalPanel>,
     workspace_id: WorkspaceId,
     serialized: &SerializedPaneGroup,
+    prepared_panes: &mut Vec<PreparedTerminalPane>,
     cx: &mut AsyncWindowContext,
-) -> Option<(Member, Option<Entity<Pane>>)> {
-    match serialized {
+) -> Result<Option<(Member, Option<Entity<Pane>>)>> {
+    Ok(match serialized {
         SerializedPaneGroup::Group {
             axis,
             flexes,
@@ -244,9 +390,10 @@ async fn deserialize_pane_group(
                     panel.clone(),
                     workspace_id,
                     child,
+                    prepared_panes,
                     cx,
                 )
-                .await
+                .await?
                 {
                     members.push(new_member);
                     current_active_pane = current_active_pane.or(active_pane);
@@ -254,11 +401,11 @@ async fn deserialize_pane_group(
             }
 
             if members.is_empty() {
-                return None;
+                return Ok(None);
             }
 
             if members.len() == 1 {
-                return Some((members.remove(0), current_active_pane));
+                return Ok(Some((members.remove(0), current_active_pane)));
             }
 
             Some((
@@ -269,19 +416,22 @@ async fn deserialize_pane_group(
         SerializedPaneGroup::Pane(serialized_pane) => {
             let active = serialized_pane.active;
 
-            let pane = panel
-                .update_in(cx, |terminal_panel, window, cx| {
-                    new_terminal_pane(
-                        workspace.clone(),
-                        project.clone(),
-                        terminal_panel.active_pane.read(cx).is_zoomed(),
-                        window,
-                        cx,
-                    )
-                })
-                .log_err()?;
+            let pane = panel.update_in(cx, |terminal_panel, window, cx| {
+                new_terminal_pane(
+                    workspace.clone(),
+                    project.clone(),
+                    terminal_panel.active_pane.read(cx).is_zoomed(),
+                    window,
+                    cx,
+                )
+            })?;
             let active_item = serialized_pane.active_item;
-            let pinned_count = serialized_pane.pinned_count;
+            let pinned_ids = serialized_pane
+                .children
+                .iter()
+                .take(serialized_pane.pinned_count)
+                .copied()
+                .collect::<HashSet<_>>();
             let new_items = deserialize_terminal_views(
                 workspace_id,
                 project.clone(),
@@ -289,52 +439,44 @@ async fn deserialize_pane_group(
                 serialized_pane.children.as_slice(),
                 cx,
             );
-            cx.spawn({
-                let pane = pane.downgrade();
-                async move |cx| {
-                    let new_items = new_items.await;
-
-                    let items = pane.update_in(cx, |pane, window, cx| {
-                        populate_pane_items(pane, new_items, active_item, window, cx);
-                        pane.set_pinned_count(pinned_count.min(pane.items_len()));
-                        pane.items_len()
-                    });
-                    // Avoid blank panes in splits
-                    if items.is_ok_and(|items| items == 0) {
-                        let working_directory = workspace
-                            .update(cx, |workspace, cx| default_working_directory(workspace, cx))
-                            .ok()
-                            .flatten();
-                        let terminal = project
-                            .update(cx, |project, cx| {
-                                project.create_terminal_shell(working_directory, cx)
-                            })
-                            .await
-                            .log_err();
-                        let Some(terminal) = terminal else {
-                            return;
-                        };
-                        pane.update_in(cx, |pane, window, cx| {
-                            let terminal_view = Box::new(cx.new(|cx| {
-                                TerminalView::new(
-                                    terminal,
-                                    workspace.clone(),
-                                    Some(workspace_id),
-                                    project.downgrade(),
-                                    window,
-                                    cx,
-                                )
-                            }));
-                            pane.add_item(terminal_view, true, false, None, window, cx);
-                        })
-                        .ok();
-                    }
-                }
-            })
-            .await;
+            let new_items = new_items.await?;
+            let pinned_count = new_items
+                .iter()
+                .take_while(|(item_id, _)| pinned_ids.contains(item_id))
+                .count();
+            // Avoid blank panes in splits
+            let default_terminal = if new_items.is_empty() {
+                let working_directory = workspace
+                    .update(cx, |workspace, cx| default_working_directory(workspace, cx))?;
+                let terminal = project
+                    .update(cx, |project, cx| {
+                        project.create_terminal_shell(working_directory, cx)
+                    })
+                    .await?;
+                Some(cx.update(|window, cx| {
+                    cx.new(|cx| {
+                        TerminalView::new(
+                            terminal,
+                            workspace.clone(),
+                            project.downgrade(),
+                            window,
+                            cx,
+                        )
+                    })
+                })?)
+            } else {
+                None
+            };
+            prepared_panes.push(PreparedTerminalPane {
+                pane: pane.clone(),
+                items: new_items,
+                active_item,
+                pinned_count,
+                default_terminal,
+            });
             Some((Member::Pane(pane.clone()), active.then_some(pane)))
         }
-    }
+    })
 }
 
 fn deserialize_terminal_views(
@@ -343,42 +485,62 @@ fn deserialize_terminal_views(
     workspace: WeakEntity<Workspace>,
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
-) -> impl Future<Output = Vec<(ItemId, Entity<TerminalView>)>> + use<> {
-    let deserialized_items = join_all(item_ids.iter().filter_map(|item_id| {
-        let item_id = *item_id;
-        cx.update(|window, cx| {
-            let task = TerminalView::deserialize(
-                project.clone(),
-                workspace.clone(),
-                workspace_id,
-                item_id,
-                window,
-                cx,
-            );
-            window.spawn(cx, {
-                let workspace = workspace.clone();
-                async move |cx| {
-                    let item = task.await?;
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.register_serialized_item_id(
-                            TerminalView::serialized_item_kind(),
-                            item.entity_id(),
-                            item_id,
-                            cx,
-                        )
-                    })??;
-                    anyhow::Ok((item_id, item))
-                }
+) -> impl Future<Output = Result<Vec<(ItemId, Entity<TerminalView>)>>> + use<> {
+    let deserialized_items = item_ids
+        .iter()
+        .map(|item_id| {
+            let item_id = *item_id;
+            cx.update(|window, cx| {
+                let task = TerminalView::deserialize(
+                    project.clone(),
+                    workspace.clone(),
+                    workspace_id,
+                    item_id,
+                    window,
+                    cx,
+                );
+                window.spawn(cx, {
+                    let workspace = workspace.clone();
+                    let project = project.clone();
+                    async move |cx| {
+                        let item = match task.await {
+                            Ok(item) => item,
+                            Err(error) => {
+                                log::error!("Failed to restore terminal {item_id}: {error:#}");
+                                cx.update(|window, cx| {
+                                    cx.new(|cx| {
+                                        TerminalView::failed_restoration(
+                                            workspace.clone(),
+                                            project.downgrade(),
+                                            workspace_id,
+                                            item_id,
+                                            error,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                })?
+                            }
+                        };
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.register_serialized_item_id(
+                                TerminalView::serialized_item_kind(),
+                                item.entity_id(),
+                                item_id,
+                                cx,
+                            )?;
+                            workspace.track_serialized_item(Box::new(item.downgrade()));
+                            anyhow::Ok(())
+                        })??;
+                        anyhow::Ok((item_id, item))
+                    }
+                })
             })
         })
-        .log_err()
-    }));
+        .collect::<Vec<_>>();
     async move {
-        deserialized_items
-            .await
-            .into_iter()
-            .filter_map(|item| item.log_err())
-            .collect()
+        let tasks = deserialized_items.into_iter().collect::<Result<Vec<_>>>()?;
+        join_all(tasks).await.into_iter().collect()
     }
 }
 
@@ -387,9 +549,124 @@ pub(crate) struct SerializedTerminalPanel {
     pub items: SerializedItems,
     // A deprecated field, kept for backwards compatibility for the code before terminal splits were introduced.
     pub active_item_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub primary_item_ids: Vec<ItemId>,
 }
 
 impl SerializedTerminalPanel {
+    pub(crate) fn validate_child_item_ids(&self) -> Result<()> {
+        let mut child_ids = HashSet::default();
+        match &self.items {
+            SerializedItems::NoSplits(items) => {
+                for item_id in items {
+                    anyhow::ensure!(
+                        child_ids.insert(*item_id),
+                        "Terminal layout contains duplicate child ID {item_id}"
+                    );
+                }
+            }
+            SerializedItems::WithSplits(group) => {
+                let mut groups = vec![group];
+                while let Some(group) = groups.pop() {
+                    match group {
+                        SerializedPaneGroup::Pane(pane) => {
+                            for item_id in &pane.children {
+                                anyhow::ensure!(
+                                    child_ids.insert(*item_id),
+                                    "Terminal layout contains duplicate child ID {item_id}"
+                                );
+                            }
+                        }
+                        SerializedPaneGroup::Group { children, .. } => groups.extend(children),
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn without_items(self, excluded: &HashSet<ItemId>) -> Option<Self> {
+        let active_item_id = self
+            .active_item_id
+            .filter(|item_id| !excluded.contains(item_id));
+        let items = match self.items {
+            SerializedItems::NoSplits(mut items) => {
+                let was_empty = items.is_empty();
+                items.retain(|item_id| !excluded.contains(item_id));
+                if items.is_empty() && !was_empty {
+                    return None;
+                }
+                SerializedItems::NoSplits(items)
+            }
+            SerializedItems::WithSplits(group) => {
+                SerializedItems::WithSplits(group.without_items(excluded)?)
+            }
+        };
+        Some(Self {
+            items,
+            active_item_id,
+            primary_item_ids: self.primary_item_ids,
+        })
+    }
+
+    pub(crate) fn merge(
+        mut self,
+        mut previous: Self,
+        previous_live_ids: &HashSet<ItemId>,
+    ) -> Result<Self> {
+        let mut known = self.item_ids().into_iter().collect::<HashSet<_>>();
+        let primary_ids = self
+            .primary_item_ids
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
+        let previous_primary_ids = previous
+            .primary_item_ids
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
+        let mut conflicts = previous
+            .item_ids()
+            .into_iter()
+            .filter(|item_id| {
+                known.contains(item_id)
+                    && !previous_live_ids.contains(item_id)
+                    && !(primary_ids.contains(item_id) && previous_primary_ids.contains(item_id))
+            })
+            .collect::<Vec<_>>();
+        conflicts.sort_unstable();
+        conflicts.dedup();
+        anyhow::ensure!(
+            conflicts.is_empty(),
+            "Recovery layout references conflict with new terminal IDs {conflicts:?}; repair the saved references before retrying"
+        );
+        known.extend(primary_ids);
+        known.extend(previous_live_ids);
+        self.primary_item_ids.extend(&previous.primary_item_ids);
+        self.primary_item_ids.sort_unstable();
+        self.primary_item_ids.dedup();
+        previous.primary_item_ids = self.primary_item_ids.clone();
+        let Some(previous) = previous.without_items(&known) else {
+            return Ok(self);
+        };
+        if previous.item_ids().is_empty() {
+            return Ok(self);
+        }
+        if self.item_ids().is_empty() {
+            return Ok(previous);
+        }
+        let primary_item_ids = self.primary_item_ids.clone();
+        Ok(Self {
+            primary_item_ids,
+            items: SerializedItems::WithSplits(SerializedPaneGroup::Group {
+                axis: SerializedAxis(Axis::Horizontal),
+                flexes: None,
+                children: vec![self.into_group(), previous.into_group()],
+            }),
+            active_item_id: None,
+        })
+    }
+
     pub(crate) fn item_ids(&self) -> Vec<ItemId> {
         let mut item_ids = Vec::new();
         match &self.items {
@@ -398,6 +675,18 @@ impl SerializedTerminalPanel {
         }
         item_ids.extend(self.active_item_id);
         item_ids
+    }
+
+    fn into_group(self) -> SerializedPaneGroup {
+        match self.items {
+            SerializedItems::WithSplits(group) => group,
+            SerializedItems::NoSplits(children) => SerializedPaneGroup::Pane(SerializedPane {
+                active: true,
+                children,
+                active_item: self.active_item_id,
+                pinned_count: 0,
+            }),
+        }
     }
 }
 
@@ -420,6 +709,59 @@ pub(crate) enum SerializedPaneGroup {
 }
 
 impl SerializedPaneGroup {
+    fn without_items(self, excluded: &HashSet<ItemId>) -> Option<Self> {
+        match self {
+            Self::Pane(mut pane) => {
+                let was_empty = pane.children.is_empty();
+                let pinned_count = pane
+                    .children
+                    .iter()
+                    .take(pane.pinned_count)
+                    .filter(|item_id| !excluded.contains(item_id))
+                    .count();
+                pane.children.retain(|item_id| !excluded.contains(item_id));
+                if pane.children.is_empty() && !was_empty {
+                    return None;
+                }
+                pane.pinned_count = pinned_count;
+                pane.active_item = pane
+                    .active_item
+                    .filter(|item_id| !excluded.contains(item_id));
+                Some(Self::Pane(pane))
+            }
+            Self::Group {
+                axis,
+                children,
+                flexes,
+            } => {
+                let mut retained_flexes = Vec::new();
+                let mut children = children
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, child)| {
+                        let child = child.without_items(excluded)?;
+                        if let Some(flex) = flexes.as_ref().and_then(|flexes| flexes.get(index)) {
+                            retained_flexes.push(*flex);
+                        }
+                        Some(child)
+                    })
+                    .collect::<Vec<_>>();
+                if children.is_empty() {
+                    return None;
+                }
+                if children.len() == 1 {
+                    return children.pop();
+                }
+                let flexes = (retained_flexes.len() == children.len()).then_some(retained_flexes);
+                Some(Self::Group {
+                    axis,
+                    children,
+                    flexes,
+                })
+            }
+        }
+    }
+
     fn collect_item_ids(&self, item_ids: &mut Vec<ItemId>) {
         match self {
             Self::Pane(pane) => {
@@ -584,6 +926,106 @@ impl TerminalDb {
         }
     }
 
+    pub(crate) fn get_terminal(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+    ) -> Result<(Option<PathBuf>, Option<String>)> {
+        self.select_row_bound::<(ItemId, WorkspaceId), (Option<PathBuf>, Option<String>)>(
+            "SELECT working_directory, custom_title FROM terminals WHERE item_id = ? AND workspace_id = ?",
+        )?((item_id, workspace_id))?
+        .with_context(|| format!("Saved terminal {item_id} has no payload"))
+    }
+
+    pub(crate) fn saved_panel(
+        &self,
+        workspace_id: WorkspaceId,
+        recovery: bool,
+    ) -> Result<Option<SerializedTerminalPanel>> {
+        let key = if recovery {
+            TerminalPanel::recovery_key_for_workspace_id(workspace_id)
+        } else {
+            TerminalPanel::serialization_key_for_workspace_id(workspace_id)
+        };
+        self.select_row_bound::<&str, String>("SELECT value FROM kv_store WHERE key = ?")?(&key)?
+            .map(|raw| serde_json::from_str(&raw).map_err(anyhow::Error::from))
+            .transpose()
+    }
+
+    pub(crate) fn serialized_item_ids(&self, workspace_id: WorkspaceId) -> Result<Vec<ItemId>> {
+        let mut item_ids = self.item_ids(workspace_id)?;
+        for recovery in [false, true] {
+            let panel = match self.saved_panel(workspace_id, recovery) {
+                Ok(Some(panel)) => panel,
+                Ok(None) => continue,
+                Err(error) if !recovery && error.is::<serde_json::Error>() => {
+                    log::error!("Saved terminal layout is unreadable: {error:#}");
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error).context(
+                        "Cannot reserve terminal IDs because the recovery layout is unreadable",
+                    );
+                }
+            };
+            item_ids.extend(panel.item_ids());
+            item_ids.extend(panel.primary_item_ids);
+        }
+        item_ids.sort_unstable();
+        item_ids.dedup();
+        Ok(item_ids)
+    }
+
+    pub(crate) fn save_panel(
+        &self,
+        workspace_id: WorkspaceId,
+        mut panel: SerializedTerminalPanel,
+        recovery: bool,
+        recovery_loaded: bool,
+        previous_live_ids: HashSet<ItemId>,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        self.write(move |connection| {
+            connection.with_savepoint("save_terminal_panel", || {
+                let primary_key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+                let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+                if recovery && !recovery_loaded {
+                    if let Some(previous) = connection.select_row_bound::<&str, String>(
+                        "SELECT value FROM kv_store WHERE key = ?",
+                    )?(&recovery_key)?
+                    {
+                        panel = panel.merge(
+                            serde_json::from_str(&previous).context(
+                                "Cannot save terminal changes because the recovery layout is unreadable; keep this window open and repair the recovery layout before retrying",
+                            )?,
+                            &previous_live_ids,
+                        )?;
+                    }
+                }
+                if recovery {
+                    panel.primary_item_ids.sort_unstable();
+                    panel.primary_item_ids.dedup();
+                } else {
+                    panel.primary_item_ids.clear();
+                }
+                let key = if recovery {
+                    &recovery_key
+                } else {
+                    &primary_key
+                };
+                let serialized = serde_json::to_string(&panel)?;
+                connection.exec_bound::<(&str, &str)>(
+                    "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+                )?((key, &serialized))?;
+                if !recovery {
+                    connection.exec_bound::<&str>("DELETE FROM kv_store WHERE key = ?")?(
+                        &recovery_key,
+                    )?;
+                }
+                Ok(())
+            })
+        })
+    }
+
     pub(crate) fn prepare_cleanup(
         &self,
         workspace_id: WorkspaceId,
@@ -617,13 +1059,17 @@ impl TerminalDb {
                     workspace_id,
                     TerminalView::serialized_item_kind(),
                 ))?);
-                let panel_key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
-                if let Some(panel) = connection
-                    .select_row_bound::<&str, String>("SELECT value FROM kv_store WHERE key = ?")?(
-                    &panel_key,
-                )? {
-                    let panel = serde_json::from_str::<SerializedTerminalPanel>(&panel)?;
-                    retained.extend(panel.item_ids());
+                for panel_key in [
+                    TerminalPanel::serialization_key_for_workspace_id(workspace_id),
+                    TerminalPanel::recovery_key_for_workspace_id(workspace_id),
+                ] {
+                    if let Some(panel) = connection.select_row_bound::<&str, String>(
+                        "SELECT value FROM kv_store WHERE key = ?",
+                    )?(&panel_key)?
+                    {
+                        let panel = serde_json::from_str::<SerializedTerminalPanel>(&panel)?;
+                        retained.extend(panel.item_ids());
+                    }
                 }
                 let item_ids = match candidates {
                     Some(candidates) => candidates,

@@ -4,6 +4,7 @@ pub mod terminal_panel;
 mod terminal_path_like_target;
 pub mod terminal_scrollbar;
 
+use collections::HashSet;
 use editor::{
     Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
     ui_scrollbar_settings_from_raw,
@@ -16,7 +17,7 @@ use gpui::{
     WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
-use persistence::TerminalDb;
+use persistence::{TerminalDb, TerminalSerializationAdmission};
 use project::{Project, ProjectEntryId, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -53,7 +54,8 @@ use workspace::{
     CloseActiveItem, DraggedSelection, DraggedTab, ItemId, NewCenterTerminal, NewTerminal, Pane,
     ToolbarItemLocation, Workspace, WorkspaceId,
     item::{
-        HighlightedText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
+        HighlightedText, Item, ItemEvent, SaveDisposition, SerializableItem, TabContentParams,
+        TabTooltipContent,
     },
     register_serializable_item,
     searchable::{
@@ -148,6 +150,8 @@ pub struct TerminalView {
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     serialization_identity: Option<(WorkspaceId, ItemId)>,
+    restoration_error: Option<SharedString>,
+    restoration_task: Option<Task<()>>,
 
     pending_serialization: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
     show_breadcrumbs: bool,
@@ -236,7 +240,6 @@ impl TerminalView {
     pub fn new(
         terminal: Entity<Terminal>,
         workspace: WeakEntity<Workspace>,
-        _workspace_id: Option<WorkspaceId>,
         project: WeakEntity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -295,6 +298,8 @@ impl TerminalView {
             mode: TerminalMode::Standalone,
             show_workspace_actions: None,
             serialization_identity: None,
+            restoration_error: None,
+            restoration_task: None,
 
             pending_serialization: None,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
@@ -333,6 +338,182 @@ impl TerminalView {
     pub fn set_show_workspace_actions(&mut self, show: bool, cx: &mut Context<Self>) {
         self.show_workspace_actions = Some(show);
         cx.notify();
+    }
+
+    pub(crate) fn failed_restoration(
+        workspace: WeakEntity<Workspace>,
+        project: WeakEntity<Project>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        error: anyhow::Error,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let terminal = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                window.window_handle().window_id().as_u64(),
+                cx.background_executor(),
+                util::paths::PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        let mut view = Self::new(terminal, workspace, project, window, cx);
+        view.serialization_identity = Some((workspace_id, item_id));
+        view.restoration_error = Some(SharedString::from(format!("{error:#}")));
+        view.needs_serialize = false;
+        view
+    }
+
+    pub(crate) fn serialization_identity(&self) -> Option<(WorkspaceId, ItemId)> {
+        self.serialization_identity
+    }
+
+    pub(crate) fn retry_restoration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.restoration_error.is_none() || self.restoration_task.is_some() {
+            return;
+        }
+        let Some((workspace_id, item_id)) = self.serialization_identity else {
+            return;
+        };
+        let Some(project) = self.project.upgrade() else {
+            self.restoration_error = Some(SharedString::new_static(
+                "The terminal project is no longer available",
+            ));
+            cx.notify();
+            return;
+        };
+        let task = Self::deserialize(
+            project,
+            self.workspace.clone(),
+            workspace_id,
+            item_id,
+            window,
+            cx,
+        );
+        self.restoration_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(restored) => {
+                        let restored = restored.read(cx);
+                        let terminal = restored.terminal.clone();
+                        this.custom_title = restored.custom_title.clone();
+                        this.set_terminal(terminal, window, cx);
+                        this.restoration_error = None;
+                        this.needs_serialize = true;
+                        cx.emit(ItemEvent::UpdateTab);
+                    }
+                    Err(error) => {
+                        this.restoration_error = Some(SharedString::from(format!("{error:#}")))
+                    }
+                }
+                if let Some(task) = this.restoration_task.take() {
+                    task.detach();
+                }
+                cx.notify();
+            })
+            .log_err();
+        }));
+        cx.notify();
+    }
+
+    pub(crate) fn serialize_with_admission(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        admission: Option<&TerminalSerializationAdmission>,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<anyhow::Result<()>>> {
+        if self.restoration_error.is_some() {
+            let identity = workspace
+                .database_id()
+                .map(|workspace_id| (workspace_id, item_id));
+            return Some(Task::ready(if self.serialization_identity == identity {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "Retry this failed terminal in its original workspace before moving it"
+                ))
+            }));
+        }
+        if self.workspace.entity_id() != workspace.weak_handle().entity_id() {
+            return None;
+        }
+        let terminal = self.terminal().read(cx);
+        if terminal.task().is_some() {
+            return None;
+        }
+        let workspace_id = workspace.database_id()?;
+        let captured_admission;
+        let admission = match admission {
+            Some(admission) => admission,
+            None => {
+                let result = if let Some(panel) = workspace.panel::<TerminalPanel>(cx) {
+                    panel
+                        .read(cx)
+                        .serialization_admission(workspace, workspace_id, cx)
+                } else {
+                    let recovery = workspace.is_restoring();
+                    TerminalSerializationAdmission::new(
+                        workspace,
+                        workspace_id,
+                        recovery,
+                        HashSet::default(),
+                        cx,
+                    )
+                };
+                match result {
+                    Ok(admission) => {
+                        captured_admission = admission;
+                        &captured_admission
+                    }
+                    Err(error) => return Some(Task::ready(Err(error))),
+                }
+            }
+        };
+        if let Err(error) = admission.validate(&HashSet::from_iter([item_id])) {
+            return Some(Task::ready(Err(error)));
+        }
+        let identity = Some((workspace_id, item_id));
+        if self.serialization_identity != identity {
+            self.serialization_identity = identity;
+            self.needs_serialize = true;
+        }
+
+        if self
+            .pending_serialization
+            .as_ref()
+            .and_then(|pending| pending.peek())
+            .is_some_and(Result::is_err)
+        {
+            self.needs_serialize = true;
+        }
+
+        if self.needs_serialize {
+            let working_directory = terminal.working_directory();
+            let custom_title = self.custom_title.clone();
+            self.needs_serialize = false;
+            let write = TerminalDb::global(cx).save_terminal(
+                item_id,
+                workspace_id,
+                working_directory,
+                custom_title,
+            );
+            self.pending_serialization = Some(
+                cx.background_spawn(async move { write.await.map_err(Arc::new) })
+                    .shared(),
+            );
+        }
+
+        let pending = self.pending_serialization.clone()?;
+        Some(
+            cx.background_spawn(
+                async move { pending.await.map_err(|error| anyhow::anyhow!(error)) },
+            ),
+        )
     }
 
     fn shows_workspace_actions(&self) -> bool {
@@ -474,7 +655,7 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.terminal.read(cx).task().is_some() {
+        if self.restoration_error.is_some() || self.terminal.read(cx).task().is_some() {
             return;
         }
 
@@ -1333,6 +1514,30 @@ impl TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(error) = self.restoration_error.clone() {
+            return v_flex()
+                .track_focus(&self.focus_handle)
+                .size_full()
+                .p_4()
+                .gap_2()
+                .items_center()
+                .justify_center()
+                .bg(cx.theme().colors().editor_background)
+                .child(Label::new("Failed to restore terminal"))
+                .child(Label::new(error).size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Button::new("retry-terminal-restoration", "Retry")
+                        .disabled(self.restoration_task.is_some())
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.retry_restoration(window, cx)),
+                        ),
+                )
+                .child(
+                    Label::new("Close this tab to discard the saved terminal reference")
+                        .size(LabelSize::Small),
+                )
+                .into_any_element();
+        }
         // TODO: this should be moved out of render
         self.scroll_handle.update(self.terminal.read(cx));
 
@@ -1441,6 +1646,7 @@ impl Render for TerminalView {
                 )
                 .with_priority(1)
             }))
+            .into_any_element()
     }
 }
 
@@ -1469,6 +1675,13 @@ impl Item for TerminalView {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        if self.restoration_error.is_some() {
+            return h_flex()
+                .gap_1()
+                .child(Icon::new(IconName::Warning).color(Color::Warning))
+                .child(Label::new(self.tab_content_text(0, cx)).color(params.text_color()))
+                .into_any_element();
+        }
         let terminal = self.terminal().read(cx);
         let title = self
             .custom_title
@@ -1573,6 +1786,12 @@ impl Item for TerminalView {
     }
 
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        if self.restoration_error.is_some() {
+            return SharedString::from(match self.serialization_identity {
+                Some((_, item_id)) => format!("Failed terminal {item_id}"),
+                None => String::from("Failed terminal"),
+            });
+        }
         if let Some(custom_title) = self.custom_title.as_ref().filter(|l| !l.trim().is_empty()) {
             return custom_title.clone().into();
         }
@@ -1737,6 +1956,9 @@ impl Item for TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
+        if self.restoration_error.is_some() {
+            return Vec::new();
+        }
         let terminal = self.terminal.read(cx);
         if terminal.task().is_none() {
             vec![("Rename".into(), Box::new(RenameTerminal))]
@@ -1750,15 +1972,18 @@ impl Item for TerminalView {
     }
 
     fn can_split(&self) -> bool {
-        true
+        self.restoration_error.is_none()
     }
 
     fn clone_on_split(
         &self,
-        workspace_id: Option<WorkspaceId>,
+        _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>> {
+        if self.restoration_error.is_some() {
+            return Task::ready(None);
+        }
         let Ok(terminal) = self.project.update(cx, |project, cx| {
             let cwd = project
                 .active_project_directory(cx)
@@ -1774,7 +1999,6 @@ impl Item for TerminalView {
                     TerminalView::new(
                         terminal,
                         this.workspace.clone(),
-                        workspace_id,
                         this.project.clone(),
                         window,
                         cx,
@@ -1786,9 +2010,29 @@ impl Item for TerminalView {
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
+        if self.restoration_error.is_some() {
+            return true;
+        }
         match self.terminal.read(cx).task() {
             Some(task) => task.status == TaskStatus::Running,
             None => self.has_bell(),
+        }
+    }
+
+    fn can_move_to(
+        &self,
+        workspace: &WeakEntity<Workspace>,
+        _in_center_group: bool,
+        _cx: &App,
+    ) -> bool {
+        self.restoration_error.is_none() || self.workspace == *workspace
+    }
+
+    fn save_disposition(&self, _cx: &App) -> SaveDisposition {
+        if self.restoration_error.is_some() {
+            SaveDisposition::DiscardOnly
+        } else {
+            SaveDisposition::Normal
         }
     }
 
@@ -1805,7 +2049,9 @@ impl Item for TerminalView {
         handle: &Entity<Self>,
         _: &App,
     ) -> Option<Box<dyn SearchableItemHandle>> {
-        Some(Box::new(handle.clone()))
+        self.restoration_error
+            .is_none()
+            .then(|| Box::new(handle.clone()) as Box<dyn SearchableItemHandle>)
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
@@ -1832,6 +2078,9 @@ impl Item for TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.restoration_error.is_some() {
+            return;
+        }
         if self.terminal().read(cx).task().is_none() {
             self.workspace = workspace.weak_handle();
             self.project = workspace.project().downgrade();
@@ -1858,8 +2107,12 @@ impl SerializableItem for TerminalView {
         "Terminal"
     }
 
+    fn is_serializable(&self, cx: &App) -> bool {
+        self.terminal.read(cx).task().is_none()
+    }
+
     fn serialized_item_ids(workspace_id: WorkspaceId, cx: &App) -> anyhow::Result<Vec<ItemId>> {
-        TerminalDb::global(cx).item_ids(workspace_id)
+        TerminalDb::global(cx).serialized_item_ids(workspace_id)
     }
 
     fn cleanup(
@@ -1879,49 +2132,7 @@ impl SerializableItem for TerminalView {
         _closing: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<anyhow::Result<()>>> {
-        let terminal = self.terminal().read(cx);
-        if terminal.task().is_some() {
-            return None;
-        }
-
-        let workspace_id = workspace.database_id()?;
-        let identity = Some((workspace_id, item_id));
-        if self.serialization_identity != identity {
-            self.serialization_identity = identity;
-            self.needs_serialize = true;
-        }
-
-        if self
-            .pending_serialization
-            .as_ref()
-            .and_then(|pending| pending.peek())
-            .is_some_and(Result::is_err)
-        {
-            self.needs_serialize = true;
-        }
-
-        if self.needs_serialize {
-            let working_directory = terminal.working_directory();
-            let custom_title = self.custom_title.clone();
-            self.needs_serialize = false;
-            let write = TerminalDb::global(cx).save_terminal(
-                item_id,
-                workspace_id,
-                working_directory,
-                custom_title,
-            );
-            self.pending_serialization = Some(
-                cx.background_spawn(async move { write.await.map_err(Arc::new) })
-                    .shared(),
-            );
-        }
-
-        let pending = self.pending_serialization.clone()?;
-        Some(
-            cx.background_spawn(
-                async move { pending.await.map_err(|error| anyhow::anyhow!(error)) },
-            ),
-        )
+        self.serialize_with_admission(workspace, item_id, None, cx)
     }
 
     fn should_serialize(&self, _: &Self::Event) -> bool {
@@ -1942,46 +2153,30 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
-                .update(|_window, cx| {
-                    let db = TerminalDb::global(cx);
-                    let from_db = db
-                        .get_working_directory(item_id, workspace_id)
-                        .log_err()
-                        .flatten();
-                    let cwd = if from_db
-                        .as_ref()
-                        .is_some_and(|from_db| !from_db.as_os_str().is_empty())
-                    {
-                        from_db
-                    } else {
-                        workspace
-                            .upgrade()
-                            .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
-                    };
-                    let custom_title = db
-                        .get_custom_title(item_id, workspace_id)
-                        .log_err()
-                        .flatten()
-                        .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
-                })
-                .ok()
-                .unwrap_or((None, None));
+            let (cwd, custom_title) = cx.update(|_window, cx| {
+                let db = TerminalDb::global(cx);
+                let (from_db, custom_title) = db.get_terminal(item_id, workspace_id)?;
+                let cwd = if from_db
+                    .as_ref()
+                    .is_some_and(|from_db| !from_db.as_os_str().is_empty())
+                {
+                    from_db
+                } else {
+                    workspace
+                        .upgrade()
+                        .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
+                };
+                let custom_title = custom_title.filter(|title| !title.trim().is_empty());
+                anyhow::Ok((cwd, custom_title))
+            })??;
 
             let terminal = project
                 .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
-                    let mut view = TerminalView::new(
-                        terminal,
-                        workspace,
-                        Some(workspace_id),
-                        project.downgrade(),
-                        window,
-                        cx,
-                    );
+                    let mut view =
+                        TerminalView::new(terminal, workspace, project.downgrade(), window, cx);
                     view.serialization_identity = Some((workspace_id, item_id));
 
                     if custom_title.is_some() {
@@ -2654,7 +2849,6 @@ mod tests {
                     TerminalView::new(
                         terminal.clone(),
                         workspace.downgrade(),
-                        None,
                         project.downgrade(),
                         window,
                         cx,
@@ -3008,7 +3202,6 @@ mod tests {
                 TerminalView::new(
                     terminal,
                     workspace.downgrade(),
-                    None,
                     project.downgrade(),
                     window,
                     cx,
@@ -3038,7 +3231,6 @@ mod tests {
                 TerminalView::new(
                     terminal,
                     workspace.downgrade(),
-                    None,
                     project.downgrade(),
                     window,
                     cx,
@@ -3069,7 +3261,6 @@ mod tests {
                 TerminalView::new(
                     terminal,
                     workspace.downgrade(),
-                    None,
                     project.downgrade(),
                     window,
                     cx,
@@ -3106,7 +3297,6 @@ mod tests {
                 TerminalView::new(
                     terminal,
                     workspace.downgrade(),
-                    None,
                     project.downgrade(),
                     window,
                     cx,
@@ -3138,7 +3328,6 @@ mod tests {
                 TerminalView::new(
                     terminal,
                     workspace.downgrade(),
-                    None,
                     project.downgrade(),
                     window,
                     cx,
@@ -3184,7 +3373,6 @@ mod tests {
             TerminalView::new(
                 terminal.clone(),
                 workspace.downgrade(),
-                None,
                 project.downgrade(),
                 window,
                 cx,
@@ -3251,7 +3439,6 @@ mod tests {
             let mut terminal_view = TerminalView::new(
                 terminal.clone(),
                 workspace.downgrade(),
-                None,
                 project.downgrade(),
                 window,
                 cx,
@@ -3293,7 +3480,6 @@ mod tests {
             let mut terminal_view = TerminalView::new(
                 terminal.clone(),
                 workspace.downgrade(),
-                None,
                 project.downgrade(),
                 window,
                 cx,
@@ -3348,7 +3534,6 @@ mod tests {
                 TerminalView::new(
                     terminal,
                     workspace.downgrade(),
-                    None,
                     project.downgrade(),
                     window,
                     cx,

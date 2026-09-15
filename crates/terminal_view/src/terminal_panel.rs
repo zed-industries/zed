@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -12,14 +12,18 @@ use std::{
 use crate::{
     TerminalView, default_working_directory,
     persistence::{
-        SerializedItems, SerializedTerminalPanel, TerminalDb, deserialize_terminal_panel,
-        serialize_pane_group,
+        SerializedItems, SerializedTerminalPanel, TerminalDb, TerminalSerializationAdmission,
+        deserialize_terminal_panel, serialize_pane_group,
     },
 };
 use breadcrumbs::Breadcrumbs;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use db::kvp::KeyValueStore;
-use futures::{channel::oneshot, future::join_all};
+use futures::{
+    FutureExt as _,
+    channel::oneshot,
+    future::{Shared, join_all},
+};
 use gpui::{
     Action, Anchor, App, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task, TaskExt,
@@ -86,14 +90,22 @@ pub fn init(cx: &mut App) {
 pub struct TerminalPanel {
     pub(crate) active_pane: Entity<Pane>,
     pub(crate) center: PaneGroup,
+    pub(crate) primary_item_ids: HashSet<workspace::ItemId>,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
     pending_serialization: Task<Option<()>>,
-    pending_publication: Option<Task<Option<()>>>,
+    pending_publication: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
+    known_item_ids: Arc<Mutex<HashSet<workspace::ItemId>>>,
     needs_cleanup: Arc<AtomicBool>,
     pending_terminals_to_add: usize,
     restoring: bool,
+    primary_loaded: bool,
+    recovery_loaded: bool,
+    published_recovery_item_ids: Arc<Mutex<HashSet<workspace::ItemId>>>,
+    restoration_error: Option<SharedString>,
+    publication_error: Option<SharedString>,
+    publication_token: Arc<()>,
     _restoration: Task<()>,
     _quit_subscription: Subscription,
     deferred_tasks: HashMap<TaskId, Task<()>>,
@@ -114,9 +126,17 @@ impl TerminalPanel {
             workspace: workspace.weak_handle(),
             pending_serialization: Task::ready(None),
             pending_publication: None,
+            known_item_ids: Arc::new(Mutex::new(HashSet::default())),
             needs_cleanup: Arc::new(AtomicBool::new(true)),
             pending_terminals_to_add: 0,
             restoring: false,
+            primary_loaded: true,
+            primary_item_ids: HashSet::default(),
+            recovery_loaded: true,
+            published_recovery_item_ids: Arc::new(Mutex::new(HashSet::default())),
+            restoration_error: None,
+            publication_error: None,
+            publication_token: Arc::new(()),
             _restoration: Task::ready(()),
             _quit_subscription: cx.on_app_quit(Self::app_will_quit),
             deferred_tasks: HashMap::default(),
@@ -246,6 +266,14 @@ impl TerminalPanel {
         format!("{TERMINAL_PANEL_KEY:?}-{id:?}")
     }
 
+    pub(crate) fn recovery_key_for_workspace_id(workspace_id: WorkspaceId) -> String {
+        format!(
+            "{}-recovery",
+            Self::serialization_key_for_workspace_id(workspace_id)
+        )
+    }
+
+    #[cfg(test)]
     fn serialization_key(workspace: &Workspace) -> Option<String> {
         workspace
             .database_id()
@@ -272,29 +300,45 @@ impl TerminalPanel {
             .ok();
 
         terminal_panel.update_in(&mut cx, |panel, window, cx| {
-            panel.restoring = true;
-            panel._restoration = cx.spawn_in(window, {
-                let workspace = workspace.clone();
-                async move |terminal_panel, cx| {
-                    let restored =
-                        Self::restore_serialized_state(workspace, terminal_panel.clone(), cx)
-                            .await
-                            .log_err()
-                            .unwrap_or(false);
-                    let default_shell_task = terminal_panel
-                        .update_in(cx, |terminal_panel, window, cx| {
-                            terminal_panel.finish_restoration(restored, window, cx)
-                        })
-                        .ok()
-                        .flatten();
-                    if let Some(task) = default_shell_task {
-                        task.await.log_err();
-                    }
-                }
-            });
+            panel.primary_loaded = false;
+            panel.recovery_loaded = false;
+            panel.retry_restoration(window, cx);
         })?;
 
         Ok(terminal_panel)
+    }
+
+    fn retry_restoration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.restoring {
+            return;
+        }
+        self.restoring = true;
+        let workspace = self.workspace.clone();
+        self._restoration = cx.spawn_in(window, async move |panel, cx| {
+            let result = Self::restore_serialized_state(workspace, panel.clone(), cx).await;
+            let default_shell = panel
+                .update_in(cx, |panel, window, cx| {
+                    let restored = match result {
+                        Ok(restored) => {
+                            panel.restoration_error = None;
+                            restored
+                        }
+                        Err(error) => {
+                            log::error!("Terminal panel restoration failed: {error:#}");
+                            panel.restoration_error =
+                                Some(SharedString::from(format!("{error:#}")));
+                            false
+                        }
+                    };
+                    panel.finish_restoration(restored, window, cx)
+                })
+                .log_err()
+                .flatten();
+            if let Some(task) = default_shell {
+                task.await.log_err();
+            }
+        });
+        cx.notify();
     }
 
     fn finish_restoration(
@@ -309,7 +353,11 @@ impl TerminalPanel {
             .panes()
             .into_iter()
             .any(|pane| pane.read(cx).items_len() > 0);
-        if restored || has_terminals {
+        if restored
+            || has_terminals
+            || !self.primary_item_ids.is_empty()
+            || self.publication_error.is_some()
+        {
             self.serialize(cx);
         }
         cx.notify();
@@ -336,47 +384,150 @@ impl TerminalPanel {
         terminal_panel: WeakEntity<Self>,
         cx: &mut AsyncWindowContext,
     ) -> Result<bool> {
+        let Some((database_id, kvp)) = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .database_id()
+                .map(|id| (id, KeyValueStore::global(cx)))
+        })?
+        else {
+            terminal_panel.update(cx, |panel, _| {
+                panel.primary_loaded = true;
+                panel.recovery_loaded = true;
+            })?;
+            return Ok(false);
+        };
         let mut restored = false;
-        if let Some((database_id, serialization_key, kvp)) = workspace
-            .read_with(cx, |workspace, cx| {
-                workspace
-                    .database_id()
-                    .zip(TerminalPanel::serialization_key(workspace))
-                    .map(|(id, key)| (id, key, KeyValueStore::global(cx)))
-            })
-            .ok()
-            .flatten()
-            && let Some(serialized_panel) = cx
-                .background_spawn(async move { kvp.read_kvp(&serialization_key) })
-                .await
-                .log_err()
-                .flatten()
-                .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
-                .transpose()
-                .log_err()
-                .flatten()
-        {
-            let started_at = std::time::Instant::now();
-            let deserialized = workspace
-                .update_in(cx, |workspace, window, cx| {
-                    deserialize_terminal_panel(
-                        workspace.weak_handle(),
-                        workspace.project().clone(),
-                        database_id,
-                        serialized_panel,
-                        terminal_panel.clone(),
-                        window,
-                        cx,
-                    )
-                })?
-                .await;
-            if let Some(restored_terminals) = deserialized.log_err() {
-                restored = restored_terminals > 0;
-                log::debug!(
-                    "terminal panel: restored {restored_terminals} serialized terminal(s) in {:?}",
-                    started_at.elapsed()
-                );
+        let mut errors = Vec::new();
+        for recovery in [true, false] {
+            let loaded = terminal_panel.read_with(cx, |panel, _| {
+                if recovery {
+                    panel.recovery_loaded
+                } else {
+                    panel.primary_loaded
+                }
+            })?;
+            if loaded {
+                continue;
             }
+            let key = if recovery {
+                Self::recovery_key_for_workspace_id(database_id)
+            } else {
+                Self::serialization_key_for_workspace_id(database_id)
+            };
+            let result: Result<usize> = async {
+                let raw = cx
+                    .background_spawn({
+                        let kvp = kvp.clone();
+                        async move { kvp.read_kvp(&key) }
+                    })
+                    .await?;
+                let Some(raw) = raw else {
+                    return Ok(0);
+                };
+                let serialized = serde_json::from_str::<SerializedTerminalPanel>(&raw)?;
+                serialized.validate_child_item_ids()?;
+                let saved_ids = serialized.item_ids().into_iter().collect::<HashSet<_>>();
+                workspace.update(cx, |workspace, cx| {
+                    let mut item_ids = serialized.item_ids();
+                    item_ids.extend(&serialized.primary_item_ids);
+                    workspace.reserve_serialized_item_ids(database_id, "Terminal", &item_ids, cx)
+                })??;
+                let known = terminal_panel.read_with(cx, |panel, cx| {
+                    let known = if recovery {
+                        let mut known = panel
+                            .published_recovery_item_ids
+                            .lock()
+                            .map_err(|error| anyhow!("Failed to read recovery publication state: {error}"))?
+                            .clone();
+                        known.extend(
+                            serialized
+                                .primary_item_ids
+                                .iter()
+                                .filter(|item_id| panel.primary_item_ids.contains(item_id)),
+                        );
+                        known
+                    } else {
+                        panel.primary_item_ids.clone()
+                    };
+                    let mut conflicts = panel
+                        .center
+                        .panes()
+                        .into_iter()
+                        .flat_map(|pane| {
+                            pane.read(cx)
+                                .items_of_type::<TerminalView>()
+                                .filter_map(|view| view.read(cx).serialization_identity())
+                                .filter_map(|(workspace_id, item_id)| {
+                                    (workspace_id == database_id
+                                        && saved_ids.contains(&item_id)
+                                        && !known.contains(&item_id))
+                                    .then_some(item_id)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+                    conflicts.sort_unstable();
+                    let layout = if recovery { "Recovery layout" } else { "Saved layout" };
+                    anyhow::ensure!(
+                        conflicts.is_empty(),
+                        "{layout} references conflict with new terminal IDs {conflicts:?}; repair the saved layout before retrying"
+                    );
+                    anyhow::Ok(known)
+                })??;
+                terminal_panel.update(cx, |panel, _| {
+                    panel.known_item_ids.lock().map_err(|error| anyhow!("Failed to read terminal publication state: {error}"))?.extend(&saved_ids);
+                    anyhow::Ok(())
+                })??;
+                let primary_item_ids = if recovery {
+                    serialized.primary_item_ids.clone()
+                } else {
+                    saved_ids.into_iter().collect()
+                };
+                let Some(mut serialized) = serialized.without_items(&known) else {
+                    terminal_panel.update(cx, |panel, _| {
+                        panel.primary_item_ids.extend(primary_item_ids);
+                    })?;
+                    return Ok(0);
+                };
+                serialized.primary_item_ids = primary_item_ids;
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        deserialize_terminal_panel(
+                            workspace.weak_handle(),
+                            workspace.project().clone(),
+                            database_id,
+                            serialized,
+                            terminal_panel.clone(),
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await
+            }
+            .await;
+            match result {
+                Ok(count) => {
+                    restored |= count > 0;
+                    terminal_panel.update(cx, |panel, _| {
+                        if recovery {
+                            panel.recovery_loaded = true;
+                        } else {
+                            panel.primary_loaded = true;
+                        }
+                    })?;
+                }
+                Err(error) => errors.push(format!(
+                    "{}: {error:#}",
+                    if recovery {
+                        "Recovery layout"
+                    } else {
+                        "Saved layout"
+                    }
+                )),
+            }
+        }
+        if !errors.is_empty() {
+            return Err(anyhow!("{}", errors.join("\n")));
         }
 
         let should_focus = workspace
@@ -513,7 +664,6 @@ impl TerminalPanel {
             return Task::ready(None);
         };
         let workspace = workspace.read(cx);
-        let database_id = workspace.database_id();
         let weak_workspace = self.workspace.clone();
         let project = workspace.project().clone();
         let active_pane = &self.active_pane;
@@ -564,7 +714,6 @@ impl TerminalPanel {
                         TerminalView::new(
                             terminal.clone(),
                             weak_workspace.clone(),
-                            database_id,
                             project.downgrade(),
                             window,
                             cx,
@@ -832,7 +981,6 @@ impl TerminalPanel {
                     TerminalView::new(
                         terminal.clone(),
                         workspace.weak_handle(),
-                        workspace.database_id(),
                         workspace.project().downgrade(),
                         window,
                         cx,
@@ -877,7 +1025,6 @@ impl TerminalPanel {
                     TerminalView::new(
                         terminal.clone(),
                         workspace.weak_handle(),
-                        workspace.database_id(),
                         workspace.project().downgrade(),
                         window,
                         cx,
@@ -937,7 +1084,6 @@ impl TerminalPanel {
                         TerminalView::new(
                             terminal.clone(),
                             workspace.weak_handle(),
-                            workspace.database_id(),
                             workspace.project().downgrade(),
                             window,
                             cx,
@@ -1024,9 +1170,6 @@ impl TerminalPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        if self.restoring {
-            return;
-        }
         self.pending_serialization = cx.spawn(async move |terminal_panel, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(50))
@@ -1038,76 +1181,201 @@ impl TerminalPanel {
         });
     }
 
-    fn serialize_now(&mut self, cx: &mut Context<Self>) {
-        if self.restoring {
-            return;
+    pub(crate) fn serialization_admission(
+        &self,
+        workspace: &mut Workspace,
+        workspace_id: WorkspaceId,
+        cx: &App,
+    ) -> Result<TerminalSerializationAdmission> {
+        let mut known_item_ids = self
+            .known_item_ids
+            .lock()
+            .map_err(|error| anyhow!("Failed to read terminal publication state: {error}"))?
+            .clone();
+        known_item_ids.extend(&self.primary_item_ids);
+        let recovery = self.restoring
+            || !self.primary_loaded
+            || !self.recovery_loaded
+            || workspace.is_restoring();
+        TerminalSerializationAdmission::new(workspace, workspace_id, recovery, known_item_ids, cx)
+    }
+
+    fn validate_serialized_item_ids(
+        &self,
+        workspace: &mut Workspace,
+        workspace_id: WorkspaceId,
+        cx: &App,
+    ) -> Result<TerminalSerializationAdmission> {
+        let admission = self.serialization_admission(workspace, workspace_id, cx)?;
+        let mut live_ids = HashSet::default();
+        for pane in self.center.panes() {
+            for terminal in pane.read(cx).items_of_type::<TerminalView>() {
+                if terminal.read(cx).terminal().read(cx).task().is_some() {
+                    continue;
+                }
+                let item_id = workspace.serialization_id("Terminal", terminal.entity_id(), cx)?;
+                anyhow::ensure!(
+                    terminal
+                        .read(cx)
+                        .serialization_identity()
+                        .is_none_or(|identity| identity == (workspace_id, item_id)),
+                    "Terminal serialization identity does not match its workspace assignment"
+                );
+                live_ids.insert(item_id);
+            }
         }
-        let Some((workspace_id, serialization_key, items, tasks, kvp)) = self
+        admission.validate(&live_ids)?;
+        Ok(admission)
+    }
+
+    fn serialize_now(&mut self, cx: &mut Context<Self>) {
+        self.publication_token = Arc::new(());
+        let mut recovery = self.restoring || !self.primary_loaded || !self.recovery_loaded;
+        let capture = self
             .workspace
             .update(cx, |workspace, cx| {
-                if workspace.is_restoring() {
-                    return None;
-                }
-                let workspace_id = workspace.database_id()?;
-                let serialization_key = Self::serialization_key(workspace)?;
-                let (group, tasks) =
-                    serialize_pane_group(&self.center, &self.active_pane, workspace, cx)
-                        .log_err()?;
-                Some((
+                recovery |= workspace.is_restoring();
+                let Some(workspace_id) = workspace.database_id() else {
+                    return Ok(None);
+                };
+                let admission = self.validate_serialized_item_ids(workspace, workspace_id, cx)?;
+                let (group, tasks) = serialize_pane_group(
+                    &self.center,
+                    &self.active_pane,
+                    workspace,
+                    &admission,
+                    cx,
+                )?;
+                anyhow::Ok(Some((
                     workspace_id,
-                    serialization_key,
                     SerializedTerminalPanel {
                         items: SerializedItems::WithSplits(group),
                         active_item_id: None,
+                        primary_item_ids: self.primary_item_ids.iter().copied().collect(),
                     },
                     tasks,
-                    KeyValueStore::global(cx),
-                ))
+                    TerminalDb::global(cx),
+                )))
             })
-            .log_err()
-            .flatten()
-        else {
-            return;
-        };
-        let cleanup = if self.needs_cleanup.load(Ordering::Relaxed) {
-            let Some(cleanup) = self.cleanup(workspace_id, items.item_ids(), cx).log_err() else {
-                return;
-            };
-            Some(cleanup)
-        } else {
-            None
-        };
+            .and_then(|capture| capture);
+        let capture = capture.and_then(|capture| {
+            capture
+                .map(|(workspace_id, items, tasks, db)| {
+                    let cleanup = if !recovery && self.needs_cleanup.load(Ordering::Relaxed) {
+                        Some(self.cleanup(workspace_id, items.item_ids(), cx)?)
+                    } else {
+                        None
+                    };
+                    anyhow::Ok((workspace_id, items, tasks, db, cleanup))
+                })
+                .transpose()
+        });
+        if let Err(error) = &capture {
+            self.publication_error = Some(SharedString::from(format!("{error:#}")));
+            cx.notify();
+        }
         let needs_cleanup = self.needs_cleanup.clone();
         let previous = self.pending_publication.take();
-        self.pending_publication = Some(cx.background_spawn(async move {
-            if let Some(previous) = previous {
-                previous.await;
+        let recovery_loaded = self.recovery_loaded;
+        let known_item_ids = self.known_item_ids.clone();
+        let published_recovery_item_ids = self.published_recovery_item_ids.clone();
+        let (completion, completed) = oneshot::channel();
+        self.pending_publication = Some(
+            cx.background_spawn(async move {
+                if let Some(previous) = previous {
+                    previous.await.log_err();
+                }
+                let result: Result<()> = async {
+                    let Some((workspace_id, items, tasks, db, cleanup)) = capture? else {
+                        return Ok(());
+                    };
+                    for result in join_all(tasks).await {
+                        result?;
+                    }
+                    let previous_live_ids = published_recovery_item_ids
+                        .lock()
+                        .map_err(|error| {
+                            anyhow!("Failed to read recovery publication state: {error}")
+                        })?
+                        .clone();
+                    let item_ids = items.item_ids();
+                    let live_ids = if recovery {
+                        item_ids.iter().copied().collect::<HashSet<_>>()
+                    } else {
+                        HashSet::default()
+                    };
+                    db.save_panel(
+                        workspace_id,
+                        items,
+                        recovery,
+                        recovery_loaded,
+                        previous_live_ids,
+                    )
+                    .await?;
+                    known_item_ids
+                        .lock()
+                        .map_err(|error| {
+                            anyhow!("Failed to update terminal publication state: {error}")
+                        })?
+                        .extend(item_ids);
+                    *published_recovery_item_ids.lock().map_err(|error| {
+                        anyhow!("Failed to update recovery publication state: {error}")
+                    })? = live_ids;
+                    if needs_cleanup.load(Ordering::Relaxed)
+                        && let Some(cleanup) = cleanup
+                    {
+                        cleanup.await?;
+                        needs_cleanup.store(false, Ordering::Relaxed);
+                    }
+                    Ok(())
+                }
+                .await;
+                let error = result
+                    .as_ref()
+                    .err()
+                    .map(|error| SharedString::from(format!("{error:#}")));
+                if completion.send(error).is_err() {
+                    log::debug!("Terminal panel publication observer was dropped");
+                }
+                if let Err(error) = &result {
+                    log::error!("Failed to publish terminal panel: {error:#}");
+                }
+                result.map_err(Arc::new)
+            })
+            .shared(),
+        );
+        let publication_token = self.publication_token.clone();
+        cx.spawn(async move |panel, cx| {
+            if let Ok(error) = completed.await {
+                panel
+                    .update(cx, |panel, cx| {
+                        if Arc::ptr_eq(&panel.publication_token, &publication_token) {
+                            panel.publication_error = error;
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
             }
-            for result in join_all(tasks).await {
-                result.log_err()?;
+        })
+        .detach();
+    }
+
+    fn flush_serialization(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.pending_serialization = Task::ready(None);
+        self.serialize_now(cx);
+        let publication = self.pending_publication.clone();
+        cx.background_spawn(async move {
+            if let Some(publication) = publication {
+                publication.await.map_err(|error| anyhow!(error))?;
             }
-            let serialized = serde_json::to_string(&items).log_err()?;
-            kvp.write_kvp(serialization_key, serialized)
-                .await
-                .log_err()?;
-            if needs_cleanup.load(Ordering::Relaxed)
-                && let Some(cleanup) = cleanup
-            {
-                cleanup.await.log_err()?;
-                needs_cleanup.store(false, Ordering::Relaxed);
-            }
-            Some(())
-        }));
+            Ok(())
+        })
     }
 
     fn app_will_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        self.pending_serialization = Task::ready(None);
-        self.serialize_now(cx);
-        let publication = self.pending_publication.take();
+        let flush = self.flush_serialization(cx);
         cx.background_spawn(async move {
-            if let Some(publication) = publication {
-                publication.await;
-            }
+            flush.await.log_err();
         })
     }
 
@@ -1118,7 +1386,7 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Result<impl Future<Output = Result<()>> + use<>> {
         self.workspace.update(cx, |workspace, cx| {
-            item_ids.extend(workspace.assigned_serialized_item_ids("Terminal"));
+            item_ids.extend(workspace.live_serialized_item_ids("Terminal", cx));
             TerminalDb::global(cx).prepare_cleanup(workspace_id, item_ids)
         })
     }
@@ -1533,13 +1801,48 @@ impl Render for TerminalPanel {
                 )
                 .child(Label::new(label).color(Color::Muted))
         });
+        let recovery_notice = self
+            .publication_error
+            .clone()
+            .or_else(|| self.restoration_error.clone())
+            .map(|error| {
+                h_flex()
+                    .p_2()
+                    .gap_2()
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .child(Label::new(if self.publication_error.is_some() {
+                                "Terminal changes could not be saved"
+                            } else {
+                                "Saved terminal layout could not be loaded"
+                            }))
+                            .child(Label::new(error).size(LabelSize::Small).color(Color::Muted))
+                            .when(self.publication_error.is_some(), |notice| {
+                                notice.child(
+                                    Label::new("Keep this window open and retry before closing to avoid losing unsaved terminal changes")
+                                        .size(LabelSize::Small),
+                                )
+                            }),
+                    )
+                    .child(
+                        Button::new("retry-terminal-panel-restoration", "Retry")
+                            .disabled(self.restoring)
+                            .on_click(cx.listener(|panel, _, window, cx| {
+                                panel.retry_restoration(window, cx)
+                            })),
+                    )
+            });
         self.workspace
             .update(cx, |workspace, cx| {
                 registrar
                     .track_focus(&self.focus_handle)
                     .size_full()
                     .relative()
-                    .child(self.center.render(
+                    .flex()
+                    .flex_col()
+                    .children(recovery_notice)
+                    .child(div().flex_1().min_h_0().child(self.center.render(
                         workspace.zoomed_item(),
                         None,
                         &workspace::PaneRenderContext {
@@ -1552,7 +1855,7 @@ impl Render for TerminalPanel {
                         },
                         window,
                         cx,
-                    ))
+                    )))
                     .children(restoring_placeholder)
             })
             .ok()
@@ -1852,6 +2155,21 @@ impl Panel for TerminalPanel {
 struct TerminalProvider(Entity<TerminalPanel>);
 
 impl workspace::TerminalProvider for TerminalProvider {
+    fn flush_serialization(&self, cx: &mut App) -> Task<Result<()>> {
+        let panel = self.0.clone();
+        let (completion, completed) = oneshot::channel();
+        cx.spawn(async move |cx| {
+            let result = panel
+                .update(cx, |panel, cx| panel.flush_serialization(cx))
+                .await;
+            if let Err(result) = completion.send(result) {
+                result.log_err();
+            }
+        })
+        .detach();
+        cx.background_spawn(async move { completed.await? })
+    }
+
     fn spawn(
         &self,
         task: SpawnInTerminal,
@@ -1913,7 +2231,1232 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
-    use workspace::{ItemId, MultiWorkspace, SerializableItem as _, item::ItemEvent};
+    use workspace::{
+        ItemId, MultiWorkspace, SaveIntent, SerializableItem as _,
+        item::{Item as _, ItemEvent, SaveDisposition},
+    };
+
+    #[gpui::test]
+    async fn test_panel_fallible_flush_retries_storage_failures(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        for payload_failure in [true, false] {
+            let (window, panel) = init_workspace_with_panel(cx).await;
+            let workspace = window
+                .update(cx, |multi_workspace, _, _| {
+                    multi_workspace.workspace().clone()
+                })
+                .unwrap();
+            let workspace_id = initialize_terminal_persistence(&workspace, &[], cx).await;
+            let db = cx.update(|cx| TerminalDb::global(cx));
+            let kvp = cx.update(|cx| KeyValueStore::global(cx));
+            let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+            db.write(move |connection| {
+                connection.exec(if payload_failure {
+                    "CREATE TRIGGER fail_panel_flush BEFORE INSERT ON terminals
+                     BEGIN SELECT RAISE(FAIL, 'injected terminal payload failure'); END"
+                } else {
+                    "CREATE TRIGGER fail_panel_flush BEFORE INSERT ON kv_store
+                     WHEN NEW.key LIKE '%TerminalPanel%'
+                     BEGIN SELECT RAISE(FAIL, 'injected terminal graph failure'); END"
+                })?()
+            })
+            .await
+            .unwrap();
+            let (_, item_id) = window
+                .update(cx, |_, window, cx| {
+                    let pane = panel.read(cx).active_pane.clone();
+                    let terminal =
+                        add_panel_display_terminal(&workspace, &pane, "retained", window, cx);
+                    panel.update(cx, |panel, _| {
+                        panel.pending_serialization = Task::ready(None)
+                    });
+                    terminal
+                })
+                .unwrap();
+            assert!(
+                panel
+                    .update(cx, |panel, cx| panel.flush_serialization(cx))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(kvp.read_kvp(&key).unwrap(), None);
+            assert_eq!(panel_terminal_ids(&panel, cx), vec![item_id]);
+            db.write(|connection| connection.exec("DROP TRIGGER fail_panel_flush")?())
+                .await
+                .unwrap();
+            panel
+                .update(cx, |panel, cx| panel.flush_serialization(cx))
+                .await
+                .unwrap();
+            assert_eq!(saved_panel_terminal_ids(&kvp, &key), vec![item_id]);
+            assert_eq!(
+                db.get_terminal(item_id, workspace_id).unwrap(),
+                (None, Some(String::from("retained")))
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_panel_flush_survives_dropped_waiters(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window, panel) = init_workspace_with_panel(cx).await;
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[], cx).await;
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+        let (release, wait) = oneshot::channel();
+        let (_, item_id) = window
+            .update(cx, |_, window, cx| {
+                let pane = panel.read(cx).active_pane.clone();
+                let terminal = add_panel_display_terminal(&workspace, &pane, "queued", window, cx);
+                panel.update(cx, |panel, cx| {
+                    panel.pending_serialization = Task::ready(None);
+                    panel.pending_publication = Some(
+                        cx.background_spawn(async move {
+                            wait.await.map_err(|error| Arc::new(anyhow!(error)))
+                        })
+                        .shared(),
+                    );
+                    drop(panel.flush_serialization(cx));
+                });
+                terminal
+            })
+            .unwrap();
+        drop(cx.update(|cx| {
+            workspace::TerminalProvider::flush_serialization(&TerminalProvider(panel.clone()), cx)
+        }));
+        cx.run_until_parked();
+        assert_eq!(kvp.read_kvp(&key).unwrap(), None);
+        release.send(()).unwrap();
+        panel
+            .update(cx, |panel, _| panel.pending_publication.clone())
+            .unwrap()
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(saved_panel_terminal_ids(&kvp, &key), vec![item_id]);
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        assert_eq!(
+            db.get_terminal(item_id, workspace_id).unwrap(),
+            (None, Some(String::from("queued")))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_panel_flush_replaces_completed_success_with_capture_failure(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        for unreadable_sidecar in [false, true] {
+            let (window, panel) = init_workspace_with_panel(cx).await;
+            let workspace = window
+                .update(cx, |multi_workspace, _, _| {
+                    multi_workspace.workspace().clone()
+                })
+                .unwrap();
+            let workspace_id = initialize_terminal_persistence(&workspace, &[], cx).await;
+            let db = cx.update(|cx| TerminalDb::global(cx));
+            let kvp = cx.update(|cx| KeyValueStore::global(cx));
+            let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+            let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+            let (first, first_id) = window
+                .update(cx, |_, window, cx| {
+                    let pane = panel.read(cx).active_pane.clone();
+                    add_panel_display_terminal(&workspace, &pane, "first", window, cx)
+                })
+                .unwrap();
+            panel
+                .update(cx, |panel, cx| panel.flush_serialization(cx))
+                .await
+                .unwrap();
+            let previous = panel
+                .update(cx, |panel, _| panel.pending_publication.clone())
+                .unwrap();
+            let saved = kvp.read_kvp(&key).unwrap();
+            let (_, second_id) = window
+                .update(cx, |_, window, cx| {
+                    first.update(cx, |first, cx| {
+                        first.set_custom_title(Some(String::from("changed")), cx)
+                    });
+                    let pane = panel.read(cx).active_pane.clone();
+                    let terminal =
+                        add_panel_display_terminal(&workspace, &pane, "second", window, cx);
+                    panel.update(cx, |panel, _| {
+                        panel.pending_serialization = Task::ready(None)
+                    });
+                    terminal
+                })
+                .unwrap();
+            cx.update(|cx| {
+                cx.foreground_executor()
+                    .block_with_timeout(Duration::from_secs(1), async {
+                        if unreadable_sidecar {
+                            kvp.write_kvp(recovery_key.clone(), String::from("{")).await
+                        } else {
+                            db.write(|connection| {
+                                connection
+                                    .exec("ALTER TABLE kv_store RENAME TO unavailable_kv_store")?(
+                                )
+                            })
+                            .await
+                        }
+                    })
+                    .unwrap_or_else(|_| panic!("storage failure requires foreground work"))
+                    .unwrap();
+            });
+            let flush = panel.update(cx, |panel, cx| panel.flush_serialization(cx));
+            assert!(flush.await.is_err());
+            previous.await.unwrap();
+            assert!(
+                panel
+                    .update(cx, |panel, _| panel.pending_publication.clone())
+                    .unwrap()
+                    .await
+                    .is_err()
+            );
+            assert_eq!(db.item_ids(workspace_id).unwrap(), vec![first_id]);
+            assert_eq!(
+                db.get_terminal(first_id, workspace_id).unwrap(),
+                (None, Some(String::from("first")))
+            );
+            if unreadable_sidecar {
+                assert_eq!(kvp.read_kvp(&recovery_key).unwrap().as_deref(), Some("{"));
+                kvp.delete_kvp(recovery_key).await.unwrap();
+            } else {
+                db.write(|connection| {
+                    connection.exec("ALTER TABLE unavailable_kv_store RENAME TO kv_store")?()
+                })
+                .await
+                .unwrap();
+            }
+            assert_eq!(kvp.read_kvp(&key).unwrap(), saved);
+            panel
+                .update(cx, |panel, cx| panel.flush_serialization(cx))
+                .await
+                .unwrap();
+            assert_eq!(
+                saved_panel_terminal_ids(&kvp, &key),
+                vec![first_id, second_id]
+            );
+            assert_eq!(
+                db.get_terminal(first_id, workspace_id).unwrap(),
+                (None, Some(String::from("changed")))
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_panel_late_graph_collision_precedes_all_payload_writes(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        for saved_recovery in [false, true] {
+            for loaded in [false, true] {
+                let (window, panel) = init_workspace_with_panel(cx).await;
+                let workspace = window
+                    .update(cx, |multi_workspace, _, _| {
+                        multi_workspace.workspace().clone()
+                    })
+                    .unwrap();
+                let workspace_id = initialize_terminal_persistence(&workspace, &[], cx).await;
+                let db = cx.update(|cx| TerminalDb::global(cx));
+                let kvp = cx.update(|cx| KeyValueStore::global(cx));
+                let (_, collision_id) = window
+                    .update(cx, |_, window, cx| {
+                        let pane = panel.read(cx).active_pane.clone();
+                        add_panel_display_terminal(
+                            &workspace,
+                            &pane,
+                            "earlier new terminal",
+                            window,
+                            cx,
+                        );
+                        let collision = add_panel_display_terminal(
+                            &workspace,
+                            &pane,
+                            "must not overwrite",
+                            window,
+                            cx,
+                        );
+                        panel.update(cx, |panel, _| {
+                            panel.pending_serialization = Task::ready(None);
+                            panel.primary_loaded = loaded;
+                            panel.recovery_loaded = loaded;
+                        });
+                        collision
+                    })
+                    .unwrap();
+                if loaded {
+                    db.write(|connection| {
+                        connection.exec(
+                            "CREATE TRIGGER fail_late_panel_payload BEFORE INSERT ON terminals
+                             BEGIN SELECT RAISE(FAIL, 'injected terminal payload failure'); END",
+                        )?()
+                    })
+                    .await
+                    .unwrap();
+                    assert!(
+                        panel
+                            .update(cx, |panel, cx| panel.flush_serialization(cx))
+                            .await
+                            .is_err()
+                    );
+                    db.write(|connection| {
+                        connection.exec("DROP TRIGGER fail_late_panel_payload")?()
+                    })
+                    .await
+                    .unwrap();
+                }
+                let key = if saved_recovery {
+                    TerminalPanel::recovery_key_for_workspace_id(workspace_id)
+                } else {
+                    TerminalPanel::serialization_key_for_workspace_id(workspace_id)
+                };
+                let raw =
+                    serde_json::json!({"items": [collision_id], "active_item_id": collision_id})
+                        .to_string();
+                kvp.write_kvp(key.clone(), raw.clone()).await.unwrap();
+                db.save_terminal(
+                    collision_id,
+                    workspace_id,
+                    None,
+                    Some(String::from("saved payload")),
+                )
+                .await
+                .unwrap();
+                let error = panel
+                    .update(cx, |panel, cx| panel.flush_serialization(cx))
+                    .await
+                    .unwrap_err();
+                let layout = if saved_recovery {
+                    "Recovery layout"
+                } else {
+                    "Saved layout"
+                };
+                assert_eq!(
+                    error.to_string(),
+                    format!(
+                        "{layout} references conflict with new terminal IDs [{collision_id}]; repair the saved references before retrying"
+                    )
+                );
+                assert_eq!(kvp.read_kvp(&key).unwrap(), Some(raw));
+                assert_eq!(db.item_ids(workspace_id).unwrap(), vec![collision_id]);
+                assert_eq!(
+                    db.get_terminal(collision_id, workspace_id).unwrap(),
+                    (None, Some(String::from("saved payload")))
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_queued_terminal_payload_rejects_repaired_graph_collision(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        for recovery in [false, true] {
+            for in_center in [false, true] {
+                let (window, panel) = init_workspace_with_panel(cx).await;
+                let workspace = window
+                    .update(cx, |multi_workspace, _, _| {
+                        multi_workspace.workspace().clone()
+                    })
+                    .unwrap();
+                let workspace_id = initialize_terminal_persistence(&workspace, &[], cx).await;
+                let db = cx.update(|cx| TerminalDb::global(cx));
+                let kvp = cx.update(|cx| KeyValueStore::global(cx));
+                let primary_key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+                kvp.write_kvp(primary_key.clone(), String::from("{"))
+                    .await
+                    .unwrap();
+                let (live, item_id) = window
+                    .update(cx, |_, window, cx| {
+                        let pane = if in_center {
+                            workspace.read(cx).active_pane().clone()
+                        } else {
+                            panel.read(cx).active_pane.clone()
+                        };
+                        add_panel_display_terminal(&workspace, &pane, "LIVE_λ", window, cx)
+                    })
+                    .unwrap();
+                panel.update(cx, |panel, _| {
+                    panel.primary_loaded = false;
+                    panel.pending_serialization = Task::ready(None);
+                });
+                assert_eq!(db.item_ids(workspace_id).unwrap(), Vec::<ItemId>::new());
+                let key = if recovery {
+                    TerminalPanel::recovery_key_for_workspace_id(workspace_id)
+                } else {
+                    primary_key
+                };
+                let saved =
+                    serde_json::json!({"items": [item_id], "active_item_id": item_id}).to_string();
+                cx.update(|cx| {
+                    cx.foreground_executor()
+                        .block_with_timeout(Duration::from_secs(1), async {
+                            kvp.write_kvp(key.clone(), saved.clone()).await?;
+                            db.save_terminal(
+                                item_id,
+                                workspace_id,
+                                Some(PathBuf::from("saved_λ")),
+                                Some(String::from("SAVE_λ")),
+                            )
+                            .await
+                        })
+                        .unwrap_or_else(|_| panic!("repair requires foreground work"))
+                        .unwrap();
+                });
+                cx.run_until_parked();
+                cx.executor()
+                    .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+                cx.run_until_parked();
+                assert_eq!(kvp.read_kvp(&key).unwrap(), Some(saved));
+                assert_eq!(
+                    db.get_terminal(item_id, workspace_id).unwrap(),
+                    (Some(PathBuf::from("saved_λ")), Some(String::from("SAVE_λ")))
+                );
+                assert_eq!(db.item_ids(workspace_id).unwrap(), vec![item_id]);
+                live.read_with(cx, |live, _| {
+                    assert_eq!(live.serialization_identity(), Some((workspace_id, item_id)));
+                    assert_eq!(live.custom_title(), Some("LIVE_λ"));
+                    assert!(live.needs_serialize);
+                    assert!(live.pending_serialization.is_none());
+                });
+                assert!(panel.read_with(cx, |panel, _| panel.pending_publication.is_none()));
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_stale_source_queue_preserves_moved_terminal_metadata(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (source_window, source_panel) = init_workspace_with_panel(cx).await;
+        let source = source_window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let source_id = initialize_terminal_persistence(&source, &[], cx).await;
+        let (destination_window, destination_panel) = init_workspace_with_panel(cx).await;
+        let destination = destination_window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let destination_id = initialize_terminal_persistence(&destination, &[], cx).await;
+        let (view, source_item_id) = source_window
+            .update(cx, |_, window, cx| {
+                let pane = source_panel.read(cx).active_pane.clone();
+                add_panel_display_terminal(&source, &pane, "SAVE_λ", window, cx)
+            })
+            .unwrap();
+        source_panel
+            .update(cx, |panel, cx| panel.flush_serialization(cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        view.update(cx, |view, cx| {
+            view.set_custom_title(Some(String::from("queued_λ")), cx)
+        });
+        cx.run_until_parked();
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let saved_cwd = PathBuf::from("source_saved_λ");
+        cx.update(|cx| {
+            cx.foreground_executor()
+                .block_with_timeout(
+                    Duration::from_secs(1),
+                    db.save_terminal(
+                        source_item_id,
+                        source_id,
+                        Some(saved_cwd.clone()),
+                        Some(String::from("SAVE_λ")),
+                    ),
+                )
+                .unwrap_or_else(|_| panic!("source sentinel requires foreground work"))
+                .unwrap();
+        });
+        view.update(cx, |view, cx| {
+            view.set_custom_title(Some(String::from("LIVE_λ")), cx)
+        });
+        cx.run_until_parked();
+        let source_pane = source_panel.read_with(cx, |panel, _| panel.active_pane.clone());
+        let destination_pane =
+            destination_panel.read_with(cx, |panel, _| panel.active_pane.clone());
+        destination_window
+            .update(cx, |_, window, cx| {
+                workspace::move_item(
+                    &source_pane,
+                    &destination_pane,
+                    view.entity_id(),
+                    0,
+                    true,
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
+        for panel in [&source_panel, &destination_panel] {
+            panel.update(cx, |panel, _| {
+                panel.pending_serialization = Task::ready(None)
+            });
+        }
+        let destination_item_id = destination
+            .update(cx, |workspace, cx| {
+                workspace.serialization_id("Terminal", view.entity_id(), cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        let live_cwd = view.read_with(cx, |view, cx| {
+            assert_eq!(view.workspace, destination.downgrade());
+            assert_eq!(
+                view.serialization_identity(),
+                Some((destination_id, destination_item_id))
+            );
+            assert_eq!(view.custom_title(), Some("LIVE_λ"));
+            view.terminal().read(cx).working_directory()
+        });
+        assert_eq!(live_cwd, None);
+        assert_eq!(
+            db.get_terminal(source_item_id, source_id).unwrap(),
+            (Some(saved_cwd.clone()), Some(String::from("SAVE_λ")))
+        );
+        let flush = cx.update(|cx| {
+            workspace::TerminalProvider::flush_serialization(
+                &TerminalProvider(destination_panel.clone()),
+                cx,
+            )
+        });
+        flush.await.unwrap();
+        assert_eq!(
+            db.get_terminal(destination_item_id, destination_id)
+                .unwrap(),
+            (live_cwd, Some(String::from("LIVE_λ")))
+        );
+        assert_eq!(
+            db.get_terminal(source_item_id, source_id).unwrap(),
+            (Some(saved_cwd), Some(String::from("SAVE_λ")))
+        );
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        assert_eq!(
+            saved_panel_terminal_ids(
+                &kvp,
+                &TerminalPanel::serialization_key_for_workspace_id(destination_id)
+            ),
+            vec![destination_item_id]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_duplicate_terminal_children_reject_before_spawn_and_retry(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        for recovery in [false, true] {
+            for items in [
+                serde_json::json!([701, 701]),
+                serde_json::json!({"Pane": {"active": true, "children": [701, 701], "active_item": 701}}),
+                serde_json::json!({"Group": {"axis": "horizontal", "flexes": null, "children": [
+                    {"Pane": {"active": true, "children": [701], "active_item": 701}},
+                    {"Group": {"axis": "vertical", "flexes": null, "children": [
+                        {"Pane": {"active": false, "children": [701], "active_item": 701}}
+                    ]}}
+                ]}}),
+            ] {
+                let (window, panel) = init_workspace_with_panel(cx).await;
+                let workspace = window
+                    .update(cx, |multi_workspace, _, _| {
+                        multi_workspace.workspace().clone()
+                    })
+                    .unwrap();
+                let workspace_id = initialize_terminal_persistence(&workspace, &[701], cx).await;
+                let db = cx.update(|cx| TerminalDb::global(cx));
+                db.save_terminal(701, workspace_id, None, Some(String::from("SAVE_λ")))
+                    .await
+                    .unwrap();
+                let kvp = cx.update(|cx| KeyValueStore::global(cx));
+                let key = if recovery {
+                    TerminalPanel::recovery_key_for_workspace_id(workspace_id)
+                } else {
+                    TerminalPanel::serialization_key_for_workspace_id(workspace_id)
+                };
+                let saved = serde_json::json!({"items": items, "active_item_id": 701}).to_string();
+                kvp.write_kvp(key.clone(), saved.clone()).await.unwrap();
+                let (live, live_id) = window
+                    .update(cx, |_, window, cx| {
+                        let pane = panel.read(cx).active_pane.clone();
+                        let live =
+                            add_panel_display_terminal(&workspace, &pane, "LIVE_λ", window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.primary_loaded = recovery;
+                            panel.recovery_loaded = !recovery;
+                            panel.retry_restoration(window, cx);
+                        });
+                        live
+                    })
+                    .unwrap();
+                panel
+                    .update(cx, |panel, _| {
+                        std::mem::replace(&mut panel._restoration, Task::ready(()))
+                    })
+                    .await;
+                cx.run_until_parked();
+                let layout = if recovery {
+                    "Recovery layout"
+                } else {
+                    "Saved layout"
+                };
+                assert_eq!(
+                    panel.read_with(cx, |panel, _| panel
+                        .restoration_error
+                        .as_ref()
+                        .map(ToString::to_string)),
+                    Some(format!(
+                        "{layout}: Terminal layout contains duplicate child ID 701"
+                    ))
+                );
+                assert_eq!(panel_terminal_ids(&panel, cx), vec![live_id]);
+                assert_eq!(
+                    workspace.read_with(cx, |workspace, _| workspace
+                        .assigned_serialized_item_ids("Terminal")),
+                    vec![live_id]
+                );
+                assert_eq!(
+                    db.get_terminal(701, workspace_id).unwrap(),
+                    (None, Some(String::from("SAVE_λ")))
+                );
+                assert_eq!(kvp.read_kvp(&key).unwrap(), Some(saved));
+                kvp.write_kvp(
+                    key.clone(),
+                    String::from(r#"{"items":[701],"active_item_id":701}"#),
+                )
+                .await
+                .unwrap();
+                window
+                    .update(cx, |_, window, cx| {
+                        panel.update(cx, |panel, cx| panel.retry_restoration(window, cx))
+                    })
+                    .unwrap();
+                panel
+                    .update(cx, |panel, _| {
+                        std::mem::replace(&mut panel._restoration, Task::ready(()))
+                    })
+                    .await;
+                assert_eq!(
+                    panel.read_with(cx, |panel, _| panel.restoration_error.clone()),
+                    None
+                );
+                assert_eq!(panel_terminal_ids(&panel, cx), vec![701, live_id]);
+                assert_eq!(panel_terminal(&panel, live_id, cx), live);
+                let restored = panel_terminal(&panel, 701, cx);
+                assert_eq!(
+                    restored.read_with(cx, |view, _| view.custom_title().map(String::from)),
+                    Some(String::from("SAVE_λ"))
+                );
+                panel
+                    .update(cx, |panel, cx| panel.flush_serialization(cx))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    db.get_custom_title(701, workspace_id).unwrap(),
+                    Some(String::from("SAVE_λ"))
+                );
+                assert_eq!(panel_terminal(&panel, 701, cx), restored);
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_failed_terminal_batch_releases_registered_owners(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        for (split, visible) in [(false, false), (true, false), (false, true), (true, true)] {
+            let (window, panel) = init_workspace_with_panel(cx).await;
+            let workspace = window
+                .update(cx, |multi_workspace, _, _| {
+                    multi_workspace.workspace().clone()
+                })
+                .unwrap();
+            let workspace_id = initialize_terminal_persistence(&workspace, &[701, 702], cx).await;
+            let db = cx.update(|cx| TerminalDb::global(cx));
+            db.save_terminal(701, workspace_id, None, Some(String::from("SAVE_λ")))
+                .await
+                .unwrap();
+            let kvp = cx.update(|cx| KeyValueStore::global(cx));
+            let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+            let saved = if split {
+                serde_json::json!({"items": {"Group": {"axis": "horizontal", "flexes": null, "children": [
+                {"Pane": {"active": true, "children": [701], "active_item": 701}},
+                {"Pane": {"active": false, "children": [702], "active_item": 702}}
+            ]}}, "active_item_id": 701}).to_string()
+            } else {
+                String::from(r#"{"items":[701,702],"active_item_id":701}"#)
+            };
+            kvp.write_kvp(key.clone(), saved.clone()).await.unwrap();
+
+            let (original, live) = window
+                .update(cx, |_, window, cx| {
+                    let pane = workspace.read(cx).active_pane().clone();
+                    let original =
+                        add_failed_terminal(&workspace, &pane, workspace_id, 702, window, cx);
+                    let live = visible.then(|| {
+                        let pane = panel.read(cx).active_pane.clone();
+                        let live =
+                            add_panel_display_terminal(&workspace, &pane, "LIVE_λ", window, cx);
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.focus_panel::<TerminalPanel>(window, cx);
+                        });
+                        live
+                    });
+                    (original, live)
+                })
+                .unwrap();
+            cx.run_until_parked();
+            let active_pane = panel.read_with(cx, |panel, _| panel.active_pane.clone());
+            let pane_state = terminal_pane_state(&active_pane, cx);
+            let status_item = window
+                .update(cx, |_, window, cx| {
+                    observe_terminal_status(&workspace, window, cx)
+                })
+                .unwrap();
+            let status_item_id = live
+                .as_ref()
+                .map_or(original.entity_id(), |(live, _)| live.entity_id());
+            assert_eq!(
+                status_item.read_with(cx, |item, _| item.item_ids.clone()),
+                vec![Some(status_item_id)]
+            );
+            window
+                .update(cx, |_, window, cx| {
+                    panel.update(cx, |panel, cx| {
+                        panel.primary_loaded = false;
+                        panel.retry_restoration(window, cx);
+                    });
+                })
+                .unwrap();
+            panel
+                .update(cx, |panel, _| {
+                    std::mem::replace(&mut panel._restoration, Task::ready(()))
+                })
+                .await;
+            cx.run_until_parked();
+            assert_eq!(
+                panel.read_with(cx, |panel, _| panel
+                    .restoration_error
+                    .as_ref()
+                    .map(ToString::to_string)),
+                Some(String::from(
+                    "Saved layout: serialized item ID 702 already belongs to another item"
+                ))
+            );
+            let live_panel_ids = live.iter().map(|(_, item_id)| *item_id).collect::<Vec<_>>();
+            assert_eq!(panel_terminal_ids(&panel, cx), live_panel_ids);
+            assert_eq!(
+                panel.read_with(cx, |panel, _| panel.active_pane.clone()),
+                active_pane
+            );
+            assert_eq!(
+                panel.read_with(cx, |panel, _| panel
+                    .center
+                    .panes()
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>()),
+                vec![active_pane.clone()]
+            );
+            assert_eq!(terminal_pane_state(&active_pane, cx), pane_state);
+            assert_eq!(
+                status_item.read_with(cx, |item, _| item.item_ids.clone()),
+                vec![Some(status_item_id)]
+            );
+            if let Some((live, _)) = &live {
+                window
+                    .update(cx, |_, window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            assert!(
+                                workspace.is_dock_at_position_open(
+                                    panel.read(cx).position(window, cx),
+                                    cx
+                                )
+                            );
+                        });
+                        assert!(live.focus_handle(cx).contains_focused(window, cx));
+                    })
+                    .unwrap();
+            }
+            cx.executor()
+                .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+            cx.run_until_parked();
+            db.write(|_| ()).await;
+            cx.run_until_parked();
+
+            let mut live_owner_ids = vec![702];
+            live_owner_ids.extend(&live_panel_ids);
+            live_owner_ids.sort_unstable();
+            assert_eq!(
+                workspace.read_with(cx, |workspace, cx| workspace
+                    .live_serialized_item_ids("Terminal", cx)),
+                live_owner_ids,
+                "split: {split}, visible: {visible}"
+            );
+            assert_eq!(kvp.read_kvp(&key).unwrap(), Some(saved));
+            assert_eq!(
+                db.get_custom_title(701, workspace_id).unwrap(),
+                Some(String::from("SAVE_λ"))
+            );
+            kvp.write_kvp(key, String::from(r#"{"items":[701],"active_item_id":701}"#))
+                .await
+                .unwrap();
+            window
+                .update(cx, |_, window, cx| {
+                    panel.update(cx, |panel, cx| panel.retry_restoration(window, cx))
+                })
+                .unwrap();
+            panel
+                .update(cx, |panel, _| {
+                    std::mem::replace(&mut panel._restoration, Task::ready(()))
+                })
+                .await;
+            assert_eq!(
+                panel.read_with(cx, |panel, _| panel.restoration_error.clone()),
+                None
+            );
+            let mut restored_panel_ids = vec![701];
+            restored_panel_ids.extend(live_panel_ids);
+            restored_panel_ids.sort_unstable();
+            assert_eq!(panel_terminal_ids(&panel, cx), restored_panel_ids);
+            live_owner_ids.push(701);
+            live_owner_ids.sort_unstable();
+            assert_eq!(
+                workspace.read_with(cx, |workspace, cx| workspace
+                    .live_serialized_item_ids("Terminal", cx)),
+                live_owner_ids
+            );
+            assert_eq!(
+                workspace.read_with(cx, |workspace, _| {
+                    let mut ids = workspace.assigned_serialized_item_ids("Terminal");
+                    ids.sort_unstable();
+                    ids
+                }),
+                live_owner_ids
+            );
+            assert_eq!(
+                workspace.read_with(cx, |workspace, cx| workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .item_id()),
+                original.entity_id()
+            );
+            if let Some((live, live_id)) = live {
+                assert_eq!(panel_terminal(&panel, live_id, cx), live);
+                assert_eq!(
+                    active_pane.read_with(cx, |pane, _| pane.active_item().unwrap().item_id()),
+                    live.entity_id()
+                );
+            }
+            panel
+                .update(cx, |panel, cx| panel.flush_serialization(cx))
+                .await
+                .unwrap();
+            assert_eq!(
+                db.get_custom_title(701, workspace_id).unwrap(),
+                Some(String::from("SAVE_λ"))
+            );
+            assert_eq!(
+                db.get_terminal(702, workspace_id).unwrap(),
+                (None, Some(String::from("terminal-702")))
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_failed_terminal_batch_prepares_empty_pane_shell_before_activation(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window, panel) = init_workspace_with_panel(cx).await;
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[701], cx).await;
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+        let saved = serde_json::json!({"items": {"Group": {
+            "axis": "horizontal", "flexes": [0.5, 0.5], "children": [
+                {"Pane": {"active": true, "children": [701], "active_item": 701, "pinned_count": 1}},
+                {"Group": {"axis": "vertical", "flexes": null, "children": [
+                    {"Pane": {"active": false, "children": [], "active_item": null}}
+                ]}}
+            ]
+        }}, "active_item_id": 701}).to_string();
+        kvp.write_kvp(key.clone(), saved.clone()).await.unwrap();
+        let (live, live_id, active_pane) = window
+            .update(cx, |_, window, cx| {
+                let pane = panel.read(cx).active_pane.clone();
+                let (live, live_id) =
+                    add_panel_display_terminal(&workspace, &pane, "LIVE_λ", window, cx);
+                workspace.update(cx, |workspace, cx| {
+                    workspace.focus_panel::<TerminalPanel>(window, cx);
+                });
+                (live, live_id, pane)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let pane_state = terminal_pane_state(&active_pane, cx);
+        let status_item = window
+            .update(cx, |_, window, cx| {
+                observe_terminal_status(&workspace, window, cx)
+            })
+            .unwrap();
+        assert_eq!(
+            status_item.read_with(cx, |item, _| item.item_ids.clone()),
+            vec![Some(live.entity_id())]
+        );
+        let previous_shell = cx.update(|cx| {
+            let mut previous_shell = None;
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    previous_shell = settings
+                        .terminal
+                        .get_or_insert_default()
+                        .project
+                        .shell
+                        .replace(settings::Shell::Program(String::from(
+                            "__nonexistent_shell__",
+                        )));
+                });
+            });
+            previous_shell
+        });
+        window
+            .update(cx, |_, window, cx| {
+                panel.update(cx, |panel, cx| {
+                    panel.primary_loaded = false;
+                    panel.retry_restoration(window, cx);
+                });
+            })
+            .unwrap();
+        panel
+            .update(cx, |panel, _| {
+                std::mem::replace(&mut panel._restoration, Task::ready(()))
+            })
+            .await;
+        cx.run_until_parked();
+        assert!(panel.read_with(cx, |panel, _| panel.restoration_error.is_some()));
+        assert_eq!(panel_terminal_ids(&panel, cx), vec![live_id]);
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.active_pane.clone()),
+            active_pane
+        );
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel
+                .center
+                .panes()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>()),
+            vec![active_pane.clone()]
+        );
+        assert_eq!(terminal_pane_state(&active_pane, cx), pane_state);
+        assert_eq!(
+            status_item.read_with(cx, |item, _| item.item_ids.clone()),
+            vec![Some(live.entity_id())]
+        );
+        assert_eq!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .live_serialized_item_ids("Terminal", cx)),
+            vec![live_id]
+        );
+        let mut failed_owner_ids = vec![701, live_id];
+        failed_owner_ids.sort_unstable();
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| {
+                let mut ids = workspace.assigned_serialized_item_ids("Terminal");
+                ids.sort_unstable();
+                ids
+            }),
+            failed_owner_ids
+        );
+        assert_eq!(kvp.read_kvp(&key).unwrap(), Some(saved));
+        assert_eq!(
+            db.get_terminal(701, workspace_id).unwrap(),
+            (None, Some(String::from("terminal-701")))
+        );
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().project.shell = previous_shell;
+                });
+            });
+        });
+        window
+            .update(cx, |_, window, cx| {
+                panel.update(cx, |panel, cx| panel.retry_restoration(window, cx));
+            })
+            .unwrap();
+        panel
+            .update(cx, |panel, _| {
+                std::mem::replace(&mut panel._restoration, Task::ready(()))
+            })
+            .await;
+        cx.run_until_parked();
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.restoration_error.clone()),
+            None
+        );
+        panel
+            .update(cx, |panel, cx| panel.flush_serialization(cx))
+            .await
+            .unwrap();
+        let panes = panel.read_with(cx, |panel, _| {
+            panel
+                .center
+                .panes()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(panes.len(), 3);
+        let restored = panel_terminal(&panel, 701, cx);
+        assert_eq!(
+            terminal_pane_state(&panes[0], cx),
+            (vec![restored.entity_id()], 1, 0, None)
+        );
+        let default_terminal = panes[2].read_with(cx, |pane, _| {
+            pane.items_of_type::<TerminalView>().next().unwrap()
+        });
+        assert_eq!(
+            terminal_pane_state(&panes[2], cx),
+            (vec![default_terminal.entity_id()], 0, 0, None)
+        );
+        assert_eq!(panes[1], active_pane);
+        assert_eq!(terminal_pane_state(&active_pane, cx), pane_state);
+        assert_eq!(panel_terminal(&panel, live_id, cx), live);
+        let default_item_id = default_terminal.read_with(cx, |terminal, _| {
+            terminal.serialization_identity().unwrap().1
+        });
+        let mut owner_ids = vec![701, live_id, default_item_id];
+        owner_ids.sort_unstable();
+        assert_eq!(panel_terminal_ids(&panel, cx), owner_ids);
+        assert_eq!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .live_serialized_item_ids("Terminal", cx)),
+            owner_ids
+        );
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| {
+                let mut ids = workspace.assigned_serialized_item_ids("Terminal");
+                ids.sort_unstable();
+                ids
+            }),
+            owner_ids
+        );
+    }
+
+    #[gpui::test]
+    async fn test_panel_close_failure_preserves_session_membership(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window, panel) = init_workspace_with_panel(cx).await;
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[], cx).await;
+        let (_other_window, _other_panel) = init_workspace_with_panel(cx).await;
+        join_all(
+            window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.flush_all_serialization(window, cx)
+                })
+                .unwrap(),
+        )
+        .await;
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let binding = terminal_session_binding(&db, workspace_id);
+        assert!(binding.0.is_some());
+        assert!(binding.1.is_some());
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .reserve_serialized_item_ids(workspace_id, "Terminal", &[], cx)
+                .unwrap();
+        });
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+        kvp.write_kvp(recovery_key.clone(), String::from("{"))
+            .await
+            .unwrap();
+        let (_, item_id) = window
+            .update(cx, |_, window, cx| {
+                let pane = panel.read(cx).active_pane.clone();
+                let terminal = add_panel_display_terminal(&workspace, &pane, "unsaved", window, cx);
+                panel.update(cx, |panel, _| {
+                    panel.pending_serialization = Task::ready(None)
+                });
+                terminal
+            })
+            .unwrap();
+        let quitting = cx.spawn(async move |mut cx| {
+            workspace::prepare_windows_to_quit(&[window], &mut cx).await
+        });
+        assert!(!quitting.await);
+        assert_eq!(terminal_session_binding(&db, workspace_id), binding);
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.close_window(&workspace::CloseWindow, window, cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(window.read_with(cx, |_, _| ()).is_ok());
+        assert_eq!(terminal_session_binding(&db, workspace_id), binding);
+        assert_eq!(panel_terminal_ids(&panel, cx), vec![item_id]);
+        assert_eq!(kvp.read_kvp(&recovery_key).unwrap().as_deref(), Some("{"));
+        assert_eq!(db.item_ids(workspace_id).unwrap(), Vec::<ItemId>::new());
+        kvp.delete_kvp(recovery_key).await.unwrap();
+        let quitting = cx.spawn(async move |mut cx| {
+            workspace::prepare_windows_to_quit(&[window], &mut cx).await
+        });
+        assert!(quitting.await);
+        assert_eq!(terminal_session_binding(&db, workspace_id), binding);
+        assert_eq!(db.item_ids(workspace_id).unwrap(), vec![item_id]);
+    }
+
+    #[gpui::test]
+    async fn test_panel_flush_does_not_override_close_cancel(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window, panel) = init_workspace_with_panel(cx).await;
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[121], cx).await;
+        let (_other_window, _other_panel) = init_workspace_with_panel(cx).await;
+        let failed = window
+            .update(cx, |_, window, cx| {
+                let pane = workspace.read(cx).active_pane().clone();
+                add_failed_terminal(&workspace, &pane, workspace_id, 121, window, cx)
+            })
+            .unwrap();
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+        kvp.write_kvp(recovery_key.clone(), String::from("{"))
+            .await
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let closing = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.prepare_to_close(workspace::CloseIntent::CloseWindow, window, cx)
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        assert!(!closing.await.unwrap());
+        assert!(panel.read_with(cx, |panel, _| panel.pending_publication.is_none()));
+        assert_eq!(kvp.read_kvp(&recovery_key).unwrap().as_deref(), Some("{"));
+        assert_eq!(
+            failed.read_with(cx, |failed, _| failed.serialization_identity()),
+            Some((workspace_id, 121))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_failed_terminal_cross_workspace_tabbar_drop_preserves_pins(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window, panel) = init_workspace_with_panel(cx).await;
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[121], cx).await;
+        let source = panel.read_with(cx, |panel, _| panel.active_pane.clone());
+        let failed = window
+            .update(cx, |_, window, cx| {
+                add_failed_terminal(&workspace, &source, workspace_id, 121, window, cx)
+            })
+            .unwrap();
+        let (other_window, other_panel) = init_workspace_with_panel(cx).await;
+        let other_workspace = other_window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        initialize_terminal_persistence(&other_workspace, &[], cx).await;
+        let destinations = [
+            other_panel.read_with(cx, |panel, _| panel.active_pane.clone()),
+            other_workspace.read_with(cx, |workspace, _| workspace.active_pane().clone()),
+        ];
+        let cx = &mut VisualTestContext::from_window(other_window.into(), cx);
+        for destination in destinations {
+            cx.update(|window, cx| {
+                add_panel_display_terminal(
+                    &other_workspace,
+                    &destination,
+                    "destination",
+                    window,
+                    cx,
+                );
+            });
+            for source_pinned in [0, 1] {
+                for destination_pinned in [0, 1] {
+                    source.update(cx, |pane, _| pane.set_pinned_count(source_pinned));
+                    destination.update(cx, |pane, _| pane.set_pinned_count(destination_pinned));
+                    let before_source = terminal_pane_state(&source, cx);
+                    let before_destination = terminal_pane_state(&destination, cx);
+                    destination.update_in(cx, |pane, window, cx| {
+                        pane.handle_tab_drop(
+                            &DraggedTab {
+                                pane: source.clone(),
+                                item: Box::new(failed.clone()),
+                                ix: 0,
+                                detail: 0,
+                                is_active: true,
+                            },
+                            0,
+                            false,
+                            window,
+                            cx,
+                        );
+                    });
+                    cx.run_until_parked();
+                    assert!(cx.has_pending_prompt());
+                    cx.simulate_prompt_answer("OK");
+                    cx.run_until_parked();
+                    assert_eq!(terminal_pane_state(&source, cx), before_source);
+                    assert_eq!(terminal_pane_state(&destination, cx), before_destination);
+                    assert_eq!(
+                        failed.read_with(cx, |failed, _| failed.serialization_identity()),
+                        Some((workspace_id, 121))
+                    );
+                }
+            }
+        }
+        let db = cx.update(|_, cx| TerminalDb::global(cx));
+        assert_eq!(
+            db.get_terminal(121, workspace_id).unwrap(),
+            (None, Some(String::from("terminal-121")))
+        );
+    }
 
     #[gpui::test]
     async fn test_terminal_cleanup_retains_both_committed_graphs_in_either_order(
@@ -1999,12 +3542,22 @@ mod tests {
             )
             .await
             .unwrap();
-        let earlier = cx.new(|_| ());
-        let earlier_id = workspace.update(cx, |workspace, cx| {
+        let historical = cx.new(|_| ());
+        let historical_id = workspace.update(cx, |workspace, cx| {
             workspace
-                .serialization_id("Terminal", earlier.entity_id(), cx)
+                .serialization_id("Terminal", historical.entity_id(), cx)
                 .unwrap()
         });
+        db.save_terminal(historical_id, workspace_id, None, None)
+            .await
+            .unwrap();
+        drop(historical);
+        let (earlier, earlier_id) = window_handle
+            .update(cx, |_, window, cx| {
+                let pane = workspace.read(cx).active_pane().clone();
+                add_panel_display_terminal(&workspace, &pane, "unpublished", window, cx)
+            })
+            .unwrap();
         let earlier_write = db.save_terminal(earlier_id, workspace_id, None, None);
         let cleanup = panel
             .update(cx, |panel, cx| panel.cleanup(workspace_id, vec![22], cx))
@@ -2022,6 +3575,10 @@ mod tests {
         let mut expected = vec![22, earlier_id, later_id];
         expected.sort_unstable();
         assert_eq!(db.item_ids(workspace_id).unwrap(), expected);
+        assert_eq!(
+            earlier.read_with(cx, |terminal, _| terminal.serialization_identity()),
+            Some((workspace_id, earlier_id))
+        );
     }
 
     #[gpui::test]
@@ -2142,6 +3699,1293 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_panel_serialization_counts_only_retained_pinned_terminals(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window_handle, panel) = init_workspace_with_panel(cx).await;
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        initialize_terminal_persistence(&workspace, &[], cx).await;
+        workspace.update(cx, |workspace, _| workspace.set_restoring_workspace(true));
+        let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
+        let pane = panel.read_with(cx, |panel, _| panel.active_pane.clone());
+        let mut retained_ids = Vec::new();
+        for (index, is_task) in [true, false, true, false].into_iter().enumerate() {
+            if is_task {
+                let terminal = project
+                    .update(cx, |project, cx| {
+                        project.create_terminal_task(echo_task(), cx)
+                    })
+                    .await
+                    .unwrap();
+                window_handle
+                    .update(cx, |_, window, cx| {
+                        let view = cx.new(|cx| {
+                            TerminalView::new(
+                                terminal,
+                                workspace.downgrade(),
+                                project.downgrade(),
+                                window,
+                                cx,
+                            )
+                        });
+                        pane.update(cx, |pane, cx| {
+                            pane.add_item(Box::new(view), true, false, None, window, cx)
+                        });
+                    })
+                    .unwrap();
+            } else {
+                let item_id = window_handle
+                    .update(cx, |_, window, cx| {
+                        add_panel_display_terminal(
+                            &workspace,
+                            &pane,
+                            &format!("shell-{index}"),
+                            window,
+                            cx,
+                        )
+                        .1
+                    })
+                    .unwrap();
+                retained_ids.push(item_id);
+            }
+        }
+        for (pinned_count, expected_pinned) in [(0, 0), (1, 0), (2, 1), (3, 1), (4, 2)] {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    pane.update(cx, |pane, cx| {
+                        pane.set_pinned_count(pinned_count);
+                        pane.activate_item(2, false, false, window, cx);
+                    });
+                })
+                .unwrap();
+            let (serialized, tasks) = workspace.update(cx, |workspace, cx| {
+                panel.update(cx, |panel, cx| {
+                    let workspace_id = workspace.database_id().unwrap();
+                    let admission = panel
+                        .validate_serialized_item_ids(workspace, workspace_id, cx)
+                        .unwrap();
+                    serialize_pane_group(
+                        &panel.center,
+                        &panel.active_pane,
+                        workspace,
+                        &admission,
+                        cx,
+                    )
+                    .unwrap()
+                })
+            });
+            for result in join_all(tasks).await {
+                result.unwrap();
+            }
+            let SerializedPaneGroup::Pane(serialized) = serialized else {
+                panic!("expected a single pane");
+            };
+            assert_eq!(serialized.children, retained_ids);
+            assert_eq!(serialized.pinned_count, expected_pinned);
+            assert_eq!(serialized.active_item, None);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_panel_recovery_merge_is_stable_and_reconciliation_is_atomic(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        let workspace_id = WorkspaceId::from_i64(1);
+        db.write(|connection| {
+            connection.exec("INSERT INTO workspaces (workspace_id) VALUES (1)")?()
+        })
+        .await
+        .unwrap();
+        db.save_terminal(11, workspace_id, None, Some(String::from("saved")))
+            .await
+            .unwrap();
+        db.save_terminal(22, workspace_id, None, Some(String::from("new")))
+            .await
+            .unwrap();
+        let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+        let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+        kvp.write_kvp(key.clone(), String::from("{")).await.unwrap();
+        let previous = r#"{"items":{"Pane":{"active":true,"children":[11],"active_item":11,"pinned_count":1}},"active_item_id":null}"#;
+        let live = r#"{"items":{"Pane":{"active":true,"children":[22],"active_item":22,"pinned_count":0}},"active_item_id":null}"#;
+        kvp.write_kvp(recovery_key.clone(), String::from(previous))
+            .await
+            .unwrap();
+        let expected = serde_json::json!({
+            "items": { "Group": {
+                "axis": "horizontal", "flexes": null,
+                "children": [
+                    { "Pane": { "active": true, "children": [22], "active_item": 22, "pinned_count": 0 } },
+                    { "Pane": { "active": true, "children": [11], "active_item": 11, "pinned_count": 1 } },
+                ],
+            } },
+            "active_item_id": null,
+        });
+        for _ in 0..8 {
+            db.save_panel(
+                workspace_id,
+                serde_json::from_str(live).unwrap(),
+                true,
+                false,
+                HashSet::from_iter([22]),
+            )
+            .await
+            .unwrap();
+            assert_eq!(kvp.read_kvp(&key).unwrap().as_deref(), Some("{"));
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(
+                    &kvp.read_kvp(&recovery_key).unwrap().unwrap()
+                )
+                .unwrap(),
+                expected
+            );
+            assert!(db.cleanup(workspace_id, Vec::new()).await.is_err());
+            assert_eq!(db.item_ids(workspace_id).unwrap(), vec![11, 22]);
+        }
+        kvp.write_kvp(key.clone(), String::from(previous))
+            .await
+            .unwrap();
+        db.write(|connection| {
+            connection.exec(
+                "CREATE TRIGGER fail_recovery_reconciliation BEFORE DELETE ON kv_store
+             BEGIN SELECT RAISE(FAIL, 'recovery reconciliation failure'); END",
+            )?()
+        })
+        .await
+        .unwrap();
+        assert!(
+            db.save_panel(
+                workspace_id,
+                serde_json::from_value(expected.clone()).unwrap(),
+                false,
+                true,
+                HashSet::default(),
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(kvp.read_kvp(&key).unwrap().as_deref(), Some(previous));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                &kvp.read_kvp(&recovery_key).unwrap().unwrap()
+            )
+            .unwrap(),
+            expected
+        );
+        db.write(|connection| connection.exec("DROP TRIGGER fail_recovery_reconciliation")?())
+            .await
+            .unwrap();
+        db.save_panel(
+            workspace_id,
+            serde_json::from_value(expected.clone()).unwrap(),
+            false,
+            true,
+            HashSet::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&kvp.read_kvp(&key).unwrap().unwrap())
+                .unwrap(),
+            expected
+        );
+        assert_eq!(kvp.read_kvp(&recovery_key).unwrap(), None);
+        assert_eq!(
+            db.get_terminal(11, workspace_id).unwrap(),
+            (None, Some(String::from("saved")))
+        );
+        assert_eq!(
+            db.get_terminal(22, workspace_id).unwrap(),
+            (None, Some(String::from("new")))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_panel_load_failure_preserves_saved_and_new_terminals_through_reopen(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        cx.executor().set_block_on_ticks(10_000..=10_000);
+        init_test(cx);
+        for (saved, failed_item, failed_read) in [
+            ("{\n  \"items\": [121, 122]", None, false),
+            (r#"{"items":[121,122],"active_item_id":122}"#, None, true),
+            (
+                r#"{"items":[121,122],"active_item_id":122}"#,
+                Some(121),
+                false,
+            ),
+            (
+                r#"{"items":[121,122],"active_item_id":122}"#,
+                Some(122),
+                false,
+            ),
+            (
+                r#"{"items":{"Pane":{"active":true,"children":[121,122],"active_item":122,"pinned_count":1}},"active_item_id":null}"#,
+                Some(121),
+                false,
+            ),
+            (
+                r#"{"items":{"Pane":{"active":true,"children":[121,122],"active_item":122,"pinned_count":1}},"active_item_id":null}"#,
+                Some(122),
+                false,
+            ),
+        ] {
+            let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+            let window_handle =
+                cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            let workspace = window_handle
+                .update(cx, |multi_workspace, _, _| {
+                    multi_workspace.workspace().clone()
+                })
+                .unwrap();
+            let workspace_id = initialize_terminal_persistence(&workspace, &[121, 122], cx).await;
+            let db = cx.update(|cx| TerminalDb::global(cx));
+            if let Some(item_id) = failed_item {
+                db.write(move |connection| {
+                    connection.exec_bound::<(WorkspaceId, ItemId)>(
+                        "UPDATE terminals SET custom_title = CAST(X'ff' AS TEXT) WHERE workspace_id = ? AND item_id = ?",
+                    )?((workspace_id, item_id))
+                }).await.unwrap();
+            }
+            let kvp = cx.update(|cx| KeyValueStore::global(cx));
+            let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+            kvp.write_kvp(key.clone(), String::from(saved))
+                .await
+                .unwrap();
+            if failed_read {
+                db.write(|connection| {
+                    connection.exec("ALTER TABLE kv_store RENAME TO unavailable_kv_store")?()
+                })
+                .await
+                .unwrap();
+            }
+            let panel = window_handle
+                .update(cx, |_, window, cx| {
+                    let workspace = workspace.downgrade();
+                    window.spawn(cx, async move |cx| {
+                        TerminalPanel::load(workspace, cx.clone()).await
+                    })
+                })
+                .unwrap()
+                .await
+                .unwrap();
+            panel
+                .update(cx, |panel, _| {
+                    std::mem::replace(&mut panel._restoration, Task::ready(()))
+                })
+                .await;
+            if failed_read {
+                db.write(|connection| {
+                    connection.exec("ALTER TABLE unavailable_kv_store RENAME TO kv_store")?()
+                })
+                .await
+                .unwrap();
+            }
+            panel.read_with(cx, |panel, cx| {
+                assert!(!panel.restoring);
+                assert_eq!(panel.restoration_error.is_some(), failed_item.is_none());
+                let titles = panel
+                    .center
+                    .panes()
+                    .into_iter()
+                    .flat_map(|pane| {
+                        pane.read(cx)
+                            .items()
+                            .map(|item| item.tab_content_text(0, cx).to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    titles,
+                    match failed_item {
+                        Some(121) => vec![
+                            String::from("Failed terminal 121"),
+                            String::from("terminal-122")
+                        ],
+                        Some(122) => vec![
+                            String::from("terminal-121"),
+                            String::from("Failed terminal 122")
+                        ],
+                        _ => Vec::new(),
+                    }
+                );
+                if saved.starts_with(r#"{"items":{"Pane"#) {
+                    assert_eq!(panel.active_pane.read(cx).pinned_count(), 1);
+                }
+            });
+            let new_id = window_handle
+                .update(cx, |_, window, cx| {
+                    let pane = panel.read(cx).active_pane.clone();
+                    let (_, item_id) =
+                        add_panel_display_terminal(&workspace, &pane, "interim", window, cx);
+                    panel.update(cx, |panel, cx| panel.serialize(cx));
+                    item_id
+                })
+                .unwrap();
+            cx.executor().advance_clock(Duration::from_millis(100));
+            cx.run_until_parked();
+            cx.update(|cx| cx.shutdown());
+            let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+            let expected = serde_json::json!({
+                "items": { "Pane": {
+                    "active": true,
+                    "children": if failed_item.is_some() { vec![121, 122, new_id] } else { vec![new_id] },
+                    "active_item": new_id,
+                    "pinned_count": usize::from(saved.starts_with(r#"{"items":{"Pane"#)),
+                } },
+                "active_item_id": null,
+            });
+            if failed_item.is_some() {
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(
+                        &kvp.read_kvp(&key).unwrap().unwrap()
+                    )
+                    .unwrap(),
+                    expected
+                );
+                assert_eq!(kvp.read_kvp(&recovery_key).unwrap(), None);
+            } else {
+                assert_eq!(kvp.read_kvp(&key).unwrap(), Some(String::from(saved)));
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(
+                        &kvp.read_kvp(&recovery_key).unwrap().unwrap()
+                    )
+                    .unwrap(),
+                    expected
+                );
+            }
+            assert_eq!(db.item_ids(workspace_id).unwrap(), vec![121, 122, new_id]);
+            let payloads = db.select_bound::<WorkspaceId, (ItemId, Option<PathBuf>, Option<String>, String)>(
+                "SELECT item_id, working_directory, working_directory_path, hex(custom_title) FROM terminals WHERE workspace_id = ? ORDER BY item_id",
+            ).unwrap()(workspace_id).unwrap();
+            let expected = vec![
+                (
+                    121,
+                    None,
+                    None,
+                    String::from(if failed_item == Some(121) {
+                        "FF"
+                    } else {
+                        "7465726D696E616C2D313231"
+                    }),
+                ),
+                (
+                    122,
+                    None,
+                    None,
+                    String::from(if failed_item == Some(122) {
+                        "FF"
+                    } else {
+                        "7465726D696E616C2D313232"
+                    }),
+                ),
+                (new_id, None, None, String::from("696E746572696D")),
+            ];
+            assert_eq!(
+                payloads
+                    .iter()
+                    .map(|(item_id, _, _, title)| (*item_id, title))
+                    .collect::<Vec<_>>(),
+                expected
+                    .iter()
+                    .map(|(item_id, _, _, title)| (*item_id, title))
+                    .collect::<Vec<_>>(),
+            );
+            let preserved = |item_id: ItemId| {
+                failed_item.is_none() || failed_item == Some(item_id) || item_id == new_id
+            };
+            assert_eq!(
+                payloads
+                    .into_iter()
+                    .filter(|(item_id, _, _, _)| preserved(*item_id))
+                    .collect::<Vec<_>>(),
+                expected
+                    .into_iter()
+                    .filter(|(item_id, _, _, _)| preserved(*item_id))
+                    .collect::<Vec<_>>(),
+            );
+            drop(panel);
+            drop(workspace);
+            let (_, _, reopened) = reopen_terminal_panel(workspace_id, cx).await;
+            let expected_ids = if failed_item.is_some() || failed_read {
+                vec![121, 122, new_id]
+            } else {
+                vec![new_id]
+            };
+            assert_eq!(panel_terminal_ids(&reopened, cx), expected_ids);
+            reopened.read_with(cx, |panel, cx| {
+                let failures = panel
+                    .center
+                    .panes()
+                    .into_iter()
+                    .flat_map(|pane| {
+                        pane.read(cx)
+                            .items_of_type::<TerminalView>()
+                            .filter_map(|terminal| {
+                                let terminal = terminal.read(cx);
+                                terminal
+                                    .restoration_error
+                                    .as_ref()
+                                    .map(|_| terminal.serialization_identity().unwrap().1)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(failures, failed_item.into_iter().collect::<Vec<_>>());
+                assert!(!panel.restoring);
+            });
+            cx.update(|cx| cx.shutdown());
+        }
+    }
+
+    #[gpui::test]
+    async fn test_panel_retries_repaired_state_without_recreating_live_terminals(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        cx.executor().set_block_on_ticks(10_000..=10_000);
+        init_test(cx);
+        for split in [false, true] {
+            for failure in ["missing", "payload", "graph", "query"] {
+                for addition in ["before", "during", "after"] {
+                    let (window, panel) = init_workspace_with_panel(cx).await;
+                    let workspace = window
+                        .update(cx, |multi_workspace, _, _| {
+                            multi_workspace.workspace().clone()
+                        })
+                        .unwrap();
+                    let workspace_id =
+                        initialize_terminal_persistence(&workspace, &[121, 122], cx).await;
+                    let db = cx.update(|cx| TerminalDb::global(cx));
+                    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+                    let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+                    let saved = if split {
+                        r#"{"items":{"Pane":{"active":true,"children":[121,122],"active_item":122,"pinned_count":1}},"active_item_id":null}"#
+                    } else {
+                        r#"{"items":[121,122],"active_item_id":122}"#
+                    };
+                    kvp.write_kvp(
+                        key.clone(),
+                        String::from(if failure == "graph" { "{" } else { saved }),
+                    )
+                    .await
+                    .unwrap();
+                    if failure == "missing" {
+                        db.write(move |connection| {
+                            connection.exec_bound::<WorkspaceId>(
+                                "DELETE FROM terminals WHERE workspace_id = ? AND item_id = 122",
+                            )?(workspace_id)
+                        })
+                        .await
+                        .unwrap();
+                        let error = window
+                            .update(cx, |_, window, cx| {
+                                TerminalView::deserialize(
+                                    workspace.read(cx).project().clone(),
+                                    workspace.downgrade(),
+                                    workspace_id,
+                                    122,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .unwrap()
+                            .await
+                            .err()
+                            .unwrap();
+                        assert_eq!(error.to_string(), "Saved terminal 122 has no payload");
+                    } else if failure == "payload" {
+                        db.write(move |connection| connection.exec_bound::<WorkspaceId>(
+                            "UPDATE terminals SET custom_title = CAST(X'ff' AS TEXT) WHERE workspace_id = ? AND item_id = 122",
+                        )?(workspace_id)).await.unwrap();
+                    }
+                    panel.update(cx, |panel, _| {
+                        panel.primary_loaded = false;
+                        panel.recovery_loaded = false;
+                    });
+                    let mut added = None;
+                    if addition == "before" {
+                        added = Some(
+                            window
+                                .update(cx, |_, window, cx| {
+                                    let pane = panel.read(cx).active_pane.clone();
+                                    add_panel_display_terminal(&workspace, &pane, "new", window, cx)
+                                })
+                                .unwrap(),
+                        );
+                    }
+                    if failure == "query" {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace
+                                .reserve_serialized_item_ids(
+                                    workspace_id,
+                                    "Terminal",
+                                    &[121, 122],
+                                    cx,
+                                )
+                                .unwrap();
+                        });
+                        db.write(|connection| {
+                            connection
+                                .exec("ALTER TABLE kv_store RENAME TO unavailable_kv_store")?(
+                            )
+                        })
+                        .await
+                        .unwrap();
+                    }
+                    window
+                        .update(cx, |_, window, cx| {
+                            panel.update(cx, |panel, cx| panel.retry_restoration(window, cx));
+                            if addition == "during" {
+                                let pane = panel.read(cx).active_pane.clone();
+                                added = Some(add_panel_display_terminal(
+                                    &workspace, &pane, "new", window, cx,
+                                ));
+                            }
+                        })
+                        .unwrap();
+                    panel
+                        .update(cx, |panel, _| {
+                            std::mem::replace(&mut panel._restoration, Task::ready(()))
+                        })
+                        .await;
+                    if failure == "query" {
+                        db.write(|connection| {
+                            connection
+                                .exec("ALTER TABLE unavailable_kv_store RENAME TO kv_store")?(
+                            )
+                        })
+                        .await
+                        .unwrap();
+                    }
+                    if addition == "after" {
+                        added = Some(
+                            window
+                                .update(cx, |_, window, cx| {
+                                    let pane = panel.read(cx).active_pane.clone();
+                                    add_panel_display_terminal(&workspace, &pane, "new", window, cx)
+                                })
+                                .unwrap(),
+                        );
+                    }
+                    let (added, added_id) = added.unwrap();
+                    let decoded = failure == "missing" || failure == "payload";
+                    let healthy = decoded.then(|| panel_terminal(&panel, 121, cx));
+                    let failed = decoded.then(|| panel_terminal(&panel, 122, cx));
+                    let failed_backing = failed
+                        .as_ref()
+                        .map(|failed| failed.read_with(cx, |view, _| view.terminal.clone()));
+                    if let Some(failed) = &failed {
+                        window
+                            .update(cx, |_, window, cx| {
+                                failed.update(cx, |failed, cx| failed.retry_restoration(window, cx))
+                            })
+                            .unwrap();
+                        failed
+                            .update(cx, |failed, _| failed.restoration_task.take())
+                            .unwrap()
+                            .await;
+                        assert!(
+                            failed.read_with(cx, |failed, _| failed.restoration_error.is_some())
+                        );
+                        assert_eq!(panel_terminal(&panel, 121, cx), healthy.clone().unwrap());
+                        assert_eq!(panel_terminal(&panel, added_id, cx), added);
+                    } else {
+                        assert!(panel.read_with(cx, |panel, _| panel.restoration_error.is_some()));
+                    }
+                    if failure == "graph" {
+                        let conflicting = serde_json::json!({ "items": [121, added_id], "active_item_id": added_id }).to_string();
+                        kvp.write_kvp(key.clone(), conflicting.clone())
+                            .await
+                            .unwrap();
+                        window
+                            .update(cx, |_, window, cx| {
+                                panel.update(cx, |panel, cx| panel.retry_restoration(window, cx))
+                            })
+                            .unwrap();
+                        panel
+                            .update(cx, |panel, _| {
+                                std::mem::replace(&mut panel._restoration, Task::ready(()))
+                            })
+                            .await;
+                        assert_eq!(
+                            panel.read_with(cx, |panel, _| panel
+                                .restoration_error
+                                .as_ref()
+                                .map(ToString::to_string)),
+                            Some(format!(
+                                "Saved layout: Saved layout references conflict with new terminal IDs [{added_id}]; repair the saved layout before retrying"
+                            ))
+                        );
+                        assert_eq!(panel_terminal_ids(&panel, cx), vec![added_id]);
+                        assert_eq!(kvp.read_kvp(&key).unwrap(), Some(conflicting));
+                    }
+                    let restored_second_id = if failure == "graph" {
+                        added_id + 1
+                    } else {
+                        122
+                    };
+                    if decoded || failure == "graph" {
+                        db.save_terminal(
+                            restored_second_id,
+                            workspace_id,
+                            None,
+                            Some(String::from("terminal-122")),
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    if !decoded {
+                        kvp.write_kvp(
+                            key.clone(),
+                            saved.replace("122", &restored_second_id.to_string()),
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    if let Some(failed) = &failed {
+                        window
+                            .update(cx, |_, window, cx| {
+                                failed.update(cx, |failed, cx| failed.retry_restoration(window, cx))
+                            })
+                            .unwrap();
+                        failed
+                            .update(cx, |failed, _| failed.restoration_task.take())
+                            .unwrap()
+                            .await;
+                        assert!(
+                            failed.read_with(cx, |failed, _| failed.restoration_error.is_none())
+                        );
+                        assert_eq!(panel_terminal(&panel, 122, cx), *failed);
+                        assert_ne!(
+                            failed.read_with(cx, |view, _| view.terminal.clone()),
+                            failed_backing.unwrap()
+                        );
+                        assert_eq!(panel_terminal(&panel, 121, cx), healthy.unwrap());
+                    } else {
+                        window
+                            .update(cx, |_, window, cx| {
+                                panel.update(cx, |panel, cx| panel.retry_restoration(window, cx))
+                            })
+                            .unwrap();
+                        panel
+                            .update(cx, |panel, _| {
+                                std::mem::replace(&mut panel._restoration, Task::ready(()))
+                            })
+                            .await;
+                        assert!(panel.read_with(cx, |panel, _| panel.restoration_error.is_none()));
+                    }
+                    assert_eq!(panel_terminal(&panel, added_id, cx), added);
+                    let mut expected_ids = vec![121, restored_second_id, added_id];
+                    expected_ids.sort_unstable();
+                    assert_eq!(panel_terminal_ids(&panel, cx), expected_ids);
+                    let first_cwd = panel_terminal(&panel, 121, cx)
+                        .read_with(cx, |view, cx| view.terminal().read(cx).working_directory());
+                    let second_cwd = panel_terminal(&panel, restored_second_id, cx)
+                        .read_with(cx, |view, cx| view.terminal().read(cx).working_directory());
+                    cx.update(|cx| cx.shutdown());
+                    assert_eq!(db.item_ids(workspace_id).unwrap(), expected_ids);
+                    assert_eq!(saved_panel_terminal_ids(&kvp, &key), expected_ids);
+                    assert_eq!(
+                        kvp.read_kvp(&TerminalPanel::recovery_key_for_workspace_id(workspace_id))
+                            .unwrap(),
+                        None
+                    );
+                    assert_eq!(
+                        db.get_terminal(121, workspace_id).unwrap(),
+                        (first_cwd, Some(String::from("terminal-121")))
+                    );
+                    assert_eq!(
+                        db.get_terminal(restored_second_id, workspace_id).unwrap(),
+                        (second_cwd, Some(String::from("terminal-122")))
+                    );
+                    assert_eq!(
+                        db.get_terminal(added_id, workspace_id).unwrap(),
+                        (None, Some(String::from("new")))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_panel_recovery_merge_preserves_primary_tombstones() {
+        for (current, previous, expected) in [
+            (
+                r#"{"items":[22],"active_item_id":22,"primary_item_ids":[11]}"#,
+                r#"{"items":[11],"active_item_id":11,"primary_item_ids":[11]}"#,
+                r#"{"items":[22],"active_item_id":22,"primary_item_ids":[11]}"#,
+            ),
+            (
+                r#"{"items":[],"active_item_id":null,"primary_item_ids":[11]}"#,
+                r#"{"items":[11],"active_item_id":11,"primary_item_ids":[11]}"#,
+                r#"{"items":[],"active_item_id":null,"primary_item_ids":[11]}"#,
+            ),
+            (
+                r#"{"items":[],"active_item_id":null}"#,
+                r#"{"items":[11],"active_item_id":11,"primary_item_ids":[11]}"#,
+                r#"{"items":[11],"active_item_id":11,"primary_item_ids":[11]}"#,
+            ),
+            (
+                r#"{"items":[22],"active_item_id":22}"#,
+                r#"{"items":[22],"active_item_id":22,"primary_item_ids":[11]}"#,
+                r#"{"items":[22],"active_item_id":22,"primary_item_ids":[11]}"#,
+            ),
+        ] {
+            let current = serde_json::from_str::<SerializedTerminalPanel>(current).unwrap();
+            let previous = serde_json::from_str::<SerializedTerminalPanel>(previous).unwrap();
+            assert_eq!(
+                serde_json::to_value(current.merge(previous, &HashSet::from_iter([22])).unwrap())
+                    .unwrap(),
+                serde_json::from_str::<serde_json::Value>(expected).unwrap(),
+            );
+        }
+    }
+
+    #[test]
+    fn test_panel_recovery_merge_discards_closed_live_items_and_rejects_unknown_overlap() {
+        let previous = r#"{"items":[11,22],"active_item_id":22}"#;
+        for current in [
+            r#"{"items":[22],"active_item_id":22}"#,
+            r#"{"items":[],"active_item_id":null}"#,
+        ] {
+            let merged = serde_json::from_str::<SerializedTerminalPanel>(current)
+                .unwrap()
+                .merge(
+                    serde_json::from_str(previous).unwrap(),
+                    &HashSet::from_iter([11, 22]),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(merged).unwrap(),
+                serde_json::from_str::<serde_json::Value>(current).unwrap()
+            );
+        }
+        let current = r#"{"items":[22],"active_item_id":22}"#;
+        let result = serde_json::from_str::<SerializedTerminalPanel>(current)
+            .unwrap()
+            .merge(serde_json::from_str(previous).unwrap(), &HashSet::default());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Recovery layout references conflict with new terminal IDs [22]; repair the saved references before retrying"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_failed_terminal_save_close_and_recovery_tombstones(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        cx.executor().set_block_on_ticks(10_000..=10_000);
+        init_test(cx);
+        for missing_payload in [false, true] {
+            for recovery in [false, true] {
+                let (window, panel) = init_workspace_with_panel(cx).await;
+                let workspace = window
+                    .update(cx, |multi_workspace, _, _| {
+                        multi_workspace.workspace().clone()
+                    })
+                    .unwrap();
+                let workspace_id =
+                    initialize_terminal_persistence(&workspace, &[121, 122], cx).await;
+                let db = cx.update(|cx| TerminalDb::global(cx));
+                let kvp = cx.update(|cx| KeyValueStore::global(cx));
+                let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+                let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+                let saved = r#"{"items":[121,122],"active_item_id":121}"#;
+                kvp.write_kvp(key.clone(), String::from(saved))
+                    .await
+                    .unwrap();
+                db.write(move |connection| {
+                    connection.exec_bound::<WorkspaceId>(if missing_payload {
+                        "DELETE FROM terminals WHERE workspace_id = ? AND item_id = 121"
+                    } else {
+                        "UPDATE terminals SET custom_title = CAST(X'ff' AS TEXT) WHERE workspace_id = ? AND item_id = 121"
+                    })?(workspace_id)
+                }).await.unwrap();
+                window
+                    .update(cx, |_, window, cx| {
+                        panel.update(cx, |panel, cx| {
+                            panel.primary_loaded = false;
+                            panel.recovery_loaded = false;
+                            panel.retry_restoration(window, cx);
+                        });
+                    })
+                    .unwrap();
+                panel
+                    .update(cx, |panel, _| {
+                        std::mem::replace(&mut panel._restoration, Task::ready(()))
+                    })
+                    .await;
+                let failed = panel_terminal(&panel, 121, cx);
+                let pane = panel.read_with(cx, |panel, _| panel.active_pane.clone());
+                failed.read_with(cx, |failed, cx| {
+                    assert_eq!(failed.save_disposition(cx), SaveDisposition::DiscardOnly);
+                    assert!(failed.is_dirty(cx));
+                    assert!(!failed.can_split());
+                    assert!(!failed.can_save(cx));
+                    assert!(!failed.can_save_as(cx));
+                });
+                let publication = workspace.update(cx, |workspace, cx| {
+                    failed.update(cx, |failed, cx| {
+                        failed.serialize(workspace, 121, true, cx).unwrap()
+                    })
+                });
+                publication.await.unwrap();
+                assert_eq!(
+                    db.select_row_bound::<WorkspaceId, String>(
+                        "SELECT hex(custom_title) FROM terminals WHERE workspace_id = ? AND item_id = 121",
+                    ).unwrap()(workspace_id).unwrap(),
+                    (!missing_payload).then(|| String::from("FF")),
+                );
+                workspace.update(cx, |workspace, _| {
+                    workspace.set_restoring_workspace(recovery)
+                });
+                {
+                    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+                    for intent in [SaveIntent::Save, SaveIntent::SaveAs, SaveIntent::SaveAll] {
+                        let closing = pane.update_in(cx, |pane, window, cx| {
+                            pane.close_item_by_id(failed.entity_id(), intent, window, cx)
+                        });
+                        cx.run_until_parked();
+                        assert!(cx.has_pending_prompt());
+                        cx.simulate_prompt_answer("OK");
+                        closing.await.unwrap();
+                        assert_eq!(pane.read_with(cx, |pane, _| pane.items_len()), 2);
+                    }
+                    for answer in ["Cancel", "Discard"] {
+                        let closing = pane.update_in(cx, |pane, window, cx| {
+                            pane.close_item_by_id(failed.entity_id(), SaveIntent::Close, window, cx)
+                        });
+                        cx.run_until_parked();
+                        assert!(cx.has_pending_prompt());
+                        cx.simulate_prompt_answer(answer);
+                        closing.await.unwrap();
+                        assert_eq!(
+                            pane.read_with(cx, |pane, _| pane.items_len()),
+                            if answer == "Cancel" { 2 } else { 1 }
+                        );
+                    }
+                }
+                workspace.update(cx, |workspace, _| {
+                    workspace.set_restoring_workspace(recovery)
+                });
+                panel.update(cx, |panel, cx| {
+                    panel.pending_serialization = Task::ready(None);
+                    panel.serialize_now(cx);
+                });
+                panel
+                    .update(cx, |panel, _| panel.pending_publication.take())
+                    .unwrap()
+                    .await
+                    .unwrap();
+                if recovery {
+                    assert_eq!(saved_panel_terminal_ids(&kvp, &key), vec![121, 122]);
+                    assert_eq!(saved_panel_terminal_ids(&kvp, &recovery_key), vec![122]);
+                    let saved = serde_json::from_str::<serde_json::Value>(
+                        &kvp.read_kvp(&recovery_key).unwrap().unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(saved["primary_item_ids"], serde_json::json!([121, 122]));
+                } else {
+                    assert_eq!(saved_panel_terminal_ids(&kvp, &key), vec![122]);
+                    assert_eq!(kvp.read_kvp(&recovery_key).unwrap(), None);
+                }
+                cx.update(|cx| cx.shutdown());
+                drop(failed);
+                drop(panel);
+                drop(workspace);
+                let (_, _, reopened) = reopen_terminal_panel(workspace_id, cx).await;
+                assert_eq!(panel_terminal_ids(&reopened, cx), vec![122]);
+                cx.update(|cx| cx.shutdown());
+                assert_eq!(saved_panel_terminal_ids(&kvp, &key), vec![122]);
+                assert_eq!(kvp.read_kvp(&recovery_key).unwrap(), None);
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_panel_unreadable_recovery_reports_unsaved_changes_without_overwrite(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window, panel) = init_workspace_with_panel(cx).await;
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[121], cx).await;
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+        let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .reserve_serialized_item_ids(workspace_id, "Terminal", &[121], cx)
+                .unwrap();
+        });
+        for key in [&key, &recovery_key] {
+            kvp.write_kvp(key.clone(), String::from("{")).await.unwrap();
+        }
+        window
+            .update(cx, |_, window, cx| {
+                panel.update(cx, |panel, cx| {
+                    panel.primary_loaded = false;
+                    panel.recovery_loaded = false;
+                    panel.retry_restoration(window, cx);
+                });
+            })
+            .unwrap();
+        panel
+            .update(cx, |panel, _| {
+                std::mem::replace(&mut panel._restoration, Task::ready(()))
+            })
+            .await;
+        let (live, live_id) = window
+            .update(cx, |_, window, cx| {
+                let pane = panel.read(cx).active_pane.clone();
+                add_panel_display_terminal(&workspace, &pane, "unsaved", window, cx)
+            })
+            .unwrap();
+        for _ in 0..3 {
+            panel.update(cx, |panel, cx| {
+                panel.pending_serialization = Task::ready(None);
+                panel.serialize_now(cx);
+            });
+            panel
+                .update(cx, |panel, _| panel.pending_publication.take())
+                .unwrap()
+                .await
+                .unwrap_err();
+            cx.run_until_parked();
+            assert_eq!(
+                panel.read_with(cx, |panel, _| panel
+                    .publication_error
+                    .as_ref()
+                    .map(ToString::to_string)),
+                Some(String::from(
+                    "Cannot reserve terminal IDs because the recovery layout is unreadable: EOF while parsing an object at line 1 column 1"
+                )),
+            );
+            assert_eq!(kvp.read_kvp(&key).unwrap().as_deref(), Some("{"));
+            assert_eq!(kvp.read_kvp(&recovery_key).unwrap().as_deref(), Some("{"));
+            assert_eq!(db.item_ids(workspace_id).unwrap(), vec![121]);
+        }
+        kvp.write_kvp(
+            recovery_key.clone(),
+            String::from(r#"{"items":[121],"active_item_id":121}"#),
+        )
+        .await
+        .unwrap();
+        window
+            .update(cx, |_, window, cx| {
+                panel.update(cx, |panel, cx| panel.retry_restoration(window, cx));
+            })
+            .unwrap();
+        panel
+            .update(cx, |panel, _| {
+                std::mem::replace(&mut panel._restoration, Task::ready(()))
+            })
+            .await;
+        panel.update(cx, |panel, cx| {
+            panel.pending_serialization = Task::ready(None);
+            panel.serialize_now(cx);
+        });
+        panel
+            .update(cx, |panel, _| panel.pending_publication.take())
+            .unwrap()
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.publication_error.clone()),
+            None
+        );
+        assert_eq!(panel_terminal(&panel, live_id, cx), live);
+        assert_eq!(
+            saved_panel_terminal_ids(&kvp, &recovery_key),
+            vec![121, live_id]
+        );
+        assert_eq!(kvp.read_kvp(&key).unwrap().as_deref(), Some("{"));
+    }
+
+    #[gpui::test]
+    async fn test_terminal_ids_require_a_readable_recovery_graph(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window, _) = init_workspace_with_panel(cx).await;
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[], cx).await;
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+        let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+        kvp.write_kvp(key, String::from("{")).await.unwrap();
+        kvp.write_kvp(recovery_key.clone(), String::from("{"))
+            .await
+            .unwrap();
+        let live = cx.new(|_| ());
+        assert!(
+            workspace
+                .update(cx, |workspace, cx| workspace.serialization_id(
+                    "Terminal",
+                    live.entity_id(),
+                    cx
+                ))
+                .is_err()
+        );
+        let saved_id = live.entity_id().as_u64();
+        kvp.write_kvp(
+            recovery_key,
+            serde_json::json!({"items": [saved_id], "active_item_id": saved_id}).to_string(),
+        )
+        .await
+        .unwrap();
+        db.write(|connection| {
+            connection.exec("ALTER TABLE kv_store RENAME TO unavailable_kv_store")?()
+        })
+        .await
+        .unwrap();
+        assert!(
+            workspace
+                .update(cx, |workspace, cx| workspace.serialization_id(
+                    "Terminal",
+                    live.entity_id(),
+                    cx
+                ))
+                .is_err()
+        );
+        db.write(|connection| {
+            connection.exec("ALTER TABLE unavailable_kv_store RENAME TO kv_store")?()
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            db.serialized_item_ids(workspace_id).unwrap(),
+            vec![saved_id]
+        );
+        let live_id = workspace
+            .update(cx, |workspace, cx| {
+                workspace.serialization_id("Terminal", live.entity_id(), cx)
+            })
+            .unwrap();
+        assert!(live_id > saved_id);
+        assert_eq!(db.item_ids(workspace_id).unwrap(), Vec::<ItemId>::new());
+    }
+
+    #[gpui::test]
+    async fn test_panel_rejects_unloaded_recovery_id_collision(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window, panel) = init_workspace_with_panel(cx).await;
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[], cx).await;
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+        let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+        kvp.write_kvp(key.clone(), String::from("{")).await.unwrap();
+        let (live, live_id) = window
+            .update(cx, |_, window, cx| {
+                let pane = panel.read(cx).active_pane.clone();
+                let live = add_panel_display_terminal(&workspace, &pane, "new", window, cx);
+                panel.update(cx, |panel, _| {
+                    panel.primary_loaded = false;
+                    panel.recovery_loaded = false;
+                    panel.pending_serialization = Task::ready(None);
+                });
+                live
+            })
+            .unwrap();
+        let saved = serde_json::json!({"items": [live_id], "active_item_id": live_id}).to_string();
+        kvp.write_kvp(recovery_key.clone(), saved.clone())
+            .await
+            .unwrap();
+        window
+            .update(cx, |_, window, cx| {
+                panel.update(cx, |panel, cx| panel.retry_restoration(window, cx));
+            })
+            .unwrap();
+        panel
+            .update(cx, |panel, _| {
+                std::mem::replace(&mut panel._restoration, Task::ready(()))
+            })
+            .await;
+        assert!(!panel.read_with(cx, |panel, _| panel.recovery_loaded));
+        assert_eq!(panel_terminal(&panel, live_id, cx), live);
+        assert_eq!(panel_terminal_ids(&panel, cx), vec![live_id]);
+        panel.update(cx, |panel, cx| {
+            panel.pending_serialization = Task::ready(None);
+            panel.serialize_now(cx);
+        });
+        panel
+            .update(cx, |panel, _| panel.pending_publication.take())
+            .unwrap()
+            .await
+            .unwrap_err();
+        cx.run_until_parked();
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel
+                .publication_error
+                .as_ref()
+                .map(ToString::to_string)),
+            Some(format!(
+                "Recovery layout references conflict with new terminal IDs [{live_id}]; repair the saved references before retrying"
+            )),
+        );
+        assert_eq!(kvp.read_kvp(&recovery_key).unwrap(), Some(saved));
+        assert_eq!(kvp.read_kvp(&key).unwrap().as_deref(), Some("{"));
+    }
+
+    #[gpui::test]
+    async fn test_panel_recovery_does_not_resurrect_all_discarded_terminals(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        cx.executor().set_block_on_ticks(10_000..=10_000);
+        init_test(cx);
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        let workspace_id = WorkspaceId::from_i64(1);
+        db.write(|connection| {
+            connection.exec("INSERT INTO workspaces (workspace_id) VALUES (1)")?()
+        })
+        .await
+        .unwrap();
+        db.save_terminal(121, workspace_id, None, Some(String::from("discarded")))
+            .await
+            .unwrap();
+        let key = TerminalPanel::serialization_key_for_workspace_id(workspace_id);
+        let recovery_key = TerminalPanel::recovery_key_for_workspace_id(workspace_id);
+        kvp.write_kvp(
+            key.clone(),
+            String::from(r#"{"items":[121],"active_item_id":121}"#),
+        )
+        .await
+        .unwrap();
+        kvp.write_kvp(
+            recovery_key.clone(),
+            String::from(r#"{"items":[],"active_item_id":null,"primary_item_ids":[121]}"#),
+        )
+        .await
+        .unwrap();
+        let (_, _, panel) = reopen_terminal_panel(workspace_id, cx).await;
+        assert_eq!(panel_terminal_ids(&panel, cx), Vec::<ItemId>::new());
+        cx.update(|cx| cx.shutdown());
+        assert_eq!(saved_panel_terminal_ids(&kvp, &key), Vec::<ItemId>::new());
+        assert_eq!(kvp.read_kvp(&recovery_key).unwrap(), None);
+        assert_eq!(db.item_ids(workspace_id).unwrap(), Vec::<ItemId>::new());
+    }
+
+    #[gpui::test]
+    async fn test_failed_terminal_keeps_its_identity_when_moved(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let (window, panel) = init_workspace_with_panel(cx).await;
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_id = initialize_terminal_persistence(&workspace, &[121], cx).await;
+        let failed = window
+            .update(cx, |_, window, cx| {
+                let pane = panel.read(cx).active_pane.clone();
+                let failed = workspace.update(cx, |workspace, cx| {
+                    let failed = cx.new(|cx| {
+                        TerminalView::failed_restoration(
+                            workspace.weak_handle(),
+                            workspace.project().downgrade(),
+                            workspace_id,
+                            121,
+                            anyhow!("terminal could not be restored"),
+                            window,
+                            cx,
+                        )
+                    });
+                    workspace
+                        .register_serialized_item_id("Terminal", failed.entity_id(), 121, cx)
+                        .unwrap();
+                    failed
+                });
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(failed.clone()), true, false, None, window, cx)
+                });
+                let destination = workspace.read(cx).active_pane().clone();
+                workspace::move_item(
+                    &pane,
+                    &destination,
+                    failed.entity_id(),
+                    0,
+                    false,
+                    window,
+                    cx,
+                );
+                assert_eq!(pane.read(cx).items_len(), 0);
+                assert_eq!(destination.read(cx).items_len(), 1);
+                failed
+            })
+            .unwrap();
+        workspace
+            .update(cx, |workspace, cx| {
+                failed.update(cx, |failed, cx| {
+                    failed.serialize(workspace, 121, false, cx).unwrap()
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            failed.read_with(cx, |failed, _| failed.serialization_identity()),
+            Some((workspace_id, 121))
+        );
+        let (other_window, _) = init_workspace_with_panel(cx).await;
+        let other_workspace = other_window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let other_id = initialize_terminal_persistence(&other_workspace, &[], cx).await;
+        let result = other_window
+            .update(cx, |_, window, cx| {
+                other_workspace.update(cx, |workspace, cx| {
+                    failed.update(cx, |failed, cx| {
+                        failed.added_to_workspace(workspace, window, cx);
+                        failed.serialize(workspace, 121, false, cx).unwrap()
+                    })
+                })
+            })
+            .unwrap()
+            .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Retry this failed terminal in its original workspace before moving it"
+        );
+        assert_eq!(
+            failed.read_with(cx, |failed, _| failed.serialization_identity()),
+            Some((workspace_id, 121))
+        );
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        assert_eq!(db.item_ids(workspace_id).unwrap(), vec![121]);
+        assert_eq!(db.item_ids(other_id).unwrap(), Vec::<ItemId>::new());
+    }
+
+    #[gpui::test]
     async fn test_panel_restores_and_serializes_saved_active_terminal_id(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
@@ -2183,6 +5027,7 @@ mod tests {
                         SerializedTerminalPanel {
                             items,
                             active_item_id: Some(122),
+                            primary_item_ids: Vec::new(),
                         },
                         panel.downgrade(),
                         window,
@@ -2200,7 +5045,18 @@ mod tests {
             });
             let (serialized, tasks) = workspace.update(cx, |workspace, cx| {
                 panel.update(cx, |panel, cx| {
-                    serialize_pane_group(&panel.center, &panel.active_pane, workspace, cx).unwrap()
+                    let workspace_id = workspace.database_id().unwrap();
+                    let admission = panel
+                        .validate_serialized_item_ids(workspace, workspace_id, cx)
+                        .unwrap();
+                    serialize_pane_group(
+                        &panel.center,
+                        &panel.active_pane,
+                        workspace,
+                        &admission,
+                        cx,
+                    )
+                    .unwrap()
                 })
             });
             for result in join_all(tasks).await {
@@ -2383,10 +5239,11 @@ mod tests {
             let saved = String::from(r#"{"items":[11],"active_item_id":11}"#);
             kvp.write_kvp(key.clone(), saved.clone()).await.unwrap();
             cx.run_until_parked();
-            window_handle
+            let new_id = window_handle
                 .update(cx, |_, window, cx| {
                     let pane = panel.read(cx).active_pane.clone();
-                    add_panel_display_terminal(&workspace, &pane, "interim", window, cx);
+                    let (_, new_id) =
+                        add_panel_display_terminal(&workspace, &pane, "interim", window, cx);
                     panel.update(cx, |panel, cx| {
                         panel.serialize(cx);
                         panel.restoring = panel_restoring;
@@ -2394,11 +5251,23 @@ mod tests {
                     workspace.update(cx, |workspace, _| {
                         workspace.set_restoring_workspace(workspace_restoring)
                     });
+                    new_id
                 })
                 .unwrap();
             cx.update(|cx| cx.shutdown());
             assert_eq!(kvp.read_kvp(&key).unwrap(), Some(saved));
-            assert_eq!(db.item_ids(workspace_id).unwrap(), vec![11]);
+            assert_eq!(
+                saved_panel_terminal_ids(
+                    &kvp,
+                    &TerminalPanel::recovery_key_for_workspace_id(workspace_id)
+                ),
+                vec![new_id]
+            );
+            assert_eq!(db.item_ids(workspace_id).unwrap(), vec![11, new_id]);
+            assert_eq!(
+                db.get_terminal(new_id, workspace_id).unwrap(),
+                (None, Some(String::from("interim")))
+            );
             assert_eq!(
                 db.get_custom_title(11, workspace_id).unwrap().as_deref(),
                 Some("terminal-11")
@@ -2406,6 +5275,11 @@ mod tests {
             assert!(panel.read_with(cx, |panel, _| {
                 panel.needs_cleanup.load(Ordering::Relaxed)
             }));
+            drop(panel);
+            drop(workspace);
+            let (_, _, reopened) = reopen_terminal_panel(workspace_id, cx).await;
+            assert_eq!(panel_terminal_ids(&reopened, cx), vec![11, new_id]);
+            cx.update(|cx| cx.shutdown());
         }
     }
 
@@ -2694,6 +5568,87 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_empty_inactive_panel_restores_without_spawning_shell(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().project.shell = Some(
+                    settings::Shell::Program(String::from("__nonexistent_shell__")),
+                );
+            });
+        });
+        for recovery in [false, true] {
+            for items in [
+                serde_json::json!([]),
+                serde_json::json!({"Pane": {
+                    "active": true, "children": [], "active_item": null
+                }}),
+                serde_json::json!({"Group": {
+                    "axis": "horizontal", "flexes": [0.5, 0.5], "children": [
+                        {"Pane": {"active": false, "children": [], "active_item": null}},
+                        {"Group": {"axis": "vertical", "flexes": null, "children": [
+                            {"Pane": {"active": true, "children": [], "active_item": null}}
+                        ]}}
+                    ]
+                }}),
+            ] {
+                let (window, panel) = init_workspace_with_panel(cx).await;
+                let workspace = window
+                    .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                    .expect("workspace window");
+                let workspace_id = initialize_terminal_persistence(&workspace, &[], cx).await;
+                let kvp = cx.read(|cx| KeyValueStore::global(cx));
+                let key = if recovery {
+                    TerminalPanel::recovery_key_for_workspace_id(workspace_id)
+                } else {
+                    TerminalPanel::serialization_key_for_workspace_id(workspace_id)
+                };
+                let saved = serde_json::json!({
+                    "items": items, "active_item_id": null, "primary_item_ids": []
+                })
+                .to_string();
+                kvp.write_kvp(key.clone(), saved.clone())
+                    .await
+                    .expect("save empty graph");
+                window
+                    .update(cx, |_, window, cx| {
+                        panel.update(cx, |panel, cx| {
+                            assert!(!panel.active);
+                            panel.primary_loaded = false;
+                            panel.recovery_loaded = false;
+                            panel.retry_restoration(window, cx);
+                        });
+                    })
+                    .expect("restore empty panel");
+                panel
+                    .update(cx, |panel, _| {
+                        std::mem::replace(&mut panel._restoration, Task::ready(()))
+                    })
+                    .await;
+                cx.run_until_parked();
+                panel.read_with(cx, |panel, cx| {
+                    assert!(!panel.active);
+                    assert!(!panel.restoring);
+                    assert_eq!(panel.restoration_error, None);
+                    assert!(panel.primary_loaded);
+                    assert!(panel.recovery_loaded);
+                    assert_eq!(panel.pending_terminals_to_add, 0);
+                    assert_eq!(
+                        panel
+                            .center
+                            .panes()
+                            .into_iter()
+                            .map(|pane| pane.read(cx).items_len())
+                            .collect::<Vec<_>>(),
+                        vec![0]
+                    );
+                });
+                assert_eq!(kvp.read_kvp(&key).expect("read empty graph"), Some(saved));
+            }
+        }
+    }
+
+    #[gpui::test]
     async fn test_load_without_serialized_state_does_not_persist_empty_state(
         cx: &mut TestAppContext,
     ) {
@@ -2793,7 +5748,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             suppressed_state, None,
-            "serialization should stay suppressed while the panel is restoring"
+            "the primary graph must not change while the panel is restoring"
         );
         let db = cx.update(|cx| TerminalDb::global(cx));
         db.write(|connection| {
@@ -2813,6 +5768,16 @@ mod tests {
                 .downcast::<TerminalView>()
                 .unwrap()
         });
+        let (workspace_id, item_id) =
+            terminal_view.read_with(cx, |view, _| view.serialization_identity().unwrap());
+        assert_eq!(
+            saved_panel_terminal_ids(
+                &cx.update(|cx| KeyValueStore::global(cx)),
+                &TerminalPanel::recovery_key_for_workspace_id(workspace_id)
+            ),
+            vec![item_id]
+        );
+        assert_eq!(db.item_ids(workspace_id).unwrap(), vec![item_id]);
         terminal_view.update(cx, |terminal_view, cx| {
             terminal_view.set_custom_title(Some(String::from("during-restore")), cx);
         });
@@ -2836,15 +5801,26 @@ mod tests {
             .read_kvp(&serialization_key)
             .unwrap();
         assert_eq!(failed_state, None);
+        assert!(terminal_panel.read_with(cx, |panel, _| panel.publication_error.is_some()));
         assert!(terminal_panel.read_with(cx, |panel, _| {
             panel.needs_cleanup.load(Ordering::Relaxed)
         }));
         db.write(|connection| connection.exec("DROP TRIGGER fail_terminal_payload")?())
             .await
             .unwrap();
-        terminal_panel.update(cx, |panel, cx| panel.serialize(cx));
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |panel, cx| panel.retry_restoration(window, cx))
+            })
+            .unwrap();
+        terminal_panel
+            .update(cx, |panel, _| {
+                std::mem::replace(&mut panel._restoration, Task::ready(()))
+            })
+            .await;
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
+        assert!(terminal_panel.read_with(cx, |panel, _| panel.publication_error.is_none()));
         let serialized_state = cx
             .update(|cx| KeyValueStore::global(cx))
             .read_kvp(&serialization_key)
@@ -2918,6 +5894,7 @@ mod tests {
                     SerializedTerminalPanel {
                         items: SerializedItems::NoSplits(vec![12345]),
                         active_item_id: Some(12345),
+                        primary_item_ids: Vec::new(),
                     },
                     terminal_panel.downgrade(),
                     window,
@@ -3005,6 +5982,7 @@ mod tests {
                             },
                         )),
                         active_item_id: None,
+                        primary_item_ids: Vec::new(),
                     },
                     terminal_panel.downgrade(),
                     window,
@@ -3486,6 +6464,7 @@ mod tests {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
                     let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
                     workspace.add_panel(panel.clone(), window, cx);
+                    workspace.set_terminal_provider(TerminalProvider(panel.clone()));
                     panel
                 })
             })
@@ -3939,6 +6918,215 @@ mod tests {
         );
     }
 
+    struct TerminalStatusItem {
+        item_ids: Vec<Option<gpui::EntityId>>,
+    }
+
+    impl Render for TerminalStatusItem {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    impl workspace::StatusItemView for TerminalStatusItem {
+        fn set_active_pane_item(
+            &mut self,
+            item: Option<&dyn workspace::ItemHandle>,
+            _: &mut Window,
+            _: &mut Context<Self>,
+        ) {
+            let item_id = item.map(|item| item.item_id());
+            if self.item_ids.last() != Some(&item_id) {
+                self.item_ids.push(item_id);
+            }
+        }
+
+        fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+            None
+        }
+    }
+
+    fn observe_terminal_status(
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<TerminalStatusItem> {
+        let item = cx.new(|_| TerminalStatusItem {
+            item_ids: Vec::new(),
+        });
+        workspace
+            .read(cx)
+            .status_bar()
+            .clone()
+            .update(cx, |status_bar, cx| {
+                status_bar.add_right_item(item.clone(), window, cx);
+            });
+        item
+    }
+
+    async fn reopen_terminal_panel(
+        workspace_id: WorkspaceId,
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::WindowHandle<MultiWorkspace>,
+        Entity<Workspace>,
+        Entity<TerminalPanel>,
+    ) {
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let window = cx.add_window(|window, cx| {
+            let template = cx.new(|cx| Workspace::test_new(project.clone(), window, cx));
+            let app_state = template.read(cx).app_state().clone();
+            let workspace =
+                cx.new(|cx| Workspace::new(Some(workspace_id), project, app_state, window, cx));
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
+        });
+        let workspace = window
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let panel = load_terminal_panel(&workspace, window, cx).await;
+        panel
+            .update(cx, |panel, _| {
+                std::mem::replace(&mut panel._restoration, Task::ready(()))
+            })
+            .await;
+        (window, workspace, panel)
+    }
+
+    async fn load_terminal_panel(
+        workspace: &Entity<Workspace>,
+        window: gpui::WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) -> Entity<TerminalPanel> {
+        window
+            .update(cx, |_, window, cx| {
+                let workspace = workspace.downgrade();
+                window.spawn(cx, async move |cx| {
+                    TerminalPanel::load(workspace, cx.clone()).await
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap()
+    }
+
+    fn terminal_session_binding(
+        db: &TerminalDb,
+        workspace_id: WorkspaceId,
+    ) -> (Option<String>, Option<u64>) {
+        db.select_row_bound::<WorkspaceId, (Option<String>, Option<u64>)>(
+            "SELECT session_id, window_id FROM workspaces WHERE workspace_id = ?",
+        )
+        .unwrap()(workspace_id)
+        .unwrap()
+        .unwrap()
+    }
+
+    fn terminal_pane_state(
+        pane: &Entity<Pane>,
+        cx: &TestAppContext,
+    ) -> (Vec<gpui::EntityId>, usize, usize, Option<gpui::EntityId>) {
+        pane.read_with(cx, |pane, _| {
+            (
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                pane.pinned_count(),
+                pane.active_item_index(),
+                pane.preview_item_id(),
+            )
+        })
+    }
+
+    fn add_failed_terminal(
+        workspace: &Entity<Workspace>,
+        pane: &Entity<Pane>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<TerminalView> {
+        let failed = workspace.update(cx, |workspace, cx| {
+            let failed = cx.new(|cx| {
+                TerminalView::failed_restoration(
+                    workspace.weak_handle(),
+                    workspace.project().downgrade(),
+                    workspace_id,
+                    item_id,
+                    anyhow!("terminal could not be restored"),
+                    window,
+                    cx,
+                )
+            });
+            workspace
+                .register_serialized_item_id("Terminal", failed.entity_id(), item_id, cx)
+                .unwrap();
+            failed
+        });
+        pane.update(cx, |pane, cx| {
+            pane.add_item(Box::new(failed.clone()), true, false, None, window, cx)
+        });
+        failed
+    }
+
+    fn panel_terminal(
+        panel: &Entity<TerminalPanel>,
+        item_id: ItemId,
+        cx: &TestAppContext,
+    ) -> Entity<TerminalView> {
+        panel.read_with(cx, |panel, cx| {
+            panel
+                .center
+                .panes()
+                .into_iter()
+                .find_map(|pane| {
+                    pane.read(cx).items_of_type::<TerminalView>().find(|view| {
+                        view.read(cx)
+                            .serialization_identity()
+                            .is_some_and(|(_, id)| id == item_id)
+                    })
+                })
+                .unwrap()
+        })
+    }
+
+    fn saved_panel_terminal_ids(kvp: &KeyValueStore, key: &str) -> Vec<ItemId> {
+        fn collect(value: &serde_json::Value, ids: &mut Vec<ItemId>) {
+            if let Some(items) = value.as_array() {
+                ids.extend(items.iter().map(|item| item.as_u64().unwrap()));
+            } else if let Some(pane) = value.get("Pane") {
+                collect(&pane["children"], ids);
+            } else {
+                for child in value["Group"]["children"].as_array().unwrap() {
+                    collect(child, ids);
+                }
+            }
+        }
+        let value = serde_json::from_str::<serde_json::Value>(&kvp.read_kvp(key).unwrap().unwrap())
+            .unwrap();
+        let mut ids = Vec::new();
+        collect(&value["items"], &mut ids);
+        ids.sort_unstable();
+        ids
+    }
+
+    fn panel_terminal_ids(panel: &Entity<TerminalPanel>, cx: &TestAppContext) -> Vec<ItemId> {
+        panel.read_with(cx, |panel, cx| {
+            let mut ids = panel
+                .center
+                .panes()
+                .into_iter()
+                .flat_map(|pane| {
+                    pane.read(cx)
+                        .items_of_type::<TerminalView>()
+                        .map(|view| view.read(cx).serialization_identity().unwrap().1)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            ids.sort_unstable();
+            ids
+        })
+    }
+
     fn add_panel_display_terminal(
         workspace: &Entity<Workspace>,
         pane: &Entity<Pane>,
@@ -3962,7 +7150,6 @@ mod tests {
                 let mut view = TerminalView::new(
                     terminal,
                     workspace.weak_handle(),
-                    workspace.database_id(),
                     workspace.project().downgrade(),
                     window,
                     cx,

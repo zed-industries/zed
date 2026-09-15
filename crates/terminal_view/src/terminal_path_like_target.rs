@@ -218,7 +218,6 @@ mod tests {
             TerminalView::new(
                 terminal,
                 workspace_a.downgrade(),
-                None,
                 project.downgrade(),
                 window,
                 cx,

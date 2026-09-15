@@ -2079,7 +2079,6 @@ impl AgentPanel {
             project.create_terminal_shell(working_directory, cx)
         });
         let workspace = self.workspace.clone();
-        let workspace_id = self.workspace_id;
         let project = self.project.downgrade();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -2103,8 +2102,7 @@ impl AgentPanel {
             this.update_in(cx, |this, window, cx| {
                 let terminal_for_init_command = terminal.clone();
                 let terminal_view = cx.new(|cx| {
-                    let mut view =
-                        TerminalView::new(terminal, workspace, workspace_id, project, window, cx);
+                    let mut view = TerminalView::new(terminal, workspace, project, window, cx);
                     view.set_show_workspace_actions(false, cx);
                     view
                 });
@@ -6829,7 +6827,6 @@ impl AgentPanel {
             let mut view = TerminalView::new(
                 terminal,
                 self.workspace.clone(),
-                self.workspace_id,
                 self.project.downgrade(),
                 window,
                 cx,
