@@ -2,6 +2,7 @@ syntax = "proto3";
 package zed.messages;
 
 import "buffer.proto";
+import "core.proto";
 
 message GetDefinition {
   uint64 project_id = 1;
@@ -571,6 +572,7 @@ message InlayHintLabelPart {
   PointUtf16 location_range_start = 4;
   PointUtf16 location_range_end = 5;
   optional uint64 language_server_id = 6;
+  optional CodeAction command = 7;
 }
 
 message InlayHintTooltip {
@@ -667,6 +669,11 @@ message RefreshDocumentColors {
 }
 
 message RefreshDocumentLinks {
+  uint64 project_id = 1;
+  optional uint64 server_id = 2;
+}
+
+message RefreshDocumentHighlights {
   uint64 project_id = 1;
   optional uint64 server_id = 2;
 }
@@ -959,6 +966,26 @@ message LanguageServerPromptResponse {
   optional uint64 action_response = 1;
 }
 
+message LanguageServerShowDocumentRequest {
+  uint64 project_id = 1;
+  string uri = 2;
+  bool external = 3;
+  bool take_focus = 4;
+  optional PointUtf16 selection_start = 5;
+  optional PointUtf16 selection_end = 6;
+}
+
+message ExecuteLspCommand {
+  uint64 project_id = 1;
+  uint64 language_server_id = 2;
+  string command = 3;
+  repeated string arguments = 4;
+}
+
+message ExecuteLspCommandResponse {
+  optional string result = 1;
+}
+
 message GetDocumentColor {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
@@ -1035,6 +1062,7 @@ message LspQueryResponse {
   uint64 project_id = 1;
   uint64 lsp_request_id = 2;
   repeated LspResponse responses = 3;
+  PeerId peer_id = 4;
 }
 
 message LspResponse {
