@@ -64,11 +64,13 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+mod frame_pipeline;
 #[cfg(target_os = "macos")]
 mod mac;
 mod prompts;
 
 pub use a11y::A11ySubtreeBuilder;
+pub use frame_pipeline::{FramePipeline, StandardImmediatePipeline};
 #[cfg(target_os = "macos")]
 pub use mac::*;
 
@@ -1199,6 +1201,11 @@ pub(crate) struct WindowFrameState {
 pub(crate) struct WindowHostCore {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
+    /// The pipeline this window draws its frames through.
+    ///
+    /// Held behind a [`RefCell`] so a frame can hold it while also borrowing the
+    /// window it is drawing.
+    frame_pipeline: Rc<RefCell<Box<dyn FramePipeline>>>,
     pub(crate) removed: bool,
     /// The most recently sampled metrics, published for lock-free reads.
     metrics: Arc<ArcSwap<WindowMetrics>>,
@@ -2160,6 +2167,7 @@ impl WindowHost {
             core: WindowHostCore {
                 handle,
                 invalidator,
+                frame_pipeline: Rc::new(RefCell::new(cx.new_frame_pipeline(handle.window_id()))),
                 removed: false,
                 metrics,
                 platform_window,
@@ -3300,48 +3308,8 @@ impl Window<'_> {
     #[doc(hidden)]
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
-        // Drain every draw in profiler builds so a previous frame's
-        // first-invalidation timestamp can't be attributed to this one.
-        #[cfg(feature = "profiler")]
-        let frame_dirty = self.core.invalidator.take_frame_dirty();
-        #[cfg(feature = "profiler")]
-        self.core.window_profiler.begin_draw();
-
-        // Set up the per-App arena for element allocation during this draw.
-        // This ensures that multiple test Apps have isolated arenas.
-        let arena_scope = ElementArenaScope::enter(&cx.element_arena);
-
-        self.begin_frame(cx);
-        self.restore_input_handler();
-        if !cx.mode.skip_drawing() {
-            self.draw_roots(cx);
-            #[cfg(feature = "profiler")]
-            {
-                let viewport_size = self.core.viewport_size;
-                let scale_factor = self.scale_factor();
-                self.core.debug_frame_overlay.paint(
-                    &mut self.frame_state.next_frame.scene,
-                    viewport_size,
-                    scale_factor,
-                );
-            }
-        }
-        self.finish_frame(cx);
-        let focus_before_listeners = self.complete_frame(cx);
-        self.end_frame(cx, focus_before_listeners);
-
-        #[cfg(feature = "profiler")]
-        {
-            let draw_duration = self
-                .core
-                .window_profiler
-                .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
-            self.core.debug_frame_overlay.record_frame(draw_duration);
-        }
-
-        // Exit the scope to obtain the arena-clear token this draw owes; the
-        // scope's teardown itself happens in `ElementArenaScope::drop`.
-        arena_scope.exit(&cx.element_arena)
+        let pipeline = self.core.frame_pipeline.clone();
+        pipeline.borrow_mut().draw(self, cx)
     }
 
     /// Opens a frame: samples the platform window, resets the scratch state a
@@ -7912,14 +7880,80 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Context, DispatchPhase, DragMoveEvent, Empty,
-        ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
-        InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke,
-        LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
-        PlatformInput, Point, Render, RequestFrameOptions, StatefulInteractiveElement as _, Styled,
-        TestAppContext, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Window, WindowAppearance,
-        WindowOptions, canvas, div, point, px, size,
+        AnyWindowHandle, App, AppContext as _, Bounds, Context, DispatchPhase, DragMoveEvent,
+        Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
+        FocusId, FramePipeline, InputEvent as _, InteractiveElement as _, IntoElement,
+        KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+        ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions,
+        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
+        TouchId, TouchPhase, Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
     };
+
+    /// A window draws through whatever pipeline its app installs, running the
+    /// phases in order.
+    #[gpui::test]
+    fn a_window_draws_through_its_frame_pipeline(cx: &mut TestAppContext) {
+        let recorded: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        let recorder = recorded.clone();
+        cx.update(move |cx| {
+            cx.set_frame_pipeline_factory(Rc::new(move |_| {
+                Box::new(RecordingPipeline(recorder.clone()))
+            }));
+        });
+
+        let window = cx.add_window(|_, _| EmptyView);
+        recorded.borrow_mut().clear();
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        let phases = recorded.borrow();
+        assert!(
+            phases.starts_with(&[
+                "begin_frame",
+                "draw_roots",
+                "finish_frame",
+                "complete_frame",
+                "end_frame"
+            ]),
+            "frame ran {phases:?}"
+        );
+    }
+
+    /// Records the phases it is asked to run, then delegates to the standard
+    /// implementation of each one.
+    struct RecordingPipeline(Rc<RefCell<Vec<&'static str>>>);
+
+    impl FramePipeline for RecordingPipeline {
+        fn begin_frame(&mut self, window: &mut Window, cx: &mut App) {
+            self.0.borrow_mut().push("begin_frame");
+            window.begin_frame(cx);
+        }
+
+        fn draw_roots(&mut self, window: &mut Window, cx: &mut App) {
+            self.0.borrow_mut().push("draw_roots");
+            window.draw_roots(cx);
+        }
+
+        fn finish_frame(&mut self, window: &mut Window, cx: &mut App) {
+            self.0.borrow_mut().push("finish_frame");
+            window.finish_frame(cx);
+        }
+
+        fn complete_frame(&mut self, window: &mut Window, cx: &mut App) -> Option<FocusId> {
+            self.0.borrow_mut().push("complete_frame");
+            window.complete_frame(cx)
+        }
+
+        fn end_frame(
+            &mut self,
+            window: &mut Window,
+            cx: &mut App,
+            focus_before_listeners: Option<FocusId>,
+        ) {
+            self.0.borrow_mut().push("end_frame");
+            window.end_frame(cx, focus_before_listeners);
+        }
+    }
 
     #[gpui::test]
     fn test_fully_visible_bounds_preserve_layout_viewport(cx: &mut TestAppContext) {

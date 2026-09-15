@@ -44,15 +44,15 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, ActivityGuard, Any, AnyView, AnyWindowHandle,
     AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
     ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload,
-    FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke,
-    LayoutEngine, LayoutId, Menu, MenuCommandId, MenuItem, OwnedMenu, OwnedMenuItem,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    FocusHandle, FocusMap, ForegroundExecutor, FramePipeline, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutEngine, LayoutId, Menu, MenuCommandId, MenuItem, OwnedMenu,
+    OwnedMenuItem, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
-    SystemNotificationResponse, SystemWindowTab, Task, TextRenderingMode, TextSystem, ThermalState,
-    Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowHost, WindowId,
-    WindowInvalidator,
+    SharedString, StandardImmediatePipeline, SubscriberSet, Subscription, SvgRenderer,
+    SystemNotification, SystemNotificationResponse, SystemWindowTab, Task, TextRenderingMode,
+    TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle,
+    WindowHost, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, resolve_dock_menu, resolve_menus,
 };
@@ -569,6 +569,10 @@ pub struct App {
     /// construction so windows drive layout through the [`LayoutEngine`] trait
     /// without naming an implementation.
     layout_engine_factory: Rc<dyn Fn() -> Box<dyn LayoutEngine>>,
+    /// Creates a fresh frame pipeline for each window. Injected at application
+    /// construction so windows draw through the [`FramePipeline`] trait without
+    /// naming an implementation.
+    frame_pipeline_factory: Rc<dyn Fn(WindowId) -> Box<dyn FramePipeline>>,
 
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
@@ -668,6 +672,11 @@ impl App {
         (self.layout_engine_factory)()
     }
 
+    /// Creates the frame pipeline for a newly opened window.
+    pub(crate) fn new_frame_pipeline(&self, window_id: WindowId) -> Box<dyn FramePipeline> {
+        (self.frame_pipeline_factory)(window_id)
+    }
+
     #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
@@ -699,6 +708,7 @@ impl App {
                 platform: platform.clone(),
                 text_system,
                 layout_engine_factory: Rc::new(gpui_engine_default::default_layout_engine),
+                frame_pipeline_factory: Rc::new(|_| Box::new(StandardImmediatePipeline)),
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
@@ -2757,6 +2767,15 @@ impl App {
     #[doc(hidden)]
     pub fn set_layout_engine_factory(&mut self, factory: Rc<dyn Fn() -> Box<dyn LayoutEngine>>) {
         self.layout_engine_factory = factory;
+    }
+
+    /// Replaces the factory that creates each window's frame pipeline.
+    #[doc(hidden)]
+    pub fn set_frame_pipeline_factory(
+        &mut self,
+        factory: Rc<dyn Fn(WindowId) -> Box<dyn FramePipeline>>,
+    ) {
+        self.frame_pipeline_factory = factory;
     }
 
     /// Sets the arguments to pass when restarting the application.

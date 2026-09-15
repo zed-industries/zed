@@ -3,8 +3,8 @@
 
 use anyhow::Result;
 use gpui_authoring::{
-    App, AppCell, AssetSource, AsyncApp, BackgroundExecutor, ForegroundExecutor, LayoutEngine,
-    Platform, QuitMode, TextSystem, http_client::HttpClient,
+    App, AppCell, AssetSource, AsyncApp, BackgroundExecutor, ForegroundExecutor, FramePipeline,
+    LayoutEngine, Platform, QuitMode, TextSystem, WindowId, http_client::HttpClient,
 };
 use std::{ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
 
@@ -96,6 +96,21 @@ impl Application {
         self.0
             .borrow_mut()
             .set_layout_engine_factory(Rc::new(layout_engine));
+        self
+    }
+
+    /// Sets the factory that creates each window's frame pipeline.
+    ///
+    /// Defaults to the immediate-mode pipeline bundled with GPUI, which
+    /// re-evaluates the view tree every frame. Supply a different implementation
+    /// to change how a window draws its frames.
+    pub fn with_frame_pipeline(
+        self,
+        frame_pipeline: impl Fn(WindowId) -> Box<dyn FramePipeline> + 'static,
+    ) -> Self {
+        self.0
+            .borrow_mut()
+            .set_frame_pipeline_factory(Rc::new(frame_pipeline));
         self
     }
 
