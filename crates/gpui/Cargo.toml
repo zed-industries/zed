@@ -144,6 +144,10 @@ name = "instrumented_pipeline"
 path = "examples/instrumented_pipeline.rs"
 
 [[example]]
+name = "frame_pipeline_decorator"
+path = "examples/frame_pipeline_decorator.rs"
+
+[[example]]
 name = "move_entity_between_windows"
 path = "examples/move_entity_between_windows.rs"
 

@@ -64,6 +64,15 @@
 //! example: it times the root passes and draws the standard frame otherwise, using
 //! nothing but this crate's public surface.
 //!
+//! ## Composing pipelines
+//!
+//! [`FramePipeline`](crate::FramePipeline) is object-safe and every pass defaults
+//! to the [`Window`](crate::Window) method implementing it, so independent concerns
+//! compose as decorators: a pipeline wraps another, changes the one pass it cares
+//! about, and forwards the rest. `gpui_runtime`'s `ThrottledPipeline` caps a frame
+//! rate this way, and the `frame_pipeline_decorator` example in the `gpui` crate
+//! writes the same pattern from an application, entirely outside the framework.
+//!
 //! ## Installing one
 //!
 //! `Application::with_frame_pipeline` takes a factory and builds a pipeline per

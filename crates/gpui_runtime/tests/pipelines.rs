@@ -7,13 +7,13 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use gpui_authoring::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, EntitySlotExt as _, FramePipeline,
-    IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, Window, WindowMetrics,
-    div, px,
+    AnyWindowHandle, App, AppContext as _, Context, Entity, EntitySlotExt as _, FocusId,
+    FramePipeline, IntoElement, ParentElement as _, PreparedRoots, Render, Styled as _,
+    TestAppContext, Window, WindowMetrics, div, px,
 };
 use gpui_runtime::{FramePipelineExt, InstrumentedPipeline, PhaseMetrics};
 
@@ -140,9 +140,8 @@ fn a_pipeline_written_outside_the_framework_can_defer_a_frame() {
     );
 }
 
-/// A pipeline written outside the framework can cap a frame rate by wrapping
-/// another pipeline, drawing its first frame and deferring one that follows it
-/// too soon.
+/// The batteries-included throttle caps a frame rate through its builder,
+/// drawing its first frame and deferring one that follows it too soon.
 #[test]
 fn a_throttled_pipeline_defers_a_frame_that_arrives_too_soon() {
     let mut cx = TestAppContext::single();
@@ -155,6 +154,110 @@ fn a_throttled_pipeline_defers_a_frame_that_arrives_too_soon() {
                 // One frame a second: a frame that follows another one within a
                 // test is always too soon to draw again.
                 Box::new(InstrumentedPipeline::new(metrics.clone()).max_fps(1))
+            }));
+        }
+    });
+
+    let counter = cx.new(|_| Counter(10));
+    let window = cx.add_window(move |_, _| SlotView { counter });
+
+    // The throttle has nothing to compare a timestamp against yet, so it draws.
+    metrics.borrow_mut().frames = 0;
+    window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
+    assert!(metrics.borrow().frames > 0, "the first frame was drawn");
+
+    // A frame that follows within the throttle's one-second window is deferred.
+    metrics.borrow_mut().frames = 0;
+    window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
+    assert_eq!(
+        metrics.borrow().frames,
+        0,
+        "the frame that arrived too soon was deferred"
+    );
+}
+
+/// A frame-rate cap written outside the framework, mirroring the decorator
+/// pattern an application would use: it changes only `should_render` and forwards
+/// every other pass to the pipeline it wraps.
+struct OutOfTreeThrottle<P> {
+    inner: P,
+    min_interval: Duration,
+    last_render: Option<Instant>,
+}
+
+impl<P> OutOfTreeThrottle<P> {
+    fn max_fps(inner: P, max_fps: u32) -> Self {
+        Self {
+            inner,
+            min_interval: Duration::from_secs_f64(1.0 / f64::from(max_fps.max(1))),
+            last_render: None,
+        }
+    }
+}
+
+impl<P: FramePipeline> FramePipeline for OutOfTreeThrottle<P> {
+    fn should_render(&mut self, is_dirty: bool, metrics: &WindowMetrics) -> bool {
+        if !self.inner.should_render(is_dirty, metrics) {
+            return false;
+        }
+
+        let now = Instant::now();
+        if let Some(last_render) = self.last_render
+            && now.duration_since(last_render) < self.min_interval
+        {
+            return false;
+        }
+
+        self.last_render = Some(now);
+        true
+    }
+
+    fn begin_frame(&mut self, window: &mut Window<'_>, cx: &mut App) {
+        self.inner.begin_frame(window, cx);
+    }
+
+    fn evaluate_roots(&mut self, window: &mut Window<'_>, cx: &mut App) -> PreparedRoots {
+        self.inner.evaluate_roots(window, cx)
+    }
+
+    fn layout_roots(&mut self, window: &mut Window<'_>, roots: &mut PreparedRoots, cx: &mut App) {
+        self.inner.layout_roots(window, roots, cx);
+    }
+
+    fn paint_roots(&mut self, window: &mut Window<'_>, roots: PreparedRoots, cx: &mut App) {
+        self.inner.paint_roots(window, roots, cx);
+    }
+
+    fn finish_frame(&mut self, window: &mut Window<'_>, cx: &mut App) {
+        self.inner.finish_frame(window, cx);
+    }
+
+    fn complete_frame(&mut self, window: &mut Window<'_>, cx: &mut App) -> Option<FocusId> {
+        self.inner.complete_frame(window, cx)
+    }
+
+    fn end_frame(&mut self, window: &mut Window<'_>, cx: &mut App, focus: Option<FocusId>) {
+        self.inner.end_frame(window, cx, focus);
+    }
+}
+
+/// A decorator written outside the framework can cap a frame rate by wrapping a
+/// pipeline the framework ships.
+#[test]
+fn a_decorator_written_outside_the_framework_can_cap_a_frame_rate() {
+    let mut cx = TestAppContext::single();
+    let metrics = Rc::new(RefCell::new(PhaseMetrics::default()));
+
+    cx.update({
+        let metrics = metrics.clone();
+        move |cx| {
+            cx.set_frame_pipeline_factory(Rc::new(move |_| {
+                // One frame a second: a frame that follows another one within a
+                // test is always too soon to draw again.
+                Box::new(OutOfTreeThrottle::max_fps(
+                    InstrumentedPipeline::new(metrics.clone()),
+                    1,
+                ))
             }));
         }
     });

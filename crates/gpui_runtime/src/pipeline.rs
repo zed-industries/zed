@@ -10,9 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui_authoring::{
-    App, ArenaClearNeeded, FocusId, FramePipeline, PreparedRoots, Window, WindowMetrics,
-};
+use gpui_authoring::{App, FocusId, FramePipeline, PreparedRoots, Window, WindowMetrics};
 
 /// What an [`InstrumentedPipeline`] has measured.
 ///
@@ -51,9 +49,11 @@ impl PhaseMetrics {
 /// which is how independent concerns — capping the frame rate, timing the passes,
 /// inspecting what a frame is about to draw — stack in any order.
 ///
-/// A decorator has to forward every pass, including
-/// [`draw`](FramePipeline::draw): the passes have defaults, so a pass it forgets
-/// to forward silently draws the standard frame instead of the one it wraps.
+/// A decorator forwards the passes it does not change to the pipeline it wraps;
+/// the default [`draw`](FramePipeline::draw) then runs those forwards as one
+/// frame. A pass it forgets to forward falls back to the standard implementation
+/// of that pass, not the inner pipeline's, so a decorator must forward every pass
+/// it wants the inner pipeline to decide.
 pub trait FramePipelineExt: FramePipeline + Sized {
     /// Caps this pipeline at `max_fps` frames a second.
     ///
@@ -67,10 +67,11 @@ impl<P: FramePipeline> FramePipelineExt for P {}
 
 /// Defers frames that arrive sooner than a target rate.
 ///
-/// Forwards everything to the pipeline it wraps except the decision to draw, which
-/// it only allows every `1 / max_fps` seconds. Wrap the standard pipeline to cap an
-/// application's frame rate, or wrap another decorator — `.max_fps(30)` reads the
-/// same on an [`InstrumentedPipeline`] as on a
+/// Changes only [`should_render`](FramePipeline::should_render) and forwards every
+/// other pass to the pipeline it wraps, so the wrapped pipeline draws exactly as it
+/// would have. Wrap the standard pipeline to cap an application's frame rate, or
+/// wrap another decorator — `.max_fps(30)` reads the same on an
+/// [`InstrumentedPipeline`] as on a
 /// [`StandardImmediatePipeline`][gpui_authoring::StandardImmediatePipeline].
 ///
 /// A deferred frame is not a dropped one. It leaves the window dirty and leaves
@@ -120,12 +121,6 @@ impl<P: FramePipeline> FramePipeline for ThrottledPipeline<P> {
 
         self.last_frame = Some(now);
         true
-    }
-
-    // Every pass is forwarded, so a decorator is transparent to what it wraps: an
-    // inner pipeline that drives the passes itself still gets to.
-    fn draw(&mut self, window: &mut Window<'_>, cx: &mut App) -> ArenaClearNeeded {
-        self.inner.draw(window, cx)
     }
 
     fn begin_frame(&mut self, window: &mut Window<'_>, cx: &mut App) {
