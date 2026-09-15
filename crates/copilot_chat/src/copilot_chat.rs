@@ -22,6 +22,8 @@ pub use copilot_oauth::DeviceFlow;
 // https://github.com/github/copilot-language-server-release/issues/3#issuecomment-2699433055
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
 pub const GITHUB_COPILOT_OAUTH_ENV_VAR: &str = "GITHUB_COPILOT_TOKEN";
+const CENTS_PER_DOLLAR: f64 = 100.0;
+const COPILOT_API_VERSION: &str = "2026-08-01";
 const DEFAULT_COPILOT_API_ENDPOINT: &str = "https://api.githubcopilot.com";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -177,12 +179,52 @@ pub struct Model {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 struct ModelBilling {
+    #[serde(default)]
     is_premium: bool,
-    multiplier: f64,
+    #[serde(default)]
+    multiplier: Option<f64>,
     // List of plans a model is restricted to
     // Field is not present if a model is available for all plans
     #[serde(default)]
     restricted_to: Option<Vec<String>>,
+    #[serde(default)]
+    token_prices: Option<ModelTokenPrices>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+struct ModelTokenPrices {
+    default: ModelContextTier,
+    #[serde(default)]
+    long_context: Option<ModelContextTier>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+struct ModelContextTier {
+    #[serde(default)]
+    max_prompt_tokens: u64,
+    #[serde(default, rename = "input_price")]
+    input_cents_per_1m: f64,
+    #[serde(default, rename = "output_price")]
+    output_cents_per_1m: f64,
+}
+
+impl ModelBilling {
+    fn max_prompt_tokens_before_surcharge(&self) -> Option<u64> {
+        let prices = self.token_prices.as_ref()?;
+        let long_context = prices.long_context.as_ref()?;
+        let has_surcharge = long_context.input_cents_per_1m > prices.default.input_cents_per_1m
+            || long_context.output_cents_per_1m > prices.default.output_cents_per_1m;
+        if !has_surcharge || prices.default.max_prompt_tokens == 0 {
+            return None;
+        }
+        Some(prices.default.max_prompt_tokens)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModelTokenCost {
+    pub input_dollars_per_1m: f64,
+    pub output_dollars_per_1m: f64,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -276,7 +318,13 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> u64 {
-        self.capabilities.limits.max_context_window_tokens as u64
+        let full_window = self.capabilities.limits.max_context_window_tokens as u64;
+        match self.billing.max_prompt_tokens_before_surcharge() {
+            Some(max_prompt_tokens) => max_prompt_tokens
+                .saturating_add(self.capabilities.limits.max_output_tokens as u64)
+                .min(full_window),
+            None => full_window,
+        }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
@@ -345,8 +393,16 @@ impl Model {
         &self.capabilities.family
     }
 
-    pub fn multiplier(&self) -> f64 {
+    pub fn multiplier(&self) -> Option<f64> {
         self.billing.multiplier
+    }
+
+    pub fn token_cost(&self) -> Option<ModelTokenCost> {
+        let prices = self.billing.token_prices.as_ref()?;
+        Some(ModelTokenCost {
+            input_dollars_per_1m: prices.default.input_cents_per_1m / CENTS_PER_DOLLAR,
+            output_dollars_per_1m: prices.default.output_cents_per_1m / CENTS_PER_DOLLAR,
+        })
     }
 }
 
@@ -1030,7 +1086,7 @@ pub(crate) fn copilot_request_headers(
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )
-        .header("X-GitHub-Api-Version", "2025-10-01")
+        .header("X-GitHub-Api-Version", COPILOT_API_VERSION)
         .when_some(is_user_initiated, |builder, is_user_initiated| {
             builder.header(
                 "X-Initiator",
@@ -1845,8 +1901,9 @@ mod tests {
         let model_with_responses_only = Model {
             billing: ModelBilling {
                 is_premium: false,
-                multiplier: 1.0,
+                multiplier: Some(1.0),
                 restricted_to: None,
+                token_prices: None,
             },
             capabilities: ModelCapabilities {
                 family: "test".to_string(),
