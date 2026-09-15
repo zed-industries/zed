@@ -1143,8 +1143,9 @@ impl VsCodeSettings {
             scan_symlinks: None,
             private_files: None,
             hidden_files: None,
+            // Zed cannot represent the writable exceptions in `files.readonlyExclude`
             read_only_files: self
-                .read_value("files.readonlyExclude")
+                .read_value("files.readonlyInclude")
                 .and_then(|v| v.as_object())
                 .map(|v| {
                     v.iter()
@@ -1234,7 +1235,7 @@ mod tests {
             ..Default::default()
         };
         let imported = VsCodeSettings::from_str(
-            r#"{"files.readonlyExclude": {"**/*.gen.rs": true, "**/*.lock": false}}"#,
+            r#"{"files.readonlyInclude": {"**/*.gen.rs": true, "**/*.lock": false}}"#,
             VsCodeSettingsSource::VsCode,
         )?
         .worktree_settings_content();
@@ -1247,8 +1248,9 @@ mod tests {
         assert_eq!(replaced.read_only_files, imported.read_only_files);
 
         for content in [
-            r#"{"files.readonlyExclude": {"**/*.gen.rs": false}}"#,
-            r#"{"files.readonlyExclude": {}}"#,
+            r#"{"files.readonlyExclude": {"**/*.gen.rs": true}}"#,
+            r#"{"files.readonlyInclude": {"**/*.gen.rs": false}}"#,
+            r#"{"files.readonlyInclude": {}}"#,
             "{}",
         ] {
             let imported = VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)?
@@ -1258,6 +1260,23 @@ mod tests {
             unchanged.merge_from(&imported);
             assert_eq!(unchanged.read_only_files, inherited.read_only_files);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_import_read_only_files_with_exclusions() -> Result<()> {
+        let imported = VsCodeSettings::from_str(
+            r#"{
+                "files.readonlyExclude": {"**/*.lock": true, "**/editable.gen.rs": true},
+                "files.readonlyInclude": {"**/*.gen.rs": true}
+            }"#,
+            VsCodeSettingsSource::VsCode,
+        )?
+        .worktree_settings_content();
+        assert_eq!(
+            serde_json::to_value(&imported.read_only_files)?,
+            serde_json::json!(["**/*.gen.rs"])
+        );
         Ok(())
     }
 
