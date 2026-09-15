@@ -7207,7 +7207,11 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     thread.read_with(cx, |thread, cx| {
-        assert_eq!(thread.running_subagent_ids(cx), Vec::new(), "The subagent should no longer be running");
+        assert_eq!(
+            thread.running_subagent_ids(cx),
+            Vec::new(),
+            "The subagent should no longer be running"
+        );
     });
 
     let request = model.pending_completions().pop().unwrap();
