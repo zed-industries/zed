@@ -11,8 +11,10 @@
 //! underneath, behind [`LayoutEngine`], [`SceneRenderer`] and [`Platform`], or
 //! rides along in [`Style::custom`].
 //!
-//! The `gpui` crate is a thin facade over this and the platform backends, so
-//! applications keep importing `gpui`.
+//! Above this crate sits `gpui_runtime`, which holds `Application` — how a host
+//! program builds, configures and starts an app — and above that, the `gpui`
+//! crate: a thin facade re-exporting this, the runtime, and the platform
+//! backends, so applications keep importing `gpui`.
 
 #![warn(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks

@@ -1,5 +1,8 @@
 mod app_menu;
 
+// Kept here rather than in `gpui_runtime` because the test and bench harnesses in
+// this crate build an app against it, which would make this crate depend on that
+// one and invert the layering.
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 mod threaded_dispatcher;
 
