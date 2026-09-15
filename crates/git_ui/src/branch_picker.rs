@@ -3,7 +3,7 @@ use editor::Editor;
 use fuzzy_nucleo::StringMatchCandidate;
 
 use collections::{HashMap, HashSet};
-use git::repository::{Branch, delete_branch_flag};
+use git::repository::{Branch, Worktree as GitWorktree, delete_branch_flag};
 use git::{GitHostingProviderRegistry, parse_git_remote_url};
 use gpui::http_client::Url;
 use gpui::{
@@ -794,6 +794,27 @@ enum PickerState {
     NewBranch,
 }
 
+/// Git refuses a second checkout of a branch, so a held one cannot be switched to or deleted.
+fn worktree_holding_branch(
+    branch: &Branch,
+    current_branch: Option<&SharedString>,
+    linked_worktrees: &[GitWorktree],
+) -> Option<SharedString> {
+    if current_branch.is_some_and(|current| *current == branch.ref_name) {
+        return None;
+    }
+    linked_worktrees
+        .iter()
+        .find(|worktree| worktree.ref_name.as_ref() == Some(&branch.ref_name))
+        .map(|worktree| {
+            let name = worktree
+                .path
+                .file_name()
+                .unwrap_or(worktree.path.as_os_str());
+            SharedString::from(name.to_string_lossy().into_owned())
+        })
+}
+
 fn delete_branch_command(is_remote: bool, branch_name: &str, force: bool) -> String {
     format!(
         "branch {} {branch_name}",
@@ -977,6 +998,15 @@ fn process_branches(branches: &Arc<[Branch]>, collapse_tracked_remotes: bool) ->
 }
 
 impl BranchListDelegate {
+    fn worktree_holding_branch(&self, branch: &Branch, cx: &App) -> Option<SharedString> {
+        let repo = self.repo.as_ref()?.read(cx);
+        worktree_holding_branch(
+            branch,
+            repo.branch.as_ref().map(|current| &current.ref_name),
+            repo.linked_worktrees(),
+        )
+    }
+
     fn new(
         workspace: WeakEntity<Workspace>,
         repo: Option<Entity<Repository>>,
@@ -1102,6 +1132,12 @@ impl BranchListDelegate {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
         };
+        if entry
+            .as_branch()
+            .is_some_and(|branch| self.worktree_holding_branch(branch, cx).is_some())
+        {
+            return;
+        }
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -1547,6 +1583,10 @@ impl PickerDelegate for BranchListDelegate {
                     return;
                 }
 
+                if self.worktree_holding_branch(branch, cx).is_some() {
+                    return;
+                }
+
                 let current_branch = self.repo.as_ref().map(|repo| {
                     repo.read_with(cx, |repo, _| {
                         repo.branch.as_ref().map(|branch| branch.ref_name.clone())
@@ -1657,6 +1697,9 @@ impl PickerDelegate for BranchListDelegate {
             .unwrap_or_else(|| (None, None, None, None));
 
         let is_head_branch = entry.as_branch().is_some_and(|branch| branch.is_head);
+        let held_by = entry
+            .as_branch()
+            .and_then(|branch| self.worktree_holding_branch(branch, cx));
         let is_checked_branch = entry.as_branch().is_some_and(|branch| {
             if self.is_select_only() {
                 self.branch_selection_behavior
@@ -1700,9 +1743,22 @@ impl PickerDelegate for BranchListDelegate {
                 .truncate()
                 .into_any_element(),
             Entry::Branch { branch, positions } => {
-                HighlightedLabel::new(branch.name().to_string(), positions.clone())
+                let held_by = held_by.clone();
+                let label = HighlightedLabel::new(branch.name().to_string(), positions.clone())
                     .single_line()
                     .truncate()
+                    .when(held_by.is_some(), |label| label.color(Color::Disabled));
+                h_flex()
+                    .min_w_0()
+                    .gap_1p5()
+                    .child(label)
+                    .children(held_by.map(|folder| {
+                        Label::new(format!("in {folder}"))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .single_line()
+                            .truncate()
+                    }))
                     .into_any_element()
             }
         };
@@ -1884,6 +1940,7 @@ impl PickerDelegate for BranchListDelegate {
                                 entry.as_branch().map(|b| b.name().to_string()),
                                 |this, branch_name| {
                                     let absolute_time = absolute_time.clone();
+                                    let held_by = held_by.clone();
                                     this.tooltip({
                                         let is_head = is_head_branch;
                                         let is_checked = is_checked_branch;
@@ -1891,6 +1948,15 @@ impl PickerDelegate for BranchListDelegate {
                                         Tooltip::element(move |_, _| {
                                             v_flex()
                                                 .child(Label::new(branch_name.clone()))
+                                                .when_some(held_by.clone(), |this, folder| {
+                                                    this.child(
+                                                        Label::new(format!(
+                                                            "Checked out in {folder}"
+                                                        ))
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                    )
+                                                })
                                                 .when(is_select_only && is_checked, |this| {
                                                     this.child(
                                                         Label::new("Selected Branch")
@@ -2209,6 +2275,68 @@ mod tests {
             create_test_branch("feature-ui", false, None, Some(800)),
             create_test_branch("develop", false, None, Some(700)),
         ]
+    }
+
+    fn worktree_on(branch_name: &str, path: &str) -> GitWorktree {
+        GitWorktree {
+            path: std::path::PathBuf::from(path),
+            ref_name: Some(format!("refs/heads/{branch_name}").into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        }
+    }
+
+    #[test]
+    fn test_branch_held_by_another_worktree_names_folder() {
+        let branch = create_test_branch("demo-one", false, None, None);
+        let worktrees = [worktree_on(
+            "demo-one",
+            path!("/project/.worktrees/demo-one"),
+        )];
+
+        assert_eq!(
+            worktree_holding_branch(&branch, Some(&"refs/heads/main".into()), &worktrees),
+            Some(SharedString::from("demo-one"))
+        );
+    }
+
+    #[test]
+    fn test_current_branch_is_not_held_by_another_worktree() {
+        let branch = create_test_branch("main", true, None, None);
+        let worktrees = [worktree_on("main", path!("/project"))];
+
+        assert_eq!(
+            worktree_holding_branch(&branch, Some(&"refs/heads/main".into()), &worktrees),
+            None,
+            "the current branch is checked out here, so it is not held elsewhere"
+        );
+    }
+
+    #[test]
+    fn test_branch_is_held_even_when_its_path_has_no_name() {
+        let branch = create_test_branch("demo-one", false, None, None);
+        let worktrees = [worktree_on("demo-one", path!("/"))];
+
+        assert!(
+            worktree_holding_branch(&branch, Some(&"refs/heads/main".into()), &worktrees).is_some(),
+            "git still refuses the checkout, so a path with no file name cannot report the \
+             branch as free"
+        );
+    }
+
+    #[test]
+    fn test_branch_no_worktree_holds_is_free() {
+        let branch = create_test_branch("feature-ui", false, None, None);
+        let worktrees = [worktree_on(
+            "demo-one",
+            path!("/project/.worktrees/demo-one"),
+        )];
+
+        assert_eq!(
+            worktree_holding_branch(&branch, Some(&"refs/heads/main".into()), &worktrees),
+            None
+        );
     }
 
     #[test]
@@ -2581,6 +2709,151 @@ mod tests {
                 assert_eq!(branches, expected_branches);
             })
         });
+    }
+
+    async fn add_worktree_holding_branch(fs: &FakeFs, name: &str, branch: &str) {
+        let admin_dir = format!("{}/{name}", path!("/dir/.git/worktrees"));
+        let checkout = format!("{}/{name}", path!("/worktrees"));
+        fs.insert_tree(
+            &admin_dir,
+            json!({
+                "HEAD": format!("ref: refs/heads/{branch}\n"),
+                "commondir": path!("/dir/.git"),
+                "gitdir": format!("{checkout}/.git\n"),
+            }),
+        )
+        .await;
+        fs.insert_tree(&checkout, json!({})).await;
+        fs.insert_file(
+            format!("{checkout}/.git"),
+            format!("gitdir: {admin_dir}").into_bytes(),
+        )
+        .await;
+    }
+
+    async fn branches_in(
+        repository: &Entity<Repository>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<String> {
+        repository
+            .update(cx, |repository, _| repository.branches())
+            .await
+            .unwrap()
+            .unwrap()
+            .branches
+            .iter()
+            .map(|branch| branch.name().to_string())
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_delete_leaves_branch_another_worktree_holds(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, _project, repository) = init_fake_repository_with_fs(cx).await;
+
+        let branches = create_test_branches();
+        let held = branches[1].name().to_string();
+        let repo = repository.clone();
+        let names = branches
+            .iter()
+            .map(|branch| branch.name().to_string())
+            .collect::<Vec<_>>();
+        cx.spawn(async move |mut cx| {
+            for name in names {
+                repo.update(&mut cx, |repo, _| repo.create_branch(name, None))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        })
+        .await;
+        add_worktree_holding_branch(&fs, "held", &held).await;
+        cx.run_until_parked();
+
+        let (branch_list, mut ctx) =
+            init_branch_list_test(repository.clone().into(), branches, cx).await;
+        let cx = &mut ctx;
+        cx.run_until_parked();
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
+
+        branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                assert_eq!(
+                    picker.delegate.worktree_holding_branch(
+                        picker.delegate.matches[1].as_branch().unwrap(),
+                        cx
+                    ),
+                    Some("held".into()),
+                    "the worktree has to be holding the branch before this can prove \
+                     the button leaves it alone"
+                );
+                picker.delegate.delete_at(1, false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        assert!(
+            branches_in(&repository, cx).await.contains(&held),
+            "git refuses to delete a branch a worktree has checked out, so the delete \
+             button has to refuse too"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_switching_leaves_branch_another_worktree_holds(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, _project, repository) = init_fake_repository_with_fs(cx).await;
+
+        let branches = create_test_branches();
+        let held = branches[1].name().to_string();
+        let repo = repository.clone();
+        let names = branches
+            .iter()
+            .map(|branch| branch.name().to_string())
+            .collect::<Vec<_>>();
+        cx.spawn(async move |mut cx| {
+            for name in names {
+                repo.update(&mut cx, |repo, _| repo.create_branch(name, None))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        })
+        .await;
+        add_worktree_holding_branch(&fs, "held", &held).await;
+        cx.run_until_parked();
+
+        let (branch_list, mut ctx) =
+            init_branch_list_test(repository.clone().into(), branches, cx).await;
+        let cx = &mut ctx;
+        cx.run_until_parked();
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
+
+        let before = repository.read_with(cx, |repository, _| {
+            repository
+                .branch
+                .as_ref()
+                .map(|branch| branch.ref_name.clone())
+        });
+        branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                picker.delegate.set_selected_index(1, window, cx);
+                picker.delegate.confirm(false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        let after = repository.read_with(cx, |repository, _| {
+            repository
+                .branch
+                .as_ref()
+                .map(|branch| branch.ref_name.clone())
+        });
+        assert_eq!(
+            after, before,
+            "git refuses to check a branch out in two places, so choosing one another \
+             worktree holds has to leave this one where it is"
+        );
     }
 
     #[gpui::test]
