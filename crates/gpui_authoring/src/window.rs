@@ -1161,6 +1161,42 @@ enum InputModality {
 /// A field belongs here when the frame lifecycle clears it, or when it is only
 /// valid while a frame is being driven or while an element is being laid out or
 /// painted. State that survives across frames lives in [`WindowHostCore`].
+/// Which pass of a frame a window is in.
+///
+/// Debug builds check that the passes run in order, so a [`FramePipeline`] that
+/// drives them itself fails loudly instead of leaving the frame half-built.
+#[cfg(debug_assertions)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum FramePhase {
+    /// No frame is in progress.
+    Idle,
+    /// [`Window::begin_frame`] has run.
+    Begun,
+    /// [`Window::evaluate_roots`] has run.
+    Evaluated,
+    /// [`Window::layout_roots`] has run.
+    LaidOut,
+    /// [`Window::paint_roots`] has run.
+    Painted,
+    /// [`Window::finish_frame`] has run.
+    Finished,
+    /// [`Window::complete_frame`] has run.
+    Completed,
+}
+
+#[cfg(debug_assertions)]
+impl FramePhase {
+    /// Moves to `next`, asserting this pass may follow the current one.
+    #[track_caller]
+    fn enter(&mut self, from: &[FramePhase], next: FramePhase, method: &'static str) {
+        debug_assert!(
+            from.contains(self),
+            "{method} ran while the frame was {self:?}, but it must follow one of {from:?}"
+        );
+        *self = next;
+    }
+}
+
 pub(crate) struct WindowFrameState {
     /// The stack of override values for the window's rem size.
     ///
@@ -1191,6 +1227,9 @@ pub(crate) struct WindowFrameState {
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
+    /// The pass of the frame in progress, for debug builds to check ordering.
+    #[cfg(debug_assertions)]
+    frame_phase: FramePhase,
 }
 
 /// State a window keeps across frames.
@@ -2253,9 +2292,36 @@ impl WindowHost {
                 next_hitbox_id: HitboxId(0),
                 next_tooltip_id: TooltipId::default(),
                 tooltip_bounds: None,
+                #[cfg(debug_assertions)]
+                frame_phase: FramePhase::Idle,
             },
         })
     }
+}
+
+/// The roots a frame draws, assembled before they are laid out.
+///
+/// A frame draws the window's own view tree, plus at most one overlay: a prompt,
+/// a drag image, or a tooltip. Roots are gathered by [`Window::evaluate_roots`],
+/// laid out and prepainted by [`Window::layout_roots`], and drawn by
+/// [`Window::paint_roots`], so a [`FramePipeline`] can sit between the passes.
+///
+/// Only [`root`](Self::root) is laid out like the window's view tree, filling it
+/// unless the view sizes itself. The others are placed as their own conventions
+/// require, which is why the carrier records what each one is rather than letting
+/// callers guess from the element.
+pub struct PreparedRoots {
+    /// The window's own view tree.
+    pub root: AnyElement,
+    /// A prompt, laid out like the root: it covers the window.
+    pub prompt: Option<AnyElement>,
+    /// A tooltip, already laid out where the request that asked for it wanted it.
+    pub tooltip: Option<AnyElement>,
+    /// A drag image, and the point it hangs from: the pointer, less the offset
+    /// recorded when the drag started.
+    pub drag: Option<(AnyElement, Point<Pixels>)>,
+    /// The inspector's root, when the inspector is open.
+    pub inspector: Option<AnyElement>,
 }
 
 impl Window<'_> {
@@ -3314,7 +3380,15 @@ impl Window<'_> {
 
     /// Opens a frame: samples the platform window, resets the scratch state a
     /// frame rebuilds, and takes ownership of the invalidations this frame owes.
-    fn begin_frame(&mut self, cx: &mut App) {
+    ///
+    /// Runtime API: [driven by a `FramePipeline`][FramePipeline], not by elements.
+    pub fn begin_frame(&mut self, cx: &mut App) {
+        #[cfg(debug_assertions)]
+        self.frame_state.frame_phase.enter(
+            &[FramePhase::Idle, FramePhase::Completed],
+            FramePhase::Begun,
+            "begin_frame",
+        );
         if self.core.platform_window.prepare_frame() {
             self.refresh();
         }
@@ -3353,7 +3427,19 @@ impl Window<'_> {
     /// Finishes the painted frame: notes the views it touched, records whether
     /// the window is active, and hands the platform the input handler the frame
     /// asked for.
-    fn finish_frame(&mut self, cx: &mut App) {
+    ///
+    /// Runtime API: [driven by a `FramePipeline`][FramePipeline], not by elements.
+    ///
+    /// A frame that skipped drawing its roots arrives here from
+    /// [`begin_frame`](Self::begin_frame) rather than from
+    /// [`paint_roots`](Self::paint_roots).
+    pub fn finish_frame(&mut self, cx: &mut App) {
+        #[cfg(debug_assertions)]
+        self.frame_state.frame_phase.enter(
+            &[FramePhase::Begun, FramePhase::Painted],
+            FramePhase::Finished,
+            "finish_frame",
+        );
         self.frame_state.dirty_views.clear();
         self.frame_state.next_frame.window_active = self.core.active.get();
 
@@ -3399,7 +3485,15 @@ impl Window<'_> {
     ///
     /// Returns the focus that was current before the listeners ran: they may
     /// move it, and the caller has to tell those moves apart from its own.
-    fn complete_frame(&mut self, cx: &mut App) -> Option<FocusId> {
+    ///
+    /// Runtime API: [driven by a `FramePipeline`][FramePipeline], not by elements.
+    pub fn complete_frame(&mut self, cx: &mut App) -> Option<FocusId> {
+        #[cfg(debug_assertions)]
+        self.frame_state.frame_phase.enter(
+            &[FramePhase::Finished],
+            FramePhase::Completed,
+            "complete_frame",
+        );
         self.core.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.frame_state.rendered_frame.focus_path();
         let previous_window_active = self.frame_state.rendered_frame.window_active;
@@ -3451,7 +3545,13 @@ impl Window<'_> {
     }
 
     /// Closes the frame out and marks it ready to present.
-    fn end_frame(&mut self, cx: &mut App, focus_before_listeners: Option<FocusId>) {
+    ///
+    /// Runtime API: [driven by a `FramePipeline`][FramePipeline], not by elements.
+    pub fn end_frame(&mut self, cx: &mut App, focus_before_listeners: Option<FocusId>) {
+        #[cfg(debug_assertions)]
+        self.frame_state
+            .frame_phase
+            .enter(&[FramePhase::Completed], FramePhase::Idle, "end_frame");
         debug_assert!(self.frame_state.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
@@ -3560,7 +3660,51 @@ impl Window<'_> {
         self.refresh();
     }
 
-    fn draw_roots(&mut self, cx: &mut App) {
+    /// Gathers the roots this frame will draw.
+    ///
+    /// The root element is produced here; a view's [`Render`][crate::Render] is
+    /// not called until [`layout_roots`](Self::layout_roots) lays it out, because
+    /// an element builds its tree when it is asked for a layout.
+    pub fn evaluate_roots(&mut self, cx: &mut App) -> PreparedRoots {
+        #[cfg(debug_assertions)]
+        self.frame_state.frame_phase.enter(
+            &[FramePhase::Begun],
+            FramePhase::Evaluated,
+            "evaluate_roots",
+        );
+        let root = self.core.root.as_ref().unwrap().clone().into_any_element();
+
+        // A prompt displaces the other overlays rather than stacking with them,
+        // so at most one of prompt, drag and tooltip is drawn.
+        let mut prompt = None;
+        let mut drag = None;
+        if let Some(handle) = self.core.prompt.take() {
+            prompt = Some(handle.view.any_view().into_any_element());
+            self.core.prompt = Some(handle);
+        } else if let Some(active_drag) = cx.active_drag.take() {
+            let origin = self.mouse_position() - active_drag.cursor_offset;
+            drag = Some((active_drag.view.clone().into_any_element(), origin));
+            cx.active_drag = Some(active_drag);
+        }
+
+        PreparedRoots {
+            root,
+            prompt,
+            tooltip: None,
+            drag,
+            inspector: None,
+        }
+    }
+
+    /// Lays out and prepaints the roots, then hit tests the pointer against what
+    /// they registered.
+    pub fn layout_roots(&mut self, roots: &mut PreparedRoots, cx: &mut App) {
+        #[cfg(debug_assertions)]
+        self.frame_state.frame_phase.enter(
+            &[FramePhase::Evaluated],
+            FramePhase::LaidOut,
+            "layout_roots",
+        );
         self.core.invalidator.set_phase(DrawPhase::Prepaint);
         self.frame_state.tooltip_bounds.take();
 
@@ -3569,13 +3713,14 @@ impl Window<'_> {
             self.core.a11y.begin_frame();
         }
 
-        let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        let inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
         let root_size = {
             #[cfg(any(feature = "inspector", debug_assertions))]
             {
                 if self.core.inspector.is_some() {
                     let mut size = self.core.viewport_size;
-                    size.width = (size.width - _inspector_width).max(px(0.0));
+                    size.width = (size.width - inspector_width).max(px(0.0));
                     size
                 } else {
                     self.core.viewport_size
@@ -3591,64 +3736,65 @@ impl Window<'_> {
         // stretches to fill the viewport unless explicitly sized, window roots
         // fill the window when their size is `auto`.
         let scale_factor = self.scale_factor();
-        let mut root_element = self.core.root.as_ref().unwrap().clone().into_any_element();
-        let root_layout_id = root_element.request_layout(self, cx);
+        let root_layout_id = roots.root.request_layout(self, cx);
         self.frame_state.layout_session.stretch_auto_size_to_fill(
             root_layout_id,
             root_size,
             scale_factor,
         );
-        root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+        roots
+            .root
+            .prepaint_as_root(Point::default(), root_size.into(), self, cx);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
-        let inspector_element = self.prepaint_inspector(_inspector_width, cx);
+        {
+            roots.inspector = self.prepaint_inspector(inspector_width, cx);
+        }
 
         self.prepaint_deferred_draws(cx);
 
-        let mut prompt_element = None;
-        let mut active_drag_element = None;
-        let mut tooltip_element = None;
-        if let Some(prompt) = self.core.prompt.take() {
-            let mut element = prompt.view.any_view().into_any_element();
-            let prompt_layout_id = element.request_layout(self, cx);
+        if let Some(prompt) = roots.prompt.as_mut() {
+            let prompt_layout_id = prompt.request_layout(self, cx);
             self.frame_state.layout_session.stretch_auto_size_to_fill(
                 prompt_layout_id,
                 root_size,
                 scale_factor,
             );
-            element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
-            prompt_element = Some(element);
-            self.core.prompt = Some(prompt);
-        } else if let Some(active_drag) = cx.active_drag.take() {
-            let mut element = active_drag.view.clone().into_any_element();
-            let offset = self.mouse_position() - active_drag.cursor_offset;
-            element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
-            active_drag_element = Some(element);
-            cx.active_drag = Some(active_drag);
+            prompt.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+        } else if let Some((drag, origin)) = roots.drag.as_mut() {
+            drag.prepaint_as_root(*origin, AvailableSpace::min_size(), self, cx);
         } else {
-            tooltip_element = self.prepaint_tooltip(cx);
+            roots.tooltip = self.prepaint_tooltip(cx);
         }
 
         self.core.mouse_hit_test = self
             .frame_state
             .next_frame
             .hit_test(self.core.mouse_position);
+    }
 
-        // Now actually paint the elements.
+    /// Paints the roots, in the order they stack.
+    pub fn paint_roots(&mut self, mut roots: PreparedRoots, cx: &mut App) {
+        #[cfg(debug_assertions)]
+        self.frame_state.frame_phase.enter(
+            &[FramePhase::LaidOut],
+            FramePhase::Painted,
+            "paint_roots",
+        );
         self.core.invalidator.set_phase(DrawPhase::Paint);
-        root_element.paint(self, cx);
+        roots.root.paint(self, cx);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
-        self.paint_inspector(inspector_element, cx);
+        self.paint_inspector(roots.inspector.take(), cx);
 
         self.paint_deferred_draws(cx);
 
-        if let Some(mut prompt_element) = prompt_element {
-            prompt_element.paint(self, cx);
-        } else if let Some(mut drag_element) = active_drag_element {
-            drag_element.paint(self, cx);
-        } else if let Some(mut tooltip_element) = tooltip_element {
-            tooltip_element.paint(self, cx);
+        if let Some(mut prompt) = roots.prompt.take() {
+            prompt.paint(self, cx);
+        } else if let Some((mut drag, _)) = roots.drag.take() {
+            drag.paint(self, cx);
+        } else if let Some(mut tooltip) = roots.tooltip.take() {
+            tooltip.paint(self, cx);
         }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -3680,6 +3826,16 @@ impl Window<'_> {
                 self.core.platform_window.a11y_tree_update(tree_update);
             }
         }
+    }
+
+    /// Draws the window's roots: everything on screen except the deferred draws.
+    ///
+    /// The three passes above, in sequence. A [`FramePipeline`] that wants to
+    /// intervene between them drives them itself instead of calling this.
+    fn draw_roots(&mut self, cx: &mut App) {
+        let mut roots = self.evaluate_roots(cx);
+        self.layout_roots(&mut roots, cx);
+        self.paint_roots(roots, cx);
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -7953,6 +8109,35 @@ mod tests {
             self.0.borrow_mut().push("end_frame");
             window.end_frame(cx, focus_before_listeners);
         }
+    }
+
+    /// A frame that skips drawing its roots goes straight from opening the frame
+    /// to finishing it, without running the root passes.
+    #[gpui::test]
+    fn a_frame_that_skips_drawing_still_completes(cx: &mut TestAppContext) {
+        cx.skip_drawing();
+        let window = cx.add_window(|_, _| EmptyView);
+
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+    }
+
+    /// The passes have to run in order: one that is skipped is reported, rather
+    /// than leaving the frame half-built.
+    #[cfg(debug_assertions)]
+    #[gpui::test]
+    #[should_panic(expected = "paint_roots ran while the frame was Evaluated")]
+    fn a_frame_pass_out_of_order_is_rejected(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.begin_frame(cx);
+            let roots = window.evaluate_roots(cx);
+            // Laying the roots out is what registers their hitboxes, so painting
+            // them now has nothing to paint.
+            window.paint_roots(roots, cx);
+        })
+        .unwrap();
     }
 
     #[gpui::test]
