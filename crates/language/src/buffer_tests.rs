@@ -2034,6 +2034,115 @@ fn test_range_for_syntax_ancestor(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_range_for_syntax_siblings(cx: &mut App) {
+    cx.new(|cx| {
+        let text = r#"{"alice": 1, "bob": [2, 3], "carol": {"x": 4}}"#;
+        let buffer = Buffer::local(text, cx).with_language(json_lang(), cx);
+        let snapshot = buffer.snapshot();
+
+        // Stepping between the members of an object skips the separating commas.
+        assert_eq!(
+            snapshot
+                .syntax_next_sibling(range_of(text, r#""alice": 1"#))
+                .unwrap()
+                .byte_range(),
+            range_of(text, r#""bob": [2, 3]"#)
+        );
+        assert_eq!(
+            snapshot
+                .syntax_prev_sibling(range_of(text, r#""carol": {"x": 4}"#))
+                .unwrap()
+                .byte_range(),
+            range_of(text, r#""bob": [2, 3]"#)
+        );
+
+        // The same holds for the elements of an array.
+        assert_eq!(
+            snapshot
+                .syntax_next_sibling(range_of(text, "2"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "3")
+        );
+        assert_eq!(
+            snapshot
+                .syntax_prev_sibling(range_of(text, "3"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "2")
+        );
+
+        // Starting from a comma still lands on the members around it.
+        assert_eq!(
+            snapshot
+                .syntax_next_sibling(range_of(text, ","))
+                .unwrap()
+                .byte_range(),
+            range_of(text, r#""bob": [2, 3]"#)
+        );
+
+        // The last member has no named sibling left, at any ancestor level.
+        assert_eq!(
+            snapshot.syntax_next_sibling(range_of(text, r#""carol": {"x": 4}"#)),
+            None
+        );
+
+        buffer
+    });
+
+    cx.new(|cx| {
+        let text = "// a comment\nfn f(a: u32, b: u32) {\n    let x = 1;\n}\nfn g() {}";
+        let buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+        let snapshot = buffer.snapshot();
+
+        // Function parameters are separated by commas too.
+        assert_eq!(
+            snapshot
+                .syntax_next_sibling(range_of(text, "a: u32"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "b: u32")
+        );
+
+        // Comments are named nodes, so they stay reachable.
+        assert_eq!(
+            snapshot
+                .syntax_prev_sibling(range_of(text, "fn f"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "// a comment")
+        );
+
+        // A level whose remaining siblings are all anonymous is not a stopping
+        // point: the search continues at the parent level, the same way it
+        // already did for a level with no siblings at all. So the only
+        // statement of a body steps out to the next item rather than to `}`,
+        // and symmetrically backwards to the parameter list rather than `{`.
+        assert_eq!(
+            snapshot
+                .syntax_next_sibling(range_of(text, "let x = 1;"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "fn g() {}")
+        );
+        assert_eq!(
+            snapshot
+                .syntax_prev_sibling(range_of(text, "let x = 1;"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "(a: u32, b: u32)")
+        );
+
+        buffer
+    });
+
+    fn range_of(text: &str, part: &str) -> Range<usize> {
+        let start = text.find(part).unwrap();
+        start..start + part.len()
+    }
+}
+
+#[gpui::test]
 fn test_autoindent_with_soft_tabs(cx: &mut App) {
     init_settings(cx, |_| {});
 
