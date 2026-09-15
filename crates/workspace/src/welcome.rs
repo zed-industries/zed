@@ -306,7 +306,7 @@ impl WelcomePage {
                 let is_local = matches!(workspace.location, SerializedWorkspaceLocation::Local);
 
                 if is_local {
-                    let paths = workspace.paths.paths().to_vec();
+                    let paths = workspace.paths.ordered_paths().cloned().collect();
                     let open_mode = match WorkspaceSettings::get_global(cx).default_open_behavior {
                         DefaultOpenBehavior::ExistingWindow => OpenMode::Activate,
                         DefaultOpenBehavior::NewWindow => OpenMode::NewWindow,
