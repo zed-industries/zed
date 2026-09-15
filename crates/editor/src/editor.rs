@@ -1809,6 +1809,8 @@ struct GutterButtonTooltip {
     primary: GutterButtonIntent,
     secondary: GutterButtonIntent,
     focus_handle: FocusHandle,
+    #[cfg(test)]
+    on_render: Option<Rc<RefCell<Vec<(String, String)>>>>,
 }
 
 impl GutterButtonTooltip {
@@ -1820,7 +1822,7 @@ impl GutterButtonTooltip {
         }
     }
 
-    fn meta_text(&self, intent: GutterButtonIntent) -> String {
+    fn meta_text(&self) -> String {
         const RIGHT_CLICK_HINT: &str = "right-click for more options";
 
         if self.primary == self.secondary {
@@ -1830,11 +1832,11 @@ impl GutterButtonTooltip {
             modifiers: Modifiers::secondary_key(),
             ..Default::default()
         };
-        let other = match intent {
-            GutterButtonIntent::SetBookmark => "breakpoint",
-            GutterButtonIntent::SetBreakpoint => "bookmark",
+        let secondary = match self.secondary {
+            GutterButtonIntent::SetBookmark => "bookmark",
+            GutterButtonIntent::SetBreakpoint => "breakpoint",
         };
-        format!("{modifier_as_text}-click to add a {other}\n{RIGHT_CLICK_HINT}")
+        format!("{modifier_as_text}-click to add a {secondary}\n{RIGHT_CLICK_HINT}")
     }
 }
 
@@ -1842,7 +1844,14 @@ impl Render for GutterButtonTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let intent = self.active_intent(window.modifiers());
         let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
-        let meta_text = self.meta_text(intent);
+        let meta_text = self.meta_text();
+
+        #[cfg(test)]
+        if let Some(on_render) = &self.on_render {
+            on_render
+                .borrow_mut()
+                .push((intent.as_str().to_owned(), meta_text.clone()));
+        }
 
         tooltip_container(cx, move |this, _| {
             this.child(
@@ -4936,6 +4945,8 @@ impl Editor {
                         primary,
                         secondary,
                         focus_handle: focus_handle.clone(),
+                        #[cfg(test)]
+                        on_render: None,
                     })
                     .into()
                 })

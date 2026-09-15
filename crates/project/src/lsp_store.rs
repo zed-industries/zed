@@ -10146,7 +10146,7 @@ impl LspStore {
                 self.worktree_store.read(cx).find_worktree(abs_path, cx)
             else {
                 log::warn!("skipping diagnostics update, no worktree found for path {abs_path:?}");
-                return Ok(());
+                continue;
             };
 
             let worktree_id = worktree.read(cx).id();

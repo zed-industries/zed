@@ -206,7 +206,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: left (Agentic layout), right (Classic layout)
     pub dock: Option<DockPosition>,
-    /// Whether the agent panel should use flexible (proportional) sizing.
+    /// Whether the agent panel should use flexible (proportional) sizing when docked to the
+    /// left or right.
+    ///
+    /// When enabled, `default_width` does not control the panel width, and resetting the panel
+    /// restores the default proportion.
     ///
     /// Default: true
     pub flexible: Option<bool>,
@@ -214,7 +218,8 @@ pub struct AgentSettingsContent {
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
-    /// Default width in pixels when the agent panel is docked to the left or right.
+    /// Default fixed width in pixels when the agent panel is docked to the left or right and
+    /// `flexible` is false.
     ///
     /// Default: 640
     pub default_width: Option<crate::PixelSetting>,

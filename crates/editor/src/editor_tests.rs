@@ -23271,7 +23271,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
         }
     "});
 
-    // If a selection span multiple lines, empty lines are not toggled.
+    // If a selection spans multiple lines, empty lines are also toggled.
     cx.set_state(indoc! {"
         fn a() {
             «a();
@@ -23284,9 +23284,9 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
 
     cx.assert_editor_state(indoc! {"
         fn a() {
-            // «a();
-
-            // c();ˇ»
+        //     «a();
+        //•
+        //     c();ˇ»
         }
     "});
 
@@ -23326,6 +23326,7 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
     let toggle_comments = &ToggleComments {
         advance_downwards: false,
         ignore_indent: true,
+        comment_empty_lines: false,
     };
 
     // If multiple selections intersect a line, the line is only toggled once.
@@ -23436,6 +23437,160 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_comment_commenting_blank_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    // A prefix without a trailing space keeps every expectation below free of
+    // trailing whitespace, which would otherwise be stripped on save and break
+    // the assertions on commented blank lines.
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments::default();
+
+    cx.set_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //«fn a() {
+        //    b();
+        //
+        //    c();
+        //}ˇ»
+    "});
+
+    // Toggling again removes the prefix from every line, blank ones included.
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    // All prefixes in a block go at one shared column so they line up: the
+    // smallest indent among the rows being commented. A blank line contributes
+    // 0 and drags that to 0 - shifting every line in the block left. VS Code
+    // does the same.
+    cx.set_state(indoc! {"
+        fn a() {
+            «b();
+
+            c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    «b();
+        //
+        //    c();ˇ»
+        }
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_uncomments_after_parameter_change(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let skip_blank_lines = &ToggleComments {
+        comment_empty_lines: false,
+        ..Default::default()
+    };
+    let comment_blank_lines = &ToggleComments::default();
+
+    cx.set_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    // Comment with one binding: the blank line gets no marker.
+    cx.update_editor(|e, window, cx| e.toggle_comments(skip_blank_lines, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //«fn a() {
+        //    b();
+
+        //    c();
+        //}ˇ»
+    "});
+
+    // Toggle with the other binding. The blank line still has no marker, but it must
+    // not make the block look uncommented: the markers are removed, not doubled.
+    cx.update_editor(|e, window, cx| e.toggle_comments(comment_blank_lines, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_selection_of_only_blank_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments::default();
+
+    // No line carries a marker, so there is nothing to remove: comment them.
+    cx.set_state(indoc! {"
+        fn a() {
+        «
+
+        ˇ»}
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //«
+        //
+        ˇ»}
+    "});
+}
+
+#[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -23457,6 +23612,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     let toggle_comments = &ToggleComments {
         advance_downwards: true,
         ignore_indent: false,
+        comment_empty_lines: false,
     };
 
     // Single cursor on one line -> advance
@@ -32988,6 +33144,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         primary: GutterButtonIntent::SetBreakpoint,
         secondary: GutterButtonIntent::SetBookmark,
         focus_handle,
+        on_render: None,
     };
 
     let primary_intent = tooltip.active_intent(Modifiers::none());
@@ -33000,11 +33157,10 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
 
     // When both features are enabled, the meta text advertises the
     // modifier-click alternative.
-    let meta = tooltip.meta_text(primary_intent);
+    let meta = tooltip.meta_text();
     assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+    assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
     assert!(meta.contains("right-click for more options"));
-    let meta = tooltip.meta_text(secondary_intent);
-    assert!(meta.contains("-click to add a breakpoint"), "got: {meta}");
 
     // When only one feature is enabled (primary == secondary), a
     // modifier-click repeats the primary action, so the tooltip must not
@@ -33013,9 +33169,46 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         primary: GutterButtonIntent::SetBreakpoint,
         secondary: GutterButtonIntent::SetBreakpoint,
         focus_handle: tooltip.focus_handle,
+        on_render: None,
     };
-    let meta = single_feature_tooltip.meta_text(GutterButtonIntent::SetBreakpoint);
+    let meta = single_feature_tooltip.meta_text();
     assert_eq!(meta, "right-click for more options");
+}
+
+#[gpui::test]
+fn test_gutter_button_tooltip_renders_modifier_transitions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let renders = Rc::new(RefCell::new(Vec::new()));
+    let (tooltip, cx) = cx.add_window_view({
+        let renders = renders.clone();
+        move |_window, cx| GutterButtonTooltip {
+            primary: GutterButtonIntent::SetBreakpoint,
+            secondary: GutterButtonIntent::SetBookmark,
+            focus_handle: cx.focus_handle(),
+            on_render: Some(renders),
+        }
+    });
+    cx.run_until_parked();
+
+    let assert_render = |expected_title: &str| {
+        let (title, meta) = renders.borrow().last().cloned().expect("tooltip rendered");
+        assert_eq!(title, expected_title);
+        assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+        assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
+    };
+
+    assert_render("Set Breakpoint");
+
+    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    tooltip.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+    assert_render("Set Bookmark");
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    tooltip.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+    assert_render("Set Breakpoint");
 }
 
 #[gpui::test]

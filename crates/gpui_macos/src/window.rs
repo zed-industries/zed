@@ -6,7 +6,6 @@ use crate::{
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
-use block::ConcreteBlock;
 use block2::RcBlock;
 use cocoa::{
     appkit::{
@@ -31,7 +30,7 @@ use gpui::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
-    WindowParams, point, px, size,
+    WindowParams, WindowVisibility, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -50,12 +49,17 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
-use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject as Objc2Object};
-use objc2_app_kit::{
-    NSAlert, NSAlertStyle, NSBeep, NSButton as Objc2NSButton, NSView as Objc2NSView,
-    NSWindow as Objc2NSWindow, NSWindowButton as Objc2NSWindowButton,
+use objc2::{
+    AnyThread, MainThreadMarker,
+    rc::Retained,
+    runtime::{AnyObject as Objc2Object, ProtocolObject},
 };
-use objc2_foundation::{NSPoint as Objc2NSPoint, NSRect as Objc2NSRect};
+use objc2_app_kit::{
+    NSAlert, NSAlertStyle, NSBeep, NSButton as Objc2NSButton, NSDraggingImageComponent,
+    NSDraggingImageComponentIconKey, NSDraggingItem, NSPasteboardWriting, NSView as Objc2NSView,
+    NSWindow as Objc2NSWindow, NSWindowButton as Objc2NSWindowButton, NSWorkspace,
+};
+use objc2_foundation::{NSPoint as Objc2NSPoint, NSRect as Objc2NSRect, NSURL};
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -125,12 +129,6 @@ pub enum UserTabbingPreference {
     InFullScreen,
 }
 
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {
-    // AppKit constant naming the icon component of an NSDraggingImageComponent.
-    #[allow(non_upper_case_globals)]
-    static NSDraggingImageComponentIconKey: id;
-}
 #[ctor(unsafe)]
 unsafe fn build_classes() {
     unsafe {
@@ -673,6 +671,10 @@ struct MacWindowState {
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
+    visibility_callback: Option<Box<dyn FnMut(WindowVisibility)>>,
+    // `None` until a callback is registered, so notifications during
+    // construction are not queued for delivery to a callback registered later.
+    last_visibility: Option<WindowVisibility>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
@@ -1106,6 +1108,8 @@ impl MacWindow {
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
+                visibility_callback: None,
+                last_visibility: None,
                 resize_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
@@ -1383,6 +1387,9 @@ impl Drop for MacWindow {
             this.native_window.setDelegate_(nil);
         }
         this.input_handler.take();
+        // A delivery task queued by `report_visibility` may still run after the
+        // GPUI window is gone; without a callback it has nothing to notify.
+        this.visibility_callback.take();
         this.foreground_executor
             .spawn(async move {
                 unsafe {
@@ -1809,6 +1816,10 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        visibility(&self.0.lock())
+    }
+
     // is_hovered is unused on macOS. See Window::is_window_hovered.
     fn is_hovered(&self) -> bool {
         false
@@ -2007,6 +2018,12 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().activate_callback = Some(callback);
     }
 
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        let mut state = self.0.lock();
+        state.last_visibility = Some(visibility(&state));
+        state.visibility_callback = Some(callback);
+    }
+
     fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
@@ -2203,6 +2220,8 @@ impl PlatformWindow for MacWindow {
     }
 
     fn start_external_drag(&self, payload: &ExternalDragPayload) -> bool {
+        use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
+
         let ExternalDragPayload::Files(paths) = payload;
         if paths.entries().is_empty() {
             log::warn!("start_external_drag declined: no paths");
@@ -2225,7 +2244,7 @@ impl PlatformWindow for MacWindow {
 
         // SAFETY: This method runs on the AppKit/foreground path during drag initiation. The
         // native view/window are retained by MacWindowState, copied out under a short lock above,
-        // and Objective-C results that may be nil are checked before use.
+        // and all pointers passed to Objective-C remain valid for their respective calls.
         unsafe {
             let event: id = Retained::as_ptr(&last_left_mouse_down_event)
                 .cast_mut()
@@ -2233,7 +2252,7 @@ impl PlatformWindow for MacWindow {
             let dragging_items: id = msg_send![class!(NSMutableArray), array];
             // AppKit keeps this frame's distance from the event's location as the drag image's
             // offset from the cursor, so it has to stay anchored on `event`.
-            let location: NSPoint = msg_send![event, locationInWindow];
+            let location: cocoa::foundation::NSPoint = msg_send![event, locationInWindow];
             let frame = NSRect::new(
                 NSPoint::new(location.x - 16., location.y - 16.),
                 NSSize::new(32., 32.),
@@ -2246,24 +2265,18 @@ impl PlatformWindow for MacWindow {
                     continue;
                 };
 
-                let url: id = msg_send![
-                    class!(NSURL),
-                    fileURLWithFileSystemRepresentation: path_bytes.as_ptr()
-                    isDirectory: is_directory.to_objc()
-                    relativeToURL: nil
-                ];
+                let path_bytes = NonNull::new_unchecked(path_bytes.as_ptr().cast_mut());
+                let url = NSURL::fileURLWithFileSystemRepresentation_isDirectory_relativeToURL(
+                    path_bytes,
+                    *is_directory,
+                    None,
+                );
 
-                if url.is_null() {
-                    log::warn!("start_external_drag skipped path with nil NSURL");
-                    continue;
-                }
-
-                let item: id = msg_send![class!(NSDraggingItem), alloc];
-                let item: id = msg_send![item, initWithPasteboardWriter: url];
-                if item.is_null() {
-                    log::warn!("start_external_drag declined: NSDraggingItem allocation failed");
-                    continue;
-                }
+                let pasteboard_writer = ProtocolObject::<dyn NSPasteboardWriting>::from_ref(&*url);
+                let item = NSDraggingItem::initWithPasteboardWriter(
+                    NSDraggingItem::alloc(),
+                    pasteboard_writer,
+                );
 
                 // Resolve drag images lazily via `imageComponentsProvider` (Apple's
                 // recommendation for large item counts), and by file *type* rather than
@@ -2279,26 +2292,24 @@ impl PlatformWindow for MacWindow {
                         .map(|extension| extension.to_string())
                         .unwrap_or_else(|| "public.data".to_string())
                 };
-                let provider = ConcreteBlock::new(move || -> id {
-                    let component: id = msg_send![
-                        class!(NSDraggingImageComponent),
-                        draggingImageComponentWithKey: NSDraggingImageComponentIconKey
-                    ];
-                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-                    let icon: id = msg_send![workspace, iconForFileType: ns_string(&file_type)];
-                    let _: () = msg_send![component, setContents: icon];
+                let provider = RcBlock::new(move || {
+                    let component = NSDraggingImageComponent::draggingImageComponentWithKey(
+                        NSDraggingImageComponentIconKey,
+                    );
+                    let workspace = NSWorkspace::sharedWorkspace();
+                    let file_type = NSString::from_str(&file_type);
+                    // TODO: Replace with `iconForContentType` once Zed no longer supports MacOS 10.15
+                    #[expect(deprecated, reason = "Support for MacOS 10.15")]
+                    let icon = workspace.iconForFileType(&file_type);
+                    component.setContents(Some(&icon));
                     // Component frames are relative to the item's dragging frame.
-                    let _: () = msg_send![
-                        component,
-                        setFrame: NSRect::new(NSPoint::new(0., 0.), NSSize::new(32., 32.))
-                    ];
-                    msg_send![class!(NSArray), arrayWithObject: component]
+                    component.setFrame(NSRect::new(NSPoint::new(0., 0.), NSSize::new(32., 32.)));
+                    let components = NSArray::from_slice(&[&*component]);
+                    NonNull::new_unchecked(Retained::autorelease_return(components))
                 });
-                let provider = provider.copy();
-                let _: () = msg_send![item, setDraggingFrame: frame];
-                let _: () = msg_send![item, setImageComponentsProvider: provider];
-                let _: () = msg_send![dragging_items, addObject: item];
-                let _: () = msg_send![item, release];
+                item.setDraggingFrame(frame);
+                item.setImageComponentsProvider(Some(&provider));
+                let _: () = msg_send![dragging_items, addObject: Retained::as_ptr(&item)];
             }
 
             let count: NSUInteger = msg_send![dragging_items, count];
@@ -2895,9 +2906,55 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     }
 }
 
+fn visibility(state: &MacWindowState) -> WindowVisibility {
+    let is_visible = unsafe {
+        state
+            .native_window
+            .occlusionState()
+            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+    };
+    if is_visible {
+        WindowVisibility::Visible
+    } else {
+        WindowVisibility::Hidden
+    }
+}
+
+fn report_visibility(window_state: &Arc<Mutex<MacWindowState>>) {
+    let state = window_state.lock();
+    if state.last_visibility.is_none() {
+        return;
+    }
+    let executor = state.foreground_executor.clone();
+    drop(state);
+
+    // AppKit can notify while GPUI is updating a window. Deliver observers
+    // after that update completes, as activation notifications do. The state
+    // is read at delivery rather than captured here so a burst of
+    // notifications collapses to the final value.
+    executor
+        .spawn({
+            let window_state = window_state.clone();
+            async move {
+                let mut state = window_state.lock();
+                let visibility = visibility(&state);
+                if state.last_visibility == Some(visibility) {
+                    return;
+                }
+                state.last_visibility = Some(visibility);
+                if let Some(mut callback) = state.visibility_callback.take() {
+                    drop(state);
+                    callback(visibility);
+                    window_state.lock().visibility_callback = Some(callback);
+                }
+            }
+        })
+        .detach();
+}
+
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = &mut *window_state.lock();
+    let mut lock = window_state.lock();
     unsafe {
         if lock
             .native_window
@@ -2910,6 +2967,10 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
             lock.stop_display_link();
         }
     }
+    drop(lock);
+    // The only visibility source: AppKit posts this for covering, minimizing,
+    // hiding, Space switches, and display sleep alike.
+    report_visibility(&window_state);
 }
 
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {

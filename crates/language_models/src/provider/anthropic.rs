@@ -467,6 +467,7 @@ mod tests {
         let model = direct_anthropic_test_model(&provider);
 
         assert!(model.supports_explicit_compaction());
+        assert_eq!(model.max_total_tokens(), Some(model.max_token_count()));
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
@@ -570,6 +571,7 @@ mod tests {
         store_key.await.unwrap();
         let model = direct_anthropic_test_model(&provider);
         let request = LanguageModelRequest {
+            max_output_tokens: Some(8192),
             messages: vec![LanguageModelRequestMessage {
                 role: language_model::Role::User,
                 content: vec![MessageContent::Text("Retain this context.".to_string())],
@@ -614,6 +616,7 @@ mod tests {
                 .is_some_and(|header| header.contains(anthropic::COMPACTION_BETA_HEADER))
         );
         let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
+        assert_eq!(body["max_tokens"], 8192);
         assert_eq!(
             body["context_management"],
             json!({
@@ -796,6 +799,10 @@ impl LanguageModel for AnthropicModel {
 
     fn supports_explicit_compaction(&self) -> bool {
         self.model.supports_compaction
+    }
+
+    fn supports_explicit_compaction_output_limit(&self) -> bool {
+        self.supports_explicit_compaction()
     }
 
     fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
