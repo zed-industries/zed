@@ -1,5 +1,5 @@
 import { danger, message, warn, fail, schedule } from "danger";
-import { releaseNotesSection } from "../lib/release-notes";
+import { releaseNotesSection, releaseNotesEntries } from "../lib/release-notes";
 
 const { prHygiene } = require("danger-plugin-pr-hygiene");
 
@@ -56,7 +56,7 @@ const GPUI_RELEASE_NOTES_PATTERN = /^- \[GPUI\]/im;
 const gpuiCrates = danger.git.fileMatch("crates/gpui*/**");
 
 if (gpuiCrates.edited || gpuiCrates.deleted) {
-  if (!GPUI_RELEASE_NOTES_PATTERN.test(releaseNotes)) {
+  if (!releaseNotesEntries(releaseNotes).some((entry) => GPUI_RELEASE_NOTES_PATTERN.test(entry))) {
     const { edited, deleted } = gpuiCrates.getKeyedPaths();
     const touchedGpuiCratesStr = [...edited, ...deleted]
       .map((file) => "`" + file.split("/")[1] + "`")

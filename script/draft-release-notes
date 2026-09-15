@@ -2,7 +2,7 @@
 
 const { execFileSync } = require("child_process");
 const { parseArgs } = require("util");
-const { releaseNotesSection } = require("./lib/release-notes");
+const { releaseNotesSection, releaseNotesEntries } = require("./lib/release-notes");
 
 const GPUI_PREFIX_PATTERN = /^- \[GPUI\]\s*/i;
 
@@ -140,10 +140,7 @@ function getCommits(oldTag, newTag) {
       let [hash, firstLine] = commit.split("\n")[0].split("|||");
       let cherryPick = firstLine.match(/\(cherry-pick #([0-9]+)\)/)?.[1] || "";
       let pr = firstLine.match(/\(#(\d+)\)$/)?.[1] || "";
-      let releaseNotes = releaseNotesSection(commit)
-        .split("\n\n")[0]
-        .trim()
-        .replace(/\n(?![\n-])/g, " ");
+      let releaseNotes = releaseNotesEntries(releaseNotesSection(commit)).join("\n");
 
       if (releaseNotes.includes("<public_issue_number_if_exists>")) {
         releaseNotes = "";
