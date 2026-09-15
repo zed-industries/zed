@@ -3340,7 +3340,7 @@ impl BackgroundScannerState {
     fn populate_dir(
         &mut self,
         parent_path: Arc<RelPath>,
-        entries: impl IntoIterator<Item = Entry>,
+        entries: Vec<Entry>,
         ignore: Option<Arc<Gitignore>>,
     ) {
         let mut parent_entry = if let Some(parent_entry) = self
@@ -3363,22 +3363,34 @@ impl BackgroundScannerState {
             _ => return,
         }
 
+        let abs_parent_path = self
+            .snapshot
+            .abs_path
+            .as_path()
+            .join(parent_path.as_std_path())
+            .into();
         if let Some(ignore) = ignore {
-            let abs_parent_path = self
-                .snapshot
-                .abs_path
-                .as_path()
-                .join(parent_path.as_std_path())
-                .into();
             self.snapshot
                 .ignores_by_parent_abs_path
                 .insert(abs_parent_path, (ignore, false));
+        } else {
+            self.snapshot
+                .ignores_by_parent_abs_path
+                .remove(&abs_parent_path);
         }
 
         let parent_entry_id = parent_entry.id;
         self.scanned_dirs.insert(parent_entry_id);
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
         let mut entries_by_id_edits = Vec::new();
+
+        for entry in &entries {
+            if let Some(old_entry) = self.snapshot.entry_for_path(&entry.path)
+                && old_entry.id != entry.id
+            {
+                entries_by_id_edits.push(Edit::Remove(old_entry.id));
+            }
+        }
 
         for entry in entries {
             entries_by_id_edits.push(Edit::Insert(PathEntry {
@@ -5588,11 +5600,39 @@ impl BackgroundScanner {
         }
 
         let mut state = self.state.lock().await;
+        let entries_by_path = new_entries
+            .iter()
+            .map(|entry| (entry.path.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        let removed_paths = state
+            .snapshot
+            .child_entries(&job.path)
+            .filter(|old_entry| {
+                entries_by_path.get(&old_entry.path).is_none_or(|entry| {
+                    old_entry.is_dir() != entry.is_dir()
+                        || old_entry.inode != entry.inode
+                        || old_entry.canonical_path != entry.canonical_path
+                })
+            })
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        for path in removed_paths {
+            let abs_path = state.snapshot.absolutize(&path);
+            state
+                .snapshot
+                .ignores_by_parent_abs_path
+                .retain(|parent, _| !parent.starts_with(&abs_path));
+            state.remove_path_from_snapshot_and_unwatch(&path, self.watcher.as_ref(), false);
+        }
+
         // Identify any subdirectories that should not be scanned.
         let mut job_ix = 0;
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
+                if let Some(old_entry) = state.snapshot.entry_for_path(&entry.path) {
+                    entry.kind = old_entry.kind;
+                }
                 if !self.should_scan_directory(&state, entry, ignore_stack.repo_root.is_some()) {
                     log::debug!("defer scanning directory {:?}", entry.path);
                     entry.kind = EntryKind::UnloadedDir;
@@ -5718,13 +5758,27 @@ impl BackgroundScanner {
         let mut state = self.state.lock().await;
         let doing_recursive_update = scan_queue_tx.is_some();
 
-        // Remove any entries for paths that no longer exist or are being recursively
-        // refreshed. Do this before adding any new entries, so that renames can be
-        // detected regardless of the order of the paths.
+        // Keep existing directories until their children have been read. Remove
+        // missing or replaced entries before inserting any, so renames can reuse ids.
         let mut paths_to_process = Vec::with_capacity(relative_paths.len());
         for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
             let path_was_removed = matches!(metadata, Ok(None));
-            let removed_descendant_paths = if path_was_removed || doing_recursive_update {
+            let needs_replacement = match metadata {
+                Ok(Some((metadata, canonical_path))) if doing_recursive_update => {
+                    !state.snapshot.entry_for_path(path).is_some_and(|entry| {
+                        entry.is_dir()
+                            && metadata.is_dir
+                            && entry.inode == metadata.inode
+                            && entry.canonical_path.is_some() == metadata.is_symlink
+                            && entry
+                                .canonical_path
+                                .as_ref()
+                                .is_none_or(|path| path.as_ref() == canonical_path.as_path())
+                    })
+                }
+                _ => false,
+            };
+            let removed_descendant_paths = if path_was_removed || needs_replacement {
                 state.remove_path_from_snapshot(path, path_was_removed)
             } else {
                 Vec::new()
@@ -5826,12 +5880,6 @@ impl BackgroundScanner {
                 }
                 Err(err) => {
                     log::error!("error reading file {abs_path:?} on event: {err:#}");
-                    state.unwatch_path(
-                        self.watcher.as_ref(),
-                        path,
-                        removed_descendant_abs_paths,
-                        false,
-                    );
                 }
             }
         }

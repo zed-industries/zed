@@ -1494,6 +1494,7 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
     fs.insert_tree(
         "/root",
         json!({
+            ".gitignore": "old.txt",
             "old.txt": "",
         }),
     )
@@ -1519,16 +1520,19 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
             tree.entries(true, 0)
                 .map(|entry| entry.path.as_ref())
                 .collect::<Vec<_>>(),
-            vec![rel_path(""), rel_path("old.txt")]
+            vec![rel_path(""), rel_path(".gitignore"), rel_path("old.txt")]
         );
     });
 
     fs.pause_events();
+    fs.remove_file(Path::new("/root/.gitignore"), RemoveOptions::default())
+        .await
+        .unwrap();
     fs.remove_file(Path::new("/root/old.txt"), RemoveOptions::default())
         .await
         .unwrap();
     fs.insert_file(Path::new("/root/new.txt"), Vec::new()).await;
-    assert_eq!(fs.buffered_event_count(), 2);
+    assert_eq!(fs.buffered_event_count(), 3);
     fs.clear_buffered_events();
 
     tree.read_with(cx, |tree, _| {
@@ -1538,9 +1542,10 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
 
     fs.emit_fs_event("/root", Some(fs::PathEventKind::Rescan));
     fs.unpause_events_and_flush();
-    tree.flush_fs_events(cx).await;
+    cx.run_until_parked();
 
     tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
         assert!(tree.entry_for_path(rel_path("old.txt")).is_none());
         assert!(tree.entry_for_path(rel_path("new.txt")).is_some());
         assert_eq!(
@@ -1550,6 +1555,80 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
             vec![rel_path(""), rel_path("new.txt")]
         );
     });
+}
+
+#[gpui::test]
+async fn test_rescan_preserves_subtree_when_read_dir_fails(cx: &mut TestAppContext) {
+    init_test(cx);
+    for unreadable_path in ["/root", "/root/dir"] {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir": {
+                    "old.txt": "",
+                    "nested": { "keep.txt": "" },
+                },
+                "other.txt": "",
+            }),
+        )
+        .await;
+        let tree = Worktree::local(
+            Path::new("/root"),
+            true,
+            fs.clone(),
+            Default::default(),
+            true,
+            WorktreeId::from_proto(0),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        let entries_before = tree.read_with(cx, |tree, _| {
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.clone(), entry.id, entry.kind))
+                .collect::<Vec<_>>()
+        });
+
+        fs.pause_events();
+        fs.remove_file(Path::new("/root/dir/old.txt"), RemoveOptions::default())
+            .await
+            .unwrap();
+        fs.insert_file("/root/dir/new.txt", Vec::new()).await;
+        fs.clear_buffered_events();
+        fs.set_read_dir_error(unreadable_path, Some("permission denied".into()));
+        let read_dir_calls = fs.read_dir_call_count();
+        fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+        fs.unpause_events_and_flush();
+        cx.run_until_parked();
+
+        assert!(fs.read_dir_call_count() > read_dir_calls);
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.entries(true, 0)
+                    .map(|entry| (entry.path.clone(), entry.id, entry.kind))
+                    .collect::<Vec<_>>(),
+                entries_before,
+                "failed to retain entries when {unreadable_path} could not be read",
+            );
+        });
+
+        fs.set_read_dir_error(unreadable_path, None);
+        fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+        tree.flush_fs_events(cx).await;
+        tree.read_with(cx, |tree, _| {
+            assert!(tree.entry_for_path(rel_path("dir/old.txt")).is_none());
+            assert!(tree.entry_for_path(rel_path("dir/new.txt")).is_some());
+            for (path, id, kind) in &entries_before {
+                if path.as_ref() != rel_path("dir/old.txt") {
+                    let entry = tree.entry_for_path(path).unwrap();
+                    assert_eq!((entry.id, entry.kind), (*id, *kind));
+                }
+            }
+        });
+    }
 }
 
 #[gpui::test]
