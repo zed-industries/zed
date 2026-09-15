@@ -31,7 +31,7 @@ pub use tools::*;
 
 use acp_thread::{
     AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
-    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId,
+    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
@@ -3479,19 +3479,54 @@ impl SubagentHandle for NativeSubagentHandle {
         let parent_thread = self.parent_thread.clone();
 
         cx.spawn(async move |cx| {
-            let task = cx.update(|cx| {
+            let (task, token_limit_rx, _subscription) = cx.update(|cx| {
                 parent_thread
                     .update(cx, |parent_thread, _cx| {
                         parent_thread.register_running_subagent(thread.downgrade())
                     })
                     .ok();
 
-                acp_thread.update(cx, |acp_thread, cx| {
+                let ratio_before_prompt = thread
+                    .read(cx)
+                    .latest_token_usage()
+                    .map_or(TokenUsageRatio::Normal, |usage| usage.ratio());
+                let (token_limit_tx, token_limit_rx) = oneshot::channel();
+                let mut token_limit_tx = Some(token_limit_tx);
+                let subscription = cx.subscribe(
+                    &thread,
+                    move |thread, event: &TokenUsageUpdated, cx| {
+                        if !thread.read(cx).auto_compaction_enabled(cx)
+                            && event.0.as_ref().is_some_and(|usage| usage.ratio() > ratio_before_prompt)
+                            && let Some(sender) = token_limit_tx.take()
+                        {
+                            sender.send(()).ok();
+                        }
+                    },
+                );
+                let task = acp_thread.update(cx, |acp_thread, cx| {
                     acp_thread.send(vec![message.into()], cx)
-                })
+                });
+                (task, token_limit_rx, subscription)
             });
 
-            let result = match task.await {
+            let mut task = task.fuse();
+            let response = futures::select_biased! {
+                response = task => response,
+                _ = token_limit_rx.fuse() => {
+                    if thread.read_with(cx, |thread, _| thread.is_turn_complete()) {
+                        task.await
+                    } else {
+                        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                        Err(anyhow!(
+                            "The agent is nearing the end of its context window and has been \
+                             stopped. You can prompt the thread again to have the agent wrap up \
+                             or hand off its work."
+                        ))
+                    }
+                }
+            };
+            let cancelled = matches!(&response, Ok(Some(response)) if response.stop_reason == acp::StopReason::Cancelled);
+            let result = match response {
                 Ok(Some(response)) => match response.stop_reason {
                     acp::StopReason::Cancelled => Err(anyhow!("User canceled")),
                     acp::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
@@ -3528,7 +3563,18 @@ impl SubagentHandle for NativeSubagentHandle {
                 })
                 .ok();
 
-            result
+            if cancelled {
+                result
+            } else {
+                result.map_err(|error| {
+                    let partial_output = thread.read_with(cx, |thread, _| thread.subagent_partial_output());
+                    if partial_output.is_empty() {
+                        anyhow!("{error:#}")
+                    } else {
+                        anyhow!("{error:#}\n\nPartial subagent output (last 3 messages, up to 4096 characters each):\n\n{partial_output}")
+                    }
+                })
+            }
         })
     }
 }
