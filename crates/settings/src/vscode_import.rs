@@ -1157,7 +1157,8 @@ impl VsCodeSettings {
                         })
                         .collect::<Vec<_>>()
                 })
-                .filter(|r| !r.is_empty()),
+                .filter(|r| !r.is_empty())
+                .map(SplicingVec::from),
         }
     }
 }
@@ -1217,12 +1218,47 @@ fn skip_default<T: Default + PartialEq>(value: T) -> Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings_content::merge_from::MergeFrom;
 
     fn imported_reduce_motion(content: &str) -> Option<ReduceMotionMode> {
         VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
             .unwrap()
             .settings_content()
             .reduce_motion
+    }
+
+    #[test]
+    fn test_import_read_only_files() -> Result<()> {
+        let inherited = WorktreeSettingsContent {
+            read_only_files: Some(SplicingVec::from(vec!["**/*.lock".to_string()])),
+            ..Default::default()
+        };
+        let imported = VsCodeSettings::from_str(
+            r#"{"files.readonlyExclude": {"**/*.gen.rs": true, "**/*.lock": false}}"#,
+            VsCodeSettingsSource::VsCode,
+        )?
+        .worktree_settings_content();
+        assert_eq!(
+            serde_json::to_value(&imported.read_only_files)?,
+            serde_json::json!(["**/*.gen.rs"])
+        );
+        let mut replaced = inherited.clone();
+        replaced.merge_from(&imported);
+        assert_eq!(replaced.read_only_files, imported.read_only_files);
+
+        for content in [
+            r#"{"files.readonlyExclude": {"**/*.gen.rs": false}}"#,
+            r#"{"files.readonlyExclude": {}}"#,
+            "{}",
+        ] {
+            let imported = VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)?
+                .worktree_settings_content();
+            assert_eq!(imported.read_only_files, None);
+            let mut unchanged = inherited.clone();
+            unchanged.merge_from(&imported);
+            assert_eq!(unchanged.read_only_files, inherited.read_only_files);
+        }
+        Ok(())
     }
 
     #[test]
