@@ -38,7 +38,7 @@ use crate::{
     },
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage};
 use gpui::{
@@ -47,20 +47,20 @@ use gpui::{
     Element, ElementInputHandler, Entity, Focusable as _, Font, FontId, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
+    ParentElement, Pixels, ScaledPixels, ScrollHandle, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, StyledText, TaskExt, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, div, fill, outline, pattern_slash, point, px, quad,
-    relative, size, solid_background, transparent_black,
+    TextStyleRefinement, UnderlineStyle, WeakEntity, Window, div, fill, outline, pattern_slash,
+    point, px, quad, relative, size, solid_background, transparent_black, underline_y_offset,
 };
 use itertools::Itertools;
 use language::{
-    HighlightedText, IndentGuideSettings, LanguageAwareStyling,
+    Diagnostic, HighlightedText, IndentGuideSettings, LanguageAwareStyling,
     language_settings::ShowWhitespaceSetting,
 };
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset, MultiBufferPoint,
-    MultiBufferRow, RowInfo, ToOffset,
+    Anchor, ExcerptRange, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset, MultiBufferPoint,
+    MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
 };
 
 use project::{
@@ -85,7 +85,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::Bias;
-use text::BufferId;
+use text::{BufferId, ToPoint as _};
 use theme::{ActiveTheme, Appearance, PlayerColor};
 use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
@@ -156,6 +156,112 @@ struct InlineBlameLayout {
     bounds: Bounds<Pixels>,
     buffer_id: BufferId,
     entry: BlameEntry,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PointDiagnostic {
+    column: u32,
+    underline: UnderlineStyle,
+    severity: lsp::DiagnosticSeverity,
+}
+
+struct DiagnosticUnderline {
+    origin: gpui::Point<Pixels>,
+    width: Pixels,
+    style: UnderlineStyle,
+    bounds: Bounds<ScaledPixels>,
+    span: Range<ScaledPixels>,
+    severity: lsp::DiagnosticSeverity,
+    is_point: bool,
+}
+
+impl DiagnosticUnderline {
+    fn point(
+        diagnostic: &PointDiagnostic,
+        origin: gpui::Point<Pixels>,
+        width: Pixels,
+        window: &Window,
+    ) -> Self {
+        let bounds = window.underline_bounds(origin, width, &diagnostic.underline);
+        Self {
+            origin,
+            width,
+            style: diagnostic.underline,
+            bounds,
+            span: bounds.left()..bounds.right(),
+            severity: diagnostic.severity,
+            is_point: true,
+        }
+    }
+
+    fn paint(&self, span: Range<ScaledPixels>, window: &mut Window) {
+        window.paint_underline_with_exclusions(
+            self.origin,
+            self.width,
+            &self.style,
+            &[
+                self.bounds.left()..span.start,
+                span.end..self.bounds.right(),
+            ],
+        );
+    }
+
+    fn paint_all(underlines: &[Self], window: &mut Window) {
+        if underlines.is_empty() {
+            return;
+        }
+        let mask = window.content_mask().bounds;
+        let scale = window.scale_factor();
+        let left = ScaledPixels((f32::from(mask.left()) * scale).floor());
+        let top = ScaledPixels((f32::from(mask.top()) * scale).floor());
+        let right = ScaledPixels((f32::from(mask.right()) * scale).ceil()).max(left);
+        let bottom = ScaledPixels((f32::from(mask.bottom()) * scale).ceil()).max(top);
+        let mask = Bounds::from_corners(point(left, top), point(right, bottom));
+        let mut events = SmallVec::<[_; 8]>::new();
+        for (index, underline) in underlines.iter().enumerate() {
+            let bounds = underline.bounds.intersect(&mask);
+            let start = underline.span.start.max(bounds.left());
+            let end = underline.span.end.min(bounds.right());
+            if !bounds.is_empty() && start < end {
+                events.push((start, true, index));
+                events.push((end, false, index));
+            }
+        }
+        events.sort_unstable();
+
+        let mut active = BTreeSet::new();
+        let mut previous = None;
+        let mut visible: Option<(usize, Range<ScaledPixels>)> = None;
+        for (position, is_start, index) in events {
+            if let Some(start) = previous
+                && start < position
+                && let Some(&(_, _, winner)) = active.first()
+            {
+                if let Some((current, span)) = visible.as_mut()
+                    && *current == winner
+                    && span.end == start
+                {
+                    span.end = position;
+                } else {
+                    if let Some((current, span)) = visible.take() {
+                        underlines[current].paint(span, window);
+                    }
+                    visible = Some((winner, start..position));
+                }
+            }
+            let underline = &underlines[index];
+            let key = (underline.severity, underline.is_point, index);
+            if is_start {
+                active.insert(key);
+            } else {
+                active.remove(&key);
+            }
+            previous = Some(position);
+        }
+        if let Some((winner, span)) = visible {
+            underlines[winner].paint(span, window);
+        }
+    }
 }
 
 impl SelectionLayout {
@@ -3190,11 +3296,14 @@ impl EditorElement {
                         &[run],
                         None,
                     );
+
                     LineWithInvisibles {
                         width: line.width,
                         len: line.len,
                         fragments: smallvec![LineFragment::Text(line)],
                         invisibles: Vec::new(),
+                        diagnostic_underline_severity_ranges: Vec::new(),
+                        point_diagnostics: Vec::new(),
                         font_size,
                     }
                 })
@@ -3230,6 +3339,7 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
+        content_width: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> SmallVec<[AnyElement; 1]> {
@@ -3242,6 +3352,8 @@ impl EditorElement {
                 scroll_pixel_position,
                 row,
                 content_origin,
+                self.style.text.text_align,
+                content_width,
                 &mut line_elements,
                 window,
                 cx,
@@ -5626,6 +5738,164 @@ impl EditorElement {
         })
     }
 
+    fn populate_point_diagnostics(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_rows: Range<DisplayRow>,
+        line_layouts: &mut [LineWithInvisibles],
+    ) {
+        if visible_rows.is_empty() {
+            return;
+        }
+
+        let display_snapshot = &snapshot.display_snapshot;
+        let buffer_snapshot = snapshot.buffer_snapshot();
+
+        let query_start = display_snapshot
+            .display_point_to_point(DisplayPoint::new(visible_rows.start, 0), Bias::Left);
+        let query_end_display = display_snapshot
+            .clip_ignoring_line_ends(DisplayPoint::new(visible_rows.end, 0), Bias::Right);
+        let query_end = display_snapshot.display_point_to_point(query_end_display, Bias::Right);
+
+        for (point, diagnostic) in
+            Self::point_diagnostics_in_range(buffer_snapshot, query_start..query_end)
+        {
+            if display_snapshot.intersects_fold(point) {
+                continue;
+            }
+
+            let Some(underline) = display_snapshot.diagnostic_underline_style(
+                diagnostic.severity,
+                diagnostic.underline,
+                diagnostic.is_unnecessary,
+                &self.style,
+            ) else {
+                continue;
+            };
+
+            let display_point = point.to_display_point(display_snapshot);
+            if !visible_rows.contains(&display_point.row()) {
+                continue;
+            }
+
+            let line_ix = display_point.row().minus(visible_rows.start) as usize;
+            let Some(line_layout) = line_layouts.get_mut(line_ix) else {
+                continue;
+            };
+            let point_diagnostic = PointDiagnostic {
+                column: display_point.column(),
+                underline,
+                severity: diagnostic.severity,
+            };
+
+            line_layout.add_point_diagnostic(point_diagnostic);
+        }
+    }
+
+    fn point_diagnostic_anchor(
+        snapshot: &MultiBufferSnapshot,
+        excerpt: &ExcerptRange<text::Anchor>,
+        text_anchor: text::Anchor,
+    ) -> Option<Anchor> {
+        let buffer = snapshot.buffer_for_id(text_anchor.buffer_id)?;
+        if !excerpt.contains(&text_anchor, buffer) {
+            return None;
+        }
+        let anchor = text_anchor.bias_right(buffer);
+        let anchor = if excerpt.context.start.cmp(&anchor, buffer).is_gt() {
+            excerpt.context.start
+        } else if excerpt.context.end.cmp(&anchor, buffer).is_lt() {
+            excerpt.context.end
+        } else {
+            anchor
+        };
+        snapshot.anchor_in_buffer(anchor)
+    }
+
+    fn add_point_diagnostic<'a>(
+        point_diagnostics: &mut Vec<(Point, &'a Diagnostic)>,
+        seen: &mut HashSet<(Point, *const Diagnostic)>,
+        range: &Range<Point>,
+        point: Point,
+        diagnostic: &'a Diagnostic,
+    ) {
+        if point >= range.start
+            && point <= range.end
+            && seen.insert((point, std::ptr::from_ref(diagnostic)))
+        {
+            point_diagnostics.push((point, diagnostic));
+        }
+    }
+
+    fn point_diagnostics_in_range(
+        snapshot: &MultiBufferSnapshot,
+        range: Range<Point>,
+    ) -> Vec<(Point, &Diagnostic)> {
+        let mut point_diagnostics = Vec::new();
+        let mut seen = HashSet::default();
+
+        for (buffer, buffer_range, excerpt) in snapshot.range_to_buffer_ranges(range.clone()) {
+            for entry in buffer
+                .diagnostic_entries_in_range(buffer_range, false)
+                .filter(|entry| entry.range.start == entry.range.end)
+            {
+                let Some(anchor) =
+                    Self::point_diagnostic_anchor(snapshot, &excerpt, entry.range.start)
+                else {
+                    continue;
+                };
+                Self::add_point_diagnostic(
+                    &mut point_diagnostics,
+                    &mut seen,
+                    &range,
+                    anchor.to_point(snapshot),
+                    &entry.diagnostic,
+                );
+            }
+        }
+
+        for (_, _, deleted_hunk_anchor) in
+            snapshot.range_to_buffer_ranges_with_deleted_hunks(range.clone())
+        {
+            let Some(deleted_hunk_anchor) = deleted_hunk_anchor else {
+                continue;
+            };
+            let Some((live_anchor, buffer)) = snapshot.anchor_to_buffer_anchor(deleted_hunk_anchor)
+            else {
+                continue;
+            };
+            let Some((_, excerpt)) =
+                snapshot.excerpt_containing(deleted_hunk_anchor..deleted_hunk_anchor)
+            else {
+                continue;
+            };
+            let live_point = live_anchor.to_point(buffer);
+
+            for entry in buffer
+                .diagnostic_entries_in_range(live_point..live_point, false)
+                .filter(|entry| entry.range.start == entry.range.end)
+            {
+                if entry.range.start.to_point(buffer) != live_point {
+                    continue;
+                }
+                let Some(anchor) =
+                    Self::point_diagnostic_anchor(snapshot, &excerpt, entry.range.start)
+                else {
+                    continue;
+                };
+                Self::add_point_diagnostic(
+                    &mut point_diagnostics,
+                    &mut seen,
+                    &range,
+                    anchor.to_point(snapshot),
+                    &entry.diagnostic,
+                );
+            }
+        }
+
+        point_diagnostics
+    }
+
     fn paint_text(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         window.with_content_mask(
             Some(ContentMask {
@@ -7153,6 +7423,8 @@ fn render_blame_entry(
 pub(crate) struct LineWithInvisibles {
     fragments: SmallVec<[LineFragment; 1]>,
     invisibles: Vec<Invisible>,
+    diagnostic_underline_severity_ranges: Vec<(Range<usize>, lsp::DiagnosticSeverity)>,
+    point_diagnostics: Vec<PointDiagnostic>,
     len: usize,
     pub(crate) width: Pixels,
     font_size: Pixels,
@@ -7171,7 +7443,7 @@ enum LineFragment {
 impl fmt::Debug for LineFragment {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            LineFragment::Text(shaped_line) => f.debug_tuple("Text").field(shaped_line).finish(),
+            LineFragment::Text(line) => f.debug_tuple("Text").field(line).finish(),
             LineFragment::Element { size, len, .. } => f
                 .debug_struct("Element")
                 .field("size", size)
@@ -7203,6 +7475,7 @@ impl LineWithInvisibles {
         // mid-line inlays/replacements, so marker offsets stay correct in that case.
         let mut line_byte_offset: usize = 0;
         let mut invisibles = Vec::new();
+        let mut diagnostic_underline_severity_ranges = Vec::new();
         let mut width = Pixels::ZERO;
         let mut len = 0;
         let mut styles = Vec::new();
@@ -7217,6 +7490,7 @@ impl LineWithInvisibles {
         for highlighted_chunk in chunks.chain([HighlightedChunk {
             text: "\n",
             style: None,
+            diagnostic_underline_severity: None,
             is_tab: false,
             is_inlay: false,
             replacement: None,
@@ -7246,6 +7520,7 @@ impl LineWithInvisibles {
                     );
                     width += shaped_line.width;
                     len += shaped_line.len;
+
                     fragments.push(LineFragment::Text(shaped_line));
                     line.clear();
                     styles.clear();
@@ -7307,11 +7582,18 @@ impl LineWithInvisibles {
                             underline: text_style.underline,
                             strikethrough: text_style.strikethrough,
                         };
+
                         let line_layout = window
                             .text_system()
                             .shape_line(x, font_size, &[run], None)
                             .with_len(highlighted_chunk.text.len());
 
+                        if let Some(severity) = highlighted_chunk.diagnostic_underline_severity {
+                            diagnostic_underline_severity_ranges.push((
+                                line_byte_offset..line_byte_offset + highlighted_chunk.text.len(),
+                                severity,
+                            ));
+                        }
                         width += line_layout.width;
                         len += highlighted_chunk.text.len();
                         line_byte_offset += highlighted_chunk.text.len();
@@ -7335,12 +7617,17 @@ impl LineWithInvisibles {
                         );
                         width += shaped_line.width;
                         len += shaped_line.len;
+
                         fragments.push(LineFragment::Text(shaped_line));
                         layouts.push(Self {
                             width: mem::take(&mut width),
                             len: mem::take(&mut len),
                             fragments: mem::take(&mut fragments),
                             invisibles: std::mem::take(&mut invisibles),
+                            diagnostic_underline_severity_ranges: mem::take(
+                                &mut diagnostic_underline_severity_ranges,
+                            ),
+                            point_diagnostics: Vec::new(),
                             font_size,
                         });
 
@@ -7385,6 +7672,13 @@ impl LineWithInvisibles {
                             strikethrough: text_style.strikethrough,
                         });
 
+                        if let Some(severity) = highlighted_chunk.diagnostic_underline_severity {
+                            diagnostic_underline_severity_ranges.push((
+                                line_byte_offset..line_byte_offset + line_chunk.len(),
+                                severity,
+                            ));
+                        }
+
                         if editor_mode.is_full() && !highlighted_chunk.is_inlay {
                             // Line wrap pads its contents with fake whitespaces,
                             // avoid printing them
@@ -7426,6 +7720,20 @@ impl LineWithInvisibles {
         }
 
         layouts
+    }
+
+    fn add_point_diagnostic(&mut self, point_diagnostic: PointDiagnostic) {
+        if let Some(existing) = self
+            .point_diagnostics
+            .iter_mut()
+            .find(|existing| existing.column == point_diagnostic.column)
+        {
+            if point_diagnostic.severity < existing.severity {
+                *existing = point_diagnostic;
+            }
+        } else {
+            self.point_diagnostics.push(point_diagnostic);
+        }
     }
 
     /// Takes text runs and non-overlapping left-to-right background ranges with color.
@@ -7511,6 +7819,8 @@ impl LineWithInvisibles {
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         row: DisplayRow,
         content_origin: gpui::Point<Pixels>,
+        text_align: TextAlign,
+        content_width: Pixels,
         line_elements: &mut SmallVec<[AnyElement; 1]>,
         window: &mut Window,
         cx: &mut App,
@@ -7521,6 +7831,8 @@ impl LineWithInvisibles {
             scroll_pixel_position,
             content_origin,
             line_y,
+            text_align,
+            content_width,
             line_elements,
             window,
             cx,
@@ -7533,12 +7845,18 @@ impl LineWithInvisibles {
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
         line_y: Pixels,
+        text_align: TextAlign,
+        content_width: Pixels,
         line_elements: &mut SmallVec<[AnyElement; 1]>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mut fragment_origin =
-            content_origin + gpui::point(Pixels::from(-scroll_pixel_position.x), line_y);
+        let mut fragment_origin = content_origin
+            + point(
+                self.alignment_offset(text_align, content_width)
+                    - Pixels::from(scroll_pixel_position.x),
+                line_y,
+            );
         for fragment in &mut self.fragments {
             match fragment {
                 LineFragment::Text(line) => {
@@ -7597,29 +7915,188 @@ impl LineWithInvisibles {
     ) {
         let line_height = layout.position_map.line_height;
         let mut fragment_origin = content_origin
-            + gpui::point(
-                Pixels::from(-layout.position_map.scroll_pixel_position.x),
+            + point(
+                self.alignment_offset(layout.text_align, layout.content_width)
+                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
                 line_y,
             );
+        let mut points = self
+            .point_diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.column as usize <= self.len)
+            .collect::<SmallVec<[_; 4]>>();
+        points.sort_unstable_by_key(|diagnostic| diagnostic.column);
+        let has_points = !points.is_empty();
+        let mut points = points.into_iter().peekable();
+        let mut underlines = SmallVec::<[DiagnosticUnderline; 4]>::new();
+        let mut diagnostic_ranges = self.diagnostic_underline_severity_ranges.iter().peekable();
+        let mut fragment_start = 0;
+        let mut end_underline_offset = layout.point_diagnostic_underline_offset;
 
         for fragment in &self.fragments {
-            match fragment {
+            let (fragment_len, fragment_width, line) = match fragment {
                 LineFragment::Text(line) => {
-                    line.paint(
-                        fragment_origin,
-                        line_height,
-                        layout.text_align,
-                        Some(layout.content_width),
-                        window,
-                        cx,
-                    )
-                    .log_err();
-                    fragment_origin.x += line.width;
+                    if has_points {
+                        let mut glyphs = line.runs.iter().flat_map(|run| &run.glyphs).peekable();
+                        line.paint_with_underline_handler(
+                            fragment_origin,
+                            line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                            |range, origin, width, style, window| {
+                                let bounds = window.underline_bounds(origin, width, style);
+                                if bounds.is_empty() {
+                                    return;
+                                }
+                                let source_range = if line.text.len() == line.len() {
+                                    fragment_start + range.start..fragment_start + range.end
+                                } else {
+                                    fragment_start..fragment_start + line.len()
+                                };
+                                if source_range.is_empty() {
+                                    window.paint_underline(origin, width, style);
+                                    return;
+                                }
+                                let mut start = source_range.start;
+                                let mut span_start = bounds.left();
+                                while start < source_range.end {
+                                    while diagnostic_ranges
+                                        .peek()
+                                        .is_some_and(|(range, _)| range.end <= start)
+                                    {
+                                        diagnostic_ranges.next();
+                                    }
+                                    let (end, severity) = match diagnostic_ranges.peek().copied() {
+                                        Some((range, severity)) if range.start <= start => {
+                                            (range.end.min(source_range.end), Some(*severity))
+                                        }
+                                        Some((range, _)) => {
+                                            (range.start.min(source_range.end), None)
+                                        }
+                                        None => (source_range.end, None),
+                                    };
+                                    let span_end = if end == source_range.end {
+                                        bounds.right()
+                                    } else {
+                                        let index = end - fragment_start;
+                                        while glyphs.peek().is_some_and(|glyph| glyph.index < index)
+                                        {
+                                            glyphs.next();
+                                        }
+                                        let x = fragment_origin.x
+                                            + glyphs
+                                                .peek()
+                                                .map_or(line.width, |glyph| glyph.position.x);
+                                        window
+                                            .underline_bounds(
+                                                point(x, origin.y),
+                                                Pixels::ZERO,
+                                                style,
+                                            )
+                                            .left()
+                                            .clamp(span_start, bounds.right())
+                                    };
+                                    if span_start < span_end {
+                                        if let Some(severity) = severity {
+                                            underlines.push(DiagnosticUnderline {
+                                                origin,
+                                                width,
+                                                style: *style,
+                                                bounds,
+                                                span: span_start..span_end,
+                                                severity,
+                                                is_point: false,
+                                            });
+                                        } else {
+                                            window.paint_underline_with_exclusions(
+                                                origin,
+                                                width,
+                                                style,
+                                                &[
+                                                    bounds.left()..span_start,
+                                                    span_end..bounds.right(),
+                                                ],
+                                            );
+                                        }
+                                    }
+                                    start = end;
+                                    span_start = span_end;
+                                }
+                            },
+                        )
+                        .log_err();
+                    } else {
+                        line.paint(
+                            fragment_origin,
+                            line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        )
+                        .log_err();
+                    }
+                    (line.len(), line.width, Some(line))
                 }
-                LineFragment::Element { size, .. } => {
-                    fragment_origin.x += size.width;
+                LineFragment::Element { size, len, .. } => (*len, size.width, None),
+            };
+            let fragment_end = fragment_start + fragment_len;
+            if has_points {
+                let mut glyphs = line
+                    .into_iter()
+                    .flat_map(|line| &line.runs)
+                    .flat_map(|run| &run.glyphs)
+                    .peekable();
+                let has_glyphs = glyphs.peek().is_some();
+                let underline_offset = line
+                    .filter(|_| has_glyphs)
+                    .map_or(layout.point_diagnostic_underline_offset, |line| {
+                        underline_y_offset(line_height, line.ascent, line.descent)
+                    });
+                if fragment_len > 0 || fragment_width != Pixels::ZERO || has_glyphs {
+                    end_underline_offset = underline_offset;
+                }
+                while points
+                    .peek()
+                    .is_some_and(|diagnostic| (diagnostic.column as usize) < fragment_end)
+                {
+                    let Some(diagnostic) = points.next() else {
+                        break;
+                    };
+                    let index = diagnostic.column as usize - fragment_start;
+                    let x = if let Some(line) = line {
+                        let index = if line.text.len() == line.len() {
+                            index
+                        } else {
+                            0
+                        };
+                        while glyphs.peek().is_some_and(|glyph| glyph.index < index) {
+                            glyphs.next();
+                        }
+                        glyphs.peek().map_or(line.width, |glyph| glyph.position.x)
+                    } else {
+                        Pixels::ZERO
+                    };
+                    underlines.push(DiagnosticUnderline::point(
+                        diagnostic,
+                        fragment_origin + point(x, underline_offset),
+                        layout.position_map.em_advance,
+                        window,
+                    ));
                 }
             }
+            fragment_origin.x += fragment_width;
+            fragment_start = fragment_end;
+        }
+        for diagnostic in points {
+            underlines.push(DiagnosticUnderline::point(
+                diagnostic,
+                fragment_origin + point(Pixels::ZERO, end_underline_offset),
+                layout.position_map.em_advance,
+                window,
+            ));
         }
 
         self.draw_invisibles(
@@ -7633,6 +8110,7 @@ impl LineWithInvisibles {
             window,
             cx,
         );
+        DiagnosticUnderline::paint_all(&underlines, window);
     }
 
     fn draw_background(
@@ -7647,8 +8125,9 @@ impl LineWithInvisibles {
         let line_y = line_height * (row.as_f64() - layout.position_map.scroll_position.y) as f32;
 
         let mut fragment_origin = content_origin
-            + gpui::point(
-                Pixels::from(-layout.position_map.scroll_pixel_position.x),
+            + point(
+                self.alignment_offset(layout.text_align, layout.content_width)
+                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
                 line_y,
             );
 
@@ -7658,8 +8137,8 @@ impl LineWithInvisibles {
                     line.paint_background(
                         fragment_origin,
                         line_height,
-                        layout.text_align,
-                        Some(layout.content_width),
+                        TextAlign::Left,
+                        None,
                         window,
                         cx,
                     )
@@ -7685,6 +8164,12 @@ impl LineWithInvisibles {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let line_origin = content_origin
+            + point(
+                self.alignment_offset(layout.text_align, layout.content_width)
+                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
+                line_y,
+            );
         let extract_whitespace_info = |invisible: &Invisible| {
             let (token_offset, token_end_offset, invisible_symbol) = match invisible {
                 Invisible::Tab {
@@ -7705,16 +8190,8 @@ impl LineWithInvisibles {
             // Center the marker inside the actual glyph's width so it lines up with
             // proportional fonts instead of assuming a monospace `em_width` cell.
             let glyph_width = (self.x_for_index(token_end_offset) - token_x).max(Pixels::ZERO);
-            let x_offset: ScrollPixelOffset = token_x.into();
-            let invisible_offset: ScrollPixelOffset =
-                ((glyph_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0).into();
-            let origin = content_origin
-                + gpui::point(
-                    Pixels::from(
-                        x_offset + invisible_offset - layout.position_map.scroll_pixel_position.x,
-                    ),
-                    line_y,
-                );
+            let invisible_offset = (glyph_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0;
+            let origin = line_origin + point(token_x + invisible_offset, Pixels::ZERO);
 
             (
                 [token_offset, token_end_offset],
@@ -8129,6 +8606,10 @@ impl Element for EditorElement {
                     let font_id = window.text_system().resolve_font(&style.text.font());
                     let font_size = style.text.font_size.to_pixels(rem_size);
                     let line_height = style.text.line_height_in_pixels(rem_size);
+                    let ascent = window.text_system().ascent(font_id, font_size);
+                    let descent = window.text_system().descent(font_id, font_size).abs();
+                    let point_diagnostic_underline_offset =
+                        underline_y_offset(line_height, ascent, descent);
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
                     let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
@@ -9098,6 +9579,7 @@ impl Element for EditorElement {
                         scroll_position,
                         scroll_pixel_position,
                         content_origin,
+                        text_hitbox.size.width,
                         window,
                         cx,
                     );
@@ -9520,6 +10002,12 @@ impl Element for EditorElement {
                             )
                         };
 
+                    self.populate_point_diagnostics(
+                        &snapshot,
+                        start_row..end_row,
+                        &mut line_layouts,
+                    );
+
                     let position_map = Rc::new(PositionMap {
                         size: bounds.size,
                         visible_row_range,
@@ -9575,6 +10063,7 @@ impl Element for EditorElement {
                         line_numbers,
                         blamed_display_rows,
                         inline_diagnostics,
+                        point_diagnostic_underline_offset,
                         inline_blame_layout,
                         inline_code_actions,
                         blocks,
@@ -9791,6 +10280,7 @@ pub struct EditorLayout {
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
+    point_diagnostic_underline_offset: Pixels,
     inline_blame_layout: Option<InlineBlameLayout>,
     inline_code_actions: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
@@ -10911,11 +11401,20 @@ mod tests {
         display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
     };
-    use gpui::{TestAppContext, VisualTestContext, font};
-    use language::{Buffer, SelectionGoal, language_settings, tree_sitter_python};
+    use buffer_diff::BufferDiff;
+    use gpui::{
+        Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext, WindowHandle, font,
+    };
+    use language::{
+        Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal,
+        language_settings, tree_sitter_python,
+    };
     use log::info;
+    use lsp::DiagnosticSeverity;
+    use multi_buffer::PathKey;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
+    use text::PointUtf16;
     use util::test::sample_text;
 
     enum PrimaryNavigationOverlay {}
@@ -11164,6 +11663,460 @@ mod tests {
                 "Soft wrapped editor should have no horizontal scrolling!"
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_stays_in_edited_excerpt(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let point = Point::new(1, 0);
+        let diagnostic_point = PointUtf16::new(1, 0);
+        let buffer = point_diagnostic_buffer(
+            "lead\n\nhidden\nsafe",
+            [(diagnostic_point..diagnostic_point, ERROR)],
+            cx,
+        );
+        let multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        multi_buffer.update(cx, |multi_buffer, cx| {
+            multi_buffer.set_excerpts_for_path(
+                PathKey::for_buffer(&buffer, cx),
+                buffer.clone(),
+                vec![Point::zero()..point, Point::new(3, 0)..Point::new(3, 4)],
+                0,
+                cx,
+            );
+        });
+        buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot();
+            buffer.edit(
+                [(snapshot.anchor_before(5)..snapshot.anchor_after(6), "")],
+                None,
+                cx,
+            );
+        });
+
+        let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
+        let excerpts = snapshot.excerpts().collect::<Vec<_>>();
+        let points_by_excerpt = excerpts
+            .iter()
+            .map(|excerpt| {
+                let start = snapshot
+                    .anchor_in_excerpt(excerpt.context.start)
+                    .expect("excerpt start")
+                    .to_point(&snapshot);
+                let end = snapshot
+                    .anchor_in_excerpt(excerpt.context.end)
+                    .expect("excerpt end")
+                    .to_point(&snapshot);
+                EditorElement::point_diagnostics_in_range(&snapshot, start..end)
+                    .into_iter()
+                    .map(|(point, _)| point)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(points_by_excerpt, vec![vec![point], Vec::new()]);
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_painted_without_glyph_or_at_edited_eof(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        for (text, point, deletion, expected_row, expected_pixels) in [
+            ("\nx", PointUtf16::new(0, 0), None, 0, 0..16),
+            ("x\n", PointUtf16::new(1, 0), None, 1, 0..16),
+            ("", PointUtf16::new(0, 0), None, 0, 0..16),
+            ("x\n", PointUtf16::new(1, 0), Some(1..2), 0, 16..32),
+        ] {
+            for clip_at_line_ends in [false, true] {
+                let buffer = point_diagnostic_buffer(
+                    text,
+                    [(point..point, WARNING), (point..point, ERROR)],
+                    cx,
+                );
+                if let Some(deletion) = deletion.clone() {
+                    buffer.update(cx, |buffer, cx| buffer.edit([(deletion, "")], None, cx));
+                }
+                let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                let (window, editor) = point_diagnostic_editor(multi_buffer, cx);
+                editor.update(cx, |editor, cx| {
+                    editor.set_clip_at_line_ends(clip_at_line_ends, cx);
+                });
+                assert_painted_point_diagnostics(
+                    window,
+                    &[(expected_row, expected_pixels.clone(), ERROR)],
+                    cx,
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_painted_monospace_severity(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        for (point_severity, other_severity) in [(WARNING, ERROR), (ERROR, WARNING), (ERROR, ERROR)]
+        {
+            for other_range in [0..1, 0..4, 1..4, 1..1] {
+                let buffer = point_diagnostic_buffer(
+                    "\niabc",
+                    [
+                        (PointUtf16::new(0, 0)..PointUtf16::new(0, 0), point_severity),
+                        (
+                            PointUtf16::new(1, other_range.start)
+                                ..PointUtf16::new(1, other_range.end),
+                            other_severity,
+                        ),
+                    ],
+                    cx,
+                );
+                buffer.update(cx, |buffer, cx| buffer.edit([(0..1, "")], None, cx));
+                let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                let (window, editor) = point_diagnostic_editor(multi_buffer, cx);
+
+                for offset_content in [false, true] {
+                    editor.update(cx, |editor, cx| {
+                        editor.set_offset_content(offset_content, cx)
+                    });
+                    for (
+                        scale,
+                        point_width,
+                        range_width,
+                        full_range_width,
+                        gutter_origins,
+                        root_origins,
+                    ) in [
+                        (1., 8, 23, 31, (4, 11), [0, 0, 0, 1, 3]),
+                        (1.25, 10, 29, 39, (4, 14), [0, 0, 1, 1, 4]),
+                        (1.5, 12, 35, 47, (5, 17), [0, 0, 1, 1, 5]),
+                        (2., 16, 47, 62, (7, 23), [0, 0, 1, 2, 6]),
+                        (3., 23, 70, 94, (11, 34), [0, 1, 1, 2, 10]),
+                    ] {
+                        cx.simulate_window_scale_factor_change(window.into(), scale);
+                        for (offset, root_start) in
+                            [0., 0.2, 0.5, 0.8, 3.25].into_iter().zip(root_origins)
+                        {
+                            window.root(cx).expect("test view").update(cx, |view, cx| {
+                                view.x_offset = px(offset);
+                                cx.notify();
+                            });
+                            let (point_start, next_start) = if offset_content {
+                                (root_start + gutter_origins.0, root_start + gutter_origins.1)
+                            } else {
+                                (root_start, root_start + point_width)
+                            };
+                            let point_pixels = point_start..point_start + point_width;
+                            let other_pixels = match (other_range.start, other_range.end) {
+                                (0, 1) => point_pixels.clone(),
+                                (0, 4) => point_start..point_start + full_range_width,
+                                (1, 1) => next_start..next_start + point_width,
+                                (1, 4) => next_start..next_start + range_width,
+                                _ => unreachable!(),
+                            };
+                            let expected = (point_start..other_pixels.end.max(point_pixels.end))
+                                .filter_map(|x| {
+                                    let severity = match (
+                                        point_pixels.contains(&x),
+                                        other_pixels.contains(&x),
+                                    ) {
+                                        (true, true) => point_severity.min(other_severity),
+                                        (true, false) => point_severity,
+                                        (false, true) => other_severity,
+                                        (false, false) => return None,
+                                    };
+                                    Some((0, x..x + 1, severity))
+                                })
+                                .collect::<Vec<_>>();
+                            assert_painted_point_diagnostics(window, &expected, cx);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_painted_tabs_multibyte_and_replacements(cx: &mut TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.tab_size = NonZeroU32::new(4);
+            settings.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+        });
+
+        for (text, range, ranged_pixels) in [
+            ("\n\tabc", 0..1, 2..64),
+            ("\néabc", 1..4, 18..65),
+            ("\n😀abc", 2..5, 33..80),
+            ("\n\u{00a0}abc", 1..4, 18..65),
+            ("\na\u{00a0}bc", 1..3, 33..49),
+        ] {
+            for (point_severity, ranged_severity) in
+                [(WARNING, ERROR), (ERROR, WARNING), (ERROR, ERROR)]
+            {
+                let buffer = point_diagnostic_buffer(
+                    text,
+                    [
+                        (PointUtf16::new(0, 0)..PointUtf16::new(0, 0), point_severity),
+                        (
+                            PointUtf16::new(1, range.start)..PointUtf16::new(1, range.end),
+                            ranged_severity,
+                        ),
+                    ],
+                    cx,
+                );
+                buffer.update(cx, |buffer, cx| buffer.edit([(0..1, "")], None, cx));
+                let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                let (window, _) = point_diagnostic_editor(multi_buffer, cx);
+                window.root(cx).expect("test view").update(cx, |view, cx| {
+                    view.x_offset = px(0.8);
+                    cx.notify();
+                });
+                let expected = (2..ranged_pixels.end)
+                    .filter_map(|x| {
+                        let severity = match (x < 18, ranged_pixels.contains(&x)) {
+                            (true, true) => point_severity.min(ranged_severity),
+                            (true, false) => point_severity,
+                            (false, true) => ranged_severity,
+                            (false, false) => return None,
+                        };
+                        Some((0, x..x + 1, severity))
+                    })
+                    .collect::<Vec<_>>();
+                assert_painted_point_diagnostics(window, &expected, cx);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_ignores_non_diagnostic_replacement_underline(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        for (point_severity, ranged_severity) in [
+            (None, ERROR),
+            (Some(WARNING), ERROR),
+            (Some(ERROR), WARNING),
+            (Some(ERROR), ERROR),
+        ] {
+            let diagnostics = iter::once((
+                PointUtf16::new(1, 0)..PointUtf16::new(1, 1),
+                ranged_severity,
+            ))
+            .chain(
+                point_severity
+                    .map(|severity| (PointUtf16::new(0, 0)..PointUtf16::new(0, 0), severity)),
+            );
+            let buffer = point_diagnostic_buffer("\n\u{00a0}abc", diagnostics, cx);
+            buffer.update(cx, |buffer, cx| buffer.edit([(0..1, "")], None, cx));
+            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let (window, _) = point_diagnostic_editor(multi_buffer, cx);
+            let expected = point_severity
+                .map(|severity| (0, 0..16, severity))
+                .into_iter()
+                .collect::<Vec<_>>();
+            assert_painted_point_diagnostics(window, &expected, cx);
+        }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostics_follow_expanded_deletions(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        for (text, base_text, point, expected_display_row) in [
+            ("", "two\n", PointUtf16::new(0, 0), 1),
+            ("\nthree\n", "one\n\nthree\n", PointUtf16::new(0, 0), 1),
+            (
+                "one\n\nthree\n",
+                "one\ntwo\n\nthree\n",
+                PointUtf16::new(1, 0),
+                2,
+            ),
+            ("one\n", "one\ntwo\n", PointUtf16::new(1, 0), 2),
+        ] {
+            let buffer =
+                point_diagnostic_buffer(text, [(point..point, WARNING), (point..point, ERROR)], cx);
+
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+            });
+            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            multi_buffer.update(cx, |multi_buffer, cx| {
+                multi_buffer.add_diff(diff, cx);
+                multi_buffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
+            });
+            cx.run_until_parked();
+
+            let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
+            let expected_point = Point::new(expected_display_row, 0);
+            let deleted_region_start = snapshot
+                .diff_hunks_in_range(Point::zero()..snapshot.max_point())
+                .find(|hunk| hunk.status.kind == DiffHunkStatusKind::Deleted)
+                .map(|hunk| Point::new(hunk.row_range.start.0, 0))
+                .expect("expanded deletion should have a deleted display region");
+            for query_start in [Point::zero(), deleted_region_start, expected_point] {
+                let point_diagnostics = EditorElement::point_diagnostics_in_range(
+                    &snapshot,
+                    query_start..snapshot.max_point(),
+                );
+                assert_eq!(
+                    point_diagnostics
+                        .iter()
+                        .map(|(point, _)| *point)
+                        .collect::<Vec<_>>(),
+                    vec![expected_point; 2],
+                    "text: {text:?}, base: {base_text:?}, query start: {query_start:?}",
+                );
+            }
+
+            let (window, _) = point_diagnostic_editor(multi_buffer, cx);
+            assert_painted_point_diagnostics(window, &[(expected_display_row, 0..16, ERROR)], cx);
+        }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostics_exclude_collapsed_and_clipped_ranges(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let collapsed_buffer = point_diagnostic_buffer(
+            "bad ok",
+            [(PointUtf16::new(0, 0)..PointUtf16::new(0, 3), ERROR)],
+            cx,
+        );
+        collapsed_buffer.update(cx, |buffer, cx| buffer.edit([(0..4, "")], None, cx));
+        let collapsed_multi_buffer = cx.new(|cx| MultiBuffer::singleton(collapsed_buffer, cx));
+        let clipped_buffer = point_diagnostic_buffer(
+            "bad\ngood\n",
+            [(PointUtf16::new(0, 0)..PointUtf16::new(1, 0), ERROR)],
+            cx,
+        );
+        let clipped_multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        clipped_multi_buffer.update(cx, |multi_buffer, cx| {
+            multi_buffer.set_excerpt_ranges_for_path(
+                multi_buffer::PathKey::sorted(0),
+                clipped_buffer.clone(),
+                &clipped_buffer.read(cx).snapshot(),
+                vec![multi_buffer::ExcerptRange::new(
+                    Point::new(1, 0)..Point::new(1, 4),
+                )],
+                cx,
+            );
+        });
+        for multi_buffer in [collapsed_multi_buffer, clipped_multi_buffer] {
+            let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
+            assert_eq!(
+                EditorElement::point_diagnostics_in_range(
+                    &snapshot,
+                    Point::zero()..snapshot.max_point(),
+                )
+                .len(),
+                0,
+            );
+            let (window, _) = point_diagnostic_editor(multi_buffer, cx);
+            assert_painted_point_diagnostics(window, &[], cx);
+        }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_inside_fold_is_not_rendered(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.gutter.get_or_insert_default().folds = Some(false);
+                });
+            });
+        });
+
+        let diagnostic_point = PointUtf16::new(1, 0);
+        let buffer = point_diagnostic_buffer(
+            "fn f() {\n\n}\n",
+            [(diagnostic_point..diagnostic_point, ERROR)],
+            cx,
+        );
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let (window, editor) = point_diagnostic_editor(multi_buffer, cx);
+        assert_painted_point_diagnostics(window, &[(1, 0..16, ERROR)], cx);
+        let visual_cx = &mut VisualTestContext::from_window(*window, cx);
+        editor.update_in(visual_cx, |editor, window, cx| {
+            editor.display_map.update(cx, |display_map, _| {
+                display_map.fold_placeholder = FoldPlaceholder::test();
+            });
+            editor.fold_ranges(vec![Point::new(0, 8)..Point::new(2, 0)], false, window, cx);
+        });
+
+        assert_painted_point_diagnostics(window, &[], &mut visual_cx.cx);
+    }
+
+    #[gpui::test]
+    async fn test_point_diagnostic_painted_in_sticky_header(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.gutter.get_or_insert_default().folds = Some(false);
+                    settings.editor.sticky_scroll = Some(settings::StickyScrollContent {
+                        enabled: Some(true),
+                    });
+                });
+            });
+        });
+
+        let diagnostic_point = PointUtf16::new(0, 0);
+        let buffer = point_diagnostic_buffer("", [(diagnostic_point..diagnostic_point, ERROR)], cx);
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(languages::rust_lang()), cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    indoc::indoc! {"
+                        fn foo() {
+                            let one = 1;
+                            let two = 2;
+                            let three = 3;
+                        }
+                    "},
+                )],
+                None,
+                cx,
+            );
+
+            let snapshot = buffer.snapshot();
+            assert_eq!(
+                snapshot
+                    .diagnostics_in_range::<_, Point>(Point::zero()..snapshot.max_point(), false)
+                    .map(|diagnostic| diagnostic.range)
+                    .collect::<Vec<_>>(),
+                vec![Point::zero()..Point::zero()],
+            );
+        });
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let (window, editor) = point_diagnostic_editor(multi_buffer, cx);
+        cx.simulate_window_resize(window.into(), size(px(500.), px(50.)));
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        cx.cx.run_until_parked();
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            editor.refresh_sticky_headers(&snapshot.display_snapshot, cx);
+        });
+        cx.cx.run_until_parked();
+        assert_painted_point_diagnostics(window, &[(0, 0..16, ERROR)], &mut cx.cx);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.scroll(point(0., 1.), window, cx)
+        });
+        cx.cx.run_until_parked();
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(EditorElement::sticky_headers(editor, &snapshot).len(), 1);
+        });
+        assert_painted_point_diagnostics(window, &[(0, 0..16, ERROR)], &mut cx.cx);
+        cx.update(|_, cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.sticky_scroll = Some(settings::StickyScrollContent {
+                        enabled: Some(false),
+                    });
+                });
+            });
+        });
+        assert_painted_point_diagnostics(window, &[], &mut cx.cx);
     }
 
     #[gpui::test]
@@ -12104,6 +13057,7 @@ mod tests {
                 let chunks = std::iter::once(HighlightedChunk {
                     text: "\u{00a0}",
                     style: None,
+                    diagnostic_underline_severity: None,
                     is_tab: false,
                     is_inlay: false,
                     replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
@@ -12111,6 +13065,7 @@ mod tests {
                 .chain(std::iter::once(HighlightedChunk {
                     text: "abcdefghi",
                     style: None,
+                    diagnostic_underline_severity: None,
                     is_tab: false,
                     is_inlay: false,
                     replacement: None,
@@ -12119,6 +13074,7 @@ mod tests {
                     std::iter::repeat_with(|| HighlightedChunk {
                         text: "\u{00a0}",
                         style: None,
+                        diagnostic_underline_severity: None,
                         is_tab: false,
                         is_inlay: false,
                         replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
@@ -12732,5 +13688,277 @@ mod tests {
             ),
             px(0.0),
         );
+    }
+
+    #[test]
+    fn test_point_diagnostic_admission_preserves_covered_column() {
+        let mut line = LineWithInvisibles {
+            fragments: SmallVec::new(),
+            invisibles: Vec::new(),
+            diagnostic_underline_severity_ranges: vec![(0..1, ERROR)],
+            point_diagnostics: Vec::new(),
+            len: 1,
+            width: px(3.25),
+            font_size: px(13.),
+        };
+        let underline = point_diagnostic_test_style(WARNING);
+        line.add_point_diagnostic(PointDiagnostic {
+            column: 0,
+            underline,
+            severity: WARNING,
+        });
+        assert_eq!(line.point_diagnostics.len(), 1);
+        let point = line.point_diagnostics.first().expect("admitted point");
+        assert_eq!((point.column, point.severity), (0, WARNING));
+        assert_eq!(point.underline, underline);
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_paint_all_ownership_and_phase(cx: &mut TestAppContext) {
+        let device_bounds = |span: &Range<i32>| {
+            Bounds::from_corners(point(span.start as f32, 8.), point(span.end as f32, 14.))
+                .map(ScaledPixels)
+        };
+        let clipped =
+            |underline: &Underline| underline.bounds.intersect(&underline.content_mask.bounds);
+        for (inputs, expected) in [
+            (
+                vec![(0., 11.349, WARNING, true), (0., 3.25, ERROR, false)],
+                vec![(0..6, 0..6, ERROR), (6..23, 0..23, WARNING)],
+            ),
+            (
+                vec![(0., 11.349, ERROR, true), (0., 3.25, WARNING, false)],
+                vec![(0..23, 0..23, ERROR)],
+            ),
+            (
+                vec![
+                    (2.888_183_8, 10.829_102, ERROR, true),
+                    (2.888_183_8, 20.959_962, WARNING, false),
+                ],
+                vec![(6..28, 6..28, ERROR), (28..48, 6..48, WARNING)],
+            ),
+            (
+                vec![
+                    (0., 3., WARNING, true),
+                    (3., 2., ERROR, false),
+                    (7., 2., WARNING, false),
+                ],
+                vec![
+                    (0..6, 0..6, WARNING),
+                    (6..10, 6..10, ERROR),
+                    (14..18, 14..18, WARNING),
+                ],
+            ),
+            (
+                vec![
+                    (0., 12., WARNING, true),
+                    (2., 8., WARNING, false),
+                    (4., 4., ERROR, true),
+                ],
+                vec![
+                    (0..4, 0..24, WARNING),
+                    (4..8, 4..20, WARNING),
+                    (8..16, 8..16, ERROR),
+                    (16..20, 4..20, WARNING),
+                    (20..24, 0..24, WARNING),
+                ],
+            ),
+            (
+                vec![(-2., 42., WARNING, true), (-1., 3., ERROR, false)],
+                vec![(0..4, -2..4, ERROR), (4..64, -4..80, WARNING)],
+            ),
+        ] {
+            for reversed in [false, true] {
+                let mut inputs = inputs.clone();
+                if reversed {
+                    inputs.reverse();
+                }
+                let window = cx.open_window(size(px(32.), px(16.)), |_, _| {
+                    PointDiagnosticPaintTestView(inputs)
+                });
+                cx.simulate_window_scale_factor_change(window.into(), 2.);
+                let mut painted = cx
+                    .update_window(window.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                        window.painted_underlines()
+                    })
+                    .expect("completed diagnostic canvas");
+                painted.sort_by_key(|underline| clipped(underline).left());
+                assert_eq!(painted.len(), expected.len());
+                for (underline, (visible, original, severity)) in painted.iter().zip(&expected) {
+                    let style = point_diagnostic_test_style(*severity);
+                    assert_eq!(clipped(underline), device_bounds(visible));
+                    assert_eq!(underline.bounds, device_bounds(original));
+                    assert_eq!(Some(underline.color), style.color);
+                    assert_eq!(underline.thickness, ScaledPixels(2.));
+                    assert_eq!(underline.wavy, true.into());
+                }
+            }
+        }
+    }
+
+    const ERROR: DiagnosticSeverity = DiagnosticSeverity::ERROR;
+    const WARNING: DiagnosticSeverity = DiagnosticSeverity::WARNING;
+
+    struct PointDiagnosticPaintTestView(Vec<(f32, f32, DiagnosticSeverity, bool)>);
+
+    impl Render for PointDiagnosticPaintTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let inputs = self.0.clone();
+            gpui::canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    let underlines = inputs
+                        .into_iter()
+                        .map(|(x, width, severity, is_point)| {
+                            let diagnostic = PointDiagnostic {
+                                column: 0,
+                                underline: point_diagnostic_test_style(severity),
+                                severity,
+                            };
+                            let mut underline = DiagnosticUnderline::point(
+                                &diagnostic,
+                                point(px(x), px(4.)),
+                                px(width),
+                                window,
+                            );
+                            underline.is_point = is_point;
+                            underline
+                        })
+                        .collect::<Vec<_>>();
+                    DiagnosticUnderline::paint_all(&underlines, window);
+                },
+            )
+            .size_full()
+        }
+    }
+
+    fn point_diagnostic_test_style(severity: DiagnosticSeverity) -> UnderlineStyle {
+        let hue = if severity == ERROR { 0. } else { 0.15 };
+        UnderlineStyle {
+            thickness: px(1.),
+            color: Some(gpui::hsla(hue, 1., 0.5, 1.)),
+            wavy: true,
+        }
+    }
+
+    struct PointDiagnosticTestView {
+        editor: Entity<Editor>,
+        style: EditorStyle,
+        x_offset: Pixels,
+    }
+
+    impl Render for PointDiagnosticTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .pl(self.x_offset)
+                .child(EditorElement::new(&self.editor, self.style.clone()))
+        }
+    }
+
+    fn point_diagnostic_buffer(
+        text: &str,
+        diagnostics: impl IntoIterator<Item = (Range<PointUtf16>, DiagnosticSeverity)>,
+        cx: &mut impl AppContext,
+    ) -> Entity<Buffer> {
+        cx.new(|cx| {
+            let mut buffer = Buffer::local(text, cx);
+            let diagnostics = DiagnosticSet::new(
+                diagnostics.into_iter().map(|(range, severity)| {
+                    DiagnosticEntry::new(
+                        range,
+                        Diagnostic {
+                            severity,
+                            underline: true,
+                            ..Diagnostic::default()
+                        },
+                    )
+                }),
+                &buffer.snapshot(),
+            );
+            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+            buffer
+        })
+    }
+
+    fn point_diagnostic_editor(
+        buffer: Entity<MultiBuffer>,
+        cx: &mut TestAppContext,
+    ) -> (WindowHandle<PointDiagnosticTestView>, Entity<Editor>) {
+        let window = cx.open_window(size(px(500.), px(200.)), |window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                editor.show_gutter = false;
+                editor.offset_content = false;
+                editor.set_read_only(true);
+                editor
+            });
+            let mut style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+            style.text.font_size = px(13.).into();
+            style.text.line_height = px(26.).into();
+            PointDiagnosticTestView {
+                editor,
+                style,
+                x_offset: Pixels::ZERO,
+            }
+        });
+        let editor = window
+            .read_with(cx, |view, _| view.editor.clone())
+            .expect("test editor");
+        (window, editor)
+    }
+
+    #[track_caller]
+    fn assert_painted_point_diagnostics(
+        window: WindowHandle<PointDiagnosticTestView>,
+        expected: &[(u32, Range<i32>, DiagnosticSeverity)],
+        cx: &mut TestAppContext,
+    ) {
+        let (error, warning, x_offset) = window
+            .read_with(cx, |view, _| {
+                (
+                    view.style.status.error,
+                    view.style.status.warning,
+                    view.x_offset,
+                )
+            })
+            .expect("diagnostic colors");
+        let (underlines, scale) = cx
+            .update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                (window.painted_underlines(), window.scale_factor())
+            })
+            .expect("completed diagnostic scene");
+        let mut actual = Vec::new();
+        for underline in underlines {
+            let severity = if underline.color == error {
+                ERROR
+            } else if underline.color == warning {
+                WARNING
+            } else {
+                continue;
+            };
+            let bounds = underline.bounds.intersect(&underline.content_mask.bounds);
+            if bounds.is_empty() {
+                continue;
+            }
+            assert_eq!(
+                [bounds.left().0.fract(), bounds.right().0.fract()],
+                [0., 0.]
+            );
+            let row = (bounds.top().0 / (26. * scale)).floor() as u32;
+            actual.extend(
+                (bounds.left().0 as i32..bounds.right().0 as i32).map(|x| (row, x, severity)),
+            );
+        }
+        let mut expected = expected
+            .iter()
+            .flat_map(|(row, range, severity)| range.clone().map(|x| (*row, x, *severity)))
+            .collect::<Vec<_>>();
+        actual.sort_by_key(|(row, x, _)| (*row, *x));
+        expected.sort_by_key(|(row, x, _)| (*row, *x));
+
+        assert_eq!(actual, expected, "scale: {scale}, x offset: {x_offset:?}");
     }
 }
