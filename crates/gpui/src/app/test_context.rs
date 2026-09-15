@@ -174,6 +174,12 @@ impl TestAppContext {
 
         let app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
+        // Recurring telemetry timers make long simulated clock advances linear
+        // in elapsed seconds. Lifecycle tests explicitly enable the watchdog.
+        #[cfg(feature = "profiler")]
+        {
+            app.borrow_mut().foreground_journal_watchdog = None;
+        }
 
         Self {
             app,
@@ -450,6 +456,16 @@ impl TestAppContext {
     pub fn simulate_system_notification_response(&self, response: SystemNotificationResponse) {
         self.test_platform
             .simulate_system_notification_response(response);
+    }
+
+    /// Delivers a system sleep notification through the platform callback.
+    pub fn simulate_system_sleep(&self) {
+        self.test_platform.simulate_system_sleep();
+    }
+
+    /// Delivers a system wake notification through the platform callback.
+    pub fn simulate_system_wake(&self) {
+        self.test_platform.simulate_system_wake();
     }
 
     /// Simulates the user resizing the window to the new size.

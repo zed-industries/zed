@@ -95,6 +95,11 @@ impl TestApp {
 
         let app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
+        // Keep long simulated clock advances independent of telemetry polling.
+        #[cfg(feature = "profiler")]
+        {
+            app.borrow_mut().foreground_journal_watchdog = None;
+        }
 
         Self {
             app,

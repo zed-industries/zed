@@ -164,6 +164,8 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
         frames_with_2_events = frames_with_2_events,
         frames_with_3_events = frames_with_3_events,
         report_window_seconds = report_window_seconds,
+        measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
+        lifecycle_coverage = "delivered_platform_callbacks",
     );
 }
 
@@ -279,8 +281,11 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         intervals_36to100 = intervals_36to100,
         total_intervals = total_intervals,
         average_dirty_to_present_ms = average_dirty_to_present_ms,
+        dirty_to_present_samples = delta_dirty_to_present.len(),
         root_entity_type_name = window_handle.root_entity_type_name(),
         report_window_seconds = report_window_seconds,
+        measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
+        lifecycle_coverage = "delivered_platform_callbacks",
     );
 }
 

@@ -47,8 +47,8 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
         // constantly.
         Duration::from_millis(100)
     } else {
-        // At least one dropped frame on any display. Generous while budget
-        // incidents are plentiful; lower it as they get fixed.
+        // This is a foreground saturation threshold, not a presentation
+        // deadline: callback cadence varies with the display and platform.
         Duration::from_millis(24)
     };
 
@@ -115,10 +115,12 @@ fn start_hang_detection(
         move |_| {
             let mut incident_detector = incident_detector.lock();
             let incidents = incident_detector.poll();
+            let lifecycle_counts = incident_detector.take_lifecycle_counts();
             let first_present_at = incident_detector.first_present_at();
             drop(incident_detector);
 
             let mut telemetry = telemetry.lock();
+            telemetry.add_lifecycle_counts(lifecycle_counts);
             for incident in &incidents {
                 telemetry.add(SerializedHangIncident::convert(
                     startup,
@@ -150,10 +152,12 @@ fn start_hang_detection(
                 {
                     let mut incident_detector = incident_detector.lock();
                     let incidents = incident_detector.poll();
+                    let lifecycle_counts = incident_detector.take_lifecycle_counts();
                     let first_present_at = incident_detector.first_present_at();
                     drop(incident_detector);
 
                     let mut telemetry = telemetry.lock();
+                    telemetry.add_lifecycle_counts(lifecycle_counts);
                     for incident in &incidents {
                         let serialized_incident = SerializedHangIncident::convert(
                             startup,

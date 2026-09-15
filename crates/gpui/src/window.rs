@@ -1908,6 +1908,8 @@ impl Window {
                             return;
                         }
                         window.visibility = visibility;
+                        #[cfg(feature = "profiler")]
+                        profiler::journal::record_window_visibility(handle.window_id(), visibility);
                         window
                             .visibility_observers
                             .clone()
@@ -2062,7 +2064,10 @@ impl Window {
             needs_present,
             input_rate_tracker,
             #[cfg(feature = "profiler")]
-            window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
+            window_profiler: profiler::WindowProfiler::new_with_visibility(
+                handle.window_id(),
+                visibility,
+            )?,
             last_input_modality: InputModality::Mouse,
             touch_gestures: TouchGestureRecognizer::new(
                 cx.platform
@@ -3141,6 +3146,11 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        #[cfg(feature = "profiler")]
+        profiler::journal::record_window_visibility(
+            self.handle.window_id(),
+            self.platform_window.visibility(),
+        );
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -3322,6 +3332,11 @@ impl Window {
     fn present(&mut self) {
         #[cfg(feature = "profiler")]
         let _foreground_turn = profiler::journal::foreground_turn();
+        #[cfg(feature = "profiler")]
+        profiler::journal::record_window_visibility(
+            self.handle.window_id(),
+            self.platform_window.visibility(),
+        );
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
         self.platform_window.draw(&self.rendered_frame.scene);
@@ -7540,6 +7555,67 @@ mod tests {
             .update(cx, |_, window, _| assert!(window.is_visible()))
             .unwrap();
         assert_eq!(test_window.frame_wake_count(), frame_wake_count);
+    }
+
+    #[cfg(feature = "profiler")]
+    #[gpui::test]
+    fn lifecycle_preserves_multiwindow_repaint_and_notifies_after_invalidation(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::{WindowVisibility, profiler::journal};
+        let (journal, _guard) = journal::install_test_foreground_journal(256, 8);
+        let first = cx.add_window(|_, _| EmptyView);
+        let second = cx.add_window(|_, _| EmptyView);
+        for handle in [first, second] {
+            cx.update_window(handle.into(), |_, window, cx| {
+                let clear = window.draw(cx);
+                clear.clear(cx);
+                assert!(window.needs_present.get());
+                window.window_profiler.begin_input("test");
+                window.window_profiler.end_input(true);
+            })
+            .expect("window exists");
+        }
+        let mut collector = journal.collector();
+        cx.simulate_window_visibility_change(first.into(), WindowVisibility::Hidden);
+        assert!(
+            !collector
+                .collect_unseen()
+                .entries
+                .iter()
+                .any(|entry| matches!(
+                    entry,
+                    journal::ForegroundJournalEntry::Boundary(
+                        journal::IntervalBoundary::Presented(_)
+                    )
+                ))
+        );
+        first
+            .update(cx, |_, window, _| assert!(window.needs_present.get()))
+            .expect("hidden window retains repaint");
+
+        let before_sleep = scheduler::Instant::now();
+        let _sleep = cx.update(|cx| {
+            cx.on_system_sleep(move |_| assert!(!journal::span_is_valid(before_sleep)))
+        });
+        let _wake = cx.update(|cx| {
+            cx.on_system_wake(move |_| assert!(!journal::span_is_valid(before_sleep)))
+        });
+        cx.simulate_system_sleep();
+        cx.simulate_system_wake();
+        for handle in [first, second] {
+            handle
+                .update(cx, |_, window, _| {
+                    assert!(window.needs_present.get());
+                    window.present_if_needed();
+                    assert_eq!(window.input_latency_snapshot().latency_histogram.len(), 0);
+                })
+                .expect("window exists");
+        }
+        let counts = journal.lifecycle_counts();
+        assert_eq!(counts.sleep_transitions, 1);
+        assert_eq!(counts.wake_transitions, 1);
+        assert!(counts.excluded_frame_samples >= 2);
     }
 
     #[gpui::test]

@@ -6,8 +6,8 @@
 //! bound the stream by the number of slow polls while preserving their exact
 //! count and total duration.
 //!
-//! Presentation and the foreground going idle are explicit [`IntervalBoundary`]
-//! entries in the same stream. Independent [`ForegroundJournalCollector`]s
+//! Presentation, foreground idle, and delivered power transitions are explicit
+//! [`IntervalBoundary`] entries in the same stream. Independent [`ForegroundJournalCollector`]s
 //! feed entries to [`IntervalSealer`], a pure state machine that groups all work
 //! preceding each boundary into a [`FrameSnapshot`]. The sealer does not infer
 //! boundaries from elapsed time or from incidental event kinds such as draws.
@@ -24,7 +24,7 @@ use std::time::Duration;
 use scheduler::Instant;
 
 use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming};
-use crate::WindowId;
+use crate::{WindowId, WindowVisibility};
 
 /// Task polls shorter than this are folded into a [`PollSummary`] instead of
 /// being recorded individually. This keeps the stream bounded by the number
@@ -182,6 +182,11 @@ pub enum IntervalBoundary {
         /// When the foreground went idle.
         ended_at: Instant,
     },
+    /// A delivered power notification invalidated the measurement interval.
+    Lifecycle {
+        /// When the notification was observed on the foreground thread.
+        ended_at: Instant,
+    },
 }
 
 impl IntervalBoundary {
@@ -189,7 +194,7 @@ impl IntervalBoundary {
     pub fn end_time(&self) -> Instant {
         match self {
             Self::Presented(presented) => presented.presentation.present_end,
-            Self::Idle { ended_at } => *ended_at,
+            Self::Idle { ended_at } | Self::Lifecycle { ended_at } => *ended_at,
         }
     }
 
@@ -197,7 +202,7 @@ impl IntervalBoundary {
     pub fn dirty_at(&self) -> Option<Instant> {
         match self {
             Self::Presented(presented) => presented.frame.dirty_at,
-            Self::Idle { .. } => None,
+            Self::Idle { .. } | Self::Lifecycle { .. } => None,
         }
     }
 }
@@ -379,11 +384,53 @@ impl ForegroundRunnableCounter {
     }
 }
 
+/// Counts of conservative lifecycle exclusions, independent of hang detection.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LifecycleCounts {
+    /// Completed work spanning an observed power transition or ending asleep.
+    /// Nested spans count separately; this is not a duration or occupancy.
+    pub interrupted_spans: u64,
+    /// Delivered sleep notifications.
+    pub sleep_transitions: u64,
+    /// Delivered wake notifications.
+    pub wake_transitions: u64,
+    /// Frame, input, or cadence timing candidates rejected by lifecycle state.
+    /// One rejected frame association may exclude several histogram samples.
+    pub excluded_frame_samples: u64,
+}
+
+#[derive(Default)]
+struct AtomicLifecycleCounts {
+    interrupted_spans: AtomicU64,
+    sleep_transitions: AtomicU64,
+    wake_transitions: AtomicU64,
+    excluded_frame_samples: AtomicU64,
+}
+
+impl AtomicLifecycleCounts {
+    fn load(&self) -> LifecycleCounts {
+        LifecycleCounts {
+            interrupted_spans: self.interrupted_spans.load(Ordering::Relaxed),
+            sleep_transitions: self.sleep_transitions.load(Ordering::Relaxed),
+            wake_transitions: self.wake_transitions.load(Ordering::Relaxed),
+            excluded_frame_samples: self.excluded_frame_samples.load(Ordering::Relaxed),
+        }
+    }
+}
+
+struct WindowJournalState {
+    visibility: WindowVisibility,
+    pending_since: Option<Instant>,
+    valid_after: Option<Instant>,
+}
+
 struct ForegroundJournalWriter {
     foreground_runnables: ForegroundRunnableCounter,
     publisher: JournalPublisher,
     turn_depth: usize,
-    pending_frames: HashMap<WindowId, Instant>,
+    windows: HashMap<WindowId, WindowJournalState>,
+    awake: bool,
+    valid_after: Option<Instant>,
     retained_since_boundary: bool,
     small_polls: Option<SmallPollFlush>,
 }
@@ -394,7 +441,9 @@ impl ForegroundJournalWriter {
             foreground_runnables,
             publisher,
             turn_depth: 0,
-            pending_frames: HashMap::new(),
+            windows: HashMap::new(),
+            awake: true,
+            valid_after: None,
             retained_since_boundary: false,
             small_polls: None,
         }
@@ -434,12 +483,78 @@ impl ForegroundJournalWriter {
     }
 
     fn has_unexpired_pending_frame(&mut self, now: Instant) -> bool {
-        if self.pending_frames.is_empty() {
-            return false;
+        for window in self.windows.values_mut() {
+            if window
+                .pending_since
+                .is_some_and(|at| now.saturating_duration_since(at) >= FRAME_DEADLINE)
+            {
+                window.pending_since = None;
+            }
         }
-        self.pending_frames
-            .retain(|_, dirty_at| now.saturating_duration_since(*dirty_at) < FRAME_DEADLINE);
-        !self.pending_frames.is_empty()
+        self.awake
+            && self.windows.values().any(|window| {
+                window.visibility.is_visible()
+                    && window.pending_since.is_some_and(|dirty_at| {
+                        now.saturating_duration_since(dirty_at) < FRAME_DEADLINE
+                    })
+            })
+    }
+
+    fn span_is_valid(&self, start: Instant) -> bool {
+        // The watermark is checked at completion, including before small-poll
+        // folding. It also rejects enclosing polls that complete after a wake
+        // callback. Already published work before delayed notifications cannot
+        // be corrected: native notification delivery is our coverage boundary.
+        self.awake && self.valid_after.is_none_or(|at| start > at)
+    }
+
+    fn accept_span(&self, start: Instant) -> bool {
+        if self.span_is_valid(start) {
+            true
+        } else {
+            self.publisher
+                .ring
+                .lifecycle_counts
+                .interrupted_spans
+                .fetch_add(1, Ordering::Relaxed);
+            false
+        }
+    }
+
+    fn record_power_transition(&mut self, awake: bool, at: Instant) {
+        self.record_entry(ForegroundJournalEntry::Boundary(
+            IntervalBoundary::Lifecycle { ended_at: at },
+        ));
+        self.awake = awake;
+        self.valid_after = Some(at);
+        let counts = &self.publisher.ring.lifecycle_counts;
+        if awake {
+            counts.wake_transitions.fetch_add(1, Ordering::Relaxed);
+        } else {
+            counts.sleep_transitions.fetch_add(1, Ordering::Relaxed);
+        }
+        for window in self.windows.values_mut() {
+            window.pending_since = None;
+            window.valid_after = Some(at);
+        }
+    }
+
+    fn record_window_visibility(
+        &mut self,
+        window_id: WindowId,
+        visibility: WindowVisibility,
+        at: Instant,
+    ) {
+        let window = self.windows.entry(window_id).or_insert(WindowJournalState {
+            visibility,
+            pending_since: None,
+            valid_after: None,
+        });
+        if window.visibility != visibility || !visibility.is_visible() {
+            window.valid_after = Some(at);
+            window.pending_since = None;
+        }
+        window.visibility = visibility;
     }
 
     fn fold_small_poll(&mut self, timing: TaskTiming) {
@@ -459,6 +574,9 @@ impl ForegroundJournalWriter {
     }
 
     fn record_event(&mut self, event: ForegroundEvent) {
+        if !self.accept_span(event.start_time()) {
+            return;
+        }
         self.retained_since_boundary = true;
         self.record_entry(ForegroundJournalEntry::Event(event));
     }
@@ -480,17 +598,21 @@ impl ForegroundJournalWriter {
     }
 
     fn record_frame_pending(&mut self, window_id: WindowId, dirty_at: Instant) {
-        let should_record = match self.pending_frames.get(&window_id) {
-            Some(previous_dirty_at) => {
-                dirty_at.saturating_duration_since(*previous_dirty_at) >= FRAME_DEADLINE
-            }
-            None => true,
-        };
-        if !should_record {
+        let window = self.windows.entry(window_id).or_insert(WindowJournalState {
+            visibility: WindowVisibility::Visible,
+            pending_since: None,
+            valid_after: None,
+        });
+        if !self.awake
+            || !window.visibility.is_visible()
+            || window.valid_after.is_some_and(|at| dirty_at <= at)
+            || window
+                .pending_since
+                .is_some_and(|at| dirty_at.saturating_duration_since(at) < FRAME_DEADLINE)
+        {
             return;
         }
-
-        self.pending_frames.insert(window_id, dirty_at);
+        window.pending_since = Some(dirty_at);
         self.record_frame_state(FrameStateChange::Pending {
             window_id,
             dirty_at,
@@ -498,14 +620,19 @@ impl ForegroundJournalWriter {
     }
 
     fn record_window_closed(&mut self, window_id: WindowId, at: Instant) {
-        self.pending_frames.remove(&window_id);
+        self.windows.remove(&window_id);
         self.record_frame_state(FrameStateChange::Closed { window_id, at });
     }
 
     fn record_present(&mut self, timing: PresentTiming, frame: Option<FrameTiming>) {
+        if let Some(window) = self.windows.get_mut(&timing.window_id) {
+            window.pending_since = None;
+        }
+        if !self.accept_span(timing.present_start) {
+            return;
+        }
         match frame {
             Some(frame) => {
-                self.pending_frames.remove(&frame.window_id);
                 self.record_entry(ForegroundJournalEntry::Boundary(
                     IntervalBoundary::Presented(PresentedFrame {
                         frame,
@@ -514,7 +641,6 @@ impl ForegroundJournalWriter {
                 ));
             }
             None => {
-                self.pending_frames.remove(&timing.window_id);
                 self.record_event(ForegroundEvent::Present(timing));
             }
         }
@@ -636,7 +762,9 @@ pub(crate) fn end_foreground_turn() {
 pub(crate) fn record_task_poll(timing: TaskTiming) {
     FOREGROUND_RUNNABLES.with(ForegroundRunnableCounter::finished);
     with_journal(|journal| {
-        if timing.poll_duration() >= TASK_POLL_FLOOR {
+        if !journal.span_is_valid(timing.start) {
+            journal.accept_span(timing.start);
+        } else if timing.poll_duration() >= TASK_POLL_FLOOR {
             journal.record_event(ForegroundEvent::TaskPoll(timing));
         } else {
             journal.fold_small_poll(timing);
@@ -668,6 +796,39 @@ pub(crate) fn record_frame_pending(window_id: WindowId, dirty_at: Instant) {
 pub(crate) fn record_window_closed(window_id: WindowId) {
     let at = Instant::now();
     with_journal(|journal| journal.record_window_closed(window_id, at));
+}
+
+pub(crate) fn record_power_transition(awake: bool) {
+    with_journal(|journal| journal.record_power_transition(awake, Instant::now()));
+}
+
+pub(crate) fn record_window_visibility(window_id: WindowId, visibility: WindowVisibility) {
+    with_journal(|journal| journal.record_window_visibility(window_id, visibility, Instant::now()));
+}
+
+pub(crate) fn span_is_valid(start: Instant) -> bool {
+    let mut valid = true;
+    with_journal(|journal| valid = journal.span_is_valid(start));
+    valid
+}
+
+pub(crate) fn frame_sample_is_valid(window_id: WindowId, start: Instant) -> bool {
+    let mut valid = true;
+    with_journal(|journal| {
+        valid = journal.span_is_valid(start)
+            && journal.windows.get(&window_id).is_none_or(|window| {
+                window.visibility.is_visible() && window.valid_after.is_none_or(|at| start > at)
+            });
+        if !valid {
+            journal
+                .publisher
+                .ring
+                .lifecycle_counts
+                .excluded_frame_samples
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    });
+    valid
 }
 
 const SLOT_WRITER: usize = 1 << (usize::BITS - 1);
@@ -775,6 +936,7 @@ struct JournalRing {
     slots: Box<[JournalSlot]>,
     finalized: AtomicU64,
     offered: AtomicU64,
+    lifecycle_counts: AtomicLifecycleCounts,
 }
 
 impl JournalRing {
@@ -784,6 +946,7 @@ impl JournalRing {
             slots: (0..capacity).map(|_| JournalSlot::new()).collect(),
             finalized: AtomicU64::new(0),
             offered: AtomicU64::new(0),
+            lifecycle_counts: AtomicLifecycleCounts::default(),
         }
     }
 
@@ -909,6 +1072,11 @@ impl ForegroundJournal {
             cursor: self.ring.offered.load(Ordering::Acquire),
             ring: Arc::clone(&self.ring),
         }
+    }
+
+    /// Cumulative counts since journal installation. Independent of ring loss.
+    pub fn lifecycle_counts(&self) -> LifecycleCounts {
+        self.ring.lifecycle_counts.load()
     }
 }
 
@@ -1101,6 +1269,191 @@ mod tests {
     use crate::{WindowId, profiler::YieldTime};
 
     #[test]
+    fn power_transitions_exclude_completed_spans_before_small_poll_folding() {
+        let (journal, _guard) = install_test_foreground_journal(64, 8);
+        let mut collector = journal.collector();
+        let start = Instant::now();
+        let wake = start + Duration::from_micros(10);
+        with_journal(|writer| {
+            writer.record_power_transition(false, start + Duration::from_micros(5));
+            writer.record_power_transition(true, wake);
+        });
+        let window_id = WindowId::from(1);
+        let end = start + Duration::from_micros(20);
+        let frame = frame_timing(window_id, start, end);
+        record_input(InputTiming {
+            kind: "test",
+            start,
+            end,
+            caused_invalidation: true,
+        });
+        record_action(ActionTiming {
+            name: "test",
+            start,
+            end,
+        });
+        record_draw(FrameTiming {
+            draw_start: start,
+            ..frame
+        });
+        record_present(
+            PresentTiming {
+                present_start: start,
+                ..presentation_timing(window_id, end)
+            },
+            Some(frame),
+        );
+        begin_foreground_turn();
+        record_task_poll(task_timing(start, end));
+        assert_eq!(journal.lifecycle_counts().interrupted_spans, 5);
+        assert!(
+            !collector
+                .collect_unseen()
+                .entries
+                .iter()
+                .any(|entry| matches!(entry, ForegroundJournalEntry::Event(_)))
+        );
+        with_journal(|writer| assert!(writer.small_polls.is_none()));
+
+        let recovered = wake + Duration::from_micros(1);
+        begin_foreground_turn();
+        record_task_poll(task_timing(recovered, recovered + TASK_POLL_FLOOR));
+        let snapshots = IntervalSealer::new(start).push_entries(collector.collect_unseen().entries);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].events.len(), 1);
+        assert_eq!(journal.lifecycle_counts().interrupted_spans, 5);
+    }
+
+    #[test]
+    fn sleeping_work_is_excluded_and_valid_work_does_not_accumulate_across_sleep() {
+        let (mut writer, mut collector) = test_journal(ForegroundRunnableCounter::new());
+        let start = Instant::now();
+        let at = |millis| start + Duration::from_millis(millis);
+        writer.record_event(ForegroundEvent::TaskPoll(task_timing(at(0), at(8))));
+        writer.record_power_transition(false, at(10));
+        writer.record_event(ForegroundEvent::TaskPoll(task_timing(at(11), at(900))));
+        writer.record_power_transition(true, at(1000));
+        writer.begin_turn();
+        writer.record_event(ForegroundEvent::TaskPoll(task_timing(at(1001), at(1009))));
+        writer.end_turn(at(1009));
+        let snapshots = IntervalSealer::new(start).push_entries(collector.collect_unseen().entries);
+        assert_eq!(snapshots.len(), 2);
+        assert!(
+            snapshots
+                .iter()
+                .all(|snapshot| snapshot.occupancy() == Duration::from_millis(8))
+        );
+        assert_eq!(
+            writer
+                .publisher
+                .ring
+                .lifecycle_counts
+                .load()
+                .interrupted_spans,
+            1
+        );
+    }
+
+    #[test]
+    fn hidden_windows_do_not_block_other_windows_or_synthesize_presentations() {
+        let (mut writer, mut collector) = test_journal(ForegroundRunnableCounter::new());
+        let start = Instant::now();
+        let first = WindowId::from(1);
+        let second = WindowId::from(2);
+        for window in [first, second] {
+            writer.record_window_visibility(window, WindowVisibility::Visible, start);
+            writer.record_frame_pending(window, start);
+        }
+        writer.record_window_visibility(first, WindowVisibility::Hidden, start);
+        assert!(writer.has_unexpired_pending_frame(start));
+        writer.begin_turn();
+        writer.record_event(ForegroundEvent::TaskPoll(task_timing(
+            start,
+            start + TASK_POLL_FLOOR,
+        )));
+        writer.end_turn(start + TASK_POLL_FLOOR);
+        assert!(
+            !collector
+                .collect_unseen()
+                .entries
+                .iter()
+                .any(|entry| matches!(entry, ForegroundJournalEntry::Boundary(_)))
+        );
+        writer.record_window_visibility(second, WindowVisibility::Hidden, start + TASK_POLL_FLOOR);
+        writer.begin_turn();
+        writer.end_turn(start + TASK_POLL_FLOOR);
+        let entries = collector.collect_unseen().entries;
+        assert!(matches!(
+            entries.as_slice(),
+            [ForegroundJournalEntry::Boundary(
+                IntervalBoundary::Idle { .. }
+            )]
+        ));
+        writer.record_window_closed(first, start);
+        assert!(!writer.windows.contains_key(&first));
+        assert!(writer.windows.contains_key(&second));
+    }
+
+    #[test]
+    fn lifecycle_counts_survive_ring_overwrites_and_have_independent_detector_baselines() {
+        use crate::profiler::hang::HangDetector;
+        let (journal, _guard) = install_test_foreground_journal(1, 1);
+        let mut first = HangDetector::new(
+            journal.clone(),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        );
+        record_power_transition(false);
+        let mut second = HangDetector::new(journal, Duration::from_secs(1), Duration::from_secs(1));
+        record_power_transition(true);
+        record_power_transition(false);
+        let counts = first.take_lifecycle_counts();
+        assert_eq!(counts.sleep_transitions, 2);
+        assert_eq!(counts.wake_transitions, 1);
+        assert_eq!(second.take_lifecycle_counts().sleep_transitions, 1);
+        assert_eq!(first.take_lifecycle_counts().sleep_transitions, 0);
+    }
+
+    #[gpui::test]
+    fn watchdog_seals_completed_hang_when_visible_window_never_presents(
+        cx: &mut crate::TestAppContext,
+    ) {
+        use crate::{Empty, profiler::hang::HangDetector};
+        let (journal, _guard) = install_test_foreground_journal(256, 8);
+        cx.update(|cx| cx.start_foreground_journal_watchdog());
+        let mut detector = HangDetector::new(
+            journal,
+            Duration::from_millis(10),
+            Duration::from_millis(10),
+        );
+        let window = cx.add_window(|_, _| Empty);
+        cx.run_until_parked();
+        let end = Instant::now();
+        begin_foreground_turn();
+        record_task_poll(task_timing(end - Duration::from_millis(20), end));
+        assert!(detector.poll().is_empty());
+        // Executor timers use fake time, but journal spans use wall-clock
+        // Instant. Age only the telemetry baseline; never request a frame.
+        with_journal(|writer| {
+            writer
+                .windows
+                .get_mut(&window.window_id())
+                .expect("registered window")
+                .pending_since = Some(end - FRAME_DEADLINE);
+        });
+        cx.background_executor.advance_clock(FRAME_DEADLINE);
+        cx.run_until_parked();
+        let incidents = detector.poll();
+        assert!(incidents.iter().any(|incident| incident.contributors.iter().any(|event| matches!(event, ForegroundEvent::TaskPoll(timing) if timing.poll_duration() >= Duration::from_millis(20)))));
+        assert!(
+            incidents.iter().all(|incident| !matches!(
+                incident.snapshot.boundary,
+                IntervalBoundary::Presented(_)
+            ))
+        );
+    }
+
+    #[test]
     fn draw_waits_for_its_presentation_boundary() {
         let start = Instant::now();
         let input = InputTiming {
@@ -1152,7 +1505,7 @@ mod tests {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration()
                 }
-                IntervalBoundary::Idle { .. } => None,
+                IntervalBoundary::Idle { .. } | IntervalBoundary::Lifecycle { .. } => None,
             },
             Some(Duration::from_millis(5))
         );
@@ -1978,6 +2331,7 @@ mod tests {
             boundary_kind: match snapshot.boundary {
                 IntervalBoundary::Idle { .. } => 0,
                 IntervalBoundary::Presented(_) => 1,
+                IntervalBoundary::Lifecycle { .. } => 2,
             },
             interval_end: snapshot.interval_end().duration_since(origin).as_micros() as u64,
             events: snapshot
@@ -2076,6 +2430,7 @@ mod tests {
                             boundary_kind: match boundary {
                                 IntervalBoundary::Idle { .. } => 0,
                                 IntervalBoundary::Presented(_) => 1,
+                                IntervalBoundary::Lifecycle { .. } => 2,
                             },
                             interval_end,
                             events: std::mem::take(&mut events),
@@ -2687,7 +3042,7 @@ mod tests {
                 );
                 prop_assert_eq!(writer.turn_depth, model.turn_depth);
                 prop_assert_eq!(writer.retained_since_boundary, model.retained_since_boundary);
-                prop_assert_eq!(writer.pending_frames.len(), model.pending_frames.len());
+                prop_assert_eq!(writer.windows.values().filter(|window| window.pending_since.is_some()).count(), model.pending_frames.len());
             }
         }
     }

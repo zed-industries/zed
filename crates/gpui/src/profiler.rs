@@ -913,6 +913,14 @@ pub struct WindowProfiler {
 impl WindowProfiler {
     /// Creates a profiler for a window.
     pub fn new(window_id: WindowId) -> anyhow::Result<Self> {
+        Self::new_with_visibility(window_id, crate::WindowVisibility::Visible)
+    }
+
+    /// Creates a profiler using the platform window's initial visibility.
+    pub fn new_with_visibility(
+        window_id: WindowId,
+        visibility: crate::WindowVisibility,
+    ) -> anyhow::Result<Self> {
         let profiler = Self {
             window_id,
             active_activities: SmallVec::new(),
@@ -939,6 +947,7 @@ impl WindowProfiler {
             animating_at_last_present: false,
             pending_frame: None,
         };
+        journal::record_window_visibility(window_id, visibility);
         journal::record_frame_pending(window_id, Instant::now());
         Ok(profiler)
     }
@@ -969,10 +978,17 @@ impl WindowProfiler {
         });
         journal::end_foreground_turn();
 
-        if !caused_invalidation {
+        if !caused_invalidation || !journal::frame_sample_is_valid(self.window_id, started_at) {
             return;
         }
 
+        if self
+            .first_input_at
+            .is_some_and(|at| !journal::frame_sample_is_valid(self.window_id, at))
+        {
+            self.first_input_at = None;
+            self.pending_input_count = 0;
+        }
         let arrived_during_draw = self
             .active_activities
             .iter()
@@ -1034,7 +1050,7 @@ impl WindowProfiler {
         let draw_end = Instant::now();
         let frame_timing = FrameTiming {
             window_id: self.window_id,
-            dirty_at,
+            dirty_at: dirty_at.filter(|at| journal::frame_sample_is_valid(self.window_id, *at)),
             invalidations,
             draw_start,
             draw_end,
@@ -1089,21 +1105,33 @@ impl WindowProfiler {
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
-        if let Some(first_input_at) = self.first_input_at.take() {
+        if let Some(first_input_at) = self.first_input_at.take()
+            && journal::frame_sample_is_valid(self.window_id, first_input_at)
+        {
             let latency_nanos = present_end.duration_since(first_input_at).as_nanos() as u64;
             self.input_latency_histogram.record(latency_nanos).ok();
+            if self.pending_input_count > 0 {
+                self.events_per_frame_histogram
+                    .record(self.pending_input_count)
+                    .ok();
+            }
         }
-        if self.pending_input_count > 0 {
-            self.events_per_frame_histogram
-                .record(self.pending_input_count)
-                .ok();
-            self.pending_input_count = 0;
-        }
+        self.pending_input_count = 0;
 
-        let frame = self.pending_frame.take();
+        let frame = self
+            .pending_frame
+            .take()
+            .filter(|frame| journal::frame_sample_is_valid(self.window_id, frame.draw_start));
+        let frame = frame.map(|mut frame| {
+            frame.dirty_at = frame
+                .dirty_at
+                .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
+            frame
+        });
         let animation_interval =
             if frame.is_some() && self.animating_at_last_present && window_active {
                 self.last_present_at
+                    .filter(|at| journal::frame_sample_is_valid(self.window_id, *at))
                     .map(|last_present_at| present_end.duration_since(last_present_at))
             } else {
                 None
@@ -1140,7 +1168,9 @@ impl WindowProfiler {
     }
 
     fn record_draw_timing(&mut self, timing: FrameTiming) {
-        self.record_draw_duration(timing.draw_duration());
+        if journal::span_is_valid(timing.draw_start) {
+            self.record_draw_duration(timing.draw_duration());
+        }
         self.pending_frame = Some(timing);
         record_frame_event(FrameEvent::Draw(timing));
         journal::record_draw(timing);
@@ -1240,6 +1270,90 @@ impl FrameTimingCollector {
 mod tests {
     use super::*;
     use std::sync::{Mutex, MutexGuard};
+
+    #[test]
+    fn lifecycle_invalidates_frame_input_and_cadence_baselines() {
+        for sleep in [false, true] {
+            let (journal, _guard) = journal::install_test_foreground_journal(128, 8);
+            let window_id = WindowId::from(0x51EE);
+            let mut profiler = WindowProfiler::new(window_id).expect("valid histograms");
+            let old = Instant::now() - Duration::from_secs(1);
+            record_test_draw(&mut profiler, old);
+            profiler.record_present_at(old, old, true, true);
+            let initial = profiler.frame_duration_snapshot();
+            profiler.first_input_at = Some(old);
+            profiler.pending_input_count = 2;
+            record_test_draw(&mut profiler, old);
+
+            if sleep {
+                journal::record_power_transition(false);
+                journal::record_power_transition(true);
+            } else {
+                journal::record_window_visibility(window_id, crate::WindowVisibility::Hidden);
+                journal::record_window_visibility(window_id, crate::WindowVisibility::Visible);
+            }
+            let recovered = Instant::now();
+            profiler.record_present_at(recovered, recovered, true, true);
+            assert_eq!(profiler.input_latency_histogram.len(), 0);
+            assert_eq!(profiler.events_per_frame_histogram.len(), 0);
+            assert_eq!(
+                profiler.dirty_to_present_histogram.len(),
+                initial.dirty_to_present_histogram.len()
+            );
+            assert_eq!(profiler.present_interval_histogram.len(), 0);
+
+            let recovered = Instant::now();
+            profiler.record_draw_timing(FrameTiming {
+                window_id,
+                dirty_at: Some(old),
+                invalidations: 1,
+                draw_start: recovered,
+                draw_end: recovered,
+            });
+            profiler.record_present_at(recovered, recovered, true, true);
+            assert_eq!(
+                profiler.dirty_to_present_histogram.len(),
+                initial.dirty_to_present_histogram.len()
+            );
+            assert_eq!(profiler.present_interval_histogram.len(), 0);
+            assert!(journal.lifecycle_counts().excluded_frame_samples >= 3);
+        }
+    }
+
+    #[test]
+    fn initially_hidden_window_still_records_real_work() {
+        let (journal, _guard) = journal::install_test_foreground_journal(128, 8);
+        let mut collector = journal.collector();
+        let window_id = WindowId::from(0x41DE);
+        let mut profiler =
+            WindowProfiler::new_with_visibility(window_id, crate::WindowVisibility::Hidden)
+                .expect("valid histograms");
+        profiler.begin_input("test");
+        profiler.end_input(true);
+        profiler.begin_draw();
+        profiler.end_draw(Some(Instant::now()), 1);
+        let now = Instant::now();
+        profiler.record_present_at(now, now, true, true);
+        let entries = collector.collect_unseen().entries;
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            journal::ForegroundJournalEntry::Event(journal::ForegroundEvent::Input(_))
+        )));
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            journal::ForegroundJournalEntry::Event(journal::ForegroundEvent::Draw(_))
+        )));
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            journal::ForegroundJournalEntry::Event(journal::ForegroundEvent::Present(_))
+        )));
+        assert!(!entries.iter().any(|entry| matches!(
+            entry,
+            journal::ForegroundJournalEntry::Boundary(journal::IntervalBoundary::Presented(_))
+        )));
+        assert_eq!(profiler.input_latency_histogram.len(), 0);
+        assert_eq!(profiler.dirty_to_present_histogram.len(), 0);
+    }
 
     #[test]
     fn records_draw_events_only_while_tracing() {
