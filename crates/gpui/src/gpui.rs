@@ -13,7 +13,7 @@ mod platform_entry;
 
 /// Do not touch, here be dragons for use by gpui_macros and such.
 #[doc(hidden)]
-pub use gpui_runtime::private;
+pub use gpui_authoring::private;
 
 /// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
 ///
@@ -39,7 +39,7 @@ macro_rules! bench_main {
     };
 }
 
-pub use gpui_runtime::prelude;
-pub use gpui_runtime::*;
+pub use gpui_authoring::prelude;
+pub use gpui_authoring::*;
 #[cfg(feature = "platform")]
 pub use platform_entry::*;

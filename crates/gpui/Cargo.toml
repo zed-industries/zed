@@ -35,20 +35,20 @@ platform = [
     "windows-manifest",
 ]
 test-support = [
-    "gpui_runtime/test-support",
+    "gpui_authoring/test-support",
     "gpui_macos?/test-support",
     "gpui_windows?/test-support",
     "wayland",
     "x11",
 ]
 bench-support = [
-    "gpui_runtime/bench-support",
+    "gpui_authoring/bench-support",
     "gpui_macos?/bench-support",
 ]
 # Preserve the published feature name while consumers migrate to `bench-support`.
 bench = ["bench-support"]
-inspector = ["gpui_runtime/inspector"]
-leak-detection = ["gpui_runtime/leak-detection"]
+inspector = ["gpui_authoring/inspector"]
+leak-detection = ["gpui_authoring/leak-detection"]
 wayland = ["gpui_platform/wayland", "gpui_linux?/wayland"]
 x11 = [
     "scap?/x11",
@@ -63,8 +63,8 @@ screen-capture = [
     "gpui_windows?/screen-capture",
 ]
 windows-manifest = ["dep:embed-resource"]
-profiler = ["gpui_runtime/profiler"]
-stacker = ["gpui_runtime/stacker"]
+profiler = ["gpui_authoring/profiler"]
+stacker = ["gpui_authoring/stacker"]
 font-kit = ["dep:font-kit", "gpui_macos?/font-kit"]
 
 [lib]
@@ -72,7 +72,7 @@ path = "src/gpui.rs"
 doctest = false
 
 [dependencies]
-gpui_runtime.workspace = true
+gpui_authoring.workspace = true
 gpui_platform.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
