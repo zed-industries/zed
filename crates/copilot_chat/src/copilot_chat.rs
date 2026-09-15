@@ -22,6 +22,8 @@ pub use copilot_oauth::DeviceFlow;
 // https://github.com/github/copilot-language-server-release/issues/3#issuecomment-2699433055
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
 pub const GITHUB_COPILOT_OAUTH_ENV_VAR: &str = "GITHUB_COPILOT_TOKEN";
+const CENTS_PER_DOLLAR: f64 = 100.0;
+const COPILOT_API_VERSION: &str = "2026-08-01";
 const DEFAULT_COPILOT_API_ENDPOINT: &str = "https://api.githubcopilot.com";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -177,12 +179,56 @@ pub struct Model {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 struct ModelBilling {
+    #[serde(default)]
     is_premium: bool,
-    multiplier: f64,
+    #[serde(default)]
+    multiplier: Option<f64>,
     // List of plans a model is restricted to
     // Field is not present if a model is available for all plans
     #[serde(default)]
     restricted_to: Option<Vec<String>>,
+    #[serde(default)]
+    token_prices: Option<ModelTokenPrices>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+struct ModelTokenPrices {
+    default: ModelContextTier,
+    #[serde(default)]
+    long_context: Option<ModelContextTier>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+struct ModelContextTier {
+    #[serde(default)]
+    max_prompt_tokens: u64,
+    #[serde(default, rename = "input_price")]
+    input_cents_per_1m: f64,
+    #[serde(default, rename = "output_price")]
+    output_cents_per_1m: f64,
+    #[serde(default, rename = "cache_read_price")]
+    cache_read_cents_per_1m: f64,
+    #[serde(default, rename = "cache_write_price")]
+    cache_write_cents_per_1m: f64,
+}
+
+impl ModelBilling {
+    fn max_prompt_tokens_before_surcharge(&self) -> Option<u64> {
+        let prices = self.token_prices.as_ref()?;
+        let long_context = prices.long_context.as_ref()?;
+        let default = &prices.default;
+        let has_surcharge = long_context.input_cents_per_1m > default.input_cents_per_1m
+            || long_context.output_cents_per_1m > default.output_cents_per_1m
+            || long_context.cache_read_cents_per_1m > default.cache_read_cents_per_1m
+            || long_context.cache_write_cents_per_1m > default.cache_write_cents_per_1m;
+        (has_surcharge && default.max_prompt_tokens > 0).then_some(default.max_prompt_tokens)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModelTokenCost {
+    pub input_dollars_per_1m: f64,
+    pub output_dollars_per_1m: f64,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -276,12 +322,27 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> u64 {
-        self.capabilities.limits.max_context_window_tokens as u64
+        let full_window = self.capabilities.limits.max_context_window_tokens as u64;
+        self.billing
+            .max_prompt_tokens_before_surcharge()
+            .map(|max_prompt_tokens| {
+                max_prompt_tokens
+                    .saturating_add(self.capabilities.limits.max_output_tokens as u64)
+                    .min(full_window)
+            })
+            .unwrap_or(full_window)
     }
 
     pub fn max_prompt_tokens(&self) -> Option<u64> {
         let limit = self.capabilities.limits.max_prompt_tokens;
-        (limit > 0).then_some(limit)
+        let limit = (limit > 0).then_some(limit);
+        // Under the tiered API, `capabilities.limits.max_prompt_tokens` describes the
+        // long-context tier, so keep surcharged models within the standard tier.
+        match (limit, self.billing.max_prompt_tokens_before_surcharge()) {
+            (Some(limit), Some(standard)) => Some(limit.min(standard)),
+            (None, Some(standard)) => Some(standard),
+            (limit, None) => limit,
+        }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
@@ -350,8 +411,16 @@ impl Model {
         &self.capabilities.family
     }
 
-    pub fn multiplier(&self) -> f64 {
+    pub fn multiplier(&self) -> Option<f64> {
         self.billing.multiplier
+    }
+
+    pub fn token_cost(&self) -> Option<ModelTokenCost> {
+        let prices = self.billing.token_prices.as_ref()?;
+        Some(ModelTokenCost {
+            input_dollars_per_1m: prices.default.input_cents_per_1m / CENTS_PER_DOLLAR,
+            output_dollars_per_1m: prices.default.output_cents_per_1m / CENTS_PER_DOLLAR,
+        })
     }
 }
 
@@ -1040,7 +1109,7 @@ pub(crate) fn copilot_request_headers(
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )
-        .header("X-GitHub-Api-Version", "2025-10-01")
+        .header("X-GitHub-Api-Version", COPILOT_API_VERSION)
         .when_some(is_user_initiated, |builder, is_user_initiated| {
             builder.header(
                 "X-Initiator",
@@ -1454,6 +1523,90 @@ mod tests {
     }
 
     #[test]
+    fn test_long_context_tier_limits() {
+        let json = r#"{
+              "data": [
+                {
+                  "billing": {
+                    "token_prices": {
+                      "batch_size": 1000000,
+                      "default": { "input_price": 1000, "output_price": 5000, "max_prompt_tokens": 200000 },
+                      "long_context": { "input_price": 1000, "output_price": 5000, "max_prompt_tokens": 936000 }
+                    }
+                  },
+                  "capabilities": {
+                    "family": "claude-opus-5",
+                    "limits": { "max_context_window_tokens": 1000000, "max_output_tokens": 64000, "max_prompt_tokens": 936000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-opus-5",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Opus 5",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-opus-5"
+                },
+                {
+                  "billing": {
+                    "token_prices": {
+                      "batch_size": 1000000,
+                      "default": { "input_price": 250, "output_price": 1500, "max_prompt_tokens": 272000 },
+                      "long_context": { "input_price": 500, "output_price": 2250, "max_prompt_tokens": 872000 }
+                    }
+                  },
+                  "capabilities": {
+                    "family": "gpt-6-sol",
+                    "limits": { "max_context_window_tokens": 1000000, "max_output_tokens": 128000, "max_prompt_tokens": 872000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "gpt-6-sol",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "GPT-6 Sol",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "OpenAI",
+                  "version": "gpt-6-sol"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        let free_long_context = &schema.data[0];
+        assert_eq!(free_long_context.max_token_count(), 1_000_000);
+        assert_eq!(free_long_context.max_prompt_tokens(), Some(936_000));
+        assert_eq!(free_long_context.multiplier(), None);
+
+        let surcharged_long_context = &schema.data[1];
+        assert_eq!(surcharged_long_context.max_token_count(), 400_000);
+        assert_eq!(surcharged_long_context.max_prompt_tokens(), Some(272_000));
+    }
+
+    #[test]
+    fn test_long_context_cache_only_surcharge() {
+        let billing: ModelBilling = serde_json::from_str(
+            r#"{
+                "token_prices": {
+                    "default": { "input_price": 200, "output_price": 1000, "cache_read_price": 20, "cache_write_price": 250, "max_prompt_tokens": 272000 },
+                    "long_context": { "input_price": 200, "output_price": 1000, "cache_read_price": 40, "cache_write_price": 250, "max_prompt_tokens": 872000 }
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(billing.max_prompt_tokens_before_surcharge(), Some(272_000));
+    }
+
+    #[test]
     fn test_models_with_pending_policy_deserialize() {
         // This test verifies that models with policy states other than "enabled"
         // (such as "pending" or "requires_consent") are properly deserialized.
@@ -1858,8 +2011,9 @@ mod tests {
         let model_with_responses_only = Model {
             billing: ModelBilling {
                 is_premium: false,
-                multiplier: 1.0,
+                multiplier: Some(1.0),
                 restricted_to: None,
+                token_prices: None,
             },
             capabilities: ModelCapabilities {
                 family: "test".to_string(),
