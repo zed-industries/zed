@@ -188,6 +188,11 @@ impl VsCodeSettings {
             base_keymap: Some(BaseKeymapContent::VSCode),
             calls: None,
             collaboration_panel: None,
+            command_palette: self
+                .read_u64("workbench.commandPalette.history")
+                .map(|history| CommandPaletteSettingsContent {
+                    use_command_history: Some(history > 0),
+                }),
             credentials_url: None,
             debugger: None,
             diagnostics: None,
@@ -1240,6 +1245,26 @@ mod tests {
             None
         );
         assert_eq!(imported_reduce_motion("{}"), None);
+    }
+
+    #[test]
+    fn test_import_command_palette_history() {
+        for (content, expected) in [
+            (r#"{ "workbench.commandPalette.history": 0 }"#, Some(false)),
+            (r#"{ "workbench.commandPalette.history": 1 }"#, Some(true)),
+            (r#"{ "workbench.commandPalette.history": 50 }"#, Some(true)),
+            ("{}", None),
+        ] {
+            let settings = VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+                .unwrap()
+                .settings_content();
+            assert_eq!(
+                settings
+                    .command_palette
+                    .and_then(|settings| settings.use_command_history),
+                expected,
+            );
+        }
     }
 
     #[test]
