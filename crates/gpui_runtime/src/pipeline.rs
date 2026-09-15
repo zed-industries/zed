@@ -4,9 +4,15 @@
 //! everything here is built from `gpui_authoring`'s public surface, so a host
 //! program or an embedder can do the same from outside the framework.
 
-use std::{cell::RefCell, rc::Rc, time::Duration, time::Instant};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-use gpui_authoring::{App, FramePipeline, PreparedRoots, Window};
+use gpui_authoring::{
+    App, ArenaClearNeeded, FocusId, FramePipeline, PreparedRoots, Window, WindowMetrics,
+};
 
 /// What an [`InstrumentedPipeline`] has measured.
 ///
@@ -36,6 +42,123 @@ impl PhaseMetrics {
     /// The time the root passes took in total.
     pub fn root_passes(&self) -> Duration {
         self.evaluate + self.layout + self.paint
+    }
+}
+
+/// Composition for pipelines.
+///
+/// A pipeline can wrap another one and leave everything it does not change to it,
+/// which is how independent concerns — capping the frame rate, timing the passes,
+/// inspecting what a frame is about to draw — stack in any order.
+///
+/// A decorator has to forward every pass, including
+/// [`draw`](FramePipeline::draw): the passes have defaults, so a pass it forgets
+/// to forward silently draws the standard frame instead of the one it wraps.
+pub trait FramePipelineExt: FramePipeline + Sized {
+    /// Caps this pipeline at `max_fps` frames a second.
+    ///
+    /// See [`ThrottledPipeline`].
+    fn max_fps(self, max_fps: u32) -> ThrottledPipeline<Self> {
+        ThrottledPipeline::new(self, max_fps)
+    }
+}
+
+impl<P: FramePipeline> FramePipelineExt for P {}
+
+/// Defers frames that arrive sooner than a target rate.
+///
+/// Forwards everything to the pipeline it wraps except the decision to draw, which
+/// it only allows every `1 / max_fps` seconds. Wrap the standard pipeline to cap an
+/// application's frame rate, or wrap another decorator — `.max_fps(30)` reads the
+/// same on an [`InstrumentedPipeline`] as on a
+/// [`StandardImmediatePipeline`][gpui_authoring::StandardImmediatePipeline].
+///
+/// A deferred frame is not a dropped one. It leaves the window dirty and leaves
+/// what the frame would have done pending, so the next frame draws it — including
+/// when the platform asks for a frame on its own, which it does while the window is
+/// dirty. Deferring does not need to schedule that next frame: `should_render` is
+/// asked before a frame's work starts, with no window to schedule one with.
+pub struct ThrottledPipeline<P> {
+    inner: P,
+    min_interval: Duration,
+    last_frame: Option<Instant>,
+}
+
+impl<P> ThrottledPipeline<P> {
+    /// Limits `inner` to `max_fps` frames a second.
+    ///
+    /// Zero is treated as one frame a second. A pipeline that should never draw is
+    /// what answering `false` from `should_render` is for.
+    pub fn new(inner: P, max_fps: u32) -> Self {
+        Self {
+            inner,
+            min_interval: Duration::from_secs_f64(1.0 / f64::from(max_fps.max(1))),
+            last_frame: None,
+        }
+    }
+
+    /// The pipeline this one wraps.
+    pub fn inner(&self) -> &P {
+        &self.inner
+    }
+}
+
+impl<P: FramePipeline> FramePipeline for ThrottledPipeline<P> {
+    fn should_render(&mut self, is_dirty: bool, metrics: &WindowMetrics) -> bool {
+        // Ask the pipeline underneath first: it may have its own reason to defer,
+        // and a frame it defers should not spend this one's slot.
+        if !self.inner.should_render(is_dirty, metrics) {
+            return false;
+        }
+
+        let now = Instant::now();
+        if let Some(last_frame) = self.last_frame
+            && now.duration_since(last_frame) < self.min_interval
+        {
+            return false;
+        }
+
+        self.last_frame = Some(now);
+        true
+    }
+
+    // Every pass is forwarded, so a decorator is transparent to what it wraps: an
+    // inner pipeline that drives the passes itself still gets to.
+    fn draw(&mut self, window: &mut Window<'_>, cx: &mut App) -> ArenaClearNeeded {
+        self.inner.draw(window, cx)
+    }
+
+    fn begin_frame(&mut self, window: &mut Window<'_>, cx: &mut App) {
+        self.inner.begin_frame(window, cx);
+    }
+
+    fn evaluate_roots(&mut self, window: &mut Window<'_>, cx: &mut App) -> PreparedRoots {
+        self.inner.evaluate_roots(window, cx)
+    }
+
+    fn layout_roots(&mut self, window: &mut Window<'_>, roots: &mut PreparedRoots, cx: &mut App) {
+        self.inner.layout_roots(window, roots, cx);
+    }
+
+    fn paint_roots(&mut self, window: &mut Window<'_>, roots: PreparedRoots, cx: &mut App) {
+        self.inner.paint_roots(window, roots, cx);
+    }
+
+    fn finish_frame(&mut self, window: &mut Window<'_>, cx: &mut App) {
+        self.inner.finish_frame(window, cx);
+    }
+
+    fn complete_frame(&mut self, window: &mut Window<'_>, cx: &mut App) -> Option<FocusId> {
+        self.inner.complete_frame(window, cx)
+    }
+
+    fn end_frame(
+        &mut self,
+        window: &mut Window<'_>,
+        cx: &mut App,
+        focus_before_listeners: Option<FocusId>,
+    ) {
+        self.inner.end_frame(window, cx, focus_before_listeners);
     }
 }
 

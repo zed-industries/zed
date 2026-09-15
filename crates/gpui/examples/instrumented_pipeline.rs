@@ -1,8 +1,11 @@
-//! Times the passes a frame is made of.
+//! Times the passes a frame is made of, capped at 30 frames a second.
 //!
 //! [`InstrumentedPipeline`] draws the way GPUI normally does, and records how long
-//! each of a frame's root passes took. The window animates and reports a second's
-//! worth of frames as they go by, so the numbers move.
+//! each of a frame's root passes took. Wrapping it in
+//! [`FramePipelineExt::max_fps`] stacks a second concern on top without touching
+//! the first: the throttle defers frames that arrive sooner than the cap, and
+//! forwards everything else. The window animates and reports a second's worth of
+//! frames as they go by, so the numbers move.
 //!
 //! Run it with `cargo run -p gpui --example instrumented_pipeline`.
 
@@ -14,8 +17,8 @@ mod example_support;
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    App, Bounds, Context, InstrumentedPipeline, PhaseMetrics, Render, Window, WindowBounds,
-    WindowOptions, application, div, prelude::*, px, rgb, size,
+    App, Bounds, Context, FramePipelineExt, InstrumentedPipeline, PhaseMetrics, Render, Window,
+    WindowBounds, WindowOptions, application, div, prelude::*, px, rgb, size,
 };
 
 const REPORT_EVERY: usize = 60;
@@ -76,7 +79,7 @@ fn run_example() {
     application()
         .with_frame_pipeline({
             let metrics = metrics.clone();
-            move |_window_id| Box::new(InstrumentedPipeline::new(metrics.clone()))
+            move |_window_id| Box::new(InstrumentedPipeline::new(metrics.clone()).max_fps(30))
         })
         .run(move |cx: &mut App| {
             if !example_support::load_fonts(cx) {

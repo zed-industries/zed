@@ -16,4 +16,4 @@ mod application;
 mod pipeline;
 
 pub use application::{Application, ApplicationHandle};
-pub use pipeline::{InstrumentedPipeline, PhaseMetrics};
+pub use pipeline::{FramePipelineExt, InstrumentedPipeline, PhaseMetrics, ThrottledPipeline};

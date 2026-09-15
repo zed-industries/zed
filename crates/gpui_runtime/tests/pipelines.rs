@@ -15,7 +15,7 @@ use gpui_authoring::{
     IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, Window, WindowMetrics,
     div, px,
 };
-use gpui_runtime::{InstrumentedPipeline, PhaseMetrics};
+use gpui_runtime::{FramePipelineExt, InstrumentedPipeline, PhaseMetrics};
 
 struct Counter(usize);
 
@@ -137,5 +137,42 @@ fn a_pipeline_written_outside_the_framework_can_defer_a_frame() {
     assert!(
         frames.get() > 0,
         "the deferred frame was drawn once allowed"
+    );
+}
+
+/// A pipeline written outside the framework can cap a frame rate by wrapping
+/// another pipeline, drawing its first frame and deferring one that follows it
+/// too soon.
+#[test]
+fn a_throttled_pipeline_defers_a_frame_that_arrives_too_soon() {
+    let mut cx = TestAppContext::single();
+    let metrics = Rc::new(RefCell::new(PhaseMetrics::default()));
+
+    cx.update({
+        let metrics = metrics.clone();
+        move |cx| {
+            cx.set_frame_pipeline_factory(Rc::new(move |_| {
+                // One frame a second: a frame that follows another one within a
+                // test is always too soon to draw again.
+                Box::new(InstrumentedPipeline::new(metrics.clone()).max_fps(1))
+            }));
+        }
+    });
+
+    let counter = cx.new(|_| Counter(10));
+    let window = cx.add_window(move |_, _| SlotView { counter });
+
+    // The throttle has nothing to compare a timestamp against yet, so it draws.
+    metrics.borrow_mut().frames = 0;
+    window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
+    assert!(metrics.borrow().frames > 0, "the first frame was drawn");
+
+    // A frame that follows within the throttle's one-second window is deferred.
+    metrics.borrow_mut().frames = 0;
+    window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
+    assert_eq!(
+        metrics.borrow().frames,
+        0,
+        "the frame that arrived too soon was deferred"
     );
 }
