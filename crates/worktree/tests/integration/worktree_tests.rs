@@ -224,6 +224,288 @@ async fn test_rescan_requests_processed_before_root_creation_events(cx: &mut Tes
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_rescan_replaced_entry_kinds_and_directory(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "directory_to_file": {"nested": {"obsolete": ""}},
+            "file_to_directory": "",
+            "recreated": {"nested": {"obsolete": ""}},
+            "untouched": {"child": ""}
+        }),
+    )
+    .await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    let untouched_id = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path("untouched/child")).unwrap().id
+    });
+    let obsolete_ids = tree.read_with(cx, |tree, _| {
+        [
+            "directory_to_file/nested/obsolete",
+            "recreated/nested/obsolete",
+        ]
+        .map(|path| tree.entry_for_path(rel_path(path)).unwrap().id)
+    });
+
+    fs.pause_events();
+    for path in ["/root/directory_to_file", "/root/recreated"] {
+        fs.remove_dir(
+            Path::new(path),
+            RemoveOptions {
+                recursive: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+    fs.remove_file(Path::new("/root/file_to_directory"), Default::default())
+        .await
+        .unwrap();
+    fs.insert_tree(
+        "/root",
+        json!({
+            "directory_to_file": "replacement",
+            "file_to_directory": {"nested": {"new": ""}},
+            "recreated": {"nested": {"new": ""}}
+        }),
+    )
+    .await;
+    fs.clear_buffered_events();
+    fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_dir()))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), true),
+                (rel_path("directory_to_file"), false),
+                (rel_path("file_to_directory"), true),
+                (rel_path("file_to_directory/nested"), true),
+                (rel_path("file_to_directory/nested/new"), false),
+                (rel_path("recreated"), true),
+                (rel_path("recreated/nested"), true),
+                (rel_path("recreated/nested/new"), false),
+                (rel_path("untouched"), true),
+                (rel_path("untouched/child"), false),
+            ]
+        );
+        assert_eq!(
+            tree.entry_for_path(rel_path("untouched/child")).unwrap().id,
+            untouched_id
+        );
+        for id in obsolete_ids {
+            assert!(tree.entry_for_id(id).is_none());
+        }
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_rescan_retargeted_external_symlink(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks =
+                    Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({"untouched": ""})).await;
+    fs.insert_tree("/old_target", json!({"nested": {"old": ""}}))
+        .await;
+    fs.insert_tree("/new_target", json!({"nested": {"new": ""}}))
+        .await;
+    fs.create_symlink(Path::new("/root/link"), "/old_target".into())
+        .await
+        .unwrap();
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    let old_id = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path("link/nested/old")).unwrap().id
+    });
+
+    fs.pause_events();
+    fs.create_symlink(Path::new("/root/link"), "/new_target".into())
+        .await
+        .unwrap();
+    fs.clear_buffered_events();
+    fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("link"),
+                rel_path("link/nested"),
+                rel_path("link/nested/new"),
+                rel_path("untouched"),
+            ]
+        );
+        assert!(tree.entry_for_id(old_id).is_none());
+    });
+    assert!(
+        fs.watched_paths()
+            .iter()
+            .all(|path| !path.starts_with("/old_target")),
+        "retargeting must remove watches on the old external target: {:?}",
+        fs.watched_paths()
+    );
+
+    fs.insert_tree("/new_target/nested", json!({"after_rescan": ""}))
+        .await;
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert!(
+            tree.entry_for_path(rel_path("link/nested/after_rescan"))
+                .is_some(),
+            "the new external target must receive ordinary filesystem events"
+        );
+    });
+    fs.insert_tree("/old_target/nested", json!({"stale_event": ""}))
+        .await;
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert!(
+            tree.entry_for_path(rel_path("link/nested/stale_event"))
+                .is_none()
+        );
+        assert!(tree.entry_for_path(rel_path("link/nested/new")).is_some());
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_rescan_symlink_becomes_dangling_or_circular(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks =
+                    Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+    for target in ["/missing_target", "/root"] {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({"untouched": ""})).await;
+        fs.insert_tree("/old_target", json!({"nested": {"old": ""}}))
+            .await;
+        fs.create_symlink(Path::new("/root/link"), "/old_target".into())
+            .await
+            .unwrap();
+        let tree = Worktree::local(
+            Path::new("/root"),
+            true,
+            fs.clone(),
+            Default::default(),
+            true,
+            WorktreeId::from_proto(0),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        let old_id = tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("link/nested/old")).unwrap().id
+        });
+
+        fs.pause_events();
+        fs.create_symlink(Path::new("/root/link"), target.into())
+            .await
+            .unwrap();
+        fs.clear_buffered_events();
+        fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+        fs.unpause_events_and_flush();
+        cx.run_until_parked();
+
+        tree.read_with(cx, |tree, _| {
+            tree.as_local().unwrap().snapshot().check_invariants(true);
+            assert!(
+                tree.entries(true, 0)
+                    .all(|entry| !entry.path.as_unix_str().starts_with("link/")),
+                "retargeting to {target} must not retain the old subtree"
+            );
+            assert!(tree.entry_for_id(old_id).is_none());
+        });
+        assert!(
+            fs.watched_paths()
+                .iter()
+                .all(|path| !path.starts_with("/old_target")),
+            "retargeting to {target} must remove old target watches: {:?}",
+            fs.watched_paths()
+        );
+        let rescanned_entries = tree.read_with(cx, |tree, _| {
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.clone(), entry.kind, entry.is_external))
+                .collect::<Vec<_>>()
+        });
+        let fresh_tree = Worktree::local(
+            Path::new("/root"),
+            true,
+            fs.clone(),
+            Default::default(),
+            true,
+            WorktreeId::from_proto(1),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| fresh_tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        fresh_tree.read_with(cx, |tree, _| {
+            tree.as_local().unwrap().snapshot().check_invariants(true);
+            assert_eq!(
+                rescanned_entries,
+                tree.entries(true, 0)
+                    .map(|entry| (entry.path.clone(), entry.kind, entry.is_external))
+                    .collect::<Vec<_>>(),
+                "rescan must agree with a fresh scan after retargeting to {target}"
+            );
+        });
+    }
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_circular_symlinks(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -1487,6 +1769,413 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test(iterations = 20)]
+async fn test_rescan_deferred_directory_does_not_keep_children(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_depth = Some(2);
+            });
+        });
+    });
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({ "a": {} })).await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.pause_events();
+    fs.insert_tree("/root/a/deep", json!({ "child.rs": "" }))
+        .await;
+    let mut refresh = tree.update(cx, |tree, _| {
+        tree.as_local().unwrap().refresh_entries_for_paths(vec![
+            rel_path("a/deep").into(),
+            rel_path("a/deep/child.rs").into(),
+        ])
+    });
+    refresh.recv().await;
+    assert!(tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path("a/deep/child.rs")).is_some()
+    }));
+
+    fs.clear_buffered_events();
+    fs.emit_fs_event("/root/a/deep", Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert_eq!(
+            tree.entry_for_path(rel_path("a/deep")).unwrap().kind,
+            EntryKind::UnloadedDir,
+        );
+        assert!(tree.entry_for_path(rel_path("a/deep/child.rs")).is_none());
+    });
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_rescan_rename_source_metadata_error_preserves_old_entry(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({ "a": { "source.rs": "source" }, "b": {} }))
+        .await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    let source_id = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path("a/source.rs")).unwrap().id
+    });
+
+    fs.pause_events();
+    fs.rename(
+        Path::new("/root/a/source.rs"),
+        Path::new("/root/b/moved.rs"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    // Neither listing the old directory nor checking the rename source can
+    // establish that the old entry is gone.
+    fs.set_read_dir_error("/root/a", Some("permission denied".into()));
+    fs.set_metadata_error("/root/a/source.rs", Some("permission denied".into()));
+    fs.clear_buffered_events();
+    fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+    let destination_id = tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert_eq!(
+            tree.entry_for_path(rel_path("a/source.rs")).unwrap().id,
+            source_id,
+        );
+        let destination_id = tree.entry_for_path(rel_path("b/moved.rs")).unwrap().id;
+        assert_ne!(destination_id, source_id);
+        destination_id
+    });
+
+    fs.set_read_dir_error("/root/a", None);
+    fs.set_metadata_error("/root/a/source.rs", None);
+    fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert!(tree.entry_for_path(rel_path("a/source.rs")).is_none());
+        assert!(tree.entry_for_id(source_id).is_none());
+        assert_eq!(
+            tree.entry_for_path(rel_path("b/moved.rs")).unwrap().id,
+            destination_id,
+        );
+    });
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_rescan_live_alias_does_not_steal_entry_id(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({ "a": { "source.rs": "source" }, "b": {} }))
+        .await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    let source_id = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path("a/source.rs")).unwrap().id
+    });
+
+    fs.pause_events();
+    fs.create_symlink(Path::new("/root/b/alias.rs"), "../a/source.rs".into())
+        .await
+        .unwrap();
+    fs.clear_buffered_events();
+    fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+    let alias_id = tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        let source = tree.entry_for_path(rel_path("a/source.rs")).unwrap();
+        let alias = tree.entry_for_path(rel_path("b/alias.rs")).unwrap();
+        assert_eq!(source.inode, alias.inode);
+        assert_eq!(source.mtime, alias.mtime);
+        assert_eq!(source.id, source_id);
+        assert_ne!(alias.id, source_id);
+        alias.id
+    });
+
+    fs.pause_events();
+    fs.create_symlink(Path::new("/root/b/alias.rs"), "../missing.rs".into())
+        .await
+        .unwrap();
+    fs.clear_buffered_events();
+    fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert_eq!(
+            tree.entry_for_path(rel_path("a/source.rs")).unwrap().id,
+            source_id,
+        );
+        assert!(tree.entry_for_id(alias_id).is_none());
+        assert!(tree.entry_for_path(rel_path("b/alias.rs")).is_none());
+    });
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_rescan_cross_directory_file_rename_preserves_id(cx: &mut TestAppContext) {
+    assert_rescan_rename_preserves_ids("a/file.rs", "b/moved.rs", cx).await;
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_rescan_cross_directory_move_over_file_preserves_id(cx: &mut TestAppContext) {
+    assert_rescan_rename_preserves_ids("a/file.rs", "b/replaced.rs", cx).await;
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_rescan_cross_directory_rename_preserves_descendant_ids(cx: &mut TestAppContext) {
+    assert_rescan_rename_preserves_ids("a/directory", "b/moved", cx).await;
+}
+
+async fn assert_rescan_rename_preserves_ids(
+    source: &str,
+    destination: &str,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "file.rs": "source",
+                "directory": {
+                    "child.rs": "",
+                    "nested": { "grandchild.rs": "" },
+                },
+            },
+            "b": { "replaced.rs": "destination" },
+        }),
+    )
+    .await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    let source = RelPath::from_unix_str(source).unwrap();
+    let destination = RelPath::from_unix_str(destination).unwrap();
+    let (moved_entries, replaced_id) = tree.read_with(cx, |tree, _| {
+        (
+            tree.entries(true, 0)
+                .filter(|entry| entry.path.starts_with(source))
+                .map(|entry| {
+                    (
+                        entry.path.strip_prefix(source).unwrap().to_rel_path_buf(),
+                        entry.id,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            tree.entry_for_path(destination).map(|entry| entry.id),
+        )
+    });
+    assert!(!moved_entries.is_empty());
+
+    fs.pause_events();
+    fs.rename(
+        &Path::new("/root").join(source.as_std_path()),
+        &Path::new("/root").join(destination.as_std_path()),
+        fs::RenameOptions {
+            overwrite: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    fs.clear_buffered_events();
+    fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert!(tree.entry_for_path(source).is_none());
+        for (suffix, id) in moved_entries {
+            let path = destination.join(&suffix);
+            assert_eq!(
+                tree.entry_for_path(&path).unwrap().id,
+                id,
+                "entry identity changed while moving {source} to {destination}: {path}",
+            );
+            assert_eq!(tree.entry_for_id(id).unwrap().path.as_ref(), &path);
+        }
+        if let Some(id) = replaced_id {
+            assert!(tree.entry_for_id(id).is_none());
+        }
+    });
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_rescan_concurrent_mutations_and_refresh_preserve_unchanged_entries(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "keep": { "nested": { "unchanged.rs": "" } },
+            "change": {
+                "disappearing.rs": "",
+                "directory": { "old.rs": "" },
+            },
+        }),
+    )
+    .await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    let unchanged_id = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path("keep/nested/unchanged.rs"))
+            .unwrap()
+            .id
+    });
+    let observed_updates = Rc::new(Cell::new(0));
+    tree.update(cx, |_, cx| {
+        let observed_updates = observed_updates.clone();
+        cx.subscribe(&tree, move |tree, _, event, _| {
+            if let Event::UpdatedEntries(_) = event {
+                observed_updates.set(observed_updates.get() + 1);
+                tree.as_local().unwrap().snapshot().check_invariants(false);
+                assert_eq!(
+                    tree.entry_for_path(rel_path("keep/nested/unchanged.rs"))
+                        .unwrap()
+                        .id,
+                    unchanged_id,
+                );
+            }
+        })
+        .detach();
+    });
+
+    fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+    let mutation = cx.background_executor.spawn({
+        let fs = fs.clone();
+        async move {
+            fs.remove_file(
+                Path::new("/root/change/disappearing.rs"),
+                RemoveOptions::default(),
+            )
+            .await
+            .unwrap();
+            fs.remove_dir(
+                Path::new("/root/change/directory"),
+                RemoveOptions {
+                    recursive: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            fs.insert_tree("/root/change/directory", json!({ "new.rs": "" }))
+                .await;
+        }
+    });
+    let mut refresh = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("change/directory").into()])
+    });
+    refresh.recv().await;
+    mutation.await;
+    cx.run_until_parked();
+    assert!(observed_updates.get() > 0);
+
+    let snapshot = tree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
+    snapshot.check_invariants(true);
+    assert!(
+        snapshot
+            .entry_for_path(rel_path("change/disappearing.rs"))
+            .is_none()
+    );
+    assert!(
+        snapshot
+            .entry_for_path(rel_path("change/directory/old.rs"))
+            .is_none()
+    );
+    assert!(
+        snapshot
+            .entry_for_path(rel_path("change/directory/new.rs"))
+            .is_some()
+    );
+
+    let fresh_tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs,
+        Default::default(),
+        true,
+        WorktreeId::from_proto(1),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| fresh_tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    fresh_tree.read_with(cx, |tree, _| {
+        let fresh_snapshot = tree.as_local().unwrap().snapshot();
+        assert_eq!(
+            snapshot.entries_without_ids(true),
+            fresh_snapshot.entries_without_ids(true),
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
     init_test(cx);
@@ -1494,6 +2183,7 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
     fs.insert_tree(
         "/root",
         json!({
+            ".gitignore": "old.txt",
             "old.txt": "",
         }),
     )
@@ -1519,16 +2209,19 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
             tree.entries(true, 0)
                 .map(|entry| entry.path.as_ref())
                 .collect::<Vec<_>>(),
-            vec![rel_path(""), rel_path("old.txt")]
+            vec![rel_path(""), rel_path(".gitignore"), rel_path("old.txt")]
         );
     });
 
     fs.pause_events();
+    fs.remove_file(Path::new("/root/.gitignore"), RemoveOptions::default())
+        .await
+        .unwrap();
     fs.remove_file(Path::new("/root/old.txt"), RemoveOptions::default())
         .await
         .unwrap();
     fs.insert_file(Path::new("/root/new.txt"), Vec::new()).await;
-    assert_eq!(fs.buffered_event_count(), 2);
+    assert_eq!(fs.buffered_event_count(), 3);
     fs.clear_buffered_events();
 
     tree.read_with(cx, |tree, _| {
@@ -1538,9 +2231,10 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
 
     fs.emit_fs_event("/root", Some(fs::PathEventKind::Rescan));
     fs.unpause_events_and_flush();
-    tree.flush_fs_events(cx).await;
+    cx.run_until_parked();
 
     tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
         assert!(tree.entry_for_path(rel_path("old.txt")).is_none());
         assert!(tree.entry_for_path(rel_path("new.txt")).is_some());
         assert_eq!(
@@ -1550,6 +2244,80 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
             vec![rel_path(""), rel_path("new.txt")]
         );
     });
+}
+
+#[gpui::test]
+async fn test_rescan_preserves_subtree_when_read_dir_fails(cx: &mut TestAppContext) {
+    init_test(cx);
+    for unreadable_path in ["/root", "/root/dir"] {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir": {
+                    "old.txt": "",
+                    "nested": { "keep.txt": "" },
+                },
+                "other.txt": "",
+            }),
+        )
+        .await;
+        let tree = Worktree::local(
+            Path::new("/root"),
+            true,
+            fs.clone(),
+            Default::default(),
+            true,
+            WorktreeId::from_proto(0),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        let entries_before = tree.read_with(cx, |tree, _| {
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.clone(), entry.id, entry.kind))
+                .collect::<Vec<_>>()
+        });
+
+        fs.pause_events();
+        fs.remove_file(Path::new("/root/dir/old.txt"), RemoveOptions::default())
+            .await
+            .unwrap();
+        fs.insert_file("/root/dir/new.txt", Vec::new()).await;
+        fs.clear_buffered_events();
+        fs.set_read_dir_error(unreadable_path, Some("permission denied".into()));
+        let read_dir_calls = fs.read_dir_call_count();
+        fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+        fs.unpause_events_and_flush();
+        cx.run_until_parked();
+
+        assert!(fs.read_dir_call_count() > read_dir_calls);
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.entries(true, 0)
+                    .map(|entry| (entry.path.clone(), entry.id, entry.kind))
+                    .collect::<Vec<_>>(),
+                entries_before,
+                "failed to retain entries when {unreadable_path} could not be read",
+            );
+        });
+
+        fs.set_read_dir_error(unreadable_path, None);
+        fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+        tree.flush_fs_events(cx).await;
+        tree.read_with(cx, |tree, _| {
+            assert!(tree.entry_for_path(rel_path("dir/old.txt")).is_none());
+            assert!(tree.entry_for_path(rel_path("dir/new.txt")).is_some());
+            for (path, id, kind) in &entries_before {
+                if path.as_ref() != rel_path("dir/old.txt") {
+                    let entry = tree.entry_for_path(path).unwrap();
+                    assert_eq!((entry.id, entry.kind), (*id, *kind));
+                }
+            }
+        });
+    }
 }
 
 #[gpui::test]
@@ -3298,6 +4066,330 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         }
         entry
     }
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_rescan_retained_ignore_rules(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "nested": {
+                "first.txt": "",
+                "second.txt": "",
+                "deeper": { "first.txt": "", "second.txt": "" },
+            },
+        }),
+    )
+    .await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+    let retained_entries = tree.read_with(cx, |tree, _| {
+        tree.entries(true, 0)
+            .map(|entry| (entry.path.clone(), entry.id, entry.kind))
+            .collect::<Vec<_>>()
+    });
+
+    for rules in [Some("first.txt\n"), Some("second.txt\n"), None] {
+        fs.pause_events();
+        if let Some(rules) = rules {
+            fs.insert_file("/root/nested/.gitignore", rules.as_bytes().to_vec())
+                .await;
+        } else {
+            fs.remove_file(
+                Path::new("/root/nested/.gitignore"),
+                RemoveOptions::default(),
+            )
+            .await
+            .unwrap();
+        }
+        fs.clear_buffered_events();
+        fs.emit_fs_event("/root", Some(fs::PathEventKind::Rescan));
+        fs.unpause_events_and_flush();
+        cx.run_until_parked();
+
+        tree.read_with(cx, |tree, _| {
+            tree.as_local().unwrap().snapshot().check_invariants(true);
+            for (path, id, kind) in &retained_entries {
+                let entry = tree.entry_for_path(path).unwrap();
+                assert_eq!((entry.id, entry.kind), (*id, *kind), "{path:?}");
+                assert_eq!(tree.entry_for_id(*id).unwrap().path, *path);
+                let ignored = match rules {
+                    Some("first.txt\n") => path.as_std_path().ends_with("first.txt"),
+                    Some("second.txt\n") => path.as_std_path().ends_with("second.txt"),
+                    _ => false,
+                };
+                assert_eq!(entry.is_ignored, ignored, "rules {rules:?}, path {path:?}");
+                assert!(!entry.is_external);
+            }
+            assert_eq!(
+                tree.entry_for_path(rel_path("nested/.gitignore")).is_some(),
+                rules.is_some(),
+            );
+        });
+    }
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_rescan_retained_expanded_and_deferred_directories(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "expanded/\ndeferred/\n",
+            "expanded": { "keep.txt": "", "remove.txt": "" },
+            "deferred": { "keep.txt": "", "remove.txt": "" },
+        }),
+    )
+    .await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.update(cx, |tree, cx| {
+        tree.load_file(rel_path("expanded/keep.txt"), cx)
+    })
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    let retained_entries = tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entry_for_path(rel_path("deferred")).unwrap().kind,
+            EntryKind::UnloadedDir,
+        );
+        assert!(tree.entry_for_path(rel_path("deferred/keep.txt")).is_none());
+        ["expanded", "expanded/keep.txt", "deferred"]
+            .map(|path| (path, tree.entry_for_path(rel_path(path)).unwrap().id))
+    });
+
+    for (iteration, ignored) in [true, false, true].into_iter().enumerate() {
+        fs.pause_events();
+        fs.insert_file(
+            "/root/.gitignore",
+            if ignored {
+                b"expanded/\ndeferred/\n".to_vec()
+            } else {
+                Vec::new()
+            },
+        )
+        .await;
+        for directory in ["expanded", "deferred"] {
+            fs.remove_file(
+                &Path::new("/root").join(directory).join("remove.txt"),
+                RemoveOptions {
+                    ignore_if_not_exists: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            fs.insert_file(
+                Path::new("/root").join(directory).join("new.txt"),
+                Vec::new(),
+            )
+            .await;
+        }
+        fs.clear_buffered_events();
+        fs.emit_fs_event("/root", Some(fs::PathEventKind::Rescan));
+        fs.unpause_events_and_flush();
+        cx.run_until_parked();
+
+        tree.read_with(cx, |tree, _| {
+            tree.as_local().unwrap().snapshot().check_invariants(true);
+            for (path, id) in &retained_entries {
+                let entry = tree.entry_for_path(rel_path(path)).unwrap();
+                assert_eq!(entry.id, *id, "{path}");
+                assert_eq!(tree.entry_for_id(*id).unwrap().path, entry.path);
+                assert_eq!(entry.is_ignored, ignored, "{path}");
+            }
+            assert_eq!(
+                tree.entry_for_path(rel_path("expanded")).unwrap().kind,
+                EntryKind::Dir,
+            );
+            let new_entry = tree.entry_for_path(rel_path("expanded/new.txt")).unwrap();
+            assert_eq!(new_entry.is_ignored, ignored);
+            assert!(
+                tree.entry_for_path(rel_path("expanded/remove.txt"))
+                    .is_none()
+            );
+            assert!(
+                tree.entry_for_path(rel_path("deferred/remove.txt"))
+                    .is_none()
+            );
+            if iteration == 0 {
+                assert_eq!(
+                    tree.entry_for_path(rel_path("deferred")).unwrap().kind,
+                    EntryKind::UnloadedDir,
+                );
+                assert!(tree.entry_for_path(rel_path("deferred/new.txt")).is_none());
+            } else {
+                assert_eq!(
+                    tree.entry_for_path(rel_path("deferred")).unwrap().kind,
+                    EntryKind::Dir,
+                );
+                assert_eq!(
+                    tree.entry_for_path(rel_path("deferred/new.txt"))
+                        .unwrap()
+                        .is_ignored,
+                    ignored,
+                );
+            }
+        });
+    }
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_rescan_retained_repository_and_removed_metadata(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "keep": { ".git": {}, "file.txt": "" },
+            "remove": {
+                ".gitignore": "*.txt\n",
+                "nested": { ".git": {}, ".gitignore": "*.log\n", "file.txt": "" },
+            },
+        }),
+    )
+    .await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+    let (retained_entries, removed_ids, removed_repository_id) = tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.as_local().unwrap().repositories().len(), 2);
+        (
+            ["keep", "keep/file.txt"]
+                .map(|path| (path, tree.entry_for_path(rel_path(path)).unwrap().id)),
+            tree.entries(true, 0)
+                .filter(|entry| entry.path.as_std_path().starts_with("remove"))
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            tree.entry_for_path(rel_path("remove/nested")).unwrap().id,
+        )
+    });
+    let repository_updates = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |_, cx| {
+        let repository_updates = repository_updates.clone();
+        cx.subscribe(&tree, move |_, _, event, _| {
+            if let Event::UpdatedGitRepositories(updates) = event {
+                repository_updates.lock().extend(updates.iter().cloned());
+            }
+        })
+        .detach();
+    });
+
+    fs.pause_events();
+    fs.remove_dir(
+        Path::new("/root/remove"),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    fs.clear_buffered_events();
+    fs.emit_fs_event("/root", Some(fs::PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert_eq!(
+            tree.as_local().unwrap().repositories(),
+            vec![Arc::<Path>::from(Path::new("/root/keep"))],
+        );
+        for (path, id) in &retained_entries {
+            assert_eq!(tree.entry_for_path(rel_path(path)).unwrap().id, *id);
+            assert_eq!(
+                tree.entry_for_id(*id).unwrap().path.as_ref(),
+                rel_path(path)
+            );
+        }
+        for id in &removed_ids {
+            assert!(tree.entry_for_id(*id).is_none());
+        }
+        assert!(tree.entry_for_path(rel_path("remove")).is_none());
+    });
+    let keep_id = retained_entries[0].1;
+    assert!(repository_updates.lock().iter().any(|update| {
+        update.work_directory_id == keep_id
+            && update.old_work_directory_abs_path.as_deref() == Some(Path::new("/root/keep"))
+            && update.new_work_directory_abs_path.as_deref() == Some(Path::new("/root/keep"))
+    }));
+    assert!(repository_updates.lock().iter().any(|update| {
+        update.work_directory_id == removed_repository_id
+            && update.old_work_directory_abs_path.as_deref()
+                == Some(Path::new("/root/remove/nested"))
+            && update.new_work_directory_abs_path.is_none()
+    }));
+    repository_updates.lock().clear();
+
+    // Reusing the removed paths without ignore files exposes leaked ignore metadata.
+    fs.insert_tree(
+        "/root/remove",
+        json!({ "nested": { ".git": {}, "file.txt": "", "file.log": "" } }),
+    )
+    .await;
+    fs.insert_file("/root/keep/after.txt", Vec::new()).await;
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true);
+        assert_eq!(tree.as_local().unwrap().repositories().len(), 2);
+        for path in [
+            "remove/nested/file.txt",
+            "remove/nested/file.log",
+            "keep/after.txt",
+        ] {
+            let entry = tree.entry_for_path(rel_path(path)).unwrap();
+            assert!(!entry.is_ignored, "{path}");
+            assert!(!removed_ids.contains(&entry.id));
+        }
+        assert_eq!(tree.entry_for_path(rel_path("keep")).unwrap().id, keep_id);
+        let new_repository_id = tree.entry_for_path(rel_path("remove/nested")).unwrap().id;
+        assert_ne!(new_repository_id, removed_repository_id);
+        assert!(repository_updates.lock().iter().any(|update| {
+            update.work_directory_id == new_repository_id
+                && update.old_work_directory_abs_path.is_none()
+                && update.new_work_directory_abs_path.as_deref()
+                    == Some(Path::new("/root/remove/nested"))
+        }));
+    });
 }
 
 #[gpui::test(iterations = 100)]
