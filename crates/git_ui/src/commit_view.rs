@@ -1529,3 +1529,117 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
         .map(|entry| entry.oid.to_string() == sha)
         .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::{Navigated, actions::GoToDefinition};
+    use gpui::TestAppContext;
+    use project::FakeFs;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::{path, rel_path::rel_path};
+    use workspace::{MultiWorkspace, notifications::NotificationId};
+
+    #[gpui::test]
+    async fn test_go_to_definition_in_git_blob_singleton(cx: &mut TestAppContext) {
+        assert_historical_definition_toast(true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_go_to_definition_in_git_blob_multibuffer(cx: &mut TestAppContext) {
+        assert_historical_definition_toast(false, cx).await;
+    }
+
+    async fn assert_historical_definition_toast(singleton: bool, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({".git": {}})).await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (worktree_id, language_registry) = project.read_with(cx, |project, cx| {
+            (
+                project
+                    .worktrees(cx)
+                    .next()
+                    .expect("project should have a worktree")
+                    .read(cx)
+                    .id(),
+                project.languages().clone(),
+            )
+        });
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi, _| multi.workspace().clone());
+        let mut async_cx = cx.update(|window, cx| window.to_async(cx));
+        let buffer = build_buffer(
+            "historical_symbol();\n".into(),
+            Arc::new(GitBlob {
+                path: RepoPath::from_rel_path(rel_path("historical.txt")),
+                worktree_id,
+                is_deleted: false,
+                is_binary: false,
+                display_name: "abc1234 - historical.txt".into(),
+            }),
+            &language_registry,
+            &mut async_cx,
+        )
+        .await
+        .expect("historical buffer should build");
+
+        let editor = cx.new_window_entity(|window, cx| {
+            assert!(matches!(
+                buffer
+                    .read(cx)
+                    .file()
+                    .expect("GitBlob should be attached")
+                    .disk_state(),
+                DiskState::Historic { was_deleted: false }
+            ));
+            let multibuffer = cx.new(|cx| {
+                if singleton {
+                    MultiBuffer::singleton(buffer.clone(), cx)
+                } else {
+                    let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+                    multibuffer.set_all_diff_hunks_expanded(cx);
+                    multibuffer.set_excerpts_for_buffer(
+                        buffer.clone(),
+                        [Default::default()..buffer.read(cx).max_point()],
+                        0,
+                        cx,
+                    );
+                    multibuffer
+                }
+            });
+            assert_eq!(multibuffer.read(cx).is_singleton(), singleton);
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        let notification_id = NotificationId::unique::<GoToDefinition>();
+        workspace.read_with(cx, |workspace, _| {
+            assert!(!workspace.notification_ids().contains(&notification_id));
+        });
+        let navigation = editor.update_in(cx, |editor, window, cx| {
+            // Historical navigation must explain the limitation even without a semantics provider.
+            editor.set_semantics_provider(None);
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        });
+        assert_eq!(
+            navigation.await.expect("navigation should not error"),
+            Navigated::No
+        );
+        workspace.read_with(cx, |workspace, _| {
+            assert!(workspace.notification_ids().contains(&notification_id));
+        });
+    }
+}

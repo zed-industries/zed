@@ -2388,15 +2388,33 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        let Some(provider) = self.semantics_provider.clone() else {
-            return Task::ready(Ok(Navigated::No));
-        };
         let head = self
             .selections
             .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
             .head();
         let buffer = self.buffer.read(cx);
         let Some((buffer, head)) = buffer.text_anchor_for_position(head, cx) else {
+            return Task::ready(Ok(Navigated::No));
+        };
+        if buffer
+            .read(cx)
+            .file()
+            .is_some_and(|file| matches!(file.disk_state(), language::DiskState::Historic { .. }))
+        {
+            if let Some(workspace) = self.workspace() {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.show_toast(
+                        Toast::new(
+                            NotificationId::unique::<GoToDefinition>(),
+                            "Semantic navigation is unavailable in historical revisions. Open the working-tree file to navigate definitions.",
+                        ),
+                        cx,
+                    );
+                });
+            }
+            return Task::ready(Ok(Navigated::No));
+        }
+        let Some(provider) = self.semantics_provider.clone() else {
             return Task::ready(Ok(Navigated::No));
         };
         let Some(definitions) = provider.definitions(&buffer, head, kind, cx) else {
