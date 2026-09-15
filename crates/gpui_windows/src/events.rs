@@ -60,7 +60,8 @@ fn pointer_sample_time(info: &POINTER_INFO) -> std::time::Duration {
                 as u32,
         );
     }
-    // dwTimeの32bit wrapを現在の64bit tickに対応づける。historyにも元の発生時刻を使う。
+    // Map dwTime's 32-bit wrap onto the current 64-bit tick epoch, preserving
+    // the original sample times for coalesced history too.
     let current = unsafe { windows::Win32::System::SystemInformation::GetTickCount64() };
     Duration::from_millis(current.saturating_sub((current as u32).wrapping_sub(info.dwTime) as u64))
 }
@@ -523,7 +524,8 @@ impl WindowsWindowInner {
             return None;
         }
 
-        // 履歴は新しい順。callback中に別messageを取得する可能性があるため、先に全点を取得する。
+        // History is newest first. Retrieve it before callbacks can fetch another
+        // message and invalidate the history associated with this one.
         if phase == TouchPhase::Moved && pointer_info.historyCount > 1 {
             let capacity = pointer_info.historyCount.min(4096);
             let mut history = vec![POINTER_INFO::default(); capacity as usize];
@@ -543,7 +545,7 @@ impl WindowsWindowInner {
                             phase,
                             index + 1 == sample_count,
                         );
-                        // 未取得のcontactは、履歴がある場合も従来どおりOSへ処理を返す。
+                        // Leave unclaimed contacts to the OS even when history is available.
                         handled = result.or(handled);
                     }
                     return handled;
