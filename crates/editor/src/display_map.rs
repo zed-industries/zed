@@ -2062,7 +2062,17 @@ impl DisplaySnapshot {
 
     #[instrument(skip_all)]
     pub fn grapheme_at(&self, mut point: DisplayPoint) -> Option<SharedString> {
-        point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
+        let buffer = self.buffer_snapshot();
+        let buffer_point = point.to_point(self);
+        let grapheme_start = buffer.clip_point(buffer_point, Bias::Left);
+        if grapheme_start != buffer_point {
+            let offset = grapheme_start.to_offset(buffer);
+            let next_offset = buffer.clip_offset(offset + 1usize, Bias::Right);
+            // Normalize in buffer space so clipping cannot snap back across an inlay.
+            point = self
+                .contiguous_display_point_range_for_buffer_range(offset..next_offset)
+                .map_or_else(|| self.clip_point(point, Bias::Left), |range| range.start);
+        }
         let chars = self
             .text_chunks(point.row())
             .flat_map(str::chars)
