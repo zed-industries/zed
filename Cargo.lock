@@ -10589,6 +10589,7 @@ dependencies = [
  "pulldown-cmark 0.13.4",
  "settings",
  "smallvec",
+ "smol",
  "stacksafe",
  "sum_tree",
  "theme",

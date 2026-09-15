@@ -21,6 +21,10 @@ use super::{
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
+/// Keep diagram-heavy previews responsive while Mermaid layout and SVG
+/// rasterization run on the background executor.
+const MAX_CONCURRENT_MERMAID_RENDERS: usize = 2;
+
 /// Per scroll tick, zoom changes by 10 percentage points, regardless of how
 /// large a delta the platform reports for the tick.
 const MERMAID_ZOOM_STEP: f32 = 0.1;
@@ -39,10 +43,21 @@ pub(crate) struct ParsedMarkdownMermaidDiagramContents {
     pub(crate) scale: u32,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(crate) struct MermaidState {
     cache: MermaidDiagramCache,
     order: Vec<ParsedMarkdownMermaidDiagramContents>,
+    render_slots: Arc<smol::lock::Semaphore>,
+}
+
+impl Default for MermaidState {
+    fn default() -> Self {
+        Self {
+            cache: MermaidDiagramCache::default(),
+            order: Vec::new(),
+            render_slots: Arc::new(smol::lock::Semaphore::new(MAX_CONCURRENT_MERMAID_RENDERS)),
+        }
+    }
 }
 
 struct CachedMermaidDiagram {
@@ -129,6 +144,7 @@ impl MermaidState {
                         new_content.clone(),
                         zoom,
                         fallback,
+                        self.render_slots.clone(),
                         cx,
                     )),
                 );
@@ -206,6 +222,7 @@ impl MermaidState {
             scale_factor,
             target_scale,
             new_fallback,
+            self.render_slots.clone(),
             cx,
         ));
     }
@@ -216,6 +233,7 @@ impl CachedMermaidDiagram {
         contents: ParsedMarkdownMermaidDiagramContents,
         zoom: f32,
         fallback_image: Option<(Arc<RenderImage>, f32)>,
+        render_slots: Arc<smol::lock::Semaphore>,
         cx: &mut Context<Markdown>,
     ) -> Self {
         let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
@@ -230,6 +248,7 @@ impl CachedMermaidDiagram {
             async move |this, cx| {
                 let value = cx
                     .background_spawn(async move {
+                        let _slot = render_slots.acquire().await;
                         let svg_string =
                             mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
                         let tree = svg_renderer
@@ -269,6 +288,7 @@ impl CachedMermaidDiagram {
         scale_factor: f32,
         rasterized_scale: f32,
         fallback_image: Option<(Arc<RenderImage>, f32)>,
+        render_slots: Arc<smol::lock::Semaphore>,
         cx: &mut Context<Markdown>,
     ) -> Self {
         let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
@@ -282,6 +302,7 @@ impl CachedMermaidDiagram {
             async move |this, cx| {
                 let value = cx
                     .background_spawn(async move {
+                        let _slot = render_slots.acquire().await;
                         svg_renderer
                             .render_parsed(&parsed_svg, scale_factor)
                             .map_err(|error| anyhow::anyhow!("{error}"))

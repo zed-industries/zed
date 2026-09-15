@@ -32,6 +32,7 @@ mermaid_render = { path = "../mermaid_render" }
 pulldown-cmark.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+smol.workspace = true
 stacksafe.workspace = true
 sum_tree.workspace = true
 theme.workspace = true
