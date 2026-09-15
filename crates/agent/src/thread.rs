@@ -7236,10 +7236,11 @@ mod tests {
     #[gpui::test]
     async fn test_compaction_threshold_respects_independent_input_limit(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let mut model = FakeLanguageModel::default();
         model.set_max_token_count(200_000);
         model.set_max_input_tokens(90_000);
         model.set_max_output_tokens(Some(16_384));
+        let model = Arc::new(model);
         let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {

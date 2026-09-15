@@ -121,7 +121,7 @@ pub struct FakeLanguageModel {
     supports_images: AtomicBool,
     supports_server_side_compaction: AtomicBool,
     max_token_count: AtomicU64,
-    max_input_tokens: Mutex<Option<u64>>,
+    max_input_tokens: Option<u64>,
     max_output_tokens: AtomicU64,
     input_token_counts: Mutex<VecDeque<u64>>,
     input_token_count_requests: Mutex<Vec<LanguageModelRequest>>,
@@ -142,7 +142,7 @@ impl Default for FakeLanguageModel {
             supports_images: AtomicBool::new(false),
             supports_server_side_compaction: AtomicBool::new(false),
             max_token_count: AtomicU64::new(1_000_000),
-            max_input_tokens: Mutex::new(None),
+            max_input_tokens: None,
             max_output_tokens: AtomicU64::new(0),
             input_token_counts: Mutex::new(VecDeque::new()),
             input_token_count_requests: Mutex::new(Vec::new()),
@@ -198,8 +198,8 @@ impl FakeLanguageModel {
         self.max_token_count.store(count, SeqCst);
     }
 
-    pub fn set_max_input_tokens(&self, count: u64) {
-        *self.max_input_tokens.lock() = Some(count);
+    pub fn set_max_input_tokens(&mut self, count: u64) {
+        self.max_input_tokens = Some(count);
     }
 
     pub fn set_max_output_tokens(&self, count: Option<u64>) {
@@ -350,7 +350,6 @@ impl LanguageModel for FakeLanguageModel {
 
     fn max_input_tokens(&self) -> u64 {
         self.max_input_tokens
-            .lock()
             .unwrap_or_else(|| self.max_token_count())
     }
 
