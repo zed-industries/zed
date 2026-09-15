@@ -1,0 +1,38 @@
+package zed:extension;
+
+/// The host-rendered persistent panel API for extensions.
+interface panel {
+    enum panel-location {
+        right,
+        bottom,
+    }
+
+    record panel-descriptor {
+        /// Unique within the owning extension.
+        panel-id: string,
+        title: string,
+        location: panel-location,
+        actions: list<panel-action>,
+    }
+
+    record panel-action {
+        /// Stable action id returned to the extension when clicked.
+        id: string,
+        /// Human-readable label rendered by Zed.
+        label: string,
+        /// Render a text field and pass its contents as `payload.input`.
+        requires-input: bool,
+    }
+
+    /// Creates the extension's persistent panel, or focuses its existing view.
+    open-panel: func(descriptor: panel-descriptor) -> result<_, string>;
+
+    /// Sends one structured JSON-object event to the extension's panel.
+    send-event: func(panel-id: string, kind: string, payload: string) -> result<_, string>;
+
+    /// Returns the root of the active workspace's first visible worktree.
+    active-worktree-root: func() -> result<string, string>;
+
+    /// Reads one relative file from the active workspace's visible worktree.
+    read-active-worktree-file: func(path: string) -> result<string, string>;
+}
