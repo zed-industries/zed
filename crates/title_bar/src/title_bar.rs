@@ -256,7 +256,12 @@ impl Render for TitleBar {
 
         let mut children = <ArrayVec<_, 5>>::new();
 
-        let mut project_name = None;
+        let mut project_name = self.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .placeholder_project_name()
+                .map(SharedString::from)
+        });
         let mut repository = None;
         let mut linked_worktree_name = None;
         if let Some(worktree) = self.effective_active_worktree(cx) {
