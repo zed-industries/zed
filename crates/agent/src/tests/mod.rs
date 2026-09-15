@@ -6591,11 +6591,7 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
     let send = test.send("subagent task prompt", cx);
     test.tool_round(900_000, cx);
 
-    let request = test.model.pending_completions().pop().unwrap();
-    assert_eq!(
-        request.intent,
-        Some(CompletionIntent::ThreadContextSummarization)
-    );
+    let request = test.compaction_request();
     assert_eq!(request.thread_id, Some(test.handle.id().to_string()));
     assert_eq!(
         request.messages.last().unwrap().string_contents(),
@@ -6665,18 +6661,14 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_subagent_compaction_respects_settings_and_context_window(cx: &mut TestAppContext) {
-    let test = SubagentCompactionTest::new(cx).await;
-    for (enabled, max_tokens, input_tokens) in [
-        (true, 1_000_000, 899_999),
-        (false, 1_000_000, 950_000),
-        (true, 79_999, 75_999),
+    for (enabled, max_tokens, max_output_tokens, input_tokens) in [
+        (true, 1_000_000, None, 899_999),
+        (false, 1_000_000, None, 799_999),
+        (true, 79_999, None, 63_999),
+        (true, 100_000, Some(20_001), 79_999),
     ] {
-        cx.update(|cx| {
-            let mut settings = AgentSettings::get_global(cx).clone();
-            settings.auto_compact.enabled = enabled;
-            AgentSettings::override_global(settings, cx);
-        });
-        test.model.set_max_token_count(max_tokens);
+        let test = SubagentCompactionTest::new(cx).await;
+        test.configure_compaction(enabled, max_tokens, max_output_tokens, cx);
         let send = test.send("subagent task prompt", cx);
         test.tool_round(input_tokens, cx);
         let request = test.model.pending_completions().pop().unwrap();
@@ -6684,10 +6676,6 @@ async fn test_subagent_compaction_respects_settings_and_context_window(cx: &mut 
         test.assert_running(cx);
         test.model
             .send_completion_stream_text_chunk(&request, "subagent answer");
-        test.model.send_completion_stream_event(
-            &request,
-            LanguageModelCompletionEvent::UsageUpdate(TokenUsage::default()),
-        );
         test.model.end_completion_stream(&request);
         assert_eq!(send.await.unwrap(), "subagent answer");
         test.assert_stopped(cx);
@@ -6695,15 +6683,406 @@ async fn test_subagent_compaction_respects_settings_and_context_window(cx: &mut 
 }
 
 #[gpui::test]
+async fn test_subagent_compaction_minimum_input_capacity(cx: &mut TestAppContext) {
+    for (max_tokens, max_output_tokens) in [(80_000, None), (100_000, Some(20_000))] {
+        let test = SubagentCompactionTest::new(cx).await;
+        test.configure_compaction(true, max_tokens, max_output_tokens, cx);
+        let send = test.send("subagent task prompt", cx);
+        test.tool_round(72_000, cx);
+        let request = test.compaction_request();
+        test.assert_running(cx);
+        test.model
+            .send_completion_stream_text_chunk(&request, "subagent summary");
+        test.model.end_completion_stream(&request);
+        cx.run_until_parked();
+        let request = test.model.pending_completions().pop().unwrap();
+        assert_eq!(request.intent, Some(CompletionIntent::ToolResults));
+        test.model
+            .send_completion_stream_text_chunk(&request, "subagent answer");
+        test.model.end_completion_stream(&request);
+        assert_eq!(send.await.unwrap(), "subagent answer");
+        test.assert_stopped(cx);
+    }
+}
+
+#[gpui::test]
+async fn test_subagent_context_limit_warning_when_compaction_unavailable(cx: &mut TestAppContext) {
+    for (enabled, max_tokens, max_output_tokens, warning_tokens) in [
+        (false, 1_000_000, None, 800_000),
+        (true, 79_999, None, 64_000),
+        (true, 100_000, Some(20_001), 80_000),
+    ] {
+        let test = SubagentCompactionTest::new(cx).await;
+        test.configure_compaction(enabled, max_tokens, max_output_tokens, cx);
+        let send = test.send("subagent task prompt", cx);
+        let request = test.model.pending_completions().pop().unwrap();
+        test.model
+            .send_completion_stream_text_chunk(&request, "partial work");
+        test.update_usage(warning_tokens - 1, cx);
+        test.assert_running(cx);
+        assert!(!test.model.is_completion_stream_closed(&request));
+        test.update_usage(warning_tokens, cx);
+        assert_eq!(
+            send.await.unwrap_err().to_string(),
+            format!(
+                "{SUBAGENT_CONTEXT_LIMIT_WARNING}\n\nPartial subagent output (last 3 messages, up to 4096 characters each):\n\npartial work"
+            ),
+        );
+        test.assert_stopped(cx);
+        assert!(test.model.is_completion_stream_closed(&request));
+        test.model.end_completion_stream(&request);
+        assert_eq!(test.model.pending_completions(), Vec::new());
+        test.assert_no_compaction(cx).await;
+    }
+}
+
+#[gpui::test]
+async fn test_subagent_context_limit_exceeded_without_partial_output(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    test.configure_compaction(false, 1_000_000, None, cx);
+    let send = test.send("subagent task prompt", cx);
+    let request = test.model.pending_completions().pop().unwrap();
+    test.update_usage(1_000_000, cx);
+    assert_eq!(
+        send.await.unwrap_err().to_string(),
+        SUBAGENT_CONTEXT_LIMIT_WARNING,
+    );
+    test.assert_stopped(cx);
+    assert!(test.model.is_completion_stream_closed(&request));
+    test.model.end_completion_stream(&request);
+    assert_eq!(test.model.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
+async fn test_subagent_context_limit_resumed_warning(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    test.configure_compaction(false, 1_000_000, None, cx);
+    let send = test.send("subagent task prompt", cx);
+    let request = test.model.pending_completions().pop().unwrap();
+    test.model
+        .send_completion_stream_text_chunk(&request, "partial work");
+    test.update_usage(800_000, cx);
+    assert_eq!(
+        send.await.unwrap_err().to_string(),
+        format!(
+            "{SUBAGENT_CONTEXT_LIMIT_WARNING}\n\nPartial subagent output (last 3 messages, up to 4096 characters each):\n\npartial work"
+        ),
+    );
+    test.assert_stopped(cx);
+    test.model.end_completion_stream(&request);
+
+    let handle = cx
+        .update(|cx| {
+            test.environment
+                .resume_subagent_thread(test.handle.id(), cx)
+        })
+        .unwrap();
+    assert_eq!(handle.id(), test.handle.id());
+    let send = cx.update(|cx| handle.send("wrap up".to_string(), &cx.to_async()));
+    cx.run_until_parked();
+    test.assert_running(cx);
+    let request = test.model.pending_completions().pop().unwrap();
+    test.model
+        .send_completion_stream_text_chunk(&request, "wrapped up");
+    test.update_usage(950_000, cx);
+    test.assert_running(cx);
+    test.model.end_completion_stream(&request);
+    assert_eq!(send.await.unwrap(), "wrapped up");
+    test.assert_stopped(cx);
+
+    let send = cx.update(|cx| handle.send("follow-up task".to_string(), &cx.to_async()));
+    cx.run_until_parked();
+    test.assert_running(cx);
+    let request = test.model.pending_completions().pop().unwrap();
+    test.model
+        .send_completion_stream_text_chunk(&request, "unfinished follow-up");
+    test.update_usage(999_999, cx);
+    test.assert_running(cx);
+    test.update_usage(1_000_000, cx);
+    assert_eq!(
+        send.await.unwrap_err().to_string(),
+        format!(
+            "{SUBAGENT_CONTEXT_LIMIT_WARNING}\n\nPartial subagent output (last 3 messages, up to 4096 characters each):\n\nunfinished follow-up"
+        ),
+    );
+    test.assert_stopped(cx);
+    assert!(test.model.is_completion_stream_closed(&request));
+    test.model.end_completion_stream(&request);
+    assert_eq!(test.model.pending_completions(), Vec::new());
+
+    let send = cx.update(|cx| {
+        handle.send(
+            "wrap up after exceeding context".to_string(),
+            &cx.to_async(),
+        )
+    });
+    cx.run_until_parked();
+    test.assert_running(cx);
+    let request = test.model.pending_completions().pop().unwrap();
+    test.model
+        .send_completion_stream_text_chunk(&request, "wrapped up after exceeding context");
+    test.update_usage(1_000_001, cx);
+    test.assert_running(cx);
+    assert!(!test.model.is_completion_stream_closed(&request));
+    test.model.end_completion_stream(&request);
+    assert_eq!(send.await.unwrap(), "wrapped up after exceeding context");
+    test.assert_stopped(cx);
+    assert_eq!(test.model.pending_completions(), Vec::new());
+    test.assert_no_compaction(cx).await;
+}
+
+#[gpui::test]
+async fn test_subagent_context_limit_preserves_terminal_result_during_checkpoint(
+    cx: &mut TestAppContext,
+) {
+    for provider_error in [false, true] {
+        let test = SubagentCompactionTest::new_with_files(json!({".git": {}}), cx).await;
+        test.configure_compaction(false, 1_000_000, None, cx);
+        let mut send = test.send("subagent task prompt", cx);
+        let repository = test.thread.read_with(cx, |thread, cx| {
+            thread
+                .project()
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .active_repository()
+                .unwrap()
+        });
+        let (resume_checkpoint, checkpoint_gate) = oneshot::channel::<()>();
+        let checkpoint_job = repository.update(cx, |repository, _| {
+            repository.send_job("hold checkpoint", None, move |_, _| async move {
+                checkpoint_gate.await
+            })
+        });
+        test.model
+            .send_last_completion_stream_text_chunk("partial work");
+        if provider_error {
+            test.model.send_last_completion_stream_error(
+                LanguageModelCompletionError::from_http_status(
+                    LanguageModelProviderName::new("test"),
+                    http_client::StatusCode::BAD_REQUEST,
+                    "terminal provider error".to_string(),
+                    None,
+                ),
+            );
+        }
+        test.model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        test.thread
+            .read_with(cx, |thread, _| assert!(thread.is_turn_complete()));
+        assert!((&mut send).now_or_never().is_none());
+        repository.read_with(cx, |repository, _| {
+            let queue = repository.job_debug_queue().to_debug_value();
+            assert_eq!(
+                queue["entries"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|job| job["description"] == "checkpoint" && job["status"] == "Pending")
+                    .count(),
+                1,
+            );
+        });
+        test.thread.update(cx, |thread, cx| {
+            assert!(thread.is_turn_complete());
+            cx.emit(TokenUsageUpdated(Some(acp_thread::TokenUsage {
+                max_tokens: 1_000_000,
+                used_tokens: 800_000,
+                input_tokens: 800_000,
+                ..acp_thread::TokenUsage::default()
+            })));
+        });
+        cx.run_until_parked();
+        assert!((&mut send).now_or_never().is_none());
+        test.parent.read_with(cx, |thread, cx| {
+            assert_eq!(thread.running_subagent_ids(cx), vec![test.handle.id()]);
+        });
+
+        resume_checkpoint.send(()).unwrap();
+        checkpoint_job.await.unwrap().unwrap();
+        if provider_error {
+            assert_eq!(
+                send.await.unwrap_err().to_string(),
+                concat!(
+                    "terminal provider error\n\n",
+                    "Partial subagent output (last 3 messages, up to 4096 characters each):\n\n",
+                    "partial work",
+                ),
+            );
+        } else {
+            assert_eq!(send.await.unwrap(), "partial work");
+        }
+        test.assert_stopped(cx);
+        assert_eq!(test.model.pending_completions(), Vec::new());
+    }
+}
+
+#[gpui::test(iterations = 20)]
+async fn test_subagent_provider_overflow_with_auto_compaction_disabled(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    test.configure_compaction(false, 1_000_000, None, cx);
+    let send = test.send("subagent task prompt", cx);
+    test.model
+        .send_last_completion_stream_text_chunk("partial work");
+    test.model
+        .send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+            LanguageModelProviderName::new("test"),
+            http_client::StatusCode::PAYLOAD_TOO_LARGE,
+            "prompt too large".to_string(),
+            None,
+        ));
+    test.model.end_last_completion_stream();
+    assert_eq!(
+        send.await.unwrap_err().to_string(),
+        concat!(
+            "prompt too large\n\n",
+            "Partial subagent output (last 3 messages, up to 4096 characters each):\n\n",
+            "partial work",
+        ),
+    );
+    test.assert_stopped(cx);
+    assert_eq!(test.model.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
+async fn test_subagent_compaction_retries_transient_error(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    let send = test.send("subagent task prompt", cx);
+    test.tool_round(950_000, cx);
+    let request = test.compaction_request();
+    test.fail_compaction(
+        http_client::StatusCode::SERVICE_UNAVAILABLE,
+        Some(Duration::from_secs(3)),
+        cx,
+    );
+    test.assert_running(cx);
+    assert_eq!(test.model.pending_completions(), Vec::new());
+
+    cx.executor()
+        .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+            3,
+        )));
+    cx.run_until_parked();
+    let retry_request = test.compaction_request();
+    assert_eq!(retry_request.messages, request.messages);
+    test.model
+        .send_completion_stream_text_chunk(&retry_request, "subagent summary");
+    test.model.end_completion_stream(&retry_request);
+    cx.run_until_parked();
+
+    let request = test.model.pending_completions().pop().unwrap();
+    assert_eq!(request.intent, Some(CompletionIntent::ToolResults));
+    assert_eq!(
+        request
+            .messages
+            .iter()
+            .filter(|message| message.role != Role::System)
+            .map(|message| message.string_contents())
+            .collect::<Vec<_>>(),
+        vec![
+            "subagent task prompt",
+            "The previous conversation was compacted. Use this summary as context:\n\nsubagent summary",
+        ],
+    );
+    test.model
+        .send_completion_stream_text_chunk(&request, "subagent answer");
+    test.model.end_completion_stream(&request);
+    assert_eq!(send.await.unwrap(), "subagent answer");
+    test.assert_stopped(cx);
+    assert_eq!(test.model.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
+async fn test_subagent_compaction_exhausts_transient_retries(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    let send = test.send("subagent task prompt", cx);
+    test.tool_round(950_000, cx);
+    for request_index in 0..5 {
+        test.fail_compaction(
+            http_client::StatusCode::SERVICE_UNAVAILABLE,
+            Some(Duration::from_secs(3)),
+            cx,
+        );
+        assert_eq!(test.model.pending_completions(), Vec::new());
+        if request_index < 4 {
+            test.assert_running(cx);
+            cx.executor()
+                .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+                    3,
+                )));
+            cx.run_until_parked();
+        }
+    }
+    assert_eq!(
+        send.await.unwrap_err().to_string(),
+        concat!(
+            "Automatic context compaction failed: compaction provider error\n\n",
+            "Partial subagent output (last 3 messages, up to 4096 characters each):\n\n",
+            "partial work",
+        ),
+    );
+    test.assert_stopped(cx);
+    test.assert_no_compaction(cx).await;
+    cx.executor()
+        .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+            3,
+        )));
+    cx.run_until_parked();
+    assert_eq!(test.model.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
+async fn test_subagent_compaction_cancellation_during_retry_backoff(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    let send = test.send("subagent task prompt", cx);
+    test.tool_round(950_000, cx);
+    test.fail_compaction(
+        http_client::StatusCode::SERVICE_UNAVAILABLE,
+        Some(Duration::from_secs(3)),
+        cx,
+    );
+    test.assert_running(cx);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(test.model.pending_completions(), Vec::new());
+    test.parent.update(cx, |thread, cx| thread.cancel(cx)).await;
+    assert_eq!(send.await.unwrap_err().to_string(), "User canceled");
+    test.assert_stopped(cx);
+    test.assert_no_compaction(cx).await;
+    cx.executor()
+        .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+            3,
+        )));
+    cx.run_until_parked();
+    assert_eq!(test.model.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
+async fn test_subagent_compaction_nonretryable_provider_error(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    let send = test.send("subagent task prompt", cx);
+    test.tool_round(950_000, cx);
+    test.fail_compaction(http_client::StatusCode::BAD_REQUEST, None, cx);
+    assert_eq!(
+        send.await.unwrap_err().to_string(),
+        concat!(
+            "Automatic context compaction failed: compaction provider error\n\n",
+            "Partial subagent output (last 3 messages, up to 4096 characters each):\n\n",
+            "partial work",
+        ),
+    );
+    test.assert_stopped(cx);
+    test.assert_no_compaction(cx).await;
+    assert_eq!(test.model.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
 async fn test_subagent_compaction_parent_cancellation(cx: &mut TestAppContext) {
     let test = SubagentCompactionTest::new(cx).await;
     let send = test.send("subagent task prompt", cx);
     test.tool_round(950_000, cx);
-    let request = test.model.pending_completions().pop().unwrap();
-    assert_eq!(
-        request.intent,
-        Some(CompletionIntent::ThreadContextSummarization)
-    );
+    let request = test.compaction_request();
     test.model
         .send_completion_stream_text_chunk(&request, "partial summary");
     cx.run_until_parked();
@@ -6713,18 +7092,7 @@ async fn test_subagent_compaction_parent_cancellation(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(test.model.is_completion_stream_closed(&request));
     test.assert_stopped(cx);
-    let saved = test
-        .thread
-        .read_with(cx, |thread, cx| thread.to_db(cx))
-        .await;
-    assert_eq!(
-        saved
-            .messages
-            .iter()
-            .filter(|message| matches!(&***message, Message::Compaction(_)))
-            .count(),
-        0
-    );
+    test.assert_no_compaction(cx).await;
     test.model.end_completion_stream(&request);
     cx.run_until_parked();
     assert_eq!(test.model.pending_completions(), Vec::new());
@@ -6735,29 +7103,18 @@ async fn test_subagent_compaction_error_propagation(cx: &mut TestAppContext) {
     let test = SubagentCompactionTest::new(cx).await;
     let send = test.send("subagent task prompt", cx);
     test.tool_round(950_000, cx);
-    let request = test.model.pending_completions().pop().unwrap();
-    assert_eq!(
-        request.intent,
-        Some(CompletionIntent::ThreadContextSummarization)
-    );
+    let request = test.compaction_request();
     test.model.end_completion_stream(&request);
     assert_eq!(
         send.await.unwrap_err().to_string(),
-        "Compaction produced an empty summary"
+        concat!(
+            "Automatic context compaction failed: Compaction produced an empty summary\n\n",
+            "Partial subagent output (last 3 messages, up to 4096 characters each):\n\n",
+            "partial work",
+        )
     );
     test.assert_stopped(cx);
-    let saved = test
-        .thread
-        .read_with(cx, |thread, cx| thread.to_db(cx))
-        .await;
-    assert_eq!(
-        saved
-            .messages
-            .iter()
-            .filter(|message| matches!(&***message, Message::Compaction(_)))
-            .count(),
-        0
-    );
+    test.assert_no_compaction(cx).await;
     assert_eq!(test.model.pending_completions(), Vec::new());
 }
 
@@ -6832,44 +7189,59 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    // Verify subagent is running
-    thread.read_with(cx, |thread, cx| {
-        assert!(
-            !thread.running_subagent_ids(cx).is_empty(),
-            "subagent should be running"
-        );
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        let subagent_ids = thread.running_subagent_ids(cx);
+        assert_eq!(subagent_ids.len(), 1);
+        subagent_ids.into_iter().next().unwrap()
     });
 
-    // The subagent's model returns a non-retryable error
+    model.send_last_completion_stream_text_chunk("partial work");
     model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
         LanguageModelProviderName::new("test"),
         http_client::StatusCode::PAYLOAD_TOO_LARGE,
         "prompt too large".to_string(),
         None,
     ));
+    model.end_last_completion_stream();
 
     cx.run_until_parked();
 
-    // The subagent should no longer be running
     thread.read_with(cx, |thread, cx| {
-        assert!(
-            thread.running_subagent_ids(cx).is_empty(),
-            "subagent should not be running after error"
-        );
+        assert_eq!(thread.running_subagent_ids(cx), Vec::new(), "The subagent should no longer be running");
     });
 
-    // The parent model should get a new completion request to respond to the tool error
-    model.send_last_completion_stream_text_chunk("Response after error");
-    model.end_last_completion_stream();
+    let request = model.pending_completions().pop().unwrap();
+    assert_eq!(request.intent, Some(CompletionIntent::ToolResults));
+    let tool_results = request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|content| match content {
+            MessageContent::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(tool_results.len(), 1);
+    let tool_result = tool_results.first().unwrap();
+    assert_eq!(tool_result.tool_use_id.to_string(), "subagent_1");
+    assert_eq!(&*tool_result.tool_name, SpawnAgentTool::NAME);
+    assert!(tool_result.is_error);
+    assert_eq!(
+        tool_result.text_contents(),
+        json!({
+            "session_id": subagent_session_id,
+            "error": concat!(
+                "prompt too large\n\n",
+                "Partial subagent output (last 3 messages, up to 4096 characters each):\n\n",
+                "partial work",
+            ),
+        })
+        .to_string(),
+    );
+    model.send_completion_stream_text_chunk(&request, "Response after error");
+    model.end_completion_stream(&request);
 
     send.await.unwrap();
-
-    // Verify the parent thread shows the error in the tool call
-    let markdown = acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
-    assert!(
-        markdown.contains("Status: Failed"),
-        "tool call should have Failed status after model error, got:\n{markdown}"
-    );
 }
 
 #[gpui::test]
@@ -8616,6 +8988,8 @@ async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
     assert!(model_b_completions[0].thinking_allowed);
 }
 
+const SUBAGENT_CONTEXT_LIMIT_WARNING: &str = "The agent is nearing the end of its context window and has been stopped. You can prompt the thread again to have the agent wrap up or hand off its work.";
+
 struct SubagentCompactionTest {
     _agent: Entity<NativeAgent>,
     _acp_thread: Entity<AcpThread>,
@@ -8628,6 +9002,10 @@ struct SubagentCompactionTest {
 
 impl SubagentCompactionTest {
     async fn new(cx: &mut TestAppContext) -> Self {
+        Self::new_with_files(json!({}), cx).await
+    }
+
+    async fn new_with_files(files: serde_json::Value, cx: &mut TestAppContext) -> Self {
         init_test(cx);
         cx.update(|cx| {
             LanguageModelRegistry::test(cx);
@@ -8642,7 +9020,7 @@ impl SubagentCompactionTest {
             AgentSettings::override_global(settings, cx);
         });
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({})).await;
+        fs.insert_tree(path!("/test"), files).await;
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
         let store = cx.new(ThreadStore::new);
         let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
@@ -8681,15 +9059,29 @@ impl SubagentCompactionTest {
         }
     }
 
+    fn configure_compaction(
+        &self,
+        enabled: bool,
+        max_tokens: u64,
+        max_output_tokens: Option<u64>,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.auto_compact.enabled = enabled;
+            AgentSettings::override_global(settings, cx);
+        });
+        self.model.set_max_token_count(max_tokens);
+        self.model.set_max_output_tokens(max_output_tokens);
+    }
+
     fn send(&self, message: &str, cx: &mut TestAppContext) -> Task<Result<String>> {
         let send = cx.update(|cx| self.handle.send(message.to_string(), &cx.to_async()));
         cx.run_until_parked();
         send
     }
 
-    fn tool_round(&self, input_tokens: u64, cx: &mut TestAppContext) {
-        self.model
-            .send_last_completion_stream_text_chunk("partial work");
+    fn update_usage(&self, input_tokens: u64, cx: &mut TestAppContext) {
         self.model
             .send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
                 TokenUsage {
@@ -8698,6 +9090,12 @@ impl SubagentCompactionTest {
                 },
             ));
         cx.run_until_parked();
+    }
+
+    fn tool_round(&self, input_tokens: u64, cx: &mut TestAppContext) {
+        self.model
+            .send_last_completion_stream_text_chunk("partial work");
+        self.update_usage(input_tokens, cx);
         self.assert_running(cx);
         self.model
             .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
@@ -8714,6 +9112,54 @@ impl SubagentCompactionTest {
             ));
         self.model.end_last_completion_stream();
         cx.run_until_parked();
+    }
+
+    fn compaction_request(&self) -> LanguageModelRequest {
+        let mut requests = self.model.pending_completions();
+        assert_eq!(requests.len(), 1);
+        let request = requests.pop().unwrap();
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        request
+    }
+
+    fn fail_compaction(
+        &self,
+        status: http_client::StatusCode,
+        retry_after: Option<Duration>,
+        cx: &mut TestAppContext,
+    ) {
+        let request = self.compaction_request();
+        self.model
+            .send_completion_stream_text_chunk(&request, "failed summary");
+        self.model.send_completion_stream_error(
+            &request,
+            LanguageModelCompletionError::from_http_status(
+                LanguageModelProviderName::new("test"),
+                status,
+                "compaction provider error".to_string(),
+                retry_after,
+            ),
+        );
+        self.model.end_completion_stream(&request);
+        cx.run_until_parked();
+    }
+
+    async fn assert_no_compaction(&self, cx: &mut TestAppContext) {
+        let saved = self
+            .thread
+            .read_with(cx, |thread, cx| thread.to_db(cx))
+            .await;
+        assert_eq!(
+            saved
+                .messages
+                .iter()
+                .filter(|message| matches!(&***message, Message::Compaction(_)))
+                .count(),
+            0
+        );
     }
 
     fn assert_running(&self, cx: &mut TestAppContext) {
