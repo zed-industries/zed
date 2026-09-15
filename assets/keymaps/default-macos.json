@@ -1305,6 +1305,13 @@
     },
   },
   {
+    "context": "CommandPalette || (CommandPalette > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-backspace": "command_palette::RemoveSelected",
+    },
+  },
+  {
     "context": "RecentProjects || (RecentProjects > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {

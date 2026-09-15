@@ -1506,6 +1506,11 @@
     // Default: medium
     "modal_max_width": "medium",
   },
+  // Settings related to the command palette.
+  "command_palette": {
+    // Whether to use command history ranking for sorting in the command palette.
+    "use_command_history": true,
+  },
   // Settings related to the file finder.
   "file_finder": {
     // Whether to show file icons in the file finder.

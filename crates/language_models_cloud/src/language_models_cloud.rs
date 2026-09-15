@@ -609,6 +609,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         ) && self.model.supports_server_side_compaction
     }
 
+    fn supports_explicit_compaction_output_limit(&self) -> bool {
+        self.model.provider == cloud_llm_client::LanguageModelProvider::Anthropic
+            && self.supports_explicit_compaction()
+    }
+
     fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
         (self.model.provider == cloud_llm_client::LanguageModelProvider::Anthropic
             && self.supports_explicit_compaction())
@@ -710,6 +715,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             .boxed();
         }
 
+        let mut request = request;
+        if request.max_output_tokens.is_some() {
+            request.max_output_tokens =
+                request.effective_max_output_tokens(self.max_output_tokens());
+        }
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let app_version = self.app_version.clone();
@@ -1328,6 +1338,8 @@ mod tests {
             }
         });
         let model = cloud_test_model(http_client);
+        assert!(model.supports_explicit_compaction());
+        assert!(!model.supports_explicit_compaction_output_limit());
         let request = compact_test_request();
 
         let result = model.compact(request, &cx.to_async()).await.unwrap();
@@ -1475,10 +1487,9 @@ mod tests {
         });
         let model = cloud_anthropic_test_model(http_client);
 
-        let result = model
-            .compact(compact_test_request(), &cx.to_async())
-            .await
-            .unwrap();
+        let mut request = compact_test_request();
+        request.max_output_tokens = Some(8192);
+        let result = model.compact(request, &cx.to_async()).await.unwrap();
 
         assert_eq!(
             result.usage,
@@ -1510,6 +1521,7 @@ mod tests {
         assert_eq!(uri, "http://test.example/completions?");
         let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
         assert_eq!(body["provider"], "anthropic");
+        assert_eq!(body["provider_request"]["max_tokens"], 8192);
         assert_eq!(
             body["provider_request"]["context_management"],
             json!({
@@ -1805,10 +1817,61 @@ mod tests {
         let model = cloud_anthropic_test_model(FakeHttpClient::with_404_response());
 
         assert!(model.supports_explicit_compaction());
+        assert!(model.supports_explicit_compaction_output_limit());
+        assert_eq!(model.max_total_tokens(), Some(model.max_token_count()));
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
         );
+    }
+
+    #[gpui::test]
+    async fn hosted_open_ai_preserves_unset_output_and_clamps_explicit_caps(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for (limit, expected) in [
+            (None, None),
+            (Some(8192), Some(8192)),
+            (Some(u64::MAX), Some(128_000)),
+        ] {
+            let model = cloud_test_model(FakeHttpClient::create(move |mut request| async move {
+                assert_eq!(request.uri().path(), "/completions");
+                let mut body = String::new();
+                request.body_mut().read_to_string(&mut body).await?;
+                let body: serde_json::Value = serde_json::from_str(&body)?;
+                assert_eq!(
+                    body["provider_request"].get("max_output_tokens").cloned(),
+                    expected.map(|value| json!(value))
+                );
+                let completed = CompletionEvent::Event(json!({
+                    "type": "response.completed",
+                    "response": {
+                        "id": "response-1", "status": "completed", "output": [],
+                        "usage": {"input_tokens": 1, "output_tokens": 0, "total_tokens": 1}
+                    }
+                }));
+                let ended = CompletionEvent::<serde_json::Value>::Status(
+                    CompletionRequestStatus::StreamEnded,
+                );
+                Ok(Response::builder()
+                    .status(200)
+                    .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                    .body(AsyncBody::from(format!(
+                        "{}\n{}\n",
+                        serde_json::to_string(&completed)?,
+                        serde_json::to_string(&ended)?,
+                    )))?)
+            }));
+            let mut request = compact_test_request();
+            request.max_output_tokens = limit;
+            let mut stream = model
+                .stream_completion(request, &cx.to_async())
+                .await
+                .unwrap();
+            while let Some(event) = stream.next().await {
+                event.unwrap();
+            }
+        }
     }
 
     fn compact_test_request() -> LanguageModelRequest {

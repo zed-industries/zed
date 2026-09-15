@@ -3551,6 +3551,7 @@ impl Buffer {
 
             snapshot.text = new_text.snapshot.clone();
             snapshot.syntax = syntax;
+            snapshot.tree_sitter_data = Arc::new(TreeSitterData::new(&snapshot.text));
 
             EditedBufferSnapshot {
                 text: new_text,
