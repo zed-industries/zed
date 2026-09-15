@@ -12408,8 +12408,8 @@ mod tests {
     };
     use fs::FakeFs;
     use gpui::{
-        DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
-        UpdateGlobal, VisualTestContext, px,
+        DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Modifiers, Render,
+        TestAppContext, UpdateGlobal, VisualTestContext, px,
     };
     use project::{Project, ProjectEntryId, WorktreeId};
     use serde_json::json;
@@ -16815,6 +16815,48 @@ mod tests {
             assert!(workspace.right_dock().read(cx).is_open());
             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_clicking_panel_button_closes_a_zoomed_dock(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| {
+                TestPanel::new_with_icon(DockPosition::Bottom, 100, ui::IconName::Terminal, cx)
+            });
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Bottom, window, cx);
+            panel
+        });
+        cx.update(|window, _| window.activate_window());
+        cx.executor().run_until_parked();
+
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.executor().run_until_parked();
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.bottom_dock().read(cx).is_open());
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Bottom));
+        });
+
+        let button_bounds = cx
+            .debug_bounds("ICON-Terminal")
+            .expect("panel button should be rendered in the status bar");
+        cx.simulate_click(button_bounds.center(), Modifiers::default());
+        cx.executor().run_until_parked();
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(!workspace.bottom_dock().read(cx).is_open());
+            assert!(workspace.zoomed.is_none());
+            assert_eq!(workspace.zoomed_position, None);
         });
     }
 
