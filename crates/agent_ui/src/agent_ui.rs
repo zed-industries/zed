@@ -1013,6 +1013,7 @@ mod tests {
             sidebar_side: Default::default(),
             threads_sidebar_default_width: px(300.),
             thinking_display: Default::default(),
+            terminal_output_limit: agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT,
         };
 
         cx.update(|cx| {
