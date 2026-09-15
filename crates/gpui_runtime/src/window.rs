@@ -12,8 +12,8 @@ use crate::{
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
     Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
     KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, MeasureContext,
-    Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    MeasureHandles, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
     Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
@@ -89,16 +89,24 @@ pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
     height: Pixels(750.),
 };
 
-/// Bridges GPUI's window and app handles to the layout engine's erased
-/// [`MeasureContext`] so custom measure callbacks can recover them.
+/// Gives a measure callback the window halves and application it needs, erased
+/// for the layout engine to carry.
+///
+/// The halves are erased as themselves rather than as the [`Window`] borrowing
+/// them, because a window that borrows per-frame state is not `'static`, and
+/// the erasure the engine carries is `Any`, which requires it.
 struct WindowMeasureContext<'a> {
-    window: &'a mut Window,
+    core: &'a mut WindowHostCore,
+    frame_state: &'a mut WindowFrameState,
     cx: &'a mut App,
 }
 
 impl MeasureContext for WindowMeasureContext<'_> {
-    fn handles(&mut self) -> (&mut dyn Any, &mut dyn Any) {
-        (&mut *self.window, &mut *self.cx)
+    fn handles(&mut self) -> MeasureHandles<'_> {
+        MeasureHandles {
+            window: (self.core, self.frame_state),
+            app: self.cx,
+        }
     }
 }
 
@@ -1257,6 +1265,15 @@ pub(crate) struct WindowHostCore {
     pub(crate) a11y: A11y,
 }
 
+impl WindowHostCore {
+    fn metrics_handle(&self) -> WindowMetricsHandle {
+        WindowMetricsHandle {
+            id: self.handle.window_id(),
+            metrics: self.metrics.clone(),
+        }
+    }
+}
+
 /// A cloneable handle for reading a window's metrics without borrowing it.
 ///
 /// The snapshot it reads is published by the window, so a handle can be held by
@@ -1335,12 +1352,31 @@ impl WindowMetricsHandle {
 /// - Drawing: [`Window::paint_quad`], [`Window::paint_path`],
 ///   [`Window::paint_image`], [`Window::paint_drop_shadows`] and
 ///   [`Window::paint_inset_shadows`].
-pub struct Window {
+pub struct Window<'frame> {
     /// State that persists across frames: the platform handle, subscriptions
     /// and observers, input tracking and configuration.
-    pub(crate) core: WindowHostCore,
+    pub(crate) core: &'frame mut WindowHostCore,
     /// The per-frame working set that layout, prepaint and paint rebuild.
+    pub(crate) frame_state: &'frame mut WindowFrameState,
+}
+
+/// Owns a window's two halves across frames.
+///
+/// Every frame is driven through a [`Window`] borrowing both halves for the
+/// duration of the frame. Holding them in one owner lets those borrows be taken
+/// disjointly, so a frame can hold the window and the application at once.
+pub(crate) struct WindowHost {
+    pub(crate) core: WindowHostCore,
     pub(crate) frame_state: WindowFrameState,
+}
+
+impl WindowHost {
+    /// Runs `f` against a [`Window`] borrowing this host for the call.
+    pub(crate) fn with_window<R>(&mut self, f: impl FnOnce(&mut Window<'_>) -> R) -> R {
+        let core = &mut self.core;
+        let frame_state = &mut self.frame_state;
+        f(&mut Window { core, frame_state })
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1608,7 +1644,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
     window_bounds_ctor(Bounds::new(final_origin, base_size))
 }
 
-impl Window {
+impl WindowHost {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
@@ -2120,7 +2156,7 @@ impl Window {
 
         platform_window.map_window().unwrap();
 
-        Ok(Window {
+        Ok(WindowHost {
             core: WindowHostCore {
                 handle,
                 invalidator,
@@ -2212,16 +2248,16 @@ impl Window {
             },
         })
     }
+}
 
+impl Window<'_> {
     pub(crate) fn new_focus_listener(
         &self,
         value: AnyWindowFocusListener,
     ) -> (Subscription, impl FnOnce() + use<>) {
         self.core.focus_listeners.insert((), value)
     }
-}
 
-impl Window {
     fn mark_view_dirty(&mut self, view_id: EntityId) {
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
@@ -2306,10 +2342,7 @@ impl Window {
     /// frame, so unlike the accessors on `Window` it can be used from another
     /// thread. See [`WindowMetricsHandle`].
     pub fn metrics_handle(&self) -> WindowMetricsHandle {
-        WindowMetricsHandle {
-            id: self.core.handle.window_id(),
-            metrics: self.core.metrics.clone(),
-        }
+        self.core.metrics_handle()
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
@@ -5189,14 +5222,23 @@ impl Window {
         let scale_factor = self.scale_factor();
         let engine_style = to_engine_layout_style(&style);
         let measure = move |known_dimensions, available_space, context: &mut dyn MeasureContext| {
-            let (window, cx) = context.handles();
-            let window = window
-                .downcast_mut::<Window>()
-                .expect("measure context window should be a Window");
-            let cx = cx
+            let MeasureHandles { window, app } = context.handles();
+            let (core, frame_state) = window;
+            let core = core
+                .downcast_mut::<WindowHostCore>()
+                .expect("measure context window half should be a window's core");
+            let frame_state = frame_state
+                .downcast_mut::<WindowFrameState>()
+                .expect("measure context window half should be a window's frame state");
+            let cx = app
                 .downcast_mut::<App>()
                 .expect("measure context app should be an App");
-            measure(known_dimensions, available_space, window, cx)
+            measure(
+                known_dimensions,
+                available_space,
+                &mut Window { core, frame_state },
+                cx,
+            )
         };
         self.frame_state.layout_session.request_measured_layout(
             &engine_style,
@@ -5221,11 +5263,17 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let layout_session = self.frame_state.layout_session.clone();
+        let core = &mut *self.core;
+        let frame_state = &mut *self.frame_state;
         layout_session.compute_layout(
             layout_id,
             available_space,
             scale_factor,
-            &mut WindowMeasureContext { window: self, cx },
+            &mut WindowMeasureContext {
+                core,
+                frame_state,
+                cx,
+            },
         );
     }
 
@@ -7498,8 +7546,8 @@ impl AnyWindowHandle {
     pub fn metrics(&self, cx: &App) -> Option<WindowMetricsHandle> {
         cx.windows
             .get(self.id)
-            .and_then(|window| window.as_deref())
-            .map(Window::metrics_handle)
+            .and_then(|host| host.as_deref())
+            .map(|host| host.core.metrics_handle())
     }
 
     /// Returns the name of the window's declared root entity type.
@@ -7550,13 +7598,13 @@ impl AnyWindowHandle {
     }
 }
 
-impl HasWindowHandle for Window {
+impl HasWindowHandle for Window<'_> {
     fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
         self.core.platform_window.window_handle()
     }
 }
 
-impl HasDisplayHandle for Window {
+impl HasDisplayHandle for Window<'_> {
     fn display_handle(
         &self,
     ) -> std::result::Result<raw_window_handle::DisplayHandle<'_>, HandleError> {

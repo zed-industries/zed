@@ -122,10 +122,10 @@ mod conditional {
             self.active_element.as_ref().map(|e| &e.id)
         }
 
-        pub(crate) fn with_active_element_state<T: 'static, R>(
+        pub(crate) fn with_active_element_state<'w, T: 'static, R>(
             &mut self,
-            window: &mut Window,
-            f: impl FnOnce(&mut Option<T>, &mut Window) -> R,
+            window: &mut Window<'w>,
+            f: impl FnOnce(&mut Option<T>, &mut Window<'w>) -> R,
         ) -> R {
             let Some(active_element) = &mut self.active_element else {
                 return f(&mut None, window);

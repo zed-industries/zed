@@ -51,7 +51,8 @@ use crate::{
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
     SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
     SystemNotificationResponse, SystemWindowTab, Task, TextRenderingMode, TextSystem, ThermalState,
-    Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
+    Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowHost, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, resolve_dock_menu, resolve_menus,
 };
@@ -698,7 +699,7 @@ pub struct App {
     foreground_journal: crate::profiler::journal::ForegroundJournal,
     pub(crate) entities: EntityMap,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
-    pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
+    pub(crate) windows: SlotMap<WindowId, Option<Box<WindowHost>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
@@ -1298,23 +1299,25 @@ impl App {
         self.update(|cx| {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
-            match Window::new(handle.into(), options, cx) {
-                Ok(mut window) => {
+            match WindowHost::new(handle.into(), options, cx) {
+                Ok(mut host) => {
                     cx.window_update_stack.push(id);
-                    let root_view = build_root_view(&mut window, cx);
+                    let root_view = host.with_window(|window| build_root_view(window, cx));
                     cx.window_update_stack.pop();
-                    window.core.root.replace(root_view.into());
-                    window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
+                    host.core.root.replace(root_view.into());
+                    host.with_window(|window| {
+                        window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
 
-                    // allow a window to draw at least once before returning
-                    // this didn't cause any issues on non windows platforms as it seems we always won the race to on_request_frame
-                    // on windows we quite frequently lose the race and return a window that has never rendered, which leads to a crash
-                    // where DispatchTree::root_node_id asserts on empty nodes
-                    let clear = window.draw(cx);
-                    clear.clear(cx);
+                        // allow a window to draw at least once before returning
+                        // this didn't cause any issues on non windows platforms as it seems we always won the race to on_request_frame
+                        // on windows we quite frequently lose the race and return a window that has never rendered, which leads to a crash
+                        // where DispatchTree::root_node_id asserts on empty nodes
+                        let clear = window.draw(cx);
+                        clear.clear(cx);
+                    });
 
-                    cx.window_handles.insert(id, window.core.handle);
-                    cx.windows.get_mut(id).unwrap().replace(Box::new(window));
+                    cx.window_handles.insert(id, host.core.handle);
+                    cx.windows.get_mut(id).unwrap().replace(Box::new(host));
                     Ok(handle)
                 }
                 Err(e) => {
@@ -1914,16 +1917,16 @@ impl App {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update(|cx| {
-            let mut window = cx.windows.get_mut(id)?.take()?;
+            let mut host = cx.windows.get_mut(id)?.take()?;
 
-            let root_view = window.core.root.clone().unwrap();
+            let root_view = host.core.root.clone().unwrap();
 
-            cx.window_update_stack.push(window.core.handle.id);
-            let result = update(root_view, &mut window, cx);
-            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
+            cx.window_update_stack.push(host.core.handle.id);
+            let result = host.with_window(|window| update(root_view, window, cx));
+            fn trail(id: WindowId, host: Box<WindowHost>, cx: &mut App) -> Option<()> {
                 cx.window_update_stack.pop();
 
-                if window.core.removed {
+                if host.core.removed {
                     cx.end_platform_drag(id);
                     cx.window_handles.remove(&id);
                     cx.windows.remove(id);
@@ -1955,11 +1958,11 @@ impl App {
                         cx.quit();
                     }
                 } else {
-                    cx.windows.get_mut(id)?.replace(window);
+                    cx.windows.get_mut(id)?.replace(host);
                 }
                 Some(())
             }
-            trail(id, window, cx)?;
+            trail(id, host, cx)?;
 
             Some(result)
         })
@@ -2814,8 +2817,8 @@ impl App {
     /// This is a no-op if the image is not in the sprite atlas.
     pub fn drop_image(&mut self, image: Arc<RenderImage>, current_window: Option<&mut Window>) {
         // remove the texture from all other windows
-        for window in self.windows.values_mut().flatten() {
-            _ = window.drop_image(image.clone());
+        for host in self.windows.values_mut().flatten() {
+            _ = host.with_window(|window| window.drop_image(image.clone()));
         }
 
         // remove the texture from the current window

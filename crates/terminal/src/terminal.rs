@@ -5101,16 +5101,16 @@ mod tests {
             }
         }
 
-        struct HyperlinkVisualTestContext<'a, 'b> {
+        struct HyperlinkVisualTestContext<'a, 'b, 'w> {
             terminal: &'a mut Terminal,
-            window: &'a mut Window,
+            window: &'a mut Window<'w>,
             cx: &'a mut Context<'b, Terminal>,
         }
 
-        impl<'a, 'b> HyperlinkVisualTestContext<'a, 'b> {
+        impl<'a, 'b, 'w> HyperlinkVisualTestContext<'a, 'b, 'w> {
             fn new(
                 terminal: &'a mut Terminal,
-                window: &'a mut Window,
+                window: &'a mut Window<'w>,
                 cx: &'a mut Context<'b, Terminal>,
             ) -> Self {
                 Self {

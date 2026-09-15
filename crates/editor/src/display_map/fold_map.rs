@@ -1451,7 +1451,7 @@ pub struct ChunkRenderer {
     /// The id of the renderer associated with this chunk.
     pub id: ChunkRendererId,
     /// Creates a custom element to represent this chunk.
-    pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
+    pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext<'_, '_, '_>) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of the text.
     pub constrain_width: bool,
     /// The width of the element, as measured during the last layout pass.
@@ -1460,8 +1460,8 @@ pub struct ChunkRenderer {
     pub measured_width: Option<Pixels>,
 }
 
-pub struct ChunkRendererContext<'a, 'b> {
-    pub window: &'a mut Window,
+pub struct ChunkRendererContext<'a, 'b, 'w> {
+    pub window: &'a mut Window<'w>,
     pub context: &'b mut App,
     pub max_width: Pixels,
 }
@@ -1474,7 +1474,7 @@ impl fmt::Debug for ChunkRenderer {
     }
 }
 
-impl Deref for ChunkRendererContext<'_, '_> {
+impl Deref for ChunkRendererContext<'_, '_, '_> {
     type Target = App;
 
     fn deref(&self) -> &Self::Target {
@@ -1482,7 +1482,7 @@ impl Deref for ChunkRendererContext<'_, '_> {
     }
 }
 
-impl DerefMut for ChunkRendererContext<'_, '_> {
+impl DerefMut for ChunkRendererContext<'_, '_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.context
     }

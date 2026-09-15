@@ -156,7 +156,7 @@ impl BlockPointCursor<'_> {
     }
 }
 
-pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement>;
+pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext<'_, '_, '_>) -> AnyElement>;
 
 /// Where to place a block.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -318,9 +318,9 @@ pub struct EditorMargins {
 }
 
 #[derive(gpui::AppContext, gpui::VisualContext)]
-pub struct BlockContext<'a, 'b> {
+pub struct BlockContext<'a, 'b, 'w> {
     #[window]
-    pub window: &'a mut Window,
+    pub window: &'a mut Window<'w>,
     #[app]
     pub app: &'b mut App,
     pub anchor_x: Pixels,
@@ -2868,7 +2868,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
     }
 }
 
-impl Deref for BlockContext<'_, '_> {
+impl Deref for BlockContext<'_, '_, '_> {
     type Target = App;
 
     fn deref(&self) -> &Self::Target {
@@ -2876,7 +2876,7 @@ impl Deref for BlockContext<'_, '_> {
     }
 }
 
-impl DerefMut for BlockContext<'_, '_> {
+impl DerefMut for BlockContext<'_, '_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.app
     }
@@ -2884,7 +2884,7 @@ impl DerefMut for BlockContext<'_, '_> {
 
 impl CustomBlock {
     #[ztracing::instrument(skip_all)]
-    pub fn render(&self, cx: &mut BlockContext) -> AnyElement {
+    pub fn render(&self, cx: &mut BlockContext<'_, '_, '_>) -> AnyElement {
         self.render.lock()(cx)
     }
 

@@ -17,7 +17,7 @@ pub trait MacWindowExt {
     fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer);
 }
 
-impl MacWindowExt for Window {
+impl MacWindowExt for Window<'_> {
     fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
         use crate::PaintSurface;
 

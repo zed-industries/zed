@@ -16,14 +16,28 @@ use std::any::Any;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct LayoutId(pub u64);
 
-/// The type-erased handles a custom measure callback receives from the engine.
+/// The handles a facade supplies for the duration of one layout pass.
+///
+/// The engine forwards these from [`LayoutEngine::compute_layout`] to the
+/// measure callbacks the facade registered, and never reads them itself. The
+/// facade erases its window as the two halves its callback reassembles rather
+/// than as a single handle, because a window that borrows per-frame state is
+/// not `'static`, which erasing through `Any` would require.
+pub struct MeasureHandles<'a> {
+    /// The two halves of the facade's window.
+    pub window: (&'a mut dyn Any, &'a mut dyn Any),
+    /// The facade's application handle.
+    pub app: &'a mut dyn Any,
+}
+
+/// The handles a custom measure callback receives from the engine.
 ///
 /// The facade supplies a context whose `handles` return its window and
-/// application handles as `Any`; the engine only forwards the context to the
-/// callback stored when the node was created.
+/// application; the engine only forwards the context to the callback stored
+/// when the node was created.
 pub trait MeasureContext {
-    /// Returns the facade's window and application handles, type-erased.
-    fn handles(&mut self) -> (&mut dyn Any, &mut dyn Any);
+    /// Returns the facade's handles for this pass.
+    fn handles(&mut self) -> MeasureHandles<'_>;
 }
 
 /// A type-erased measure callback supplied to
