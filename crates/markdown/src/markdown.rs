@@ -3876,6 +3876,10 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
+        // The text around an image is a single flex item, so the image can only sit beside the
+        // whole text box, never inside its last wrapped row. Once the text is long enough to
+        // wrap, the image drops to the next line, unlike a browser, which flows it into the last row.
+
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
         self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
         self.append_child(child.into_any_element());
