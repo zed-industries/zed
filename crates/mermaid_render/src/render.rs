@@ -57,7 +57,10 @@ fn config_for_source(source: &str, theme: &MermaidTheme) -> Result<(merman::Merm
         .is_some_and(|name| name != "base");
     let mut config = if explicit_theme {
         // A named Mermaid preset supplies its own palette instead of host defaults.
-        merman::MermaidConfig::from_value(serde_json::json!({"htmlLabels": true}))
+        merman::MermaidConfig::from_value(serde_json::json!({
+            "fontFamily": theme.font_family,
+            "htmlLabels": true,
+        }))
     } else {
         to_merman_config(theme)
     };
@@ -342,6 +345,25 @@ mod tests {
                 config_for_source(&format!("{variables}flowchart LR\n A --> B"), &theme)
                     .expect("config");
             assert!(!custom_palette);
+        }
+    }
+
+    #[test]
+    fn named_themes_preserve_host_font_by_default() {
+        let mut theme = MermaidTheme::default();
+        theme.font_family = "Review Host Font, sans-serif".to_owned();
+
+        for name in ["dark", "forest", "neutral"] {
+            let source = format!("---\nconfig:\n  theme: {name}\n---\nflowchart LR\n A --> B");
+            let (config, custom_palette) =
+                config_for_source(&source, &theme).expect("named theme config");
+
+            assert!(custom_palette);
+            assert_eq!(
+                config.get_str("fontFamily"),
+                Some(theme.font_family.as_str()),
+                "theme {name}"
+            );
         }
     }
 
