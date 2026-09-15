@@ -7487,6 +7487,7 @@ dependencies = [
  "gpui_macos",
  "gpui_macros",
  "gpui_platform",
+ "gpui_runtime",
  "gpui_util",
  "gpui_web",
  "gpui_windows",
@@ -7789,6 +7790,14 @@ dependencies = [
  "waker-fn",
  "windows 0.62.2",
  "zed-scap",
+]
+
+[[package]]
+name = "gpui_runtime"
+version = "0.2.2"
+dependencies = [
+ "anyhow",
+ "gpui_authoring",
 ]
 
 [[package]]

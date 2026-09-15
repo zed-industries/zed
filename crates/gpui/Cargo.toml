@@ -74,6 +74,7 @@ doctest = false
 [dependencies]
 gpui_authoring.workspace = true
 gpui_platform.workspace = true
+gpui_runtime.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 gpui_web = { workspace = true, optional = true }

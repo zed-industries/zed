@@ -1,0 +1,27 @@
+[package]
+name = "gpui_runtime"
+version = "0.2.2"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+authors = ["Nathan Sobo <nathan@zed.dev>"]
+description = "Zed's process harness for starting and driving a GPUI application"
+repository = "https://github.com/zed-industries/zed"
+homepage = "https://gpui.rs"
+keywords = ["desktop", "gui", "immediate"]
+categories = ["gui"]
+
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[lib]
+path = "src/gpui_runtime.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+gpui_authoring.workspace = true

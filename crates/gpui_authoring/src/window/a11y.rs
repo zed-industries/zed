@@ -126,7 +126,7 @@ pub(crate) type A11yActionListener =
 pub(crate) struct A11y {
     /// Whether accessibility has been [forcibly disabled] for this window.
     ///
-    /// [forcibly disabled]: crate::Application::new_inaccessible
+    /// [forcibly disabled]: crate::App::set_accessibility_force_disabled
     force_disabled: bool,
     /// Whether a11y features have been requested by the system.
     ///

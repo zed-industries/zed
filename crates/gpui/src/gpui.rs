@@ -41,5 +41,6 @@ macro_rules! bench_main {
 
 pub use gpui_authoring::prelude;
 pub use gpui_authoring::*;
+pub use gpui_runtime::*;
 #[cfg(feature = "platform")]
 pub use platform_entry::*;
