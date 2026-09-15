@@ -13,6 +13,7 @@ path = "src/gpui_apple.rs"
 
 [features]
 default = []
+bench-support = ["gpui/bench-support"]
 test-support = ["gpui/test-support"]
 runtime_shaders = []
 
@@ -33,11 +34,11 @@ image.workspace = true
 log.workspace = true
 metal.workspace = true
 objc.workspace = true
+objc2.workspace = true
 parking_lot.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 cbindgen.workspace = true
-gpui.workspace = true
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

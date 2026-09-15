@@ -194,7 +194,7 @@ pub trait ParentElement {
     where
         Self: Sized,
     {
-        self.extend(std::iter::once(child.into_element().into_any()));
+        self.extend(std::iter::once(child.into_any_element()));
         self
     }
 

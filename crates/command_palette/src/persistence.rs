@@ -106,6 +106,13 @@ impl CommandPaletteDB {
         }
     }
 
+    #[cfg(test)]
+    query! {
+        pub(crate) async fn set_last_invoked(last_invoked: i64, command_name: String) -> Result<()> {
+            UPDATE command_invocations SET last_invoked = (?) WHERE command_name = (?)
+        }
+    }
+
     query! {
         pub fn get_command_usage(command: &str) -> Result<Option<SerializedCommandUsage>> {
             SELECT command_name, COUNT(1), MAX(last_invoked)
