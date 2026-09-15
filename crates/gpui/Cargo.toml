@@ -140,6 +140,10 @@ name = "hello_world"
 path = "examples/hello_world.rs"
 
 [[example]]
+name = "instrumented_pipeline"
+path = "examples/instrumented_pipeline.rs"
+
+[[example]]
 name = "move_entity_between_windows"
 path = "examples/move_entity_between_windows.rs"
 
