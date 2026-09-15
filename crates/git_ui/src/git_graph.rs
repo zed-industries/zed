@@ -4191,6 +4191,16 @@ impl workspace::SerializableItem for GitGraph {
         "GitGraph"
     }
 
+    fn serialized_item_ids(
+        workspace_id: workspace::WorkspaceId,
+        cx: &App,
+    ) -> gpui::Result<Vec<workspace::ItemId>> {
+        persistence::GitGraphsDb::global(cx)
+            .select_bound::<workspace::WorkspaceId, workspace::ItemId>(
+                "SELECT item_id FROM git_graphs WHERE workspace_id = ?",
+            )?(workspace_id)
+    }
+
     fn cleanup(
         workspace_id: workspace::WorkspaceId,
         alive_items: Vec<workspace::ItemId>,
@@ -4215,7 +4225,7 @@ impl workspace::SerializableItem for GitGraph {
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
         let db = persistence::GitGraphsDb::global(cx);
-        let Some((
+        let (
             repo_work_path,
             log_source_type,
             log_source_value,
@@ -4224,9 +4234,10 @@ impl workspace::SerializableItem for GitGraph {
             search_query,
             search_case_sensitive,
             hidden_columns,
-        )) = db.get_git_graph(item_id, workspace_id).ok().flatten()
-        else {
-            return Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")));
+        ) = match db.get_git_graph(item_id, workspace_id) {
+            Ok(Some(state)) => state,
+            Ok(None) => return Task::ready(Err(anyhow::anyhow!("No git graph to deserialize"))),
+            Err(error) => return Task::ready(Err(error)),
         };
 
         let state = persistence::SerializedGitGraphState {
@@ -4415,10 +4426,106 @@ mod persistence {
             sql!(
                 ALTER TABLE git_graphs ADD COLUMN hidden_columns INTEGER;
             ),
+            sql!(
+                CREATE TABLE git_graphs_new (
+                    workspace_id INTEGER,
+                    item_id INTEGER,
+                    is_open INTEGER DEFAULT FALSE,
+                    repo_working_path TEXT,
+                    log_source_type TEXT,
+                    log_source_value TEXT,
+                    log_order TEXT,
+                    selected_sha TEXT,
+                    search_query TEXT,
+                    search_case_sensitive INTEGER,
+                    hidden_columns INTEGER,
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+                INSERT INTO git_graphs_new (
+                    workspace_id, item_id, is_open, repo_working_path,
+                    log_source_type, log_source_value, log_order, selected_sha,
+                    search_query, search_case_sensitive, hidden_columns
+                ) SELECT
+                    workspace_id, item_id, is_open, repo_working_path,
+                    log_source_type, log_source_value, log_order, selected_sha,
+                    search_query, search_case_sensitive, hidden_columns
+                FROM git_graphs;
+                DROP TABLE git_graphs;
+                ALTER TABLE git_graphs_new RENAME TO git_graphs;
+            ),
         ];
     }
 
     db::static_connection!(GitGraphsDb, [WorkspaceDb]);
+
+    #[cfg(test)]
+    mod schema_tests {
+        use super::GitGraphsDb;
+        use db::sqlez::{
+            connection::Connection,
+            domain::{Domain as _, Migrator as _},
+        };
+
+        #[test]
+        fn migration_preserves_rows() -> anyhow::Result<()> {
+            let connection = connection(4)?;
+            connection.exec("INSERT INTO git_graphs VALUES (1, 0, 1, '/repo', '1', 'main', '2', 'abc', 'needle', 1, 13), (2, 9223372036854775807, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)")?()?;
+            let query = "SELECT json_array(workspace_id, item_id, is_open, repo_working_path, log_source_type, log_source_value, log_order, selected_sha, search_query, search_case_sensitive, hidden_columns) FROM git_graphs ORDER BY workspace_id";
+            let rows = connection.select::<String>(query)?()?;
+            GitGraphsDb::migrate(&connection)?;
+            GitGraphsDb::migrate(&connection)?;
+            assert_eq!(connection.select::<String>(query)?()?, rows);
+            assert_eq!(
+                connection
+                    .select::<String>("SELECT origin FROM pragma_index_list('git_graphs')")?(
+                )?,
+                ["pk"]
+            );
+            connection.exec("INSERT INTO git_graphs(workspace_id, item_id) VALUES (1, 1)")?()?;
+            assert_eq!(
+                connection.select::<i64>(
+                    "SELECT is_open FROM git_graphs WHERE workspace_id = 1 AND item_id = 1"
+                )?()?,
+                [0]
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn workspace_scoped_item_ids() -> anyhow::Result<()> {
+            let connection = connection(GitGraphsDb::MIGRATIONS.len())?;
+            connection.exec("PRAGMA foreign_keys = ON")?()?;
+            connection.exec("INSERT OR REPLACE INTO git_graphs(item_id, workspace_id, repo_working_path) VALUES (7, 1, '/first'), (7, 2, '/second')")?()?;
+            connection.exec("INSERT OR REPLACE INTO git_graphs(item_id, workspace_id, repo_working_path) VALUES (7, 1, '/updated')")?()?;
+            assert_eq!(connection.select::<(i64, i64, String)>("SELECT workspace_id, item_id, repo_working_path FROM git_graphs ORDER BY workspace_id")?()?, [(1, 7, String::from("/updated")), (2, 7, String::from("/second"))]);
+            connection.exec("DELETE FROM workspaces WHERE workspace_id = 1")?()?;
+            assert_eq!(
+                connection.select::<(i64, i64, String)>(
+                    "SELECT workspace_id, item_id, repo_working_path FROM git_graphs"
+                )?()?,
+                [(2, 7, String::from("/second"))]
+            );
+            assert!(
+                connection.exec("INSERT INTO git_graphs(workspace_id, item_id) VALUES (3, 7)")?()
+                    .is_err()
+            );
+            Ok(())
+        }
+
+        fn connection(migration_count: usize) -> anyhow::Result<Connection> {
+            let connection = Connection::open_memory(None);
+            connection.exec("CREATE TABLE workspaces(workspace_id INTEGER PRIMARY KEY) STRICT")?()?;
+            connection.exec("INSERT INTO workspaces VALUES (1), (2)")?()?;
+            connection.migrate(
+                GitGraphsDb::NAME,
+                &GitGraphsDb::MIGRATIONS[..migration_count],
+                &mut |_, _, _| false,
+            )?;
+            Ok(connection)
+        }
+    }
 
     pub const LOG_SOURCE_ALL: i32 = 0;
     pub const LOG_SOURCE_BRANCH: i32 = 1;

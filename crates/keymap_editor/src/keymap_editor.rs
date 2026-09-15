@@ -3932,6 +3932,15 @@ impl SerializableItem for KeymapEditor {
         "KeymapEditor"
     }
 
+    fn serialized_item_ids(
+        workspace_id: workspace::WorkspaceId,
+        cx: &App,
+    ) -> gpui::Result<Vec<workspace::ItemId>> {
+        KeybindingEditorDb::global(cx).select_bound::<workspace::WorkspaceId, workspace::ItemId>(
+            "SELECT item_id FROM keybinding_editors WHERE workspace_id = ?",
+        )?(workspace_id)
+    }
+
     fn cleanup(
         workspace_id: workspace::WorkspaceId,
         alive_items: Vec<workspace::ItemId>,
@@ -3988,7 +3997,8 @@ mod persistence {
     impl Domain for KeybindingEditorDb {
         const NAME: &str = stringify!(KeybindingEditorDb);
 
-        const MIGRATIONS: &[&str] = &[sql!(
+        const MIGRATIONS: &[&str] = &[
+            sql!(
                 CREATE TABLE keybinding_editors (
                     workspace_id INTEGER,
                     item_id INTEGER UNIQUE,
@@ -3997,10 +4007,98 @@ mod persistence {
                     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
                 ) STRICT;
-        )];
+            ),
+            sql!(
+                CREATE TABLE keybinding_editors_new (
+                    workspace_id INTEGER,
+                    item_id INTEGER,
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+                INSERT INTO keybinding_editors_new (workspace_id, item_id)
+                    SELECT workspace_id, item_id FROM keybinding_editors;
+                DROP TABLE keybinding_editors;
+                ALTER TABLE keybinding_editors_new RENAME TO keybinding_editors;
+            ),
+        ];
     }
 
     db::static_connection!(KeybindingEditorDb, [WorkspaceDb]);
+
+    #[cfg(test)]
+    mod schema_tests {
+        use super::KeybindingEditorDb;
+        use db::sqlez::{
+            connection::Connection,
+            domain::{Domain as _, Migrator as _},
+        };
+
+        #[test]
+        fn migration_preserves_rows() -> anyhow::Result<()> {
+            let connection = connection(1)?;
+            connection
+                .exec("INSERT INTO keybinding_editors VALUES (1, 0), (2, 9223372036854775807)")?(
+            )?;
+            KeybindingEditorDb::migrate(&connection)?;
+            KeybindingEditorDb::migrate(&connection)?;
+            assert_eq!(
+                connection.select::<(i64, i64)>(
+                    "SELECT * FROM keybinding_editors ORDER BY workspace_id"
+                )?()?,
+                [(1, 0), (2, i64::MAX)]
+            );
+            assert_eq!(
+                connection.select::<String>(
+                    "SELECT origin FROM pragma_index_list('keybinding_editors')"
+                )?()?,
+                ["pk"]
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn workspace_scoped_item_ids() -> anyhow::Result<()> {
+            let connection = connection(KeybindingEditorDb::MIGRATIONS.len())?;
+            connection.exec("PRAGMA foreign_keys = ON")?()?;
+            connection.exec("INSERT OR REPLACE INTO keybinding_editors(item_id, workspace_id) VALUES (7, 1), (7, 2)")?()?;
+            connection.exec(
+                "INSERT OR REPLACE INTO keybinding_editors(item_id, workspace_id) VALUES (7, 1)",
+            )?()?;
+            assert_eq!(
+                connection.select::<(i64, i64)>(
+                    "SELECT workspace_id, item_id FROM keybinding_editors ORDER BY workspace_id"
+                )?()?,
+                [(1, 7), (2, 7)]
+            );
+            connection.exec("DELETE FROM workspaces WHERE workspace_id = 1")?()?;
+            assert_eq!(
+                connection.select::<(i64, i64)>(
+                    "SELECT workspace_id, item_id FROM keybinding_editors"
+                )?()?,
+                [(2, 7)]
+            );
+            assert!(
+                connection
+                    .exec("INSERT INTO keybinding_editors(workspace_id, item_id) VALUES (3, 7)")?(
+                )
+                .is_err()
+            );
+            Ok(())
+        }
+
+        fn connection(migration_count: usize) -> anyhow::Result<Connection> {
+            let connection = Connection::open_memory(None);
+            connection.exec("CREATE TABLE workspaces(workspace_id INTEGER PRIMARY KEY) STRICT")?()?;
+            connection.exec("INSERT INTO workspaces VALUES (1), (2)")?()?;
+            connection.migrate(
+                KeybindingEditorDb::NAME,
+                &KeybindingEditorDb::MIGRATIONS[..migration_count],
+                &mut |_, _, _| false,
+            )?;
+            Ok(connection)
+        }
+    }
 
     impl KeybindingEditorDb {
         query! {

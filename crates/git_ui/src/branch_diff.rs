@@ -645,6 +645,16 @@ impl SerializableItem for BranchDiff {
         "BranchDiff"
     }
 
+    fn serialized_item_ids(
+        workspace_id: workspace::WorkspaceId,
+        cx: &App,
+    ) -> Result<Vec<workspace::ItemId>> {
+        project_diff::persistence::ProjectDiffDb::global(cx)
+            .select_bound::<workspace::WorkspaceId, workspace::ItemId>(
+                "SELECT item_id FROM project_diffs WHERE workspace_id = ?",
+            )?(workspace_id)
+    }
+
     fn cleanup(
         _: workspace::WorkspaceId,
         _: Vec<workspace::ItemId>,

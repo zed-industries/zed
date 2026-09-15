@@ -544,6 +544,15 @@ impl crate::SerializableItem for WelcomePage {
         "WelcomePage"
     }
 
+    fn serialized_item_ids(
+        workspace_id: crate::WorkspaceId,
+        cx: &App,
+    ) -> gpui::Result<Vec<crate::ItemId>> {
+        persistence::WelcomePagesDb::global(cx).select_bound::<crate::WorkspaceId, crate::ItemId>(
+            "SELECT item_id FROM welcome_pages WHERE workspace_id = ?",
+        )?(workspace_id)
+    }
+
     fn cleanup(
         workspace_id: crate::WorkspaceId,
         alive_items: Vec<crate::ItemId>,
@@ -567,16 +576,12 @@ impl crate::SerializableItem for WelcomePage {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        if persistence::WelcomePagesDb::global(cx)
-            .get_welcome_page(item_id, workspace_id)
-            .ok()
-            .is_some_and(|is_open| is_open)
-        {
-            Task::ready(Ok(
+        match persistence::WelcomePagesDb::global(cx).get_welcome_page(item_id, workspace_id) {
+            Ok(true) => Task::ready(Ok(
                 cx.new(|cx| WelcomePage::new(workspace, false, window, cx))
-            ))
-        } else {
-            Task::ready(Err(anyhow::anyhow!("No welcome page to deserialize")))
+            )),
+            Ok(false) => Task::ready(Err(anyhow::anyhow!("No welcome page to deserialize"))),
+            Err(error) => Task::ready(Err(error)),
         }
     }
 
@@ -612,7 +617,8 @@ mod persistence {
     impl Domain for WelcomePagesDb {
         const NAME: &str = stringify!(WelcomePagesDb);
 
-        const MIGRATIONS: &[&str] = (&[sql!(
+        const MIGRATIONS: &[&str] = &[
+            sql!(
                     CREATE TABLE welcome_pages (
                         workspace_id INTEGER,
                         item_id INTEGER UNIQUE,
@@ -622,10 +628,107 @@ mod persistence {
                         FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                         ON DELETE CASCADE
                     ) STRICT;
-        )]);
+            ),
+            sql!(
+                CREATE TABLE welcome_pages_new (
+                    workspace_id INTEGER,
+                    item_id INTEGER,
+                    is_open INTEGER DEFAULT FALSE,
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+                INSERT INTO welcome_pages_new (workspace_id, item_id, is_open)
+                    SELECT workspace_id, item_id, is_open FROM welcome_pages;
+                DROP TABLE welcome_pages;
+                ALTER TABLE welcome_pages_new RENAME TO welcome_pages;
+            ),
+        ];
     }
 
     db::static_connection!(WelcomePagesDb, [WorkspaceDb]);
+
+    #[cfg(test)]
+    mod schema_tests {
+        use super::WelcomePagesDb;
+        use db::sqlez::{
+            connection::Connection,
+            domain::{Domain as _, Migrator as _},
+        };
+
+        #[test]
+        fn migration_preserves_rows() -> anyhow::Result<()> {
+            let connection = connection(1)?;
+            connection.exec(
+                "INSERT INTO welcome_pages VALUES (1, 0, 1), (2, 9223372036854775807, NULL)",
+            )?()?;
+            let rows = connection.select::<(i64, i64, Option<i64>)>(
+                "SELECT * FROM welcome_pages ORDER BY workspace_id",
+            )?()?;
+            WelcomePagesDb::migrate(&connection)?;
+            WelcomePagesDb::migrate(&connection)?;
+            assert_eq!(
+                connection.select::<(i64, i64, Option<i64>)>(
+                    "SELECT * FROM welcome_pages ORDER BY workspace_id"
+                )?()?,
+                rows
+            );
+            assert_eq!(
+                connection
+                    .select::<String>("SELECT origin FROM pragma_index_list('welcome_pages')")?(
+                )?,
+                ["pk"]
+            );
+            connection.exec("INSERT INTO welcome_pages(workspace_id, item_id) VALUES (1, 1)")?()?;
+            assert_eq!(
+                connection.select::<i64>(
+                    "SELECT is_open FROM welcome_pages WHERE workspace_id = 1 AND item_id = 1"
+                )?()?,
+                [0]
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn workspace_scoped_item_ids() -> anyhow::Result<()> {
+            let connection = connection(WelcomePagesDb::MIGRATIONS.len())?;
+            connection.exec("PRAGMA foreign_keys = ON")?()?;
+            connection.exec("INSERT OR REPLACE INTO welcome_pages(item_id, workspace_id, is_open) VALUES (7, 1, 1), (7, 2, 1)")?()?;
+            connection.exec("INSERT OR REPLACE INTO welcome_pages(item_id, workspace_id, is_open) VALUES (7, 1, 0)")?()?;
+            assert_eq!(
+                connection.select::<(i64, i64, bool)>(
+                    "SELECT workspace_id, item_id, is_open FROM welcome_pages ORDER BY workspace_id"
+                )?()?,
+                [(1, 7, false), (2, 7, true)]
+            );
+            connection.exec("DELETE FROM workspaces WHERE workspace_id = 1")?()?;
+            assert_eq!(
+                connection.select::<(i64, i64, bool)>(
+                    "SELECT workspace_id, item_id, is_open FROM welcome_pages"
+                )?()?,
+                [(2, 7, true)]
+            );
+            assert!(
+                connection
+                    .exec("INSERT INTO welcome_pages(workspace_id, item_id) VALUES (3, 7)")?(
+                )
+                .is_err()
+            );
+            Ok(())
+        }
+
+        fn connection(migration_count: usize) -> anyhow::Result<Connection> {
+            let connection = Connection::open_memory(None);
+            connection.exec("CREATE TABLE workspaces(workspace_id INTEGER PRIMARY KEY) STRICT")?()?;
+            connection.exec("INSERT INTO workspaces VALUES (1), (2)")?()?;
+            connection.migrate(
+                WelcomePagesDb::NAME,
+                &WelcomePagesDb::MIGRATIONS[..migration_count],
+                &mut |_, _, _| false,
+            )?;
+            Ok(connection)
+        }
+    }
 
     impl WelcomePagesDb {
         query! {

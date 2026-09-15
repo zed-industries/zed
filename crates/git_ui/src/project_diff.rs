@@ -679,10 +679,92 @@ pub(crate) mod persistence {
                     AND project_diffs.diff_base LIKE '{"Merge"%'
                 );
             "#,
+            sql!(
+                CREATE TABLE project_diffs_new (
+                    workspace_id INTEGER,
+                    item_id INTEGER,
+                    diff_base TEXT,
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+                INSERT INTO project_diffs_new (workspace_id, item_id, diff_base)
+                    SELECT workspace_id, item_id, diff_base FROM project_diffs;
+                DROP TABLE project_diffs;
+                ALTER TABLE project_diffs_new RENAME TO project_diffs;
+            ),
         ];
     }
 
     db::static_connection!(ProjectDiffDb, [WorkspaceDb]);
+
+    #[cfg(test)]
+    mod schema_tests {
+        use super::ProjectDiffDb;
+        use db::sqlez::{
+            connection::Connection,
+            domain::{Domain as _, Migrator as _},
+        };
+
+        #[test]
+        fn migration_preserves_rows() -> anyhow::Result<()> {
+            let connection = connection(2)?;
+            connection.exec(r#"INSERT INTO project_diffs VALUES (1, 0, '{"Merge":{"base_ref":"main"}}'), (2, 9223372036854775807, NULL)"#)?()?;
+            let rows = connection.select::<(i64, i64, Option<String>)>(
+                "SELECT * FROM project_diffs ORDER BY workspace_id",
+            )?()?;
+            ProjectDiffDb::migrate(&connection)?;
+            ProjectDiffDb::migrate(&connection)?;
+            assert_eq!(
+                connection.select::<(i64, i64, Option<String>)>(
+                    "SELECT * FROM project_diffs ORDER BY workspace_id"
+                )?()?,
+                rows
+            );
+            assert_eq!(
+                connection
+                    .select::<String>("SELECT origin FROM pragma_index_list('project_diffs')")?(
+                )?,
+                ["pk"]
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn workspace_scoped_item_ids() -> anyhow::Result<()> {
+            let connection = connection(ProjectDiffDb::MIGRATIONS.len())?;
+            connection.exec("PRAGMA foreign_keys = ON")?()?;
+            connection.exec(r#"INSERT OR REPLACE INTO project_diffs(item_id, workspace_id, diff_base) VALUES (7, 1, '{"Merge":{"base_ref":"main"}}'), (7, 2, '{"Merge":{"base_ref":"release"}}')"#)?()?;
+            connection.exec(r#"INSERT OR REPLACE INTO project_diffs(item_id, workspace_id, diff_base) VALUES (7, 1, '{"Merge":{"base_ref":"develop"}}')"#)?()?;
+            assert_eq!(connection.select::<(i64, i64, String)>("SELECT workspace_id, item_id, diff_base FROM project_diffs ORDER BY workspace_id")?()?, [(1, 7, String::from(r#"{"Merge":{"base_ref":"develop"}}"#)), (2, 7, String::from(r#"{"Merge":{"base_ref":"release"}}"#))]);
+            connection.exec("DELETE FROM workspaces WHERE workspace_id = 1")?()?;
+            assert_eq!(
+                connection.select::<(i64, i64, String)>(
+                    "SELECT workspace_id, item_id, diff_base FROM project_diffs"
+                )?()?,
+                [(2, 7, String::from(r#"{"Merge":{"base_ref":"release"}}"#))]
+            );
+            assert!(
+                connection
+                    .exec("INSERT INTO project_diffs(workspace_id, item_id) VALUES (3, 7)")?(
+                )
+                .is_err()
+            );
+            Ok(())
+        }
+
+        fn connection(migration_count: usize) -> anyhow::Result<Connection> {
+            let connection = Connection::open_memory(None);
+            connection.exec("CREATE TABLE workspaces(workspace_id INTEGER PRIMARY KEY) STRICT; CREATE TABLE items(workspace_id INTEGER, item_id INTEGER, kind TEXT) STRICT")?()?;
+            connection.exec("INSERT INTO workspaces VALUES (1), (2)")?()?;
+            connection.migrate(
+                ProjectDiffDb::NAME,
+                &ProjectDiffDb::MIGRATIONS[..migration_count],
+                &mut |_, _, _| false,
+            )?;
+            Ok(connection)
+        }
+    }
 
     impl ProjectDiffDb {
         pub async fn save_project_diff_base(

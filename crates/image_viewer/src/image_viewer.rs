@@ -685,6 +685,12 @@ impl SerializableItem for ImageView {
         "ImageView"
     }
 
+    fn serialized_item_ids(workspace_id: WorkspaceId, cx: &App) -> anyhow::Result<Vec<ItemId>> {
+        ImageViewerDb::global(cx).select_bound::<WorkspaceId, ItemId>(
+            "SELECT item_id FROM image_viewers WHERE workspace_id = ?",
+        )?(workspace_id)
+    }
+
     fn deserialize(
         project: Entity<Project>,
         _workspace: WeakEntity<Workspace>,
@@ -1364,7 +1370,8 @@ mod persistence {
     impl Domain for ImageViewerDb {
         const NAME: &str = stringify!(ImageViewerDb);
 
-        const MIGRATIONS: &[&str] = &[sql!(
+        const MIGRATIONS: &[&str] = &[
+            sql!(
                 CREATE TABLE image_viewers (
                     workspace_id INTEGER,
                     item_id INTEGER UNIQUE,
@@ -1375,10 +1382,95 @@ mod persistence {
                     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
                 ) STRICT;
-        )];
+            ),
+            sql!(
+                CREATE TABLE image_viewers_new (
+                    workspace_id INTEGER,
+                    item_id INTEGER,
+                    image_path BLOB,
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+                INSERT INTO image_viewers_new (workspace_id, item_id, image_path)
+                    SELECT workspace_id, item_id, image_path FROM image_viewers;
+                DROP TABLE image_viewers;
+                ALTER TABLE image_viewers_new RENAME TO image_viewers;
+            ),
+        ];
     }
 
     db::static_connection!(ImageViewerDb, [WorkspaceDb]);
+
+    #[cfg(test)]
+    mod schema_tests {
+        use super::ImageViewerDb;
+        use db::sqlez::{
+            connection::Connection,
+            domain::{Domain as _, Migrator as _},
+        };
+
+        #[test]
+        fn migration_preserves_rows() -> anyhow::Result<()> {
+            let connection = connection(1)?;
+            connection.exec(
+                "INSERT INTO image_viewers VALUES (1, 0, X'00FF'), (2, 9223372036854775807, NULL)",
+            )?()?;
+            let rows = connection.select::<(i64, i64, Option<Vec<u8>>)>(
+                "SELECT * FROM image_viewers ORDER BY workspace_id",
+            )?()?;
+            ImageViewerDb::migrate(&connection)?;
+            ImageViewerDb::migrate(&connection)?;
+            assert_eq!(
+                connection.select::<(i64, i64, Option<Vec<u8>>)>(
+                    "SELECT * FROM image_viewers ORDER BY workspace_id"
+                )?()?,
+                rows
+            );
+            assert_eq!(
+                connection
+                    .select::<String>("SELECT origin FROM pragma_index_list('image_viewers')")?(
+                )?,
+                ["pk"]
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn workspace_scoped_item_ids() -> anyhow::Result<()> {
+            let connection = connection(ImageViewerDb::MIGRATIONS.len())?;
+            connection.exec("PRAGMA foreign_keys = ON")?()?;
+            connection.exec("INSERT OR REPLACE INTO image_viewers(item_id, workspace_id, image_path) VALUES (7, 1, X'01'), (7, 2, X'02')")?()?;
+            connection.exec("INSERT OR REPLACE INTO image_viewers(item_id, workspace_id, image_path) VALUES (7, 1, X'03')")?()?;
+            assert_eq!(connection.select::<(i64, i64, Vec<u8>)>("SELECT workspace_id, item_id, image_path FROM image_viewers ORDER BY workspace_id")?()?, [(1, 7, vec![3]), (2, 7, vec![2])]);
+            connection.exec("DELETE FROM workspaces WHERE workspace_id = 1")?()?;
+            assert_eq!(
+                connection.select::<(i64, i64, Vec<u8>)>(
+                    "SELECT workspace_id, item_id, image_path FROM image_viewers"
+                )?()?,
+                [(2, 7, vec![2])]
+            );
+            assert!(
+                connection
+                    .exec("INSERT INTO image_viewers(workspace_id, item_id) VALUES (3, 7)")?(
+                )
+                .is_err()
+            );
+            Ok(())
+        }
+
+        fn connection(migration_count: usize) -> anyhow::Result<Connection> {
+            let connection = Connection::open_memory(None);
+            connection.exec("CREATE TABLE workspaces(workspace_id INTEGER PRIMARY KEY) STRICT")?()?;
+            connection.exec("INSERT INTO workspaces VALUES (1), (2)")?()?;
+            connection.migrate(
+                ImageViewerDb::NAME,
+                &ImageViewerDb::MIGRATIONS[..migration_count],
+                &mut |_, _, _| false,
+            )?;
+            Ok(connection)
+        }
+    }
 
     impl ImageViewerDb {
         query! {

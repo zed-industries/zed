@@ -592,6 +592,16 @@ impl workspace::SerializableItem for Onboarding {
         "OnboardingPage"
     }
 
+    fn serialized_item_ids(
+        workspace_id: workspace::WorkspaceId,
+        cx: &App,
+    ) -> gpui::Result<Vec<workspace::ItemId>> {
+        persistence::OnboardingPagesDb::global(cx)
+            .select_bound::<workspace::WorkspaceId, workspace::ItemId>(
+                "SELECT item_id FROM onboarding_pages WHERE workspace_id = ?",
+            )?(workspace_id)
+    }
+
     fn cleanup(
         workspace_id: workspace::WorkspaceId,
         alive_items: Vec<workspace::ItemId>,
@@ -685,10 +695,97 @@ mod persistence {
                         DROP TABLE onboarding_pages;
                         ALTER TABLE onboarding_pages_2 RENAME TO onboarding_pages;
             ),
+            sql!(
+                CREATE TABLE onboarding_pages_new (
+                    workspace_id INTEGER,
+                    item_id INTEGER,
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+                INSERT INTO onboarding_pages_new (workspace_id, item_id)
+                    SELECT workspace_id, item_id FROM onboarding_pages;
+                DROP TABLE onboarding_pages;
+                ALTER TABLE onboarding_pages_new RENAME TO onboarding_pages;
+            ),
         ];
     }
 
     db::static_connection!(OnboardingPagesDb, [WorkspaceDb]);
+
+    #[cfg(test)]
+    mod schema_tests {
+        use super::OnboardingPagesDb;
+        use db::sqlez::{
+            connection::Connection,
+            domain::{Domain as _, Migrator as _},
+        };
+
+        #[test]
+        fn migration_preserves_rows() -> anyhow::Result<()> {
+            let connection = connection(2)?;
+            connection
+                .exec("INSERT INTO onboarding_pages VALUES (1, 0), (2, 9223372036854775807)")?(
+            )?;
+            OnboardingPagesDb::migrate(&connection)?;
+            OnboardingPagesDb::migrate(&connection)?;
+            assert_eq!(
+                connection.select::<(i64, i64)>(
+                    "SELECT * FROM onboarding_pages ORDER BY workspace_id"
+                )?()?,
+                [(1, 0), (2, i64::MAX)]
+            );
+            assert_eq!(
+                connection.select::<String>(
+                    "SELECT origin FROM pragma_index_list('onboarding_pages')"
+                )?()?,
+                ["pk"]
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn workspace_scoped_item_ids() -> anyhow::Result<()> {
+            let connection = connection(OnboardingPagesDb::MIGRATIONS.len())?;
+            connection.exec("PRAGMA foreign_keys = ON")?()?;
+            connection.exec("INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id) VALUES (7, 1), (7, 2)")?()?;
+            connection.exec(
+                "INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id) VALUES (7, 1)",
+            )?()?;
+            assert_eq!(
+                connection.select::<(i64, i64)>(
+                    "SELECT workspace_id, item_id FROM onboarding_pages ORDER BY workspace_id"
+                )?()?,
+                [(1, 7), (2, 7)]
+            );
+            connection.exec("DELETE FROM workspaces WHERE workspace_id = 1")?()?;
+            assert_eq!(
+                connection
+                    .select::<(i64, i64)>("SELECT workspace_id, item_id FROM onboarding_pages")?(
+                )?,
+                [(2, 7)]
+            );
+            assert!(
+                connection
+                    .exec("INSERT INTO onboarding_pages(workspace_id, item_id) VALUES (3, 7)")?(
+                )
+                .is_err()
+            );
+            Ok(())
+        }
+
+        fn connection(migration_count: usize) -> anyhow::Result<Connection> {
+            let connection = Connection::open_memory(None);
+            connection.exec("CREATE TABLE workspaces(workspace_id INTEGER PRIMARY KEY) STRICT")?()?;
+            connection.exec("INSERT INTO workspaces VALUES (1), (2)")?()?;
+            connection.migrate(
+                OnboardingPagesDb::NAME,
+                &OnboardingPagesDb::MIGRATIONS[..migration_count],
+                &mut |_, _, _| false,
+            )?;
+            Ok(connection)
+        }
+    }
 
     impl OnboardingPagesDb {
         query! {

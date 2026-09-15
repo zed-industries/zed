@@ -1,5 +1,6 @@
 mod persistence;
 
+use anyhow::Context as _;
 use client::UserStore;
 use collections::HashMap;
 use component::{ComponentId, ComponentMetadata, ComponentStatus, components};
@@ -783,6 +784,12 @@ impl SerializableItem for ComponentPreview {
         "ComponentPreview"
     }
 
+    fn serialized_item_ids(workspace_id: WorkspaceId, cx: &App) -> anyhow::Result<Vec<ItemId>> {
+        ComponentPreviewDb::global(cx).select_bound::<WorkspaceId, ItemId>(
+            "SELECT item_id FROM component_previews WHERE workspace_id = ?",
+        )?(workspace_id)
+    }
+
     fn deserialize(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -791,17 +798,13 @@ impl SerializableItem for ComponentPreview {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
-        let deserialized_active_page =
-            match ComponentPreviewDb::global(cx).get_active_page(item_id, workspace_id) {
-                Ok(page) => {
-                    if let Some(page) = page {
-                        ActivePageId(page)
-                    } else {
-                        ActivePageId::default()
-                    }
-                }
-                Err(_) => ActivePageId::default(),
-            };
+        let deserialized_active_page = match ComponentPreviewDb::global(cx)
+            .get_active_page(item_id, workspace_id)
+            .and_then(|page| page.context("No component preview entry found"))
+        {
+            Ok(page) => ActivePageId(page),
+            Err(error) => return Task::ready(Err(error)),
+        };
 
         let user_store = project.read(cx).user_store();
         let language_registry = project.read(cx).languages().clone();
@@ -987,5 +990,143 @@ impl RenderOnce for ComponentPreviewPage {
             .overflow_x_hidden()
             .child(self.render_header(window, cx))
             .child(self.render_preview(window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, WindowHandle};
+    use std::path::Path;
+    use workspace::{MultiWorkspace, WorkspaceDb};
+
+    #[gpui::test]
+    async fn component_deserialize_requires_payload(cx: &mut TestAppContext) {
+        let (project, window, workspace_id) = serialization_workspace(cx).await;
+        let error = window
+            .update(cx, |multi_workspace, window, cx| {
+                ComponentPreview::deserialize(
+                    project,
+                    multi_workspace.workspace().downgrade(),
+                    workspace_id,
+                    7,
+                    window,
+                    cx,
+                )
+            })
+            .expect("deserialize missing component preview")
+            .await
+            .err()
+            .expect("missing payload must fail");
+        assert_eq!(error.to_string(), "No component preview entry found");
+    }
+
+    #[gpui::test]
+    async fn component_deserialize_propagates_payload_query_error(cx: &mut TestAppContext) {
+        let (project, window, workspace_id) = serialization_workspace(cx).await;
+        let database = cx.update(|cx| ComponentPreviewDb::global(cx));
+        database.write(|connection| {
+            connection.exec("ALTER TABLE component_previews RENAME COLUMN active_page_id TO unreadable_page_id")?()
+        }).await.expect("invalidate payload query");
+        let expected = database
+            .get_active_page(7, workspace_id)
+            .expect_err("payload query must fail")
+            .to_string();
+        let error = window
+            .update(cx, |multi_workspace, window, cx| {
+                ComponentPreview::deserialize(
+                    project,
+                    multi_workspace.workspace().downgrade(),
+                    workspace_id,
+                    7,
+                    window,
+                    cx,
+                )
+            })
+            .expect("deserialize unreadable component preview")
+            .await
+            .err()
+            .expect("query failure must propagate");
+        assert_eq!(error.to_string(), expected);
+    }
+
+    #[gpui::test]
+    async fn component_deserialize_preserves_default_for_saved_pages(cx: &mut TestAppContext) {
+        let (project, window, workspace_id) = serialization_workspace(cx).await;
+        let database = cx.update(|cx| ComponentPreviewDb::global(cx));
+        for page in [ActivePageId::default().0, String::from("RemovedComponent")] {
+            database
+                .save_active_page(7, workspace_id, page)
+                .await
+                .expect("save page");
+            let preview = window
+                .update(cx, |multi_workspace, window, cx| {
+                    ComponentPreview::deserialize(
+                        project.clone(),
+                        multi_workspace.workspace().downgrade(),
+                        workspace_id,
+                        7,
+                        window,
+                        cx,
+                    )
+                })
+                .expect("deserialize saved component preview")
+                .await
+                .expect("saved page");
+            preview.read_with(cx, |preview, _| {
+                assert_eq!(preview.active_page, PreviewPage::AllComponents)
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn component_serialized_item_ids_include_orphans_without_decoding_payloads(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let workspaces = cx.update(|cx| WorkspaceDb::global(cx));
+        let workspace_id = workspaces.next_id().await.expect("workspace ID");
+        let other_workspace_id = workspaces.next_id().await.expect("other workspace ID");
+        let database = cx.update(|cx| ComponentPreviewDb::global(cx));
+        database.write(move |connection| {
+            let mut insert = connection.exec_bound::<(WorkspaceId, ItemId)>(
+                "INSERT INTO component_previews(workspace_id, item_id, active_page_id) VALUES (?, ?, NULL)",
+            )?;
+            insert((workspace_id, 0))?;
+            insert((workspace_id, i64::MAX as ItemId))?;
+            insert((other_workspace_id, 1))
+        }).await.expect("seed orphan payloads");
+        cx.read(|cx| {
+            let mut ids =
+                ComponentPreview::serialized_item_ids(workspace_id, cx).expect("orphan IDs");
+            ids.sort_unstable();
+            assert_eq!(ids, [0, i64::MAX as ItemId]);
+            assert_eq!(
+                ComponentPreview::serialized_item_ids(other_workspace_id, cx).expect("other IDs"),
+                [1]
+            );
+        });
+    }
+
+    async fn serialization_workspace(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, WindowHandle<MultiWorkspace>, WorkspaceId) {
+        let app_state = cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
+            let app_state = AppState::test(cx);
+            editor::init(cx);
+            init(app_state.clone(), cx);
+            app_state
+        });
+        let database = cx.update(|cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.expect("workspace ID");
+        let project = Project::test(app_state.fs.clone(), std::iter::empty::<&Path>(), cx).await;
+        let window = cx.add_window(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(Some(workspace_id), project.clone(), app_state, window, cx)
+            });
+            MultiWorkspace::test_from_workspace(workspace, window, cx)
+        });
+        (project, window, workspace_id)
     }
 }
