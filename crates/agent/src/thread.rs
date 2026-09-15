@@ -2438,7 +2438,7 @@ impl Thread {
     pub fn input_token_capacity(&self) -> Option<u64> {
         let model = self.model()?;
         Some(compaction_input_capacity(
-            model.max_token_count(),
+            model.max_input_tokens(),
             model.max_total_tokens(),
             model.max_output_tokens(),
         ))
@@ -2450,9 +2450,7 @@ impl Thread {
         let input_tokens = total_input_tokens(usage);
 
         Some(acp_thread::TokenUsage {
-            max_tokens: model
-                .max_total_tokens()
-                .unwrap_or_else(|| model.max_token_count()),
+            max_tokens: model.max_token_count(),
             max_output_tokens: model.max_output_tokens(),
             used_tokens: usage.total_tokens(),
             input_tokens,
@@ -4403,9 +4401,7 @@ impl Thread {
     ) -> Option<CompactionTelemetry> {
         let model = self.model()?;
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
-        let max_tokens = model
-            .max_total_tokens()
-            .unwrap_or_else(|| model.max_token_count());
+        let max_tokens = model.max_token_count();
         let max_input_tokens = self.input_token_capacity()?;
         let tokens_before = self
             .latest_request_token_usage()

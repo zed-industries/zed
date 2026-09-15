@@ -127,13 +127,13 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn max_token_count(&self) -> u64 {
+        self.model.max_token_count()
+    }
+
+    fn max_input_tokens(&self) -> u64 {
         self.model
             .max_prompt_tokens()
             .unwrap_or_else(|| self.model.max_token_count())
-    }
-
-    fn max_total_tokens(&self) -> Option<u64> {
-        Some(self.model.max_token_count())
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
@@ -1353,7 +1353,8 @@ mod tests {
             value["capabilities"]["limits"] = limits;
             let descriptor = serde_json::from_value(value).unwrap();
             let model = create_language_model(descriptor, copilot_chat.clone());
-            assert_eq!(model.max_token_count(), input);
+            assert_eq!(model.max_token_count(), context);
+            assert_eq!(model.max_input_tokens(), input);
             assert_eq!(model.max_total_tokens(), Some(context));
             assert_eq!(model.max_output_tokens(), output);
         }
