@@ -715,6 +715,14 @@ impl WebWindowInner {
                 }));
             }
 
+            if is_ime_keydown(
+                this.is_composing.get(),
+                event.is_composing(),
+                event.key_code(),
+            ) {
+                return;
+            }
+
             let key = dom_key_to_gpui_key(&event);
 
             if is_modifier_only_key(&key) {
@@ -742,11 +750,6 @@ impl WebWindowInner {
                     this.schedule_ime_mirror_sync();
                     return;
                 }
-            }
-
-            if this.is_composing.get() || event.is_composing() {
-                event.prevent_default();
-                return;
             }
 
             if keystroke_inserts_text(&modifiers, this.is_mac)
@@ -1426,9 +1429,43 @@ fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {
     point(px(event.offset_x() as f32), px(event.offset_y() as f32))
 }
 
+/// Legacy DOM keyCode reported for keydown events processed by an IME.
+/// 229 == Windows `VK_PROCESSKEY` (0xE5).
+/// https://www.w3.org/TR/uievents/#determine-keydown-keyup-keyCode
+const IME_KEYDOWN_CODE: u32 = 229;
+
+/// Leave IME-owned keydown events to the browser without dispatching editing
+/// commands or preventing their default behavior. `key` is unreliable here
+/// ("Process" vs "Unidentified" per browser), so `keyCode` is the fallback
+/// signal for the composition boundary case, where compositionstart/end
+/// ordering can leave both composing flags false.
+fn is_ime_keydown(is_composing: bool, event_is_composing: bool, key_code: u32) -> bool {
+    is_composing || event_is_composing || key_code == IME_KEYDOWN_CODE
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ime_keydowns_include_composition_boundaries() {
+        assert!(is_ime_keydown(true, false, 65));
+        assert!(is_ime_keydown(false, true, 65));
+        assert!(is_ime_keydown(true, true, 65));
+
+        // compositionstart can follow keydown, so both composing flags can still
+        // be false for the first IME-owned keydown.
+        assert!(is_ime_keydown(false, false, IME_KEYDOWN_CODE));
+
+        assert!(!is_ime_keydown(false, false, 65));
+    }
+
+    #[test]
+    fn ordinary_keys_are_not_owned_by_ime() {
+        for key_code in [0, 8, 13, 16, 17, 18, 27, 37, 65, 91] {
+            assert!(!is_ime_keydown(false, false, key_code));
+        }
+    }
 
     #[test]
     fn browser_pointer_id_reuse_gets_a_new_touch_id() {
