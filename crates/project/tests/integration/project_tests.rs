@@ -51,8 +51,8 @@ use language::{
 };
 use lsp::{
     CodeActionKind, DEFAULT_LSP_REQUEST_TIMEOUT, DiagnosticSeverity, DocumentChanges,
-    FileOperationFilter, LanguageServerId, LanguageServerName, NumberOrString, TextDocumentEdit,
-    Uri, WillRenameFiles, notification::DidRenameFiles,
+    FileOperationFilter, LanguageServerId, LanguageServerName, LanguageServerSelector,
+    NumberOrString, TextDocumentEdit, Uri, WillRenameFiles, notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
 use paths::{config_dir, global_gitignore_path, tasks_file};
@@ -4596,6 +4596,66 @@ async fn test_diagnostic_summaries_cleared_on_worktree_entry_removal(
             },
         );
     });
+}
+
+#[gpui::test]
+async fn test_restarts_stopped_language_server_by_id(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut first_server = fake_servers.next().await.unwrap();
+    first_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    let server_id = project.read_with(cx, |project, cx| {
+        project
+            .language_server_statuses(cx)
+            .next()
+            .map(|(server_id, _)| server_id)
+            .expect("the language server is registered")
+    });
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.stop_language_servers_for_buffers(
+                Vec::new(),
+                HashSet::from_iter([LanguageServerSelector::Id(server_id)]),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.restart_language_servers_for_buffers(
+            vec![buffer],
+            HashSet::from_iter([LanguageServerSelector::Id(server_id)]),
+            true,
+            cx,
+        );
+    });
+
+    let mut restarted_server = fake_servers.next().await.unwrap();
+    restarted_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
 }
 
 #[gpui::test]

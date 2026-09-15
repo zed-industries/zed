@@ -24,9 +24,13 @@ lsp.workspace = true
 project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+settings.workspace = true
 tracing.workspace = true
 util.workspace = true
 ztracing.workspace = true
+
+[dev-dependencies]
+util = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-shear]
 ignored = ["tracing"]

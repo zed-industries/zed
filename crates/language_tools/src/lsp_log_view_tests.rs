@@ -178,6 +178,7 @@ async fn test_lsp_log_view_labels_registered_supplementary_servers(cx: &mut Test
                 server_kind: LanguageServerKind::Supplementary {
                     project: project.downgrade(),
                 },
+                stopped: false,
             }]
         );
     });
@@ -406,10 +407,158 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
                 trace_level: lsp::TraceValue::Off,
                 server_kind: LanguageServerKind::Local {
                     project: project.downgrade()
-                }
+                },
+                stopped: false
             }]
         );
         assert_eq!(view.editor.read(cx).text(cx), "hello from the server\n");
+    });
+}
+
+/// A stopped server stays in the log view's menu and is marked as stopped
+#[gpui::test]
+async fn test_lsp_log_view_stopped_server_shows_retained_logs(cx: &mut TestAppContext) {
+    zlog::init_test();
+
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            "test.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            })
+            .into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )));
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-rust-language-server",
+            ..Default::default()
+        },
+    );
+
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    log_store.update(cx, |store, cx| store.add_project(&project, cx));
+
+    let _rust_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/test.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut language_server = fake_rust_servers.next().await.unwrap();
+    language_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    let server_id = language_server.server.server_id();
+
+    let window =
+        cx.add_window(|window, cx| LspLogView::new(project.clone(), log_store.clone(), window, cx));
+    let log_view = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(*window, cx);
+
+    language_server.notify::<lsp::notification::LogMessage>(lsp::LogMessageParams {
+        message: "hello from the server".into(),
+        typ: lsp::MessageType::INFO,
+    });
+    cx.executor().run_until_parked();
+
+    log_view.update(&mut cx, |view, cx| {
+        assert_eq!(view.editor.read(cx).text(cx), "hello from the server\n");
+    });
+
+    let lsp_store = project.read_with(&cx, |project, _| project.lsp_store());
+    lsp_store.update(&mut cx, |lsp_store, cx| {
+        lsp_store.stop_all_language_servers(cx)
+    });
+    cx.executor().run_until_parked();
+
+    log_view.update(&mut cx, |view, cx| {
+        assert_eq!(
+            view.menu_items(cx).unwrap(),
+            &[LogMenuItem {
+                server_id,
+                server_name: LanguageServerName("the-rust-language-server".into()),
+                worktree_root_name: project
+                    .read(cx)
+                    .worktrees(cx)
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .root_name_str()
+                    .to_string(),
+                rpc_trace_enabled: false,
+                selected_entry: LogKind::Logs,
+                trace_level: lsp::TraceValue::Off,
+                server_kind: LanguageServerKind::Local {
+                    project: project.downgrade()
+                },
+                stopped: true
+            }]
+        );
+        assert_eq!(
+            view.editor.read(cx).text(cx),
+            "hello from the server\n",
+            "the log view stays on the stopped server and keeps its logs",
+        );
+    });
+
+    lsp_store.update(&mut cx, |lsp_store, cx| {
+        lsp_store.restart_all_language_servers(cx)
+    });
+    let mut restarted_server = fake_rust_servers.next().await.unwrap();
+    restarted_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    cx.executor().run_until_parked();
+
+    let restarted_id = restarted_server.server.server_id();
+    log_view.update(&mut cx, |view, cx| {
+        assert_eq!(
+            view.menu_items(cx).unwrap(),
+            &[LogMenuItem {
+                server_id: restarted_id,
+                server_name: LanguageServerName("the-rust-language-server".into()),
+                worktree_root_name: project
+                    .read(cx)
+                    .worktrees(cx)
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .root_name_str()
+                    .to_string(),
+                rpc_trace_enabled: false,
+                selected_entry: LogKind::Logs,
+                trace_level: lsp::TraceValue::Off,
+                server_kind: LanguageServerKind::Local {
+                    project: project.downgrade()
+                },
+                stopped: false
+            }]
+        );
+        assert_eq!(
+            view.editor.read(cx).text(cx),
+            "hello from the server\n",
+            "the log view follows the restarted server and keeps the retained logs",
+        );
     });
 }
 

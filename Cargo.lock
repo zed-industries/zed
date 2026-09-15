@@ -9597,6 +9597,7 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "settings",
  "tracing",
  "util",
  "ztracing",

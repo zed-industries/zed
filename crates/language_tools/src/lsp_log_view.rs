@@ -73,7 +73,26 @@ pub fn open(
                                         && key.is_for_project(&weak_project, &weak_lsp_store)
                                 })
                                 .min_by_key(|key| key_priority(key))
-                                .cloned(),
+                                .cloned()
+                                .or_else(|| {
+                                    log_store
+                                        .read(cx)
+                                        .stopped_language_servers
+                                        .iter()
+                                        .find(|(key, state)| {
+                                            state.server_id == id
+                                                && key.kind.is_for_project(
+                                                    &weak_project,
+                                                    &weak_lsp_store,
+                                                )
+                                        })
+                                        .map(|(key, state)| {
+                                            LanguageServerLogKey::new(
+                                                key.kind.clone(),
+                                                state.server_id,
+                                            )
+                                        })
+                                }),
                             LanguageServerSelector::Name(name) => log_store
                                 .read(cx)
                                 .language_servers
@@ -83,7 +102,26 @@ pub fn open(
                                         && state.name.as_ref() == Some(&name)
                                 })
                                 .min_by_key(|(key, _)| key_priority(key))
-                                .map(|(key, _)| key.clone()),
+                                .map(|(key, _)| key.clone())
+                                .or_else(|| {
+                                    log_store
+                                        .read(cx)
+                                        .stopped_language_servers
+                                        .iter()
+                                        .find(|(key, state)| {
+                                            state.name.as_ref() == Some(&name)
+                                                && key.kind.is_for_project(
+                                                    &weak_project,
+                                                    &weak_lsp_store,
+                                                )
+                                        })
+                                        .map(|(key, state)| {
+                                            LanguageServerLogKey::new(
+                                                key.kind.clone(),
+                                                state.server_id,
+                                            )
+                                        })
+                                }),
                         };
                         if let Some(server_key) = server_key {
                             log_view.show_logs_for_server(server_key, window, cx);
@@ -121,6 +159,7 @@ pub(crate) struct LogMenuItem {
     pub selected_entry: LogKind,
     pub trace_level: lsp::TraceValue,
     pub server_kind: LanguageServerKind,
+    pub stopped: bool,
 }
 
 impl LogMenuItem {
@@ -381,50 +420,64 @@ impl LspLogView {
         });
     }
 
+    fn build_row(
+        &self,
+        key: &LanguageServerLogKey,
+        state: &log_store::LanguageServerState,
+        stopped: bool,
+        cx: &App,
+    ) -> LogMenuItem {
+        let worktree_root_name = state
+            .worktree_id
+            .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
+            .map(|worktree| worktree.read(cx).root_name_str().to_string())
+            .unwrap_or_else(|| {
+                if matches!(&key.kind, LanguageServerKind::Supplementary { .. }) {
+                    "supplementary".to_string()
+                } else {
+                    "Unknown worktree".to_string()
+                }
+            });
+
+        LogMenuItem {
+            server_id: key.server_id,
+            server_name: state
+                .name
+                .clone()
+                .unwrap_or(LanguageServerName::new_static("unknown server")),
+            server_kind: key.kind.clone(),
+            worktree_root_name,
+            rpc_trace_enabled: state.rpc_state.is_some(),
+            selected_entry: self.active_entry_kind,
+            trace_level: lsp::TraceValue::Off,
+            stopped,
+        }
+    }
+
     pub(crate) fn menu_items(&self, cx: &mut App) -> Option<Vec<LogMenuItem>> {
         self.sync_copilot_for_project(cx);
-        let log_store = self.log_store.read(cx);
 
-        let unknown_server = LanguageServerName::new_static("unknown server");
         let project = self.project.downgrade();
         let lsp_store = self.project.read(cx).lsp_store().downgrade();
 
-        let mut rows = log_store
-            .language_servers
-            .iter()
-            .filter(|(key, _)| key.is_for_project(&project, &lsp_store))
-            .map(|(key, state)| match &key.kind {
-                LanguageServerKind::Local { .. }
-                | LanguageServerKind::Remote { .. }
-                | LanguageServerKind::LocalSsh { .. } => {
-                    let worktree_root_name = state
-                        .worktree_id
-                        .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
-                        .map(|worktree| worktree.read(cx).root_name_str().to_string())
-                        .unwrap_or_else(|| "Unknown worktree".to_string());
+        let mut rows = Vec::new();
 
-                    LogMenuItem {
-                        server_id: key.server_id,
-                        server_name: state.name.clone().unwrap_or(unknown_server.clone()),
-                        server_kind: key.kind.clone(),
-                        worktree_root_name,
-                        rpc_trace_enabled: state.rpc_state.is_some(),
-                        selected_entry: self.active_entry_kind,
-                        trace_level: lsp::TraceValue::Off,
-                    }
+        self.log_store.read_with(cx, |log_store, cx| {
+            log_store
+                .language_servers
+                .iter()
+                .filter(|(key, _)| key.is_for_project(&project, &lsp_store))
+                .for_each(|(key, state)| rows.push(self.build_row(key, state, false, cx)));
+
+            for (key, state) in log_store.stopped_language_servers.iter() {
+                if key.kind.is_for_project(&project, &lsp_store) {
+                    let key = LanguageServerLogKey::new(key.kind.clone(), state.server_id);
+
+                    rows.push(self.build_row(&key, state, true, cx));
                 }
+            }
+        });
 
-                LanguageServerKind::Supplementary { .. } => LogMenuItem {
-                    server_id: key.server_id,
-                    server_name: state.name.clone().unwrap_or(unknown_server.clone()),
-                    server_kind: key.kind.clone(),
-                    worktree_root_name: "supplementary".to_string(),
-                    rpc_trace_enabled: state.rpc_state.is_some(),
-                    selected_entry: self.active_entry_kind,
-                    trace_level: lsp::TraceValue::Off,
-                },
-            })
-            .collect::<Vec<_>>();
         rows.sort_by_key(|row| row.server_id);
         Some(rows)
     }
@@ -438,8 +491,7 @@ impl LspLogView {
         let typ = self
             .log_store
             .read(cx)
-            .language_servers
-            .get(&key)
+            .language_server_state(&key)
             .map(|v| v.log_level)
             .unwrap_or(MessageType::LOG);
         let log_contents = self
@@ -957,6 +1009,7 @@ impl Render for LspLogToolbarItemView {
                     row.server_name,
                     row.worktree_root_name,
                     row.selected_entry,
+                    row.stopped,
                 )
             })
             .collect();
@@ -971,10 +1024,12 @@ impl Render for LspLogToolbarItemView {
                     current_server
                         .as_ref()
                         .map(|row| {
-                            Cow::Owned(format!(
-                                "{} ({})",
-                                row.server_name.0, row.worktree_root_name,
-                            ))
+                            let worktree_root_name = if row.stopped {
+                                format!("{}, stopped", row.worktree_root_name)
+                            } else {
+                                row.worktree_root_name.clone()
+                            };
+                            Cow::Owned(format!("{} ({})", row.server_name.0, worktree_root_name))
                         })
                         .unwrap_or_else(|| "No server selected".into()),
                 )
@@ -989,10 +1044,14 @@ impl Render for LspLogToolbarItemView {
                 move |window, cx| {
                     let log_view = log_view.clone();
                     ContextMenu::build(window, cx, |mut menu, window, _| {
-                        for (server_key, name, worktree_root, active_entry_kind) in
+                        for (server_key, name, worktree_root, active_entry_kind, stopped) in
                             available_language_servers.iter()
                         {
-                            let label = format!("{name} ({worktree_root})");
+                            let label = if *stopped {
+                                format!("{name} ({worktree_root}, stopped)")
+                            } else {
+                                format!("{name} ({worktree_root})")
+                            };
                             let server_key = server_key.clone();
                             let active_entry_kind = *active_entry_kind;
                             menu = menu.entry(
