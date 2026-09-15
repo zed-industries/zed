@@ -7543,6 +7543,63 @@ mod tests {
         .unwrap()
     }
 
+    #[gpui::test]
+    async fn test_update_last_checkpoint_if_changed_toggles_in_flight_flag(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+
+        // An empty fake-fs project has no repositories, so `checkpoint` returns
+        // an empty snapshot — enough to construct a user message with a
+        // checkpoint and exercise the debounce flag without a real git repo.
+        let git_store =
+            thread.read_with(cx, |thread, cx| thread.project.read(cx).git_store().clone());
+        let git_checkpoint = git_store
+            .update(cx, |git, cx| git.checkpoint(cx))
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, _| {
+            thread.running_turn = Some(RunningTurn {
+                id: thread.turn_id + 1,
+                send_task: Task::ready(()),
+            });
+            thread
+                .entries
+                .push(AgentThreadEntry::UserMessage(UserMessage {
+                    protocol_id: None,
+                    client_id: Some(ClientUserMessageId::new()),
+                    is_optimistic: false,
+                    content: ContentBlock::Empty,
+                    chunks: Vec::new(),
+                    checkpoint: Some(Checkpoint {
+                        git_checkpoint,
+                        show: false,
+                    }),
+                    indented: false,
+                }));
+        });
+
+        assert!(!thread.read_with(cx, |thread, _| {
+            thread.update_last_checkpoint_if_changed_in_flight.get()
+        }));
+
+        // Starting an update flips the coalescing flag synchronously; a burst
+        // of status events while it is set is skipped by the subscription.
+        let task = thread.update(cx, |thread, cx| {
+            thread.update_last_checkpoint_if_changed(cx)
+        });
+        assert!(thread.read_with(cx, |thread, _| {
+            thread.update_last_checkpoint_if_changed_in_flight.get()
+        }));
+
+        task.await.log_err();
+        assert!(!thread.read_with(cx, |thread, _| {
+            thread.update_last_checkpoint_if_changed_in_flight.get()
+        }));
+    }
+
     fn only_thread_elicitation(thread: &AcpThread) -> (ElicitationEntryId, &Elicitation) {
         let [entry] = thread.entries() else {
             panic!("expected one elicitation entry, got {:?}", thread.entries());
