@@ -7,7 +7,6 @@ use url::Url;
 
 pub fn load_workspace_graph() -> Result<PackageGraph> {
     MetadataCommand::new()
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .build_graph()
         .context("failed to load the workspace crate graph")
 }
