@@ -3790,6 +3790,24 @@ Examples:
 
 List of `string` glob patterns
 
+## Read-Only Files {#read-only-files}
+
+- Default: `[]`
+- Description: Glob patterns for files you can open and view but cannot edit, such as generated files or external dependencies.
+- Setting: `read_only_files`
+
+Add this to your project’s `.zed/settings.json`:
+
+```json [settings]
+{
+  "read_only_files": ["**/generated/**", "..."]
+}
+```
+
+Like [File Scan Exclusions](#file-scan-exclusions), `"..."` expands to the list inherited from the preceding settings layer. This example adds generated files to the read-only patterns from your user settings without repeating them. Duplicate entries collapse to their first occurrence.
+
+Omit `"..."` to replace the inherited list, or use `[]` to clear it. These patterns apply when you open a file.
+
 ## Read SSH Config
 
 - Description: Whether to read SSH configuration files

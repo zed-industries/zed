@@ -1148,8 +1148,19 @@ impl VsCodeSettings {
             scan_symlinks: None,
             private_files: None,
             hidden_files: None,
+            // Zed cannot represent the writable exceptions in `files.readonlyExclude`
             read_only_files: self
-                .read_value("files.readonlyExclude")
+                .read_value("files.readonlyInclude")
+                .filter(|_| {
+                    !self
+                        .read_value("files.readonlyExclude")
+                        .and_then(Value::as_object)
+                        .is_some_and(|patterns| {
+                            patterns
+                                .values()
+                                .any(|enabled| enabled.as_bool() == Some(true))
+                        })
+                })
                 .and_then(|v| v.as_object())
                 .map(|v| {
                     v.iter()
@@ -1162,7 +1173,8 @@ impl VsCodeSettings {
                         })
                         .collect::<Vec<_>>()
                 })
-                .filter(|r| !r.is_empty()),
+                .filter(|r| !r.is_empty())
+                .map(SplicingVec::from),
         }
     }
 }
@@ -1222,12 +1234,79 @@ fn skip_default<T: Default + PartialEq>(value: T) -> Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings_content::merge_from::MergeFrom;
 
     fn imported_reduce_motion(content: &str) -> Option<ReduceMotionMode> {
         VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
             .unwrap()
             .settings_content()
             .reduce_motion
+    }
+
+    #[test]
+    fn test_import_read_only_files() -> Result<()> {
+        let inherited = WorktreeSettingsContent {
+            read_only_files: Some(SplicingVec::from(vec!["**/*.lock".to_string()])),
+            ..Default::default()
+        };
+        let imported = VsCodeSettings::from_str(
+            r#"{
+                "files.readonlyInclude": {"**/*.gen.rs": true, "**/*.lock": false},
+                "files.readonlyExclude": {"**/editable.gen.rs": false}
+            }"#,
+            VsCodeSettingsSource::VsCode,
+        )?
+        .worktree_settings_content();
+        assert_eq!(
+            serde_json::to_value(&imported.read_only_files)?,
+            serde_json::json!(["**/*.gen.rs"])
+        );
+        let mut replaced = inherited.clone();
+        replaced.merge_from(&imported);
+        assert_eq!(replaced.read_only_files, imported.read_only_files);
+
+        for content in [
+            r#"{"files.readonlyExclude": {"**/*.gen.rs": true}}"#,
+            r#"{"files.readonlyInclude": {"**/*.gen.rs": false}}"#,
+            r#"{"files.readonlyInclude": {}}"#,
+            "{}",
+        ] {
+            let imported = VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)?
+                .worktree_settings_content();
+            assert_eq!(imported.read_only_files, None);
+            let mut unchanged = inherited.clone();
+            unchanged.merge_from(&imported);
+            assert_eq!(unchanged.read_only_files, inherited.read_only_files);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_import_read_only_files_with_exclusions() -> Result<()> {
+        let imported = VsCodeSettings::from_str(
+            r#"{
+                "files.readonlyExclude": {"**/*.lock": true, "**/editable.gen.rs": true},
+                "files.readonlyInclude": {"**/*.gen.rs": true},
+                "editor.tabSize": 8
+            }"#,
+            VsCodeSettingsSource::VsCode,
+        )?
+        .settings_content();
+        assert_eq!(imported.project.worktree.read_only_files, None);
+        assert_eq!(
+            imported.project.all_languages.defaults.tab_size,
+            NonZeroU32::new(8)
+        );
+        let mut inherited = WorktreeSettingsContent {
+            read_only_files: Some(SplicingVec::from(vec![String::from("**/*.lock")])),
+            ..WorktreeSettingsContent::default()
+        };
+        inherited.merge_from(&imported.project.worktree);
+        assert_eq!(
+            serde_json::to_value(&inherited.read_only_files)?,
+            serde_json::json!(["**/*.lock"])
+        );
+        Ok(())
     }
 
     #[test]
