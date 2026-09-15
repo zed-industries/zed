@@ -2928,28 +2928,6 @@ mod tests {
         ResponseFunctionToolCall, ResponseOutputMessage, ResponseReasoningItem,
     };
 
-    #[test]
-    fn request_output_limits_reach_bedrock_payloads() -> Result<()> {
-        for (limit, expected) in [(None, 4096), (Some(1024), 1024), (Some(8192), 4096)] {
-            let request = into_bedrock(
-                LanguageModelRequest {
-                    max_output_tokens: limit,
-                    ..Default::default()
-                },
-                "claude-sonnet-4-5".into(),
-                1.0,
-                4096,
-                BedrockModelMode::Default,
-                false,
-                false,
-                None,
-                None,
-            )?;
-            assert_eq!(request.max_tokens, expected);
-        }
-        Ok(())
-    }
-
     fn into_bedrock_request(messages: Vec<LanguageModelRequestMessage>) -> bedrock::Request {
         into_bedrock(
             LanguageModelRequest {
@@ -2973,10 +2951,15 @@ mod tests {
         // Claude Opus 5 runs adaptive thinking by default when the `thinking`
         // field is omitted, so suppressing thinking requires an explicit
         // `disabled` opt-out. Earlier Claude models treat omission as "off".
-        for (model, expects_explicit_opt_out) in [
-            ("us.anthropic.claude-opus-5", true),
-            ("global.anthropic.claude-opus-5", true),
-            ("us.anthropic.claude-opus-4-8", false),
+        for (model, expects_explicit_opt_out, output_limit, expected_output) in [
+            ("us.anthropic.claude-opus-5", true, None, 128_000),
+            ("global.anthropic.claude-opus-5", true, Some(8192), 8192),
+            (
+                "us.anthropic.claude-opus-4-8",
+                false,
+                Some(256_000),
+                128_000,
+            ),
         ] {
             let request = into_bedrock(
                 LanguageModelRequest {
@@ -2987,6 +2970,7 @@ mod tests {
                         reasoning_details: None,
                     }],
                     thinking_allowed: false,
+                    max_output_tokens: output_limit,
                     ..Default::default()
                 },
                 model.to_string(),
@@ -3002,6 +2986,7 @@ mod tests {
             )
             .unwrap();
 
+            assert_eq!(request.max_tokens, expected_output);
             if expects_explicit_opt_out {
                 assert!(
                     matches!(request.thinking, Some(bedrock::Thinking::Disabled)),

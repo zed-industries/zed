@@ -776,34 +776,6 @@ fn add_message_content_part(
 mod tests {
     use super::*;
 
-    #[test]
-    fn request_output_limits_reach_open_router_payloads() -> Result<()> {
-        let model = open_router::Model::new(
-            "openai/gpt-4o",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            false,
-            None,
-        );
-        for (limit, expected) in [(None, 4096), (Some(1024), 1024), (Some(8192), 4096)] {
-            let request = into_open_router(
-                LanguageModelRequest {
-                    max_output_tokens: limit,
-                    ..Default::default()
-                },
-                &model,
-                Some(4096),
-            )?;
-            assert_eq!(serde_json::to_value(request)?["max_tokens"], expected);
-        }
-        Ok(())
-    }
-
     #[gpui::test]
     async fn test_session_id_is_stable_without_exposing_thread_id() {
         let model = open_router::Model::new(
@@ -819,8 +791,9 @@ mod tests {
             None,
         );
         let thread_id = "internal-thread-id";
-        let request = LanguageModelRequest {
+        let request = |max_output_tokens| LanguageModelRequest {
             thread_id: Some(thread_id.to_string()),
+            max_output_tokens,
             messages: vec![language_model::LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("Hello".to_string())],
@@ -830,17 +803,27 @@ mod tests {
             ..Default::default()
         };
 
-        let result = into_open_router(request, &model, None).unwrap();
-
-        assert_eq!(
-            result.session_id,
-            open_router_session_id(Some(thread_id.into()))
-        );
-        assert_ne!(result.session_id.as_deref(), Some(thread_id));
-        assert_ne!(
-            result.session_id,
-            open_router_session_id(Some("another-thread-id".into()))
-        );
+        for (requested, maximum, expected) in [
+            (None, None, None),
+            (None, Some(4096), Some(4096)),
+            (Some(1024), Some(4096), Some(1024)),
+            (Some(8192), Some(4096), Some(4096)),
+        ] {
+            let result = into_open_router(request(requested), &model, maximum).unwrap();
+            assert_eq!(
+                result.session_id,
+                open_router_session_id(Some(thread_id.into()))
+            );
+            assert_ne!(result.session_id.as_deref(), Some(thread_id));
+            assert_ne!(
+                result.session_id,
+                open_router_session_id(Some("another-thread-id".into()))
+            );
+            assert_eq!(
+                serde_json::to_value(result).unwrap()["max_tokens"].as_u64(),
+                expected
+            );
+        }
     }
 
     #[gpui::test]

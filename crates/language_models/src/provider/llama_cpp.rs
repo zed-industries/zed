@@ -1506,31 +1506,6 @@ mod tests {
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    #[test]
-    fn request_output_limits_reach_llama_cpp_payloads() -> Result<()> {
-        for limit in [None, Some(1024)] {
-            let request = build_llama_cpp_request(
-                "test-model",
-                false,
-                LiveCapabilities {
-                    max_tokens: 8192,
-                    supports_tools: false,
-                    supports_thinking: false,
-                },
-                LanguageModelRequest {
-                    max_output_tokens: limit,
-                    ..Default::default()
-                },
-            )?;
-            let payload = serde_json::to_value(request)?;
-            assert_eq!(
-                payload.get("max_tokens").cloned(),
-                limit.map(|value| serde_json::json!(value))
-            );
-        }
-        Ok(())
-    }
-
     struct FakeCredentialsProvider {
         api_key: Vec<u8>,
     }
@@ -1727,6 +1702,7 @@ mod tests {
                 supports_thinking: true,
             },
             LanguageModelRequest {
+                max_output_tokens: Some(1024),
                 messages: vec![language_model::LanguageModelRequestMessage {
                     role: Role::Assistant,
                     content: vec![
@@ -1744,6 +1720,7 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(serde_json::to_value(&request).unwrap()["max_tokens"], 1024);
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
             llama_cpp::ChatMessage::Assistant {
@@ -1788,6 +1765,12 @@ mod tests {
         )
         .unwrap();
 
+        assert!(
+            serde_json::to_value(&request)
+                .unwrap()
+                .get("max_tokens")
+                .is_none()
+        );
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
             llama_cpp::ChatMessage::Assistant {
