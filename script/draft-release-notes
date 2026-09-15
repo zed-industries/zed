@@ -3,8 +3,6 @@
 const { execFileSync } = require("child_process");
 const { parseArgs } = require("util");
 
-main();
-
 const GPUI_PREFIX_PATTERN = /^- \[GPUI\]\s*/i;
 
 const USAGE = [
@@ -42,7 +40,7 @@ function parseArguments() {
   return { version, channel, parts, gpui: values.gpui };
 }
 
-async function main() {
+function main() {
   let { error, version, channel, parts, gpui } = parseArguments();
   if (error) {
     console.error(error);
@@ -160,4 +158,8 @@ function getCommits(oldTag, newTag) {
     });
 
   return pullRequestNumbers;
+}
+
+if (require.main === module) {
+  main();
 }

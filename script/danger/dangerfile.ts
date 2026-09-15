@@ -50,13 +50,21 @@ if (!hasReleaseNotes) {
   );
 }
 
-const GPUI_RELEASE_NOTES_PATTERN = /^\s*- \[GPUI\]/im;
+const GPUI_RELEASE_NOTES_PATTERN = /^- \[GPUI\]/im;
+
+// The release notes section is the last "Release Notes:" heading followed by a bullet, so an
+// earlier inline mention of "Release Notes:" in the body does not select the wrong text.
+function releaseNotesSection(body: string) {
+  const pattern = new RegExp(RELEASE_NOTES_PATTERN.source, RELEASE_NOTES_PATTERN.flags);
+  const headings = [...body.matchAll(pattern)];
+  const lastHeading = headings[headings.length - 1];
+  return lastHeading ? body.slice(lastHeading.index) : "";
+}
 
 const gpuiCrates = danger.git.fileMatch("crates/gpui*/**");
 
 if (gpuiCrates.edited || gpuiCrates.deleted) {
-  const releaseNotesSection = hasReleaseNotes ? body.split(/Release Notes:/)[1] : "";
-  if (!GPUI_RELEASE_NOTES_PATTERN.test(releaseNotesSection)) {
+  if (!GPUI_RELEASE_NOTES_PATTERN.test(releaseNotesSection(body))) {
     const { edited, deleted } = gpuiCrates.getKeyedPaths();
     const touchedGpuiCratesStr = [...edited, ...deleted]
       .map((file) => "`" + file.split("/")[1] + "`")
