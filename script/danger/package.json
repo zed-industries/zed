@@ -6,6 +6,9 @@
   "scripts": {
     "danger": "danger"
   },
+  "dependencies": {
+    "typescript": "^7.0.2"
+  },
   "devDependencies": {
     "danger": "13.0.8",
     "danger-plugin-pr-hygiene": "0.7.1"
