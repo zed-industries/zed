@@ -7834,7 +7834,7 @@ impl GitPanel {
                                             ));
                                         }
                                         Some(GitListEntry::EmptySection(section)) => {
-                                            items.push(this.render_empty_section(*section));
+                                            items.push(Self::render_empty_section(*section, cx));
                                         }
                                         None => {}
                                     }
@@ -7884,8 +7884,10 @@ impl GitPanel {
         Label::new(label.into()).single_line().color(color)
     }
 
-    fn list_item_height(&self) -> Rems {
-        rems(1.75)
+    fn list_item_height(cx: &App) -> Rems {
+        ThemeSettings::get_global(cx)
+            .ui_line_height()
+            .unwrap_or(rems(1.75))
     }
 
     fn render_list_header(
@@ -7918,7 +7920,7 @@ impl GitPanel {
         h_flex()
             .id(id)
             .group(group_name)
-            .h(self.list_item_height())
+            .h(Self::list_item_height(cx))
             .w_full()
             .pl_2p5()
             .pr_1()
@@ -7996,14 +7998,14 @@ impl GitPanel {
             .into_any_element()
     }
 
-    fn render_empty_section(&self, section: Section) -> AnyElement {
+    fn render_empty_section(section: Section, cx: &App) -> AnyElement {
         let message = match section {
             Section::Staged => "No staged changes yet",
             Section::Unstaged => "No unstaged changes",
             _ => "No changes",
         };
         h_flex()
-            .h(self.list_item_height())
+            .h(Self::list_item_height(cx))
             .w_full()
             .pl_2p5()
             .pr_1()
@@ -8349,7 +8351,7 @@ impl GitPanel {
 
         h_flex()
             .id(id)
-            .h(self.list_item_height())
+            .h(Self::list_item_height(cx))
             .w_full()
             .pl_2p5()
             .pr_1()
@@ -8574,7 +8576,7 @@ impl GitPanel {
 
         h_flex()
             .id(id)
-            .h(self.list_item_height())
+            .h(Self::list_item_height(cx))
             .min_w_0()
             .w_full()
             .pl_2p5()
