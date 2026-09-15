@@ -331,7 +331,7 @@ impl WgpuContext {
         bool,
         TextureFormat,
     )> {
-        let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
+        let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::from_env().unwrap_or(wgpu::Backends::all())).await;
 
         if adapters.is_empty() {
             anyhow::bail!("No GPU adapters found");
