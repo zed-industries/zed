@@ -391,6 +391,10 @@ pub enum EditPredictionsMode {
     #[default]
     #[serde(alias = "eager_preview")]
     Eager,
+    /// Only display predictions that can be shown as ghost text at the cursor,
+    /// and accept them one line at a time. Predictions that would need a diff
+    /// popover are skipped.
+    InlineOnly,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
