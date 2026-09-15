@@ -104,6 +104,7 @@
         "version_control.deleted": "#e06c76ff",
         "version_control.conflict_marker.ours": "#a1c1811a",
         "version_control.conflict_marker.theirs": "#74ade81a",
+        "version_control.conflict_marker.base": "#a9afbc1a",
         "conflict": "#dec184ff",
         "conflict.background": "#dec1841a",
         "conflict.border": "#5d4c2fff",
