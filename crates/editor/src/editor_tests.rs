@@ -23981,6 +23981,8 @@ fn test_header_jump_data_uses_selection_excerpt(cx: &mut TestAppContext) {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_anchor_ranges([selection_anchor..selection_anchor])
         });
+        editor.set_scroll_position(gpui::point(0.0, 0.5), window, cx);
+        let snapshot = editor.snapshot(window, cx);
 
         let mut latest_selection_anchors: HashMap<BufferId, Anchor> = HashMap::default();
         for selection in editor.selections.all_anchors(&display_snapshot).iter() {
@@ -24020,10 +24022,15 @@ fn test_header_jump_data_uses_selection_excerpt(cx: &mut TestAppContext) {
                     "jump should target the cursor's buffer row, not the first excerpt's row"
                 );
                 assert!(
-                    line_offset_from_top < selection_buffer_row,
+                    line_offset_from_top < selection_buffer_row as ScrollOffset,
                     "line_offset_from_top ({line_offset_from_top}) should be measured from the \
                      selection's excerpt, not the first excerpt; expected less than \
                      selection_buffer_row ({selection_buffer_row})"
+                );
+                assert_eq!(
+                    line_offset_from_top,
+                    (FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT + 2) as ScrollOffset
+                        - 0.5
                 );
             }
             JumpData::MultiBufferRow { .. } => {
@@ -28066,6 +28073,101 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
             .map(|line| format!("X{}", &line[1..]))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+}
+
+#[gpui::test]
+async fn test_open_excerpts_preserves_viewport_position(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let buffer = cx.new(|cx| {
+        Buffer::local(
+            (0..100)
+                .map(|row| format!("line {row}\n"))
+                .collect::<String>(),
+            cx,
+        )
+    });
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [Point::new(30, 0)..Point::new(70, 0)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |workspace, _| workspace.workspace().clone())
+        .expect("workspace window should exist");
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(EditorMode::full(), multibuffer, Some(project), window, cx)
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+    cx.run_until_parked();
+
+    for split in [false, true] {
+        for cursor_row in [10, 12] {
+            workspace.update_in(cx, |workspace, window, cx| {
+                assert!(workspace.activate_item(&editor, true, true, window, cx));
+            });
+            let source_pane =
+                workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+            let offset = editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections
+                        .select_ranges([Point::new(cursor_row, 0)..Point::new(cursor_row, 0)]);
+                });
+                editor.set_scroll_position(gpui::point(0.0, 5.25), window, cx);
+                let snapshot = editor.display_snapshot(cx);
+                let offset = Point::new(cursor_row, 0)
+                    .to_display_point(&snapshot)
+                    .row()
+                    .as_f64()
+                    - editor.scroll_position(cx).y;
+                if split {
+                    editor.open_excerpts_in_split(&OpenExcerptsSplit, window, cx);
+                } else {
+                    editor.open_excerpts(&OpenExcerpts, window, cx);
+                }
+                offset
+            });
+            cx.run_until_parked();
+
+            let target = workspace.read_with(cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane() != &source_pane, split);
+                workspace
+                    .active_item_as::<Editor>(cx)
+                    .expect("excerpt should open in an editor")
+            });
+            target.update_in(cx, |target, _, cx| {
+                assert_eq!(
+                    target.buffer().read(cx).as_singleton(),
+                    Some(buffer.clone())
+                );
+                let snapshot = target.display_snapshot(cx);
+                let target_offset = Point::new(30 + cursor_row, 0)
+                    .to_display_point(&snapshot)
+                    .row()
+                    .as_f64()
+                    - target.scroll_position(cx).y;
+                assert_eq!(
+                    target_offset, offset,
+                    "split={split}, cursor_row={cursor_row}"
+                );
+                assert_eq!(
+                    target.selections.ranges(&snapshot),
+                    [Point::new(30 + cursor_row, 0)..Point::new(30 + cursor_row, 0)]
+                );
+            });
+        }
     }
 }
 
