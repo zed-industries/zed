@@ -62,7 +62,6 @@ use language_model::{
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::StatusToast;
-use panel::PanelHeader;
 use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
@@ -1223,6 +1222,17 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_indent_guides(false, cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
     commit_editor.set_placeholder_text(&placeholder, window, cx);
+    commit_editor.set_custom_context_menu(|editor, _point, window, cx| {
+        let has_selection = editor.has_non_empty_selection(&editor.display_snapshot(cx));
+        let focus_handle = editor.focus_handle(cx);
+
+        Some(ContextMenu::build(window, cx, |menu, _, _| {
+            menu.context(focus_handle)
+                .action_disabled_when(!has_selection, "Cut", Box::new(editor::actions::Cut))
+                .action_disabled_when(!has_selection, "Copy", Box::new(editor::actions::Copy))
+                .action("Paste", Box::new(editor::actions::Paste))
+        }))
+    });
     commit_editor
 }
 
@@ -1821,7 +1831,13 @@ impl GitPanel {
         }
         if let Some(work_directory_abs_path) = active_work_directory_abs_path {
             let text = self.commit_message_buffer(cx).read(cx).text();
-            let message = (!text.trim().is_empty()).then_some(text);
+            let trimmed_text = text.trim();
+            let use_buffer_text = !trimmed_text.is_empty()
+                && self
+                    .commit_template
+                    .as_ref()
+                    .is_none_or(|commit_template| commit_template.template.trim() != trimmed_text);
+            let message = use_buffer_text.then_some(text);
             let original_message = self.original_commit_message.clone();
             let amend_pending = self.amend_pending;
             if message.is_some() || original_message.is_some() || amend_pending {
@@ -1852,12 +1868,15 @@ impl GitPanel {
         if self.commit_editor.read(cx).is_focused(window) {
             dispatch_context.add("CommitEditor");
         } else if self.focus_handle.contains_focused(window, cx) || self.context_menu.is_some() {
-            // Preserve the panel's `ChangesList` context while a context menu
-            // is open. Its focus handle may not appear as a descendant of the
-            // panel until the next frame, so `FocusHandle::contains_focused`
-            // would return `false`.
+            // Preserve the panel's list context while a context menu is open.
+            // Its focus handle may not appear as a descendant of the panel
+            // until the next frame, so `FocusHandle::contains_focused` would
+            // return `false`.
             dispatch_context.add("menu");
-            dispatch_context.add("ChangesList");
+            match self.active_tab {
+                GitPanelTab::Changes => dispatch_context.add("ChangesList"),
+                GitPanelTab::History => dispatch_context.add("HistoryList"),
+            }
         }
 
         dispatch_context
@@ -4147,6 +4166,7 @@ impl GitPanel {
                     thinking_effort: None,
                     speed: None,
                     compact_at_tokens: None,
+                    max_output_tokens: None,
                 };
 
                 let stream = model.stream_completion_text(request, cx);
@@ -9164,8 +9184,6 @@ impl Panel for GitPanel {
     }
 }
 
-impl PanelHeader for GitPanel {}
-
 pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
     v_flex()
         .size_full()
@@ -9706,8 +9724,8 @@ mod tests {
     use util::rel_path::rel_path;
 
     use workspace::{
-        ActivatePaneLeft, ActivatePaneRight, MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation,
-        item::test::TestItem,
+        ActivatePaneLeft, ActivatePaneRight, ItemHandle as _, MultiWorkspace, ToolbarItemEvent,
+        ToolbarItemLocation, item::test::TestItem,
     };
 
     use super::*;
@@ -11363,6 +11381,11 @@ mod tests {
             .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
             .unwrap();
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        let project_path = project.read_with(&cx, |project, cx| {
+            project
+                .find_project_path(path!("/project/partial.rs"), cx)
+                .expect("partial.rs should have a project path")
+        });
 
         cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -11398,7 +11421,10 @@ mod tests {
         cx.run_until_parked();
 
         workspace.read_with(&cx, |workspace, cx| {
-            assert!(workspace.active_item_as::<StagedDiff>(cx).is_some());
+            let staged_diff = workspace
+                .active_item_as::<StagedDiff>(cx)
+                .expect("StagedDiff should be active");
+            assert_eq!(staged_diff.project_path(cx), Some(project_path.clone()));
             assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<UnstagedDiff>(cx).count(), 0);
             assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
@@ -11423,6 +11449,7 @@ mod tests {
             let solo_diff = workspace
                 .active_item_as::<SoloDiffView>(cx)
                 .expect("SoloDiffView should be active");
+            assert_eq!(solo_diff.project_path(cx), Some(project_path.clone()));
             let searchable = solo_diff
                 .read(cx)
                 .as_searchable(&solo_diff, cx)
@@ -11467,7 +11494,10 @@ mod tests {
         cx.run_until_parked();
 
         workspace.read_with(&cx, |workspace, cx| {
-            assert!(workspace.active_item_as::<UnstagedDiff>(cx).is_some());
+            let unstaged_diff = workspace
+                .active_item_as::<UnstagedDiff>(cx)
+                .expect("UnstagedDiff should be active");
+            assert_eq!(unstaged_diff.project_path(cx), Some(project_path));
             assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<UnstagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
@@ -12142,6 +12172,198 @@ mod tests {
             // does not match the active repository, so it cannot leak across
             // repositories.
             assert_eq!(panel.commit_message_buffer(cx).read(cx).text(), "");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_commit_template_applied_fresh_after_template_file_change(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": { "main.rs": "fn main() {}" }
+                }
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+        fs.with_git_state(Path::new(path!("/root/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "Template1\n".to_string(),
+            })
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .git_store()
+                .read(cx)
+                .repositories()
+                .values()
+                .next()
+                .unwrap()
+                .clone()
+        });
+        repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        register_git_commit_language(&project, cx);
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "Template1\n",
+                "template should be applied initially"
+            );
+        });
+
+        // Update the commit template returned by the fake git repository and
+        // simulate restart: empty the active commit buffer and reload the panel
+        // from the same serialized state the previous session would have written.
+        fs.with_git_state(Path::new(path!("/root/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "Template2\n".to_string(),
+            })
+        })
+        .unwrap();
+        let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
+            signoff_enabled: false,
+            commit_messages: panel.serialized_commit_messages(cx),
+        });
+        let buffer = repository.read_with(cx, |repository, _| {
+            repository.commit_message_buffer().unwrap().clone()
+        });
+        buffer.update(cx, |buffer, cx| {
+            let start = buffer.anchor_before(0);
+            let end = buffer.anchor_after(buffer.len());
+            buffer.edit([(start..end, "")], None, cx);
+        });
+
+        let restored_panel = workspace.update_in(cx, |workspace, window, cx| {
+            GitPanel::new_with_serialized_panel(workspace, Some(serialized_panel), window, cx)
+        });
+        cx.run_until_parked();
+
+        restored_panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "Template2\n",
+                "updated commit template should be re-applied across restarts"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_user_draft_preserved_when_template_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": { "main.rs": "fn main() {}" }
+                }
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+        fs.with_git_state(Path::new(path!("/root/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "Template1\n".to_string(),
+            })
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .git_store()
+                .read(cx)
+                .repositories()
+                .values()
+                .next()
+                .unwrap()
+                .clone()
+        });
+        repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        register_git_commit_language(&project, cx);
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        cx.run_until_parked();
+
+        // User edits the buffer after the template was applied.
+        let user_message = "fix: my actual commit\n";
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, user_message)], None, cx);
+            });
+        });
+
+        // The commit template returned by the fake git repository changes
+        // after the user has already started typing. We must not clobber the
+        // user's draft.
+        fs.with_git_state(Path::new(path!("/root/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "Template2\n".to_string(),
+            })
+        })
+        .unwrap();
+        let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
+            signoff_enabled: false,
+            commit_messages: panel.serialized_commit_messages(cx),
+        });
+
+        // Simulate a restart and restore from the serialized state.
+        let buffer = repository.read_with(cx, |repository, _| {
+            repository.commit_message_buffer().unwrap().clone()
+        });
+        buffer.update(cx, |buffer, cx| {
+            let start = buffer.anchor_before(0);
+            let end = buffer.anchor_after(buffer.len());
+            buffer.edit([(start..end, "")], None, cx);
+        });
+
+        let restored_panel = workspace.update_in(cx, |workspace, window, cx| {
+            GitPanel::new_with_serialized_panel(workspace, Some(serialized_panel), window, cx)
+        });
+        cx.run_until_parked();
+
+        restored_panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                user_message,
+                "user-typed draft must be restored verbatim, never overwritten by a later template"
+            );
         });
     }
 
@@ -13308,6 +13530,10 @@ mod tests {
                 !context.contains("ChangesList"),
                 "should not have ChangesList context when commit editor is focused"
             );
+            assert!(
+                !context.contains("HistoryList"),
+                "should not have HistoryList context when commit editor is focused"
+            );
         });
 
         // Case 2: Focus the panel's focus handle directly — should have "menu" and "ChangesList".
@@ -13333,12 +13559,35 @@ mod tests {
                 "should have ChangesList context when changes list is focused"
             );
             assert!(
+                !context.contains("HistoryList"),
+                "should not have HistoryList context when changes list is focused"
+            );
+            assert!(
                 !context.contains("CommitEditor"),
                 "should not have CommitEditor context when changes list is focused"
             );
         });
 
-        // Case 3: Switch back to commit editor and verify context switches correctly
+        // Case 3: Switch to the History tab and verify its list context.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.active_tab = GitPanelTab::History;
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("menu"),
+                "should have menu context when history list is focused"
+            );
+            assert!(
+                context.contains("HistoryList"),
+                "should have HistoryList context when history list is focused"
+            );
+            assert!(
+                !context.contains("ChangesList"),
+                "should not have ChangesList context when history list is focused"
+            );
+            panel.active_tab = GitPanelTab::Changes;
+        });
+
+        // Case 4: Switch back to commit editor and verify context switches correctly
         panel.update_in(cx, |panel, window, cx| {
             panel.focus_editor(&FocusEditor, window, cx);
         });
@@ -13355,7 +13604,7 @@ mod tests {
             );
         });
 
-        // Case 4: Re-focus changes list and verify it transitions back correctly
+        // Case 5: Re-focus changes list and verify it transitions back correctly
         panel.update_in(cx, |panel, window, cx| {
             panel.focus_handle.focus(window, cx);
         });
@@ -13419,6 +13668,104 @@ mod tests {
             assert!(context.contains("menu"));
             assert!(!context.contains("CommitEditor"));
         })
+    }
+
+    #[gpui::test]
+    async fn test_commit_editor_context_menu_clipboard_actions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+
+        for in_panel in [true, false] {
+            let window_handle = cx.add_window(|window, cx| {
+                let buffer = cx.new(|cx| Buffer::local("commit message", cx));
+                commit_message_editor(buffer, None, project.clone(), in_panel, window, cx)
+            });
+            let editor = window_handle.root(cx).expect("commit editor should exist");
+            let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+            editor.update_in(cx, |editor, window, cx| {
+                editor.focus_handle(cx).focus(window, cx);
+                editor.select_all(&Default::default(), window, cx);
+            });
+            cx.run_until_parked();
+
+            let position = editor.read_with(cx, |editor, _| {
+                editor
+                    .last_bounds()
+                    .expect("editor should be rendered")
+                    .origin
+                    + gpui::point(px(10.), px(10.))
+            });
+            let open_menu = |cx: &mut VisualTestContext| {
+                cx.simulate_mouse_down(position, gpui::MouseButton::Right, Modifiers::none());
+                // MouseContextMenu waits two frames before focusing its deferred element.
+                for _ in 0..2 {
+                    cx.update(|window, cx| {
+                        window.simulate_next_frame(cx);
+                    });
+                }
+                editor.update_in(cx, |editor, window, cx| {
+                    assert!(editor.has_mouse_context_menu());
+                    assert!(editor.mouse_menu_is_focused(window, cx));
+                });
+            };
+            open_menu(cx);
+            editor.update_in(cx, |editor, window, cx| {
+                assert!(
+                    editor.mouse_menu_is_focused(window, cx),
+                    "menu should have focus"
+                );
+                assert!(
+                    editor.has_non_empty_selection(&editor.display_snapshot(cx)),
+                    "selection should remain"
+                );
+            });
+            cx.dispatch_action(menu::SelectFirst);
+            cx.dispatch_action(menu::SelectNext);
+            cx.dispatch_action(menu::Confirm);
+            assert!(
+                editor.read_with(cx, |editor, _| !editor.has_mouse_context_menu()),
+                "menu should close after Copy"
+            );
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some("commit message".to_string())
+            );
+
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("replacement".to_string()));
+            open_menu(cx);
+            cx.dispatch_action(menu::SelectLast);
+            cx.dispatch_action(menu::Confirm);
+            assert_eq!(
+                editor.read_with(cx, |editor, cx| editor.text(cx)),
+                "replacement"
+            );
+
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(" suffix".to_string()));
+            open_menu(cx);
+            cx.dispatch_action(menu::SelectFirst);
+            cx.dispatch_action(menu::Confirm);
+            assert_eq!(
+                editor.read_with(cx, |editor, cx| editor.text(cx)),
+                "replacement suffix",
+                "with no selection, menu navigation should skip disabled Cut and Copy and select Paste"
+            );
+            editor.update_in(cx, |editor, window, cx| {
+                editor.select_all(&Default::default(), window, cx);
+            });
+            open_menu(cx);
+            cx.dispatch_action(menu::SelectFirst);
+            cx.dispatch_action(menu::Confirm);
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some("replacement suffix".to_string())
+            );
+            assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), "");
+            assert!(editor.read_with(cx, |editor, _| !editor.has_mouse_context_menu()));
+            editor.update_in(cx, |editor, window, _| {
+                assert!(editor.is_focused(window));
+            });
+        }
     }
 
     #[gpui::test]

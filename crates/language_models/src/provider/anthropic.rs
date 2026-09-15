@@ -347,6 +347,13 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
     {
         extra_beta_headers.push(anthropic::FAST_MODE_BETA_HEADER.to_string());
     }
+    if anthropic::binds_thinking_blocks_to_prefix(&available.name)
+        && !extra_beta_headers
+            .iter()
+            .any(|header| header.trim() == anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER)
+    {
+        extra_beta_headers.push(anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string());
+    }
 
     anthropic::Model {
         display_name: available
@@ -460,6 +467,7 @@ mod tests {
         let model = direct_anthropic_test_model(&provider);
 
         assert!(model.supports_explicit_compaction());
+        assert_eq!(model.max_total_tokens(), Some(model.max_token_count()));
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
@@ -563,6 +571,7 @@ mod tests {
         store_key.await.unwrap();
         let model = direct_anthropic_test_model(&provider);
         let request = LanguageModelRequest {
+            max_output_tokens: Some(8192),
             messages: vec![LanguageModelRequestMessage {
                 role: language_model::Role::User,
                 content: vec![MessageContent::Text("Retain this context.".to_string())],
@@ -607,6 +616,7 @@ mod tests {
                 .is_some_and(|header| header.contains(anthropic::COMPACTION_BETA_HEADER))
         );
         let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
+        assert_eq!(body["max_tokens"], 8192);
         assert_eq!(
             body["context_management"],
             json!({
@@ -762,9 +772,8 @@ impl LanguageModel for AnthropicModel {
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto
-            | LanguageModelToolChoice::Any
-            | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Any => anthropic::supports_forced_tool_use(&self.model.id),
         }
     }
 
@@ -790,6 +799,10 @@ impl LanguageModel for AnthropicModel {
 
     fn supports_explicit_compaction(&self) -> bool {
         self.model.supports_compaction
+    }
+
+    fn supports_explicit_compaction_output_limit(&self) -> bool {
+        self.supports_explicit_compaction()
     }
 
     fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
