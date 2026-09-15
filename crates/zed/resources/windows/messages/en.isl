@@ -13,3 +13,4 @@ RunAfter=Run %1 after installation
 Other=Other:
 SourceFile=%1 Source File
 OpenWithContextMenu=Open w&ith %1
+AllUsersAlreadyInstalled=Zed is already installed for all users. Please use the "Zed All Users" installer (Zed-AllUsers-x86_64.exe) instead.
