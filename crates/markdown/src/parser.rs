@@ -250,19 +250,42 @@ pub(crate) fn parse_markdown_with_options(
     let mut within_table = false;
     let mut current_metadata_block_start = None;
     let mut metadata_block_content_range: Option<Range<usize>> = None;
-    let parse_options = if parse_metadata_blocks {
-        PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS)
-    } else {
-        PARSE_OPTIONS
-    };
-    let parser = Parser::new_ext(text, parse_options);
+    let mut frontmatter = Vec::new();
+    if parse_metadata_blocks && text.starts_with("---") {
+        // YAML metadata can occur anywhere in pulldown-cmark, but frontmatter must come first.
+        let mut parser = Parser::new_ext(
+            text,
+            PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS),
+        )
+        .into_offset_iter()
+        .peekable();
+        if let Some((
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::MetadataBlock(
+                MetadataBlockKind::YamlStyle,
+            )),
+            range,
+        )) = parser.peek()
+        {
+            let frontmatter_end = range.end;
+            frontmatter.extend(parser.take_while(|(_, range)| range.start < frontmatter_end));
+        }
+    }
+    let body_start = frontmatter.last().map_or(0, |(_, range)| range.end);
+    let parser = Parser::new_ext(&text[body_start..], PARSE_OPTIONS);
     let mut link_definition_spans = parser
         .reference_definitions()
         .iter()
-        .map(|(_, definition)| definition.span.clone())
+        .map(|(_, definition)| definition.span.start + body_start..definition.span.end + body_start)
         .collect::<Vec<_>>();
     link_definition_spans.sort_by_key(|span| span.start);
-    let mut parser = parser.into_offset_iter().peekable();
+    let mut parser = frontmatter
+        .into_iter()
+        .chain(
+            parser
+                .into_offset_iter()
+                .map(|(event, range)| (event, range.start + body_start..range.end + body_start)),
+        )
+        .peekable();
     while let Some((pulldown_event, range)) = parser.next() {
         if within_metadata && !parse_metadata_blocks {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock(_)) =
@@ -1050,6 +1073,79 @@ mod tests {
                 ..Default::default()
             }
         )
+    }
+
+    #[test]
+    fn test_yaml_frontmatter_does_not_consume_body() {
+        for frontmatter in [
+            "",
+            "---\ntitle: Post\n---\n\n",
+            "---\r\ntitle: Post\r\n---\r\n\r\n",
+            "---\ntitle: Post\n...\n\n",
+        ] {
+            let body = "# Café\n\n[Before][target]\n\n---\n## First section\n\n**Bold** and [inside][target].\n\n---\n## Second section\n\n[target]: https://example.com\n";
+            let source = format!("{frontmatter}{body}");
+            let parsed = parse_markdown_with_options(&source, false, true, true);
+            assert_eq!(
+                parsed.metadata_blocks.len(),
+                usize::from(!frontmatter.is_empty())
+            );
+            assert_eq!(
+                parsed
+                    .events
+                    .iter()
+                    .filter(|(_, event)| matches!(event, Rule))
+                    .count(),
+                2
+            );
+            assert_eq!(
+                parsed
+                    .events
+                    .iter()
+                    .filter(|(_, event)| matches!(event, Start(Heading { .. })))
+                    .count(),
+                3
+            );
+            assert!(
+                parsed
+                    .events
+                    .iter()
+                    .any(|(_, event)| matches!(event, Start(Strong)))
+            );
+            assert_eq!(
+                parsed.events.iter().filter(|(_, event)| matches!(event, Start(Link { dest_url, .. }) if dest_url.as_ref() == "https://example.com")).count(),
+                2
+            );
+            assert_eq!(
+                parsed
+                    .link_definition_spans
+                    .iter()
+                    .map(|range| &source[range.clone()])
+                    .collect::<Vec<_>>(),
+                vec!["[target]: https://example.com"]
+            );
+            for (range, _) in &parsed.events {
+                assert!(source.get(range.clone()).is_some());
+            }
+            let heading_offset = parsed.heading_slugs["first-section"];
+            assert!(source[heading_offset..].starts_with("First section"));
+        }
+    }
+
+    #[test]
+    fn test_body_separators_are_not_yaml_metadata() {
+        for source in [
+            "# Heading\n\n---\n**Bold**",
+            "# Heading\n\n> ---\n> **Bold**\n> ---\n",
+            "# Heading\n\n- item\n\n  ---\n  **Bold**\n\n  ---\n",
+            "\n---\n**Bold**\n---\n",
+        ] {
+            assert_eq!(
+                parse_markdown_with_options(source, false, false, true),
+                parse_markdown_with_options(source, false, false, false),
+                "{source:?}"
+            );
+        }
     }
 
     #[test]
