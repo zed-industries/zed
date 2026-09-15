@@ -12,9 +12,10 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     rc::Rc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use theme::BufferLineHeight;
+use web_time::Instant;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SubmenuOpenTrigger {

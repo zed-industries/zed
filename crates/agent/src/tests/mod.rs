@@ -4341,8 +4341,8 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     assert_eq!(
         tool_call,
         acp::ToolCall::new(tool_call_id.clone(), "Echo")
+            .name("echo")
             .raw_input(json!({}))
-            .meta(acp::Meta::from_iter([("tool_name".into(), "echo".into())]))
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
