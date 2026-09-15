@@ -1071,7 +1071,9 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;
-    use gpui::{Modifiers, MousePressureEvent, PressureStage};
+    use gpui::{
+        Modifiers, MouseButton, MouseDownEvent, MousePressureEvent, MouseUpEvent, PressureStage,
+    };
     use indoc::indoc;
     use language::Point;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
@@ -1712,7 +1714,11 @@ mod tests {
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["upgrade".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
             },
             cx,
         )
@@ -1756,7 +1762,12 @@ mod tests {
                                 uri: params.text_document.uri,
                                 range: target_range,
                             }),
-                            ..Default::default()
+                            command: Some(lsp::Command {
+                                title: "Upgrade".to_string(),
+                                command: "upgrade".to_string(),
+                                arguments: Some(vec![serde_json::json!("3.5.16")]),
+                            }),
+                            ..lsp::InlayHintLabelPart::default()
                         }]),
                         kind: Some(lsp::InlayHintKind::TYPE),
                         text_edits: None,
@@ -1770,6 +1781,13 @@ mod tests {
             .next()
             .await;
         cx.background_executor.run_until_parked();
+        let mut command_requests = cx
+            .lsp
+            .set_request_handler::<lsp::request::ExecuteCommand, _, _>(|params, _| async move {
+                assert_eq!(params.command, "upgrade");
+                assert_eq!(params.arguments, vec![serde_json::json!("3.5.16")]);
+                Ok(Some(serde_json::Value::Null))
+            });
         cx.update_editor(|editor, _window, cx| {
             let expected_layers = vec![hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor, cx));
@@ -1830,6 +1848,63 @@ mod tests {
 
                 assert!(actual_ranges.is_empty(), "When no cmd is pressed, should have no hint label selected, but got: {actual_ranges:?}");
             });
+
+        cx.update_editor(|editor, _window, cx| {
+            let hovered_inlay = editor
+                .display_map
+                .read(cx)
+                .current_inlays()
+                .find(|inlay| inlay.id == InlayId::Hint(0))
+                .cloned()
+                .expect("hovered inlay");
+            let hovered_inlay_id = hovered_inlay.id;
+            editor.splice_inlays(&[hovered_inlay_id], vec![hovered_inlay], cx);
+            assert!(
+                editor.hovered_inlay_hint_command().is_none(),
+                "replacing the hovered inlay should clear its command"
+            );
+        });
+        cx.simulate_click(hover_point, Modifiers::none());
+        cx.background_executor.run_until_parked();
+        assert!(
+            command_requests.try_recv().is_err(),
+            "clicking without moving after hint replacement should not run the stale command"
+        );
+
+        cx.simulate_mouse_move(hover_point, None, Modifiers::none());
+        cx.background_executor.run_until_parked();
+        cx.simulate_click(hover_point, Modifiers::none());
+        command_requests
+            .next()
+            .await
+            .expect("execute command request");
+        cx.background_executor.run_until_parked();
+        cx.assert_editor_state(indoc! {"
+                struct TestStruct;
+
+                fn main() {
+                    let variableˇ = TestStruct;
+                }
+            "});
+
+        cx.simulate_event(MouseDownEvent {
+            position: hover_point,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 2,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            position: hover_point,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 2,
+        });
+        cx.background_executor.run_until_parked();
+        assert!(
+            command_requests.try_recv().is_err(),
+            "Second click of a double click should not re-run the inlay hint command"
+        );
 
         cx.simulate_modifiers_change(Modifiers::secondary_key());
         cx.background_executor.run_until_parked();

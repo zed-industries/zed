@@ -88,10 +88,67 @@ Non-negative `float` values
 }
 ```
 
-## Agent Font Size
+## Agent Panel {#agent-panel}
+
+To configure panel sizing, open the Settings Editor and search for “Agent Panel Default Width” or “Agent Panel Flexible Sizing”.
+
+### Default Width {#agent-panel-default-width}
+
+- Description: Default fixed width in pixels when the agent panel is docked to the left or right and `agent.flexible` is `false`.
+- Setting: `agent.default_width`
+- Default: `640`
+
+### Flexible Sizing {#agent-panel-flexible-sizing}
+
+- Description: Whether the agent panel uses flexible (proportional) sizing when docked to the left or right. When enabled, `agent.default_width` does not control the panel width, and double-clicking the panel’s outer resize handle restores the default proportion.
+- Setting: `agent.flexible`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+To use a fixed reset width, disable flexible sizing in the Settings Editor. Or add this to your settings.json:
+
+```json [settings]
+{
+  "agent": {
+    "default_width": 640,
+    "flexible": false
+  }
+}
+```
+
+See [Agent Panel visual customization](../visual-customization.md#agent-panel) for other panel appearance settings.
+
+### Threads Sidebar Default Width {#agent-threads-sidebar-default-width}
+
+- Description: Default width in pixels of the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
+- Setting: `agent.threads_sidebar_default_width`
+- Default: `300`
+
+**Options**
+
+Numbers from `200` to `800` pixels (inclusive). Values outside this range are clamped to the nearest limit.
+
+Open the Settings Editor and search for “Threads Sidebar Default Width”. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads_sidebar_default_width": 360
+  }
+}
+```
+
+If you haven’t manually resized the sidebar, its width follows changes to this setting immediately. A manually resized width takes precedence until you double-click the divider to reset it. After resetting, the sidebar follows this setting again.
+
+Widths saved by older versions of Zed are preserved if they differ from the previous default of 300 pixels. A saved width of 300 pixels uses this setting instead.
+
+## Agent UI Font Size
 
 - Description: The font size for text in the agent panel. Inherits the UI font size if unset.
-- Setting: `agent_font_size`
+- Setting: `agent_ui_font_size`
 - Default: `null`
 
 **Options**
@@ -134,13 +191,35 @@ Non-negative `float` values
 
 ## Auto Indent
 
-- Description: Whether indentation should be adjusted based on context while typing. This can be specified on a per-language basis.
+- Description: Controls automatic indentation behavior when typing. This can be specified on a per-language basis.
 - Setting: `auto_indent`
-- Default: `true`
+- Default: `syntax_aware`
 
 **Options**
 
-`boolean` values
+1. `syntax_aware`, adjusts indentation based on syntax context, using Tree-sitter to analyze the code structure:
+
+```json [settings]
+{
+  "auto_indent": "syntax_aware"
+}
+```
+
+2. `preserve_indent`, keeps the indentation of the current line when starting a new one, without adjusting for syntax:
+
+```json [settings]
+{
+  "auto_indent": "preserve_indent"
+}
+```
+
+3. `none`, disables automatic indentation, so new lines start at column 0:
+
+```json [settings]
+{
+  "auto_indent": "none"
+}
+```
 
 ## Auto Indent On Paste
 
@@ -530,6 +609,24 @@ When enabled, this setting will automatically close tabs for files that have bee
 }
 ```
 
+## Command Palette
+
+### Use Command History
+
+- Description: Whether to use command history ranking for sorting in the command palette.
+- Setting: `command_palette.use_command_history`
+- Default: `true`
+
+Disabling this setting does not erase history.
+
+```json [settings]
+{
+  "command_palette": {
+    "use_command_history": false
+  }
+}
+```
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.
@@ -544,7 +641,7 @@ When enabled, this setting will automatically close tabs for files that have bee
 
 - Description: Which level to use to filter out diagnostics displayed in the editor
 - Setting: `diagnostics_max_severity`
-- Default: `null`
+- Default: `all`
 
 **Options**
 
@@ -678,18 +775,59 @@ For the case of "open", regular selection behavior can be achieved by holding `a
       "**/*.cert",
       "**/*.crt",
       "**/.dev.vars",
-      "**/secrets.yml"
+      "**/secrets.yml",
+      "**/.zed/settings.json",
+      "/**/zed/settings.json",
+      "/**/zed/keymap.json"
     ]
   }
 ```
 
 **Options**
 
+### Edit Prediction Provider
+
+- Description: Which edit prediction provider to use
+- Setting: `provider`
+- Default: `"zed"`
+
+**Options**
+
+1. Use Zeta as the edit prediction provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "zed"
+  }
+}
+```
+
+2. Use Copilot as the edit prediction provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "copilot"
+  }
+}
+```
+
+3. Turn off edit predictions across all providers
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "none"
+  }
+}
+```
+
 ### Disabled Globs
 
 - Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
 - Setting: `disabled_globs`
-- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"]`
+- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml", "**/.zed/settings.json", "/**/zed/settings.json", "/**/zed/keymap.json"]`
 
 **Options**
 
@@ -1974,58 +2112,6 @@ While other options may be changed at a runtime and should be placed under `sett
 
 `integer` values representing milliseconds
 
-## Features
-
-- Description: Features that can be globally enabled or disabled
-- Setting: `features`
-- Default:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "zed"
-  }
-}
-```
-
-### Edit Prediction Provider
-
-- Description: Which edit prediction provider to use
-- Setting: `edit_prediction_provider`
-- Default: `"zed"`
-
-**Options**
-
-1. Use Zeta as the edit prediction provider:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "zed"
-  }
-}
-```
-
-2. Use Copilot as the edit prediction provider:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "copilot"
-  }
-}
-```
-
-3. Turn off edit predictions across all providers
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "none"
-  }
-}
-```
-
 ## Focus Follows Mouse
 
 - Description: Whether the focused panel follows the mouse location.
@@ -2065,7 +2151,9 @@ Non-negative `integer` values
 
 - Description: Whether or not to perform a buffer format before saving.
 - Setting: `format_on_save`
-- Default: `on`
+- Default: `off`
+
+Zed ships `"format_on_save": "on"` as a per-language default for Astro, Dart, EEx, Elixir, Elm, Go, GraphQL, HEEx, Kotlin, Rust, Starlark, and Zig. Every other language uses the top-level default above. Use [`languages`](#languages) to configure individual languages differently.
 
 **Options**
 
@@ -2526,7 +2614,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 - Description: Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
 - Setting: `gutter_debounce`
-- Default: `null`
+- Default: `0`
 
 **Options**
 
@@ -3759,15 +3847,23 @@ Examples:
 
 List of `string` glob patterns
 
-## Projects Online By Default
+## Read-Only Files {#read-only-files}
 
-- Description: Whether or not to show the online projects view by default.
-- Setting: `projects_online_by_default`
-- Default: `true`
+- Default: `[]`
+- Description: Glob patterns for files you can open and view but cannot edit, such as generated files or external dependencies.
+- Setting: `read_only_files`
 
-**Options**
+Add this to your project’s `.zed/settings.json`:
 
-`boolean` values
+```json [settings]
+{
+  "read_only_files": ["**/generated/**", "..."]
+}
+```
+
+Like [File Scan Exclusions](#file-scan-exclusions), `"..."` expands to the list inherited from the preceding settings layer. This example adds generated files to the read-only patterns from your user settings without repeating them. Duplicate entries collapse to their first occurrence.
+
+Omit `"..."` to replace the inherited list, or use `[]` to clear it. These patterns apply when you open a file.
 
 ## Read SSH Config
 
@@ -4536,7 +4632,7 @@ List of `integer` column numbers
 
 - Description: Set whether Alternate Scroll mode (DECSET code: `?1007`) is active by default. Alternate Scroll mode converts mouse scroll events into up / down key presses when in the alternate screen (e.g. when running applications like vim or less). The terminal can still set and unset this mode with ANSI escape codes.
 - Setting: `alternate_scroll`
-- Default: `off`
+- Default: `on`
 
 **Options**
 
@@ -4620,9 +4716,9 @@ List of `integer` column numbers
 
 ### Terminal: Cursor Shape
 
-- Description: Controls the visual shape of the cursor in the terminal. When not explicitly set, it defaults to a block shape.
+- Description: Controls the visual shape of the cursor in the terminal.
 - Setting: `cursor_shape`
-- Default: `null` (defaults to block)
+- Default: `block`
 
 **Options**
 
@@ -5807,6 +5903,16 @@ Available variables:
 ## Agent
 
 Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more about AI setup.
+
+### Prevent Idle Sleep
+
+- Description: Whether to keep the system from idle-sleeping while an agent thread is running. See [Keeping the System Awake](../ai/agent-panel.md#prevent-idle-sleep).
+- Setting: `agent.prevent_idle_sleep`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ## Collaboration Panel
 

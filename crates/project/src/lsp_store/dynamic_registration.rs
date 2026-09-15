@@ -102,26 +102,32 @@ impl LspStore {
             .or_default();
         // Guests track registrations by id, so notify on any id-visible change; caches only
         // consume the (selector, options) value set, so refresh flags compare sets.
-        let registration_changed = registrations.get(&registration_id) != Some(&new_registration);
-        let applicable_set_changed;
-        if registrations.contains_key(&registration_id) {
+        let previous_registration = registrations.get(&registration_id);
+        let registration_changed = previous_registration != Some(&new_registration);
+        let applicable_set_changed = match previous_registration {
+            Some(previous_registration) if previous_registration == &new_registration => false,
+            Some(previous_registration) => {
+                let mut other_registrations = registrations
+                    .iter()
+                    .filter(|(id, _)| **id != registration_id)
+                    .map(|(_, registration)| registration);
+                let previous_value_remains = other_registrations
+                    .clone()
+                    .any(|registration| registration == previous_registration);
+                let new_value_exists =
+                    other_registrations.any(|registration| registration == &new_registration);
+                !previous_value_remains || !new_value_exists
+            }
+            None => !registrations
+                .values()
+                .any(|registration| registration == &new_registration),
+        };
+        if previous_registration.is_some() {
             log::warn!(
                 "Received a duplicate {method} registration with ID {registration_id}, replacing the previous one"
             );
-            let previous_values = registrations.values().cloned().collect::<Vec<_>>();
-            registrations.insert(registration_id, new_registration);
-            applicable_set_changed = !previous_values
-                .iter()
-                .all(|previous| registrations.values().any(|current| current == previous))
-                || !registrations
-                    .values()
-                    .all(|current| previous_values.contains(current));
-        } else {
-            applicable_set_changed = !registrations
-                .values()
-                .any(|existing| existing == &new_registration);
-            registrations.insert(registration_id, new_registration);
         }
+        registrations.insert(registration_id, new_registration);
         let new_active_envelope = registrations
             .last()
             .map(|(_, registration)| registration.server_capabilities.clone());
@@ -617,6 +623,25 @@ impl LspStore {
                         |capabilities| &mut capabilities.definition_provider,
                     )?;
                 }
+                "textDocument/documentHighlight" => {
+                    let document_selector =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let options = parse_register_capabilities(reg.register_options)?;
+                    if self
+                        .register_dynamic_text_document_capability(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            options,
+                            document_selector,
+                            cx,
+                            |capabilities| &mut capabilities.document_highlight_provider,
+                        )?
+                        .applicability_may_have_changed()
+                    {
+                        self.refresh_document_highlights(Some(server_id), cx);
+                    }
+                }
                 "textDocument/completion" => {
                     if let Some(registration_options) = reg
                         .register_options
@@ -1037,6 +1062,19 @@ impl LspStore {
                         cx,
                         |capabilities| &mut capabilities.definition_provider,
                     )?;
+                }
+                "textDocument/documentHighlight" => {
+                    if self
+                        .unregister_dynamic_text_document_capability(
+                            &server,
+                            unreg,
+                            cx,
+                            |capabilities| &mut capabilities.document_highlight_provider,
+                        )?
+                        .is_some_and(CapabilityRegistrationChange::applicability_may_have_changed)
+                    {
+                        self.refresh_document_highlights(Some(server_id), cx);
+                    }
                 }
                 "textDocument/completion" => {
                     if self
