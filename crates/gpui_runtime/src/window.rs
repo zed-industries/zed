@@ -7452,13 +7452,9 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn read<'a>(&self, cx: &'a App) -> Result<&'a V> {
         let x = cx
             .windows
-            .get(self.id)
-            .and_then(|window| {
-                window
-                    .as_deref()
-                    .and_then(|window| window.core.root.clone())
-                    .map(|root_view| root_view.downcast::<V>())
-            })
+            .cell(self.id)
+            .and_then(|cell| cell.borrow().core.root.clone())
+            .map(|root_view| root_view.downcast::<V>())
             .context("window not found")?
             .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
 
@@ -7545,9 +7541,8 @@ impl AnyWindowHandle {
     /// window is borrowed and never blocks on the UI thread.
     pub fn metrics(&self, cx: &App) -> Option<WindowMetricsHandle> {
         cx.windows
-            .get(self.id)
-            .and_then(|host| host.as_deref())
-            .map(|host| host.core.metrics_handle())
+            .cell(self.id)
+            .map(|cell| cell.borrow().core.metrics_handle())
     }
 
     /// Returns the name of the window's declared root entity type.
@@ -8121,6 +8116,49 @@ mod tests {
             assert_eq!(metrics.content_size(), window.viewport_size());
         })
         .unwrap();
+    }
+
+    /// A window cannot be updated from within its own update. Callers that
+    /// reach for a window from inside a frame land here, and they get an error
+    /// rather than a panic or a second borrow of the same host.
+    #[gpui::test]
+    fn updating_a_window_from_within_its_own_update_reports_an_error(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let handle: AnyWindowHandle = window.into();
+
+        let nested_error = cx
+            .update_window(handle, |_, _window, cx| {
+                cx.update_window(handle, |_, _, _| ())
+                    .map_err(|error| error.to_string())
+                    .unwrap_err()
+            })
+            .expect("the outer update completes");
+
+        assert!(
+            nested_error.contains("already being updated"),
+            "unexpected error: {nested_error}"
+        );
+    }
+
+    /// Updating one window while another's update is in progress is fine, which
+    /// is what a paint that opens a window relies on.
+    #[gpui::test]
+    fn a_window_can_be_updated_from_within_another_windows_update(cx: &mut TestAppContext) {
+        let first: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        let second: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+
+        let expected = cx
+            .update_window(second, |_, window, _| window.viewport_size())
+            .expect("the window can be updated on its own");
+
+        let from_inner = cx
+            .update_window(first, |_, _window, cx| {
+                cx.update_window(second, |_, window, _| window.viewport_size())
+                    .expect("the inner update succeeds")
+            })
+            .expect("the outer update completes");
+
+        assert_eq!(from_inner, expected);
     }
 
     /// The handle borrows nothing from the window, so it can be read off the UI

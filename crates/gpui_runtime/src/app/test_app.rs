@@ -362,9 +362,8 @@ impl<V: 'static + Render> TestAppWindow<V> {
             .app
             .borrow()
             .windows
-            .get(self.handle.window_id())
-            .and_then(|w| w.as_ref())
-            .and_then(|w| w.core.root.clone())
+            .cell(self.handle.window_id())
+            .and_then(|cell| cell.borrow().core.root.clone())
             .and_then(|r| r.downcast::<V>().ok())
             .expect("window or root view not found");
         f(view.read(&app), &app)
@@ -472,8 +471,9 @@ impl<V: 'static + Render> TestAppWindow<V> {
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
         let window_id = self.handle.window_id();
         let mut app = self.app.borrow_mut();
-        if let Some(Some(window)) = app.windows.get_mut(window_id) {
-            if let Some(test_window) = window
+        if let Some(cell) = app.windows.cell(window_id) {
+            let mut host = cell.borrow_mut();
+            if let Some(test_window) = host
                 .core
                 .platform_window
                 .as_test()
@@ -491,17 +491,14 @@ impl<V: 'static + Render> TestAppWindow<V> {
         let window_id = self.handle.window_id();
         let test_window = {
             let mut app = self.app.borrow_mut();
-            app.windows
-                .get_mut(window_id)
-                .and_then(|window| window.as_mut())
-                .and_then(|window| {
-                    window
-                        .core
-                        .platform_window
-                        .as_test()
-                        .and_then(|any| any.downcast_mut::<TestWindow>())
-                })
-                .map(|test_window| test_window.clone())
+            app.windows.cell(window_id).and_then(|cell| {
+                let mut host = cell.try_borrow_mut().ok()?;
+                host.core
+                    .platform_window
+                    .as_test()
+                    .and_then(|any| any.downcast_mut::<TestWindow>())
+                    .cloned()
+            })
         };
         // The resize callback needs to borrow the app again synchronously.
         if let Some(mut test_window) = test_window {

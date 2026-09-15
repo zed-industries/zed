@@ -567,10 +567,9 @@ impl TestAppContext {
         self.app
             .borrow_mut()
             .windows
-            .get_mut(window.id)
+            .cell(window.id)
             .unwrap()
-            .as_deref_mut()
-            .unwrap()
+            .borrow_mut()
             .core
             .platform_window
             .as_test()
