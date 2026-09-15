@@ -88,10 +88,10 @@ Non-negative `float` values
 }
 ```
 
-## Agent Font Size
+## Agent UI Font Size
 
 - Description: The font size for text in the agent panel. Inherits the UI font size if unset.
-- Setting: `agent_font_size`
+- Setting: `agent_ui_font_size`
 - Default: `null`
 
 **Options**
@@ -700,12 +700,53 @@ For the case of "open", regular selection behavior can be achieved by holding `a
       "**/*.cert",
       "**/*.crt",
       "**/.dev.vars",
-      "**/secrets.yml"
+      "**/secrets.yml",
+      "**/.zed/settings.json",
+      "/**/zed/settings.json",
+      "/**/zed/keymap.json"
     ]
   }
 ```
 
 **Options**
+
+### Edit Prediction Provider
+
+- Description: Which edit prediction provider to use
+- Setting: `provider`
+- Default: `"zed"`
+
+**Options**
+
+1. Use Zeta as the edit prediction provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "zed"
+  }
+}
+```
+
+2. Use Copilot as the edit prediction provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "copilot"
+  }
+}
+```
+
+3. Turn off edit predictions across all providers
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "none"
+  }
+}
+```
 
 ### Disabled Globs
 
@@ -1995,58 +2036,6 @@ While other options may be changed at a runtime and should be placed under `sett
 **Options**
 
 `integer` values representing milliseconds
-
-## Features
-
-- Description: Features that can be globally enabled or disabled
-- Setting: `features`
-- Default:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "zed"
-  }
-}
-```
-
-### Edit Prediction Provider
-
-- Description: Which edit prediction provider to use
-- Setting: `edit_prediction_provider`
-- Default: `"zed"`
-
-**Options**
-
-1. Use Zeta as the edit prediction provider:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "zed"
-  }
-}
-```
-
-2. Use Copilot as the edit prediction provider:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "copilot"
-  }
-}
-```
-
-3. Turn off edit predictions across all providers
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "none"
-  }
-}
-```
 
 ## Focus Follows Mouse
 
@@ -3782,16 +3771,6 @@ Examples:
 **Options**
 
 List of `string` glob patterns
-
-## Projects Online By Default
-
-- Description: Whether or not to show the online projects view by default.
-- Setting: `projects_online_by_default`
-- Default: `true`
-
-**Options**
-
-`boolean` values
 
 ## Read SSH Config
 
