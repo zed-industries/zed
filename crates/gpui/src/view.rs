@@ -1,7 +1,8 @@
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
     Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, PaintIndex,
-    Pixels, PrepaintStateIndex, Render, RenderOnce, Style, StyleRefinement, TextStyle, WeakEntity,
+    Pixels, Point, PrepaintStateIndex, Render, RenderOnce, Style, StyleRefinement, TextStyle,
+    WeakEntity,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -287,12 +288,48 @@ struct ViewElementState {
     paint_range: Range<PaintIndex>,
     cache_key: ViewElementCacheKey,
     accessed_entities: FxHashSet<EntityId>,
+    /// How far the reused prepaint records were moved this frame, for paint
+    /// to move the paint records by the same amount.
+    reuse_offset: Point<Pixels>,
 }
 
 struct ViewElementCacheKey {
     bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
+    /// The view lay entirely inside its content mask when it was recorded,
+    /// so the records hold everything it painted and can be reused at
+    /// another position; a clipped recording is missing what fell outside.
+    unclipped: bool,
+}
+
+/// Whether `bounds` lies entirely inside `content_mask`, edges included —
+/// `Bounds::is_contained_within` excludes the far edges, which a view that
+/// fills its container's width always touches.
+fn unclipped_by(bounds: Bounds<Pixels>, content_mask: &ContentMask<Pixels>) -> bool {
+    let mask = content_mask.bounds;
+    bounds.origin.x >= mask.origin.x
+        && bounds.origin.y >= mask.origin.y
+        && bounds.right() <= mask.right()
+        && bounds.bottom() <= mask.bottom()
+}
+
+impl ViewElementCacheKey {
+    /// Whether records made under this key can be reused at `bounds` under
+    /// `content_mask`: exactly as they are, or moved by the returned offset.
+    fn reuse_offset(
+        &self,
+        bounds: Bounds<Pixels>,
+        content_mask: &ContentMask<Pixels>,
+    ) -> Option<Point<Pixels>> {
+        if self.bounds == bounds && self.content_mask == *content_mask {
+            Some(Point::default())
+        } else if self.unclipped && self.bounds.size == bounds.size {
+            Some(bounds.origin - self.bounds.origin)
+        } else {
+            None
+        }
+    }
 }
 
 impl<V: View> Element for ViewElement<V> {
@@ -384,18 +421,24 @@ impl<V: View> Element for ViewElement<V> {
                         let text_style = window.text_style();
 
                         if let Some(mut element_state) = element_state
-                            && element_state.cache_key.bounds == bounds
-                            && element_state.cache_key.content_mask == content_mask
                             && element_state.cache_key.text_style == text_style
                             && !window.dirty_views.contains(&entity_id)
                             && !window.refreshing
+                            && let Some(offset) =
+                                element_state.cache_key.reuse_offset(bounds, &content_mask)
                         {
                             let prepaint_start = window.prepaint_index();
-                            window.reuse_prepaint(element_state.prepaint_range.clone());
+                            window.reuse_prepaint_at(element_state.prepaint_range.clone(), offset);
                             cx.entities
                                 .extend_accessed(&element_state.accessed_entities);
                             let prepaint_end = window.prepaint_index();
                             element_state.prepaint_range = prepaint_start..prepaint_end;
+                            element_state.reuse_offset = offset;
+                            // The records now describe the view here, clipped
+                            // by what clips it here.
+                            element_state.cache_key.bounds = bounds;
+                            element_state.cache_key.unclipped = unclipped_by(bounds, &content_mask);
+                            element_state.cache_key.content_mask = content_mask;
 
                             return (None, element_state);
                         }
@@ -425,9 +468,11 @@ impl<V: View> Element for ViewElement<V> {
                                 paint_range: PaintIndex::default()..PaintIndex::default(),
                                 cache_key: ViewElementCacheKey {
                                     bounds,
+                                    unclipped: unclipped_by(bounds, &content_mask),
                                     content_mask,
                                     text_style,
                                 },
+                                reuse_offset: Point::default(),
                             },
                         )
                     },
@@ -505,7 +550,10 @@ fn paint_view(
                         element.paint(window, cx);
                         window.refreshing = refreshing;
                     } else {
-                        window.reuse_paint(element_state.paint_range.clone());
+                        window.reuse_paint_at(
+                            element_state.paint_range.clone(),
+                            element_state.reuse_offset,
+                        );
                     }
 
                     let paint_end = window.paint_index();
@@ -530,4 +578,292 @@ fn paint_component(
     window.with_id(ElementId::Name(name.into()), |window| {
         element.as_mut().unwrap().paint(window, cx);
     });
+}
+
+#[cfg(test)]
+mod cached_view_tests {
+    use super::*;
+    use crate::{
+        AnyWindowHandle, AppContext as _, Hsla, InteractiveElement as _, ParentElement as _,
+        ScaledPixels, Styled as _, TestAppContext, div, px,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    /// A fixed-size card whose renders are counted, with a hover style so a
+    /// hitbox gets recorded and solid backgrounds so quads do.
+    struct Card {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for Card {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .id("card")
+                .size(px(100.))
+                .bg(Hsla::red())
+                .hover(|style| style.bg(Hsla::green()))
+                .child(div().id("inner").size(px(20.)).bg(Hsla::blue()))
+        }
+    }
+
+    /// A 200px-tall clipping viewport with the card placed `scroll` pixels
+    /// from its top, like an item in a scrolling list.
+    struct Viewport {
+        card: Entity<Card>,
+        scroll: Rc<Cell<f32>>,
+    }
+
+    impl Render for Viewport {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut style = StyleRefinement::default();
+            style.size.width = Some(px(100.).into());
+            style.size.height = Some(px(100.).into());
+            div().size(px(200.)).overflow_hidden().child(
+                div()
+                    .mt(px(self.scroll.get()))
+                    .child(self.card.clone().cached(style)),
+            )
+        }
+    }
+
+    fn quads(cx: &mut TestAppContext, window: AnyWindowHandle) -> Vec<(f32, f32, f32, f32)> {
+        cx.update_window(window, |_, window, _| {
+            let scale = window.scale_factor();
+            let unscale = |v: ScaledPixels| v.0 / scale;
+            let mut quads: Vec<_> = window
+                .rendered_frame
+                .scene
+                .quads
+                .iter()
+                .map(|quad| {
+                    let clipped = quad.bounds.intersect(&quad.content_mask.bounds);
+                    (
+                        unscale(clipped.origin.x),
+                        unscale(clipped.origin.y),
+                        unscale(clipped.size.width),
+                        unscale(clipped.size.height),
+                    )
+                })
+                .collect();
+            quads.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            quads
+        })
+        .unwrap()
+    }
+
+    fn hitboxes(cx: &mut TestAppContext, window: AnyWindowHandle) -> Vec<(f32, f32)> {
+        cx.update_window(window, |_, window, _| {
+            let mut hitboxes: Vec<_> = window
+                .rendered_frame
+                .hitboxes
+                .iter()
+                .map(|hitbox| {
+                    (
+                        f32::from(hitbox.bounds.origin.y),
+                        f32::from(hitbox.size.height),
+                    )
+                })
+                .collect();
+            hitboxes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            hitboxes
+        })
+        .unwrap()
+    }
+
+    /// A card of `items` columns of `depth` nested stateful divs.
+    struct DeepCard {
+        items: usize,
+        depth: usize,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for DeepCard {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let depth = self.depth;
+            div()
+                .flex()
+                .flex_wrap()
+                .size_full()
+                .children((0..self.items).map(move |item| {
+                    let mut element = div().id(("leaf", item as u64)).size(px(2.));
+                    for level in (0..depth).rev() {
+                        element = div()
+                            .id(("some-container-element", level as u64))
+                            .child(element);
+                    }
+                    element.id(("item", item as u64)).size(px(4.))
+                }))
+        }
+    }
+
+    /// A list of `CARD_HEIGHT`-tall cached cards in an 800px viewport,
+    /// rendering only the cards that intersect it, scrolled by `scroll`.
+    struct ScrollingList {
+        cards: Vec<Entity<DeepCard>>,
+        scroll: Rc<Cell<f32>>,
+    }
+
+    const CARD_HEIGHT: f32 = 100.;
+    const VIEWPORT_HEIGHT: f32 = 800.;
+
+    impl Render for ScrollingList {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let scroll = self.scroll.get();
+            div()
+                .w(px(400.))
+                .h(px(VIEWPORT_HEIGHT))
+                .overflow_hidden()
+                .children(self.cards.iter().enumerate().filter_map(|(ix, card)| {
+                    let top = ix as f32 * CARD_HEIGHT - scroll;
+                    (top + CARD_HEIGHT > 0. && top < VIEWPORT_HEIGHT).then(|| {
+                        let mut style = StyleRefinement::default();
+                        style.size.width = Some(px(400.).into());
+                        style.size.height = Some(px(CARD_HEIGHT).into());
+                        style.position = Some(crate::Position::Absolute);
+                        style.inset.top = Some(px(top).into());
+                        card.clone().cached(style)
+                    })
+                }))
+        }
+    }
+
+    /// Frame cost of scrolling a list of cached views by a few pixels per
+    /// frame: on `main` every card misses its cache on every frame, since the
+    /// key includes where it was.
+    ///
+    /// `cargo test -p gpui --release --lib cached_view_tests::scrolling_frame_cost -- --ignored --nocapture`
+    #[crate::test]
+    #[ignore = "prints timings; run by hand"]
+    fn scrolling_frame_cost(cx: &mut TestAppContext) {
+        let scroll = Rc::new(Cell::new(0.));
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let scroll = scroll.clone();
+            let renders = renders.clone();
+            move |_, cx| ScrollingList {
+                cards: (0..100)
+                    .map(|_| {
+                        cx.new(|_| DeepCard {
+                            items: 40,
+                            depth: 8,
+                            renders: renders.clone(),
+                        })
+                    })
+                    .collect(),
+                scroll,
+            }
+        });
+        let window = AnyWindowHandle::from(window);
+        let mut frame = |cx: &mut TestAppContext| {
+            scroll.set(scroll.get() + 3.);
+            cx.update_window(window, |root, window, cx| {
+                root.downcast::<ScrollingList>()
+                    .unwrap()
+                    .update(cx, |_, cx| cx.notify());
+                let started = std::time::Instant::now();
+                window.draw(cx).clear(cx);
+                started.elapsed()
+            })
+            .unwrap()
+        };
+        for _ in 0..5 {
+            frame(cx);
+        }
+        renders.set(0);
+        let mut samples: Vec<_> = (0..60).map(|_| frame(cx)).collect();
+        samples.sort();
+        let median = samples[samples.len() / 2];
+        eprintln!(
+            "8 visible cards x (40 items x 8 deep) scrolled 3px per frame: median frame {:.2} ms, {} card renders over 60 frames",
+            median.as_secs_f64() * 1e3,
+            renders.get(),
+        );
+    }
+
+    #[crate::test]
+    fn cached_view_is_reused_where_it_moves_to(cx: &mut TestAppContext) {
+        let renders = Rc::new(Cell::new(0));
+        let scroll = Rc::new(Cell::new(0.));
+        let window = cx.add_window({
+            let renders = renders.clone();
+            let scroll = scroll.clone();
+            move |_, cx| Viewport {
+                card: cx.new(|_| Card { renders }),
+                scroll,
+            }
+        });
+        let window = AnyWindowHandle::from(window);
+        // Opening the window drew it once.
+        assert_eq!(renders.get(), 1);
+        // The viewport re-renders (it moved the card); the card itself is
+        // only re-rendered when it is notified.
+        let draw = |cx: &mut TestAppContext| {
+            cx.update_window(window, |root, window, cx| {
+                root.downcast::<Viewport>()
+                    .unwrap()
+                    .update(cx, |_, cx| cx.notify());
+                window.draw(cx).clear(cx)
+            })
+            .unwrap();
+        };
+
+        draw(cx);
+        assert_eq!(renders.get(), 1);
+        let at_top = quads(cx, window);
+        assert_eq!(
+            at_top,
+            vec![(0., 0., 20., 20.), (0., 0., 100., 100.)],
+            "the card and its inner square, at the top"
+        );
+        let hitboxes_at_top = hitboxes(cx, window);
+        assert!(!hitboxes_at_top.is_empty());
+
+        // Scrolling moves the card; the view is not dirty, so the previous
+        // frame's records are reused, moved down.
+        scroll.set(50.);
+        draw(cx);
+        assert_eq!(renders.get(), 1, "the card was not rendered again");
+        assert_eq!(
+            quads(cx, window),
+            vec![(0., 50., 20., 20.), (0., 50., 100., 100.)],
+            "the reused quads moved with the card"
+        );
+        assert_eq!(
+            hitboxes(cx, window),
+            hitboxes_at_top
+                .iter()
+                .map(|(y, h)| (y + 50., *h))
+                .collect::<Vec<_>>(),
+            "the reused hitboxes moved with the card"
+        );
+
+        // Partly out of the viewport: still reused, and clipped by the
+        // viewport at the new position.
+        scroll.set(150.);
+        draw(cx);
+        assert_eq!(renders.get(), 1);
+        assert_eq!(
+            quads(cx, window),
+            vec![(0., 150., 20., 20.), (0., 150., 100., 50.)],
+            "the reused quads are clipped by the viewport where it now cuts them"
+        );
+
+        // A recording made while clipped is missing what fell outside, so it
+        // is not reused anywhere else: moving back renders the card again.
+        scroll.set(0.);
+        draw(cx);
+        assert_eq!(renders.get(), 2, "a clipped recording is not moved");
+        assert_eq!(quads(cx, window), at_top);
+
+        // Notifying the entity always renders it again, wherever it is.
+        cx.update_window(window, |root, _, cx| {
+            let card = root.downcast::<Viewport>().unwrap().read(cx).card.clone();
+            card.update(cx, |_, cx| cx.notify());
+        })
+        .unwrap();
+        draw(cx);
+        assert_eq!(renders.get(), 3);
+    }
 }

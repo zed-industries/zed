@@ -148,6 +148,33 @@ impl Scene {
         }
     }
 
+    /// Replays `range` of `prev_scene` moved by `offset`, clipping every
+    /// primitive to `content_mask` on top of its own (moved) mask.
+    ///
+    /// This is how a cached view is painted again at a new position: its
+    /// primitives were recorded at the old one, and their masks include
+    /// whatever clipped them there, so the masks move with them and are
+    /// then cut down to what clips them here.
+    pub fn replay_at(
+        &mut self,
+        range: Range<usize>,
+        prev_scene: &Scene,
+        offset: Point<ScaledPixels>,
+        content_mask: &ContentMask<ScaledPixels>,
+    ) {
+        for operation in &prev_scene.paint_operations[range] {
+            match operation {
+                PaintOperation::Primitive(primitive) => {
+                    let mut primitive = primitive.clone();
+                    primitive.translate(offset, content_mask);
+                    self.insert_primitive(primitive);
+                }
+                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds + offset),
+                PaintOperation::EndLayer => self.pop_layer(),
+            }
+        }
+    }
+
     pub fn finish(&mut self) {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
@@ -255,6 +282,81 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+        }
+    }
+
+    /// Moves the primitive by `offset`, moving its mask with it and clipping
+    /// that mask to `content_mask`.
+    pub(crate) fn translate(
+        &mut self,
+        offset: Point<ScaledPixels>,
+        content_mask: &ContentMask<ScaledPixels>,
+    ) {
+        fn moved(
+            bounds: &mut Bounds<ScaledPixels>,
+            mask: &mut ContentMask<ScaledPixels>,
+            offset: Point<ScaledPixels>,
+            clip: &ContentMask<ScaledPixels>,
+        ) {
+            *bounds = *bounds + offset;
+            mask.bounds = (mask.bounds + offset).intersect(&clip.bounds);
+        }
+        match self {
+            Primitive::Shadow(shadow) => moved(
+                &mut shadow.bounds,
+                &mut shadow.content_mask,
+                offset,
+                content_mask,
+            ),
+            Primitive::Quad(quad) => moved(
+                &mut quad.bounds,
+                &mut quad.content_mask,
+                offset,
+                content_mask,
+            ),
+            Primitive::Path(path) => {
+                moved(
+                    &mut path.bounds,
+                    &mut path.content_mask,
+                    offset,
+                    content_mask,
+                );
+                for vertex in &mut path.vertices {
+                    vertex.xy_position = vertex.xy_position + offset;
+                    vertex.content_mask.bounds =
+                        (vertex.content_mask.bounds + offset).intersect(&content_mask.bounds);
+                }
+            }
+            Primitive::Underline(underline) => moved(
+                &mut underline.bounds,
+                &mut underline.content_mask,
+                offset,
+                content_mask,
+            ),
+            Primitive::MonochromeSprite(sprite) => moved(
+                &mut sprite.bounds,
+                &mut sprite.content_mask,
+                offset,
+                content_mask,
+            ),
+            Primitive::SubpixelSprite(sprite) => moved(
+                &mut sprite.bounds,
+                &mut sprite.content_mask,
+                offset,
+                content_mask,
+            ),
+            Primitive::PolychromeSprite(sprite) => moved(
+                &mut sprite.bounds,
+                &mut sprite.content_mask,
+                offset,
+                content_mask,
+            ),
+            Primitive::Surface(surface) => moved(
+                &mut surface.bounds,
+                &mut surface.content_mask,
+                offset,
+                content_mask,
+            ),
         }
     }
 }
