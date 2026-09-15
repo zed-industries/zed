@@ -1640,7 +1640,7 @@ impl App {
                     .cells()
                     .filter_map(|cell| {
                         let host = cell.borrow();
-                        host.core.invalidator.is_dirty().then_some(host.core.handle)
+                        host.core.should_render_frame().then_some(host.core.handle)
                     })
                     .collect::<Vec<_>>()
                 {
@@ -1655,6 +1655,10 @@ impl App {
                             || host.core.needs_present.get()
                             || !host.core.next_frame_callbacks.borrow().is_empty()
                         {
+                            // A dirty window asks for a frame even when the pipeline
+                            // defers drawing it: deferring is a decision about the
+                            // frame's work, not about whether the platform should
+                            // wake us to decide again.
                             host.core.platform_window.schedule_frame();
                         }
                     }

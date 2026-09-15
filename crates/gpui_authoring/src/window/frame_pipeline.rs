@@ -9,7 +9,7 @@
 //! Every phase falls back to the `Window` method that implements it, so a
 //! pipeline can override one phase and leave the rest alone.
 
-use crate::{App, ArenaClearNeeded, FocusId, Window, window::ElementArenaScope};
+use crate::{App, ArenaClearNeeded, FocusId, Window, WindowMetrics, window::ElementArenaScope};
 
 /// The phases of drawing one frame, in the order [`FramePipeline::draw`] runs
 /// them.
@@ -18,6 +18,26 @@ use crate::{App, ArenaClearNeeded, FocusId, Window, window::ElementArenaScope};
 /// window's frame state, which is not public. A phase that is not overridden
 /// behaves exactly as [`StandardImmediatePipeline`] does.
 pub trait FramePipeline: 'static {
+    /// Whether the frame the application is about to draw should be drawn.
+    ///
+    /// Defaults to drawing it. Answering `false` leaves the window exactly as it
+    /// was — no roots gathered, nothing laid out, nothing painted — and leaves the
+    /// work the frame would have done pending, so the next frame draws it. This is
+    /// where a pipeline paces frames: dropping the ones the display cannot keep up
+    /// with, or coalescing several invalidations into one frame.
+    ///
+    /// A window that stays dirty keeps asking, so answer `false` to defer a frame
+    /// rather than to drop it forever, and pace using the `metrics` handed in
+    /// rather than ignoring them.
+    ///
+    /// `is_dirty` says whether something changed since the last frame, as opposed
+    /// to the platform asking for one on its own. Two frames are drawn whatever
+    /// this returns: a window's first frame, and one forced after the GPU device
+    /// was lost, whose cached content may not be replayable.
+    fn should_render(&mut self, is_dirty: bool, _metrics: &WindowMetrics) -> bool {
+        is_dirty
+    }
+
     /// Opens the frame: samples the platform window, resets the scratch state
     /// the frame rebuilds, and takes ownership of the invalidations this frame
     /// owes.

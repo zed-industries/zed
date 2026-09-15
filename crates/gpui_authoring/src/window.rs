@@ -1318,6 +1318,16 @@ impl WindowHostCore {
             metrics: self.metrics.clone(),
         }
     }
+
+    /// Whether this window's pipeline wants the frame the application is about to
+    /// draw. Consulted before any of the frame's work is started.
+    pub(crate) fn should_render_frame(&self) -> bool {
+        let is_dirty = self.invalidator.is_dirty();
+        let metrics = self.metrics.load();
+        self.frame_pipeline
+            .borrow_mut()
+            .should_render(is_dirty, &metrics)
+    }
 }
 
 /// A cloneable handle for reading a window's metrics without borrowing it.
@@ -1995,9 +2005,13 @@ impl WindowHost {
                                     // atlas tile references after a GPU device recovery.
                                     window.refresh();
                                 }
-                                let arena_clear_needed = window.draw(cx);
-                                window.present();
-                                arena_clear_needed.clear(cx);
+                                // A forced render is not the pipeline's to defer: the
+                                // cached content it would replay may be gone.
+                                if force_render || window.core.should_render_frame() {
+                                    let arena_clear_needed = window.draw(cx);
+                                    window.present();
+                                    arena_clear_needed.clear(cx);
+                                }
                             })
                             .log_err();
                     })
@@ -8036,13 +8050,14 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, App, AppContext as _, Bounds, Context, DispatchPhase, DragMoveEvent,
-        Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
-        FocusId, FramePipeline, InputEvent as _, InteractiveElement as _, IntoElement,
+        AnyWindowHandle, App, AppContext as _, ArenaClearNeeded, Bounds, Context, DispatchPhase,
+        DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent,
+        FocusHandle, FocusId, FramePipeline, InputEvent as _, InteractiveElement as _, IntoElement,
         KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
         ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions,
-        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
-        TouchId, TouchPhase, Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
+        StandardImmediatePipeline, StatefulInteractiveElement as _, Styled, TestAppContext,
+        TouchDragEvent, TouchEvent, TouchId, TouchPhase, Window, WindowAppearance, WindowMetrics,
+        WindowOptions, canvas, div, point, px, size,
     };
 
     /// A window draws through whatever pipeline its app installs, running the
@@ -8138,6 +8153,75 @@ mod tests {
             window.paint_roots(roots, cx);
         })
         .unwrap();
+    }
+
+    /// Counts the frames it renders, and defers them when told to.
+    struct PacingPipeline {
+        frames: Rc<Cell<usize>>,
+        asks: Rc<Cell<usize>>,
+        allow: bool,
+    }
+
+    impl FramePipeline for PacingPipeline {
+        fn should_render(&mut self, is_dirty: bool, _metrics: &WindowMetrics) -> bool {
+            self.asks.set(self.asks.get() + 1);
+            self.allow && is_dirty
+        }
+
+        fn draw(&mut self, window: &mut Window, cx: &mut App) -> ArenaClearNeeded {
+            self.frames.set(self.frames.get() + 1);
+            FramePipeline::draw(&mut StandardImmediatePipeline, window, cx)
+        }
+    }
+
+    /// Installs a [`PacingPipeline`] over the app's windows.
+    fn install_pacing_pipeline(
+        cx: &mut TestAppContext,
+        frames: Rc<Cell<usize>>,
+        asks: Rc<Cell<usize>>,
+        allow: bool,
+    ) {
+        cx.update(move |cx| {
+            cx.set_frame_pipeline_factory(Rc::new(move |_| {
+                Box::new(PacingPipeline {
+                    frames: frames.clone(),
+                    asks: asks.clone(),
+                    allow,
+                })
+            }));
+        });
+    }
+
+    /// A pipeline that defers a frame stops it before any of its work starts.
+    #[gpui::test]
+    fn a_pipeline_can_defer_a_frame(cx: &mut TestAppContext) {
+        let frames = Rc::new(Cell::new(0));
+        let asks = Rc::new(Cell::new(0));
+        install_pacing_pipeline(cx, frames.clone(), asks.clone(), false);
+        let window = cx.add_window(|_, _| EmptyView);
+        let test_window = cx.test_window(window.into());
+        frames.set(0);
+        asks.set(0);
+
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+
+        assert!(asks.get() > 0, "the pipeline was asked about the frame");
+        assert_eq!(frames.get(), 0, "the deferred frame was never drawn");
+    }
+
+    /// The same window draws once the pipeline allows the frame.
+    #[gpui::test]
+    fn a_pipeline_can_allow_a_frame(cx: &mut TestAppContext) {
+        let frames = Rc::new(Cell::new(0));
+        let asks = Rc::new(Cell::new(0));
+        install_pacing_pipeline(cx, frames.clone(), asks.clone(), true);
+        let window = cx.add_window(|_, _| EmptyView);
+        frames.set(0);
+
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+
+        assert!(frames.get() > 0, "the allowed frame was drawn");
     }
 
     #[gpui::test]
