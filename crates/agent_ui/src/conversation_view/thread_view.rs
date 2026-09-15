@@ -4762,13 +4762,20 @@ impl ThreadView {
 
         let workspace = self.workspace.clone();
 
-        let max_output_tokens = self
+        let (max_input_tokens, max_output_tokens) = self
             .as_native_thread(cx)
-            .and_then(|thread| thread.read(cx).model())
-            .and_then(|model| model.max_output_tokens())
-            .unwrap_or(0);
-        let input_max_label =
-            crate::humanize_token_count(usage.max_tokens.saturating_sub(max_output_tokens));
+            .map(|thread| {
+                let thread = thread.read(cx);
+                (
+                    thread.input_token_capacity().unwrap_or(usage.max_tokens),
+                    thread
+                        .model()
+                        .and_then(|model| model.max_output_tokens())
+                        .unwrap_or(0),
+                )
+            })
+            .unwrap_or((usage.max_tokens, 0));
+        let input_max_label = crate::humanize_token_count(max_input_tokens);
         let output_max_label = crate::humanize_token_count(max_output_tokens);
 
         let build_tooltip = {
@@ -4804,7 +4811,7 @@ impl ThreadView {
         };
 
         if show_split {
-            let input_max_raw = usage.max_tokens.saturating_sub(max_output_tokens);
+            let input_max_raw = max_input_tokens;
             let output_max_raw = max_output_tokens;
 
             let input_ratio = if input_max_raw > 0 {
