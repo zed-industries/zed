@@ -3525,7 +3525,11 @@ impl SubagentHandle for NativeSubagentHandle {
                     }
                 }
             };
-            let cancelled = matches!(&response, Ok(Some(response)) if response.stop_reason == acp::StopReason::Cancelled);
+            let discard_partial_output = matches!(
+                &response,
+                Ok(Some(response)) if response.stop_reason == acp::StopReason::Cancelled
+                    || response.stop_reason == acp::StopReason::Refusal
+            );
             let result = match response {
                 Ok(Some(response)) => match response.stop_reason {
                     acp::StopReason::Cancelled => Err(anyhow!("User canceled")),
@@ -3563,7 +3567,7 @@ impl SubagentHandle for NativeSubagentHandle {
                 })
                 .ok();
 
-            if cancelled {
+            if discard_partial_output {
                 result
             } else {
                 result.map_err(|error| {

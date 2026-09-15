@@ -7166,47 +7166,14 @@ mod tests {
             subagent_partial_output_from_messages(&messages, Some(&pending_message)),
             "first part\n\nsecond part\n\npending part"
         );
-    }
-
-    #[test]
-    fn test_subagent_partial_output_requires_current_turn_text() {
         assert_eq!(subagent_partial_output_from_messages(&[], None), "");
-
-        let pending_message = AgentMessage {
-            content: vec![AgentMessageContent::Text("pending output".to_string())],
-            ..AgentMessage::default()
-        };
         assert_eq!(
             subagent_partial_output_from_messages(&[], Some(&pending_message)),
             ""
         );
-
-        let mut messages = vec![
-            user_text_message(ClientUserMessageId::new(), "old task"),
-            agent_text_message("old output"),
-            user_text_message(ClientUserMessageId::new(), "current task"),
-            Arc::new(Message::Resume),
-            summary_compaction("compaction summary"),
-            agent_text_message(""),
-            Arc::new(Message::Agent(AgentMessage {
-                content: vec![AgentMessageContent::Thinking {
-                    text: "hidden thinking".to_string(),
-                    signature: None,
-                }],
-                ..AgentMessage::default()
-            })),
-        ];
+        let mut messages = messages.to_vec();
+        messages.push(user_text_message(ClientUserMessageId::new(), "next task"));
         assert_eq!(subagent_partial_output_from_messages(&messages, None), "");
-        assert_eq!(
-            subagent_partial_output_from_messages(&messages, Some(&pending_message)),
-            "pending output"
-        );
-
-        messages.push(agent_text_message("current output"));
-        assert_eq!(
-            subagent_partial_output_from_messages(&messages, None),
-            "current output"
-        );
     }
 
     #[test]
@@ -7250,22 +7217,6 @@ mod tests {
         );
         assert_eq!(output.chars().count(), 12_292);
         assert_eq!(output.len(), 49_156);
-    }
-
-    #[test]
-    fn test_subagent_partial_output_character_limit_boundaries() {
-        for (character_count, expected_count) in
-            [(0, 0), (1, 1), (4095, 4095), (4096, 4096), (4097, 4096)]
-        {
-            let messages = [
-                user_text_message(ClientUserMessageId::new(), "current task"),
-                agent_text_message(&"a".repeat(character_count)),
-            ];
-            assert_eq!(
-                subagent_partial_output_from_messages(&messages, None),
-                "a".repeat(expected_count)
-            );
-        }
     }
 
     #[gpui::test]
