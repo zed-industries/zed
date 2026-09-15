@@ -172,6 +172,7 @@
     "context": "Markdown",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-a": "markdown::SelectAll",
       "ctrl-c": "markdown::Copy",
     },
   },

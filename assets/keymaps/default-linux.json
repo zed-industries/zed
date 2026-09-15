@@ -172,6 +172,7 @@
   {
     "context": "Markdown",
     "bindings": {
+      "ctrl-a": "markdown::SelectAll",
       "copy": "markdown::Copy",
       "ctrl-insert": "markdown::Copy",
       "ctrl-c": "markdown::Copy",

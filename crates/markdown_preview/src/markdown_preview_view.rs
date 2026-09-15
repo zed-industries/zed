@@ -571,7 +571,8 @@ impl MarkdownPreviewView {
                                 (index, focused)
                             });
                         if let Some(selection_start) = selection_start {
-                            let reveal = editor_is_focused || this.focus_handle.is_focused(window);
+                            let reveal =
+                                editor_is_focused || this.focus_handle.contains_focused(window, cx);
                             this.sync_preview_to_source_index(selection_start, reveal, cx);
                             cx.notify();
                         }
@@ -1597,8 +1598,8 @@ fn resolve_project_path_for_preview_image(
 }
 
 impl Focusable for MarkdownPreviewView {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.markdown.focus_handle(cx)
     }
 }
 
@@ -1755,7 +1756,7 @@ impl Render for MarkdownPreviewView {
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .on_hover(cx.listener(|view, hovered, _window, cx| {
                 if !hovered && view.hovered_url.take().is_some() {
                     cx.notify();
@@ -1795,21 +1796,32 @@ impl Render for MarkdownPreviewView {
                             let content = right_click_menu("markdown-preview-context-menu")
                                 .trigger(move |_, _, _| markdown_element)
                                 .maybe_menu(move |window, cx| {
-                                    let focus = window.focused(cx);
+                                    let focus = markdown.focus_handle(cx);
                                     let markdown = markdown.read(cx);
                                     let context_menu_link = markdown.context_menu_link().cloned();
                                     let selected_text =
                                         markdown.context_menu_selected_text().cloned();
                                     let selected_markdown =
                                         markdown.context_menu_selected_markdown().cloned();
-                                    if context_menu_link.is_none()
-                                        && selected_text.is_none()
-                                        && selected_markdown.is_none()
-                                    {
-                                        return None;
-                                    }
+                                    let html_selection =
+                                        selected_text.clone().zip(selected_markdown.clone());
                                     Some(ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                        menu.when_some(focus, |menu, focus| menu.context(focus))
+                                        menu.context(focus)
+                                            .action("Select All", Box::new(markdown::SelectAll))
+                                            .when_some(html_selection, |menu, (text, markdown)| {
+                                                menu.entry(
+                                                    "Copy as HTML",
+                                                    Some(Box::new(markdown::CopyAsHtml)),
+                                                    move |_, cx| {
+                                                        cx.write_to_clipboard(
+                                                            Markdown::clipboard_item_as_html(
+                                                                text.to_string(),
+                                                                &markdown,
+                                                            ),
+                                                        )
+                                                    },
+                                                )
+                                            })
                                             .when_some(selected_text, |menu, text| {
                                                 menu.entry(
                                                     "Copy",
@@ -3615,6 +3627,40 @@ mod tests {
             .unwrap()
     }
 
+    #[gpui::test]
+    async fn selects_and_copies_rendered_content_when_preview_opens(cx: &mut TestAppContext) {
+        let source = "# Title\n\n**Hello**, 世界!";
+        let (multi_workspace, _) = open_markdown_file(cx, "copy.md", source).await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.update(|cx| {
+            cx.bind_keys([
+                gpui::KeyBinding::new("ctrl-a", markdown::SelectAll, Some("Markdown")),
+                gpui::KeyBinding::new("ctrl-c", markdown::Copy, Some("Markdown")),
+            ]);
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes(multi_workspace.into(), "ctrl-a ctrl-c");
+        preview.read_with(cx, |preview, cx| {
+            assert_eq!(preview.markdown.read(cx).selected_source(), Some(source));
+        });
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("Title\nHello, 世界!")
+        );
+        cx.dispatch_action(multi_workspace.into(), markdown::CopyAsHtml);
+        let clipboard = cx
+            .read_from_clipboard()
+            .expect("rendered content should be copied");
+        assert!(
+            clipboard
+                .html()
+                .expect("HTML should be available")
+                .contains("<strong>Hello</strong>")
+        );
+    }
+
     fn dispatch_close_and_return_to_editor(
         cx: &mut TestAppContext,
         multi_workspace: &WindowHandle<MultiWorkspace>,
@@ -4029,7 +4075,7 @@ mod tests {
                     })
                     .unwrap();
                 assert_eq!(preview.read(cx).active_source_index, Some(source_index));
-                assert!(preview.read(cx).focus_handle.is_focused(window));
+                assert!(preview.focus_handle(cx).is_focused(window));
                 assert!(
                     workspace
                         .read(cx)
