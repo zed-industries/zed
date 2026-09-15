@@ -283,6 +283,7 @@ fn supports_thinking_budget_disable(model_id: &str) -> bool {
 pub struct GoogleEventMapper {
     usage: UsageMetadata,
     stop_reason: StopReason,
+    stop_emitted: bool,
 }
 
 impl GoogleEventMapper {
@@ -290,6 +291,7 @@ impl GoogleEventMapper {
         Self {
             usage: UsageMetadata::default(),
             stop_reason: StopReason::EndTurn,
+            stop_emitted: false,
         }
     }
 
@@ -307,6 +309,7 @@ impl GoogleEventMapper {
                     Some(Err(error)) => {
                         vec![Err(LanguageModelCompletionError::from(error))]
                     }
+                    None if self.stop_emitted => Vec::new(),
                     None => vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))],
                 })
             })
@@ -320,6 +323,7 @@ impl GoogleEventMapper {
 
         let mut events: Vec<_> = Vec::new();
         let mut wants_to_use_tool = false;
+        let mut has_finish_reason = false;
         if let Some(usage_metadata) = event.usage_metadata {
             update_usage(&mut self.usage, &usage_metadata);
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
@@ -339,7 +343,10 @@ impl GoogleEventMapper {
                     StopReason::Refusal
                 }
             };
-            events.push(Ok(LanguageModelCompletionEvent::Stop(self.stop_reason)));
+            if !self.stop_emitted {
+                self.stop_emitted = true;
+                events.push(Ok(LanguageModelCompletionEvent::Stop(self.stop_reason)));
+            }
 
             return events;
         }
@@ -347,6 +354,7 @@ impl GoogleEventMapper {
         if let Some(candidates) = event.candidates {
             for candidate in candidates {
                 if let Some(finish_reason) = candidate.finish_reason.as_deref() {
+                    has_finish_reason = true;
                     self.stop_reason = match finish_reason {
                         "STOP" => StopReason::EndTurn,
                         "MAX_TOKENS" => StopReason::MaxTokens,
@@ -442,7 +450,10 @@ impl GoogleEventMapper {
         // responds with `finish_reason: STOP`
         if wants_to_use_tool {
             self.stop_reason = StopReason::ToolUse;
-            events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+        }
+        if (has_finish_reason || wants_to_use_tool) && !self.stop_emitted {
+            self.stop_emitted = true;
+            events.push(Ok(LanguageModelCompletionEvent::Stop(self.stop_reason)));
         }
         events
     }
@@ -492,6 +503,54 @@ mod tests {
     };
     use language_model_core::{LanguageModelRequestMessage, LanguageModelRequestTool};
     use serde_json::json;
+
+    #[test]
+    fn completed_stream_emits_stop_once() {
+        for (response, expected_stop) in [
+            (
+                json!({"candidates": [{
+                    "content": {"role": "model", "parts": [{"text": "Answer"}]},
+                    "finishReason": "STOP"
+                }]}),
+                StopReason::EndTurn,
+            ),
+            (
+                json!({"candidates": [{
+                    "content": {"role": "model", "parts": [{
+                        "functionCall": {"name": "list_directory", "args": {}}
+                    }]},
+                    "finishReason": "STOP"
+                }]}),
+                StopReason::ToolUse,
+            ),
+            (
+                json!({"promptFeedback": {"blockReason": "SAFETY"}}),
+                StopReason::Refusal,
+            ),
+        ] {
+            let responses = vec![
+                Ok(serde_json::from_value(response).unwrap()),
+                Ok(serde_json::from_value(json!({"candidates": [{
+                    "content": {"role": "model", "parts": []},
+                    "finishReason": "STOP"
+                }]}))
+                .unwrap()),
+            ];
+            let events = futures::executor::block_on(
+                GoogleEventMapper::new()
+                    .map_stream(Box::pin(futures::stream::iter(responses)))
+                    .collect::<Vec<_>>(),
+            );
+            let stops = events
+                .into_iter()
+                .filter_map(|event| match event.unwrap() {
+                    LanguageModelCompletionEvent::Stop(reason) => Some(reason),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(stops, vec![expected_stop]);
+        }
+    }
 
     fn text_request() -> LanguageModelRequest {
         LanguageModelRequest {
@@ -760,8 +819,10 @@ mod tests {
             usage_metadata: None,
         };
 
-        mapper.map_event(response);
-        assert_eq!(mapper.stop_reason, StopReason::Refusal);
+        assert!(matches!(
+            mapper.map_event(response).as_slice(),
+            [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal))]
+        ));
     }
 
     #[test]
