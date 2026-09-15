@@ -3714,6 +3714,22 @@ impl Window {
         }
     }
 
+    /// Reuses the records in `range` of the rendered frame that laying an
+    /// element out leaves behind — element state accesses and text layouts —
+    /// as [`Self::reuse_prepaint_at`] does for the prepaint records. A cached
+    /// view measured from its content lays the content out before its own
+    /// prepaint, so those records fall outside its prepaint range.
+    pub(crate) fn reuse_layout_records(&mut self, range: Range<PrepaintStateIndex>) {
+        self.next_frame.accessed_element_states.extend(
+            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .map(|(id, type_id)| (id.clone(), *type_id)),
+        );
+        self.text_system
+            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+    }
+
     /// Reuses the prepaint records in `range` of the rendered frame, moved by
     /// `offset`. Everything positioned — hitboxes, deferred draws — moves,
     /// and their content masks, which include whatever clipped them at the
@@ -5000,6 +5016,24 @@ impl Window {
             scale_factor,
             &cx.layout_id_buffer,
         )
+    }
+
+    /// Runs `f` with `engine` as the window's layout tree (a new tree if
+    /// `None`), then hands it back. Content laid out this way lives in a tree
+    /// of its own, so it can be laid out while the window's tree is being
+    /// computed — its engine is away in [`Self::compute_layout`] then, and a
+    /// measure callback can add nothing to it — and prepainted from that tree
+    /// later.
+    pub(crate) fn with_layout_engine<R>(
+        &mut self,
+        engine: &mut Option<TaffyLayoutEngine>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let engine_in_use = engine.take().unwrap_or_else(TaffyLayoutEngine::new);
+        let outer = mem::replace(&mut self.layout_engine, Some(engine_in_use));
+        let result = f(self);
+        *engine = mem::replace(&mut self.layout_engine, outer);
+        result
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
