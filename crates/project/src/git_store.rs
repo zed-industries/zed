@@ -11406,6 +11406,51 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn join_with_concurrency_limit_bounds_inflight_and_preserves_order(
+        cx: &mut TestAppContext,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let executor = cx.background_executor.clone();
+        let in_flight = std::sync::Arc::new(AtomicUsize::new(0));
+        let peak = std::sync::Arc::new(AtomicUsize::new(0));
+
+        let futures = (0..9)
+            .map(|index| {
+                let in_flight = in_flight.clone();
+                let peak = peak.clone();
+                let executor = executor.clone();
+                async move {
+                    let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    executor.timer(Duration::from_millis(5)).await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                    Ok::<usize, ()>(index)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let results = join_with_concurrency_limit(futures, 3).await.unwrap();
+        assert_eq!(results, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(in_flight.load(Ordering::SeqCst), 0);
+        assert_eq!(peak.load(Ordering::SeqCst), 3);
+    }
+
+    #[gpui::test]
+    async fn join_with_concurrency_limit_short_circuits_on_first_error(_cx: &mut TestAppContext) {
+        let futures: Vec<std::future::Ready<Result<i32, &str>>> = vec![
+            std::future::ready(Ok(1)),
+            std::future::ready(Err("first")),
+            std::future::ready(Ok(2)),
+            std::future::ready(Err("second")),
+        ];
+
+        let result: Result<Vec<i32>, &str> = join_with_concurrency_limit(futures, 2).await;
+        assert_eq!(result, Err("first"));
+    }
+
     type TestPasswordPrompt = (
         String,
         oneshot::Sender<EncryptedPassword>,
