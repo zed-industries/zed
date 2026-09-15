@@ -145,6 +145,11 @@ pub trait LanguageModel: Send + Sync {
         true
     }
 
+    /// Whether thinking can be turned off at the selected effort level.
+    fn supports_disabling_thinking_at_effort(&self, _effort: Option<&str>) -> bool {
+        self.supports_disabling_thinking()
+    }
+
     fn supports_fast_mode(&self) -> bool {
         false
     }
