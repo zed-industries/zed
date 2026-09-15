@@ -48,6 +48,41 @@ Non-negative `float` values
 
 `float` values
 
+## Active Panel Modifiers
+
+- Description: Styling settings applied to the focused dock panel.
+- Setting: `active_panel_modifiers`
+- Default:
+
+```json [settings]
+{
+  "active_panel_modifiers": {
+    "border_size": 0.0,
+    "inactive_opacity": 1.0
+  }
+}
+```
+
+### Border size
+
+- Description: Size of the border surrounding the focused dock panel. When set to 0, the focused panel doesn't have any border. The border is drawn inset.
+- Setting: `border_size`
+- Default: `0.0`
+
+**Options**
+
+Non-negative `float` values
+
+### Inactive Opacity
+
+- Description: Opacity of dock panels that don't currently have focus. When set to 1.0, unfocused panels have the same opacity as the focused one. If set to 0, unfocused panel content is not visible. Values are clamped to the [0.0, 1.0] range.
+- Setting: `inactive_opacity`
+- Default: `1.0`
+
+**Options**
+
+`float` values
+
 ## Bottom Dock Layout
 
 - Description: Control the layout of the bottom dock, relative to the left and right docks.
