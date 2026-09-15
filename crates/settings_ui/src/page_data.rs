@@ -6398,7 +6398,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 18] {
+    fn git_panel_section() -> [SettingsPageItem; 19] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6462,6 +6462,26 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Commit Editor Font Size",
+                description: "Font size for the commit editor in the Git panel and commit modal. Falls back to the editor font size.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_commit_buffer_font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .git_commit_buffer_font_size
+                            .as_ref()
+                            .or(settings_content.theme.buffer_font_size.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.git_commit_buffer_font_size = value;
                     },
                 }),
                 metadata: None,
