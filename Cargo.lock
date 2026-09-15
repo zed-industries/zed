@@ -7542,7 +7542,6 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.17",
- "tracing",
  "ttf-parser",
  "unicode-segmentation",
  "url",
@@ -7556,7 +7555,6 @@ dependencies = [
  "windows 0.62.2",
  "zed-font-kit",
  "zed-scap",
- "ztracing",
 ]
 
 [[package]]

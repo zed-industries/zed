@@ -8017,7 +8017,7 @@ impl ThreadView {
                         .border_t_1()
                         .when(tool_failed || command_failed, |card| card.border_dashed())
                         .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
+                        .bg(cx.theme().colors().terminal_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
                         .h_full()

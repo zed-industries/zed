@@ -20509,10 +20509,10 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![
-                    "**/generated/**".to_string(),
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
                     "**/*.gen.rs".to_string(),
-                ]);
+                    "**/generated/**".to_string(),
+                ]));
             });
         });
     });
@@ -20578,6 +20578,56 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_read_only_files_splice_project_settings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
+                    SplicingVec::REST.to_string(),
+                    "**/*.lock".to_string(),
+                ]));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{"read_only_files": ["**/generated/**", "..."]}"#,
+            },
+            "generated": {"schema.rs": ""},
+            "src": {"main.rs": ""},
+            "yarn.lock": "",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    cx.executor().run_until_parked();
+
+    for (relative_path, expected_read_only) in [
+        ("generated/schema.rs", true),
+        ("src/main.rs", false),
+        ("yarn.lock", true),
+    ] {
+        let full_path = Path::new(path!("/root")).join(relative_path);
+        let result = project
+            .update(cx, |project, cx| project.open_local_buffer(&full_path, cx))
+            .await;
+        match result {
+            Ok(buffer) => assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.read_only()),
+                expected_read_only,
+                "{relative_path}"
+            ),
+            Err(error) => panic!("could not open {relative_path}: {error}"),
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -20585,7 +20635,7 @@ async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![]);
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![]));
             });
         });
     });
@@ -20677,10 +20727,10 @@ async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
                     "**/*.lock".to_string(),
                     "**/package-lock.json".to_string(),
-                ]);
+                ]));
             });
         });
     });
