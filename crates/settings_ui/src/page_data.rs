@@ -6891,27 +6891,23 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Threads List Default Width",
+                title: "Threads Sidebar Default Width",
                 description: "Default width of the Threads Sidebar. Resizing it takes precedence until you double-click the divider to reset.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("agent.threads.default_width"),
+                    json_path: Some("agent.threads_sidebar_default_width"),
                     pick: |settings_content| {
                         settings_content
                             .agent
                             .as_ref()?
-                            .threads
-                            .as_ref()?
-                            .default_width
+                            .threads_sidebar_default_width
                             .as_ref()
                     },
                     write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
-                            .threads
-                            .get_or_insert_default()
-                            .default_width = value;
+                            .threads_sidebar_default_width = value;
                     },
                 }),
                 metadata: None,

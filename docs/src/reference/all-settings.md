@@ -121,24 +121,22 @@ To use a fixed reset width, disable flexible sizing in the Settings Editor. Or a
 
 See [Agent Panel visual customization](../visual-customization.md#agent-panel) for other panel appearance settings.
 
-### Threads List Default Width {#agent-threads-default-width}
+### Threads Sidebar Default Width {#agent-threads-sidebar-default-width}
 
 - Description: Default width in pixels of the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
-- Setting: `agent.threads.default_width`
+- Setting: `agent.threads_sidebar_default_width`
 - Default: `300`
 
 **Options**
 
 Numbers from `200` to `800` pixels (inclusive). Values outside this range are clamped to the nearest limit.
 
-Open the Settings Editor and search for “Threads List Default Width”. Or add this to your `settings.json`:
+Open the Settings Editor and search for “Threads Sidebar Default Width”. Or add this to your `settings.json`:
 
 ```json [settings]
 {
   "agent": {
-    "threads": {
-      "default_width": 360
-    }
+    "threads_sidebar_default_width": 360
   }
 }
 ```

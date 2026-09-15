@@ -125,7 +125,7 @@ struct SerializedSidebar {
     ///
     /// Legacy state recorded every width without this flag. A width other than
     /// the old default of 300 pixels still identifies a manual resize. Only
-    /// that ambiguous default falls back to `agent.threads.default_width`.
+    /// that ambiguous default falls back to `agent.threads_sidebar_default_width`.
     #[serde(default)]
     width_set_by_user: bool,
     #[serde(default)]
@@ -767,7 +767,7 @@ pub struct Sidebar {
     multi_workspace: WeakEntity<MultiWorkspace>,
     width: Pixels,
     /// Whether `width` came from the user rather than from
-    /// `agent.threads.default_width`. Only a user-chosen width is persisted, so
+    /// `agent.threads_sidebar_default_width`. Only a user-chosen width is persisted, so
     /// that changing the setting is not overridden by a width the user never
     /// picked. Serialization runs on many triggers besides resizing.
     width_set_by_user: bool,
@@ -841,7 +841,7 @@ impl Sidebar {
         AgentThreadWorktreeLabelFlag::watch(cx);
 
         cx.observe_global::<SettingsStore>(|this, cx| {
-            let width = AgentSettings::get_global(cx).threads_default_width;
+            let width = AgentSettings::get_global(cx).threads_sidebar_default_width;
             if !this.width_set_by_user && this.width != width {
                 this.width = width;
                 cx.notify();
@@ -934,7 +934,7 @@ impl Sidebar {
 
         Self {
             multi_workspace: multi_workspace.downgrade(),
-            width: AgentSettings::get_global(cx).threads_default_width,
+            width: AgentSettings::get_global(cx).threads_sidebar_default_width,
             width_set_by_user: false,
             focus_handle,
             filter_editor,
@@ -7813,7 +7813,7 @@ impl WorkspaceSidebar for Sidebar {
         // `None` is the reset gesture, which hands the width back to the setting.
         self.width_set_by_user = width.is_some();
         self.width = width
-            .unwrap_or_else(|| AgentSettings::get_global(cx).threads_default_width)
+            .unwrap_or_else(|| AgentSettings::get_global(cx).threads_sidebar_default_width)
             .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH);
         cx.notify();
     }

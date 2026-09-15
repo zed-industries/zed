@@ -214,7 +214,7 @@ pub struct AgentSettings {
     pub dock: DockPosition,
     pub flexible: bool,
     pub sidebar_side: SidebarDockPosition,
-    pub threads_default_width: Pixels,
+    pub threads_sidebar_default_width: Pixels,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub max_content_width: Option<Pixels>,
@@ -769,11 +769,8 @@ impl Settings for AgentSettings {
             sidebar_side: agent.sidebar_side.unwrap(),
             // Clamped once here so that every reader gets a width the sidebar can
             // actually hold, rather than each call site having to remember to.
-            threads_default_width: agent
-                .threads
-                .as_ref()
-                .unwrap()
-                .default_width
+            threads_sidebar_default_width: agent
+                .threads_sidebar_default_width
                 .unwrap()
                 .into_gpui()
                 .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH),
@@ -1109,50 +1106,55 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_threads_default_width(cx: &mut gpui::App) {
+    fn test_threads_sidebar_default_width(cx: &mut gpui::App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         project::DisableAiSettings::register(cx);
         AgentSettings::register(cx);
 
         assert_eq!(
-            AgentSettings::get_global(cx).threads_default_width,
+            AgentSettings::get_global(cx).threads_sidebar_default_width,
             px(300.),
-            "default.json should supply the threads list width"
+            "default.json supplies the Threads Sidebar width"
         );
 
         SettingsStore::update_global(cx, |store, cx| {
             store
                 .set_user_settings(
-                    r#"{ "agent": { "threads": { "default_width": 360 } } }"#,
+                    r#"{ "agent": { "threads_sidebar_default_width": 360 } }"#,
                     cx,
                 )
-                .unwrap();
+                .expect("user settings load");
         });
 
         let settings = AgentSettings::get_global(cx);
-        assert_eq!(settings.threads_default_width, px(360.));
+        assert_eq!(settings.threads_sidebar_default_width, px(360.));
         assert_eq!(
             settings.default_width,
             px(640.),
-            "the threads list width must not disturb the agent panel width"
+            "setting the Threads Sidebar width leaves the agent panel width unchanged"
         );
         assert_eq!(
             settings.sidebar_side,
             SidebarDockPosition::Left,
-            "`threads` is a nested object, so sibling keys under `agent` are untouched"
+            "setting the Threads Sidebar width leaves its position unchanged"
         );
 
-        SettingsStore::update_global(cx, |store, cx| {
-            store
-                .set_user_settings(r#"{ "agent": { "threads": {} } }"#, cx)
-                .unwrap();
-        });
-        assert_eq!(
-            AgentSettings::get_global(cx).threads_default_width,
-            px(300.),
-            "an empty `threads` object should fall back to the default width"
-        );
+        for content in [
+            r#"{ "agent": { "threads_sidebar_default_width": null } }"#,
+            r#"{ "agent": {} }"#,
+        ] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(content, cx)
+                    .expect("user settings load");
+            });
+            assert_eq!(
+                AgentSettings::get_global(cx).threads_sidebar_default_width,
+                px(300.),
+                "an unset width falls back to the default"
+            );
+        }
     }
 
     #[gpui::test]

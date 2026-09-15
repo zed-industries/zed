@@ -298,11 +298,11 @@ fn setup_sidebar_closed(
     sidebar
 }
 
-fn set_threads_default_width(width: f32, cx: &mut App) {
+fn set_threads_sidebar_default_width(width: f32, cx: &mut App) {
     SettingsStore::update_global(cx, |store, cx| {
         store
             .set_user_settings(
-                &format!(r#"{{"agent": {{"threads": {{"default_width": {width}}}}}}}"#),
+                &format!(r#"{{"agent": {{"threads_sidebar_default_width": {width}}}}}"#),
                 cx,
             )
             .unwrap();
@@ -885,7 +885,7 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_width_reset_returns_configured_default(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
-    cx.update(|cx| set_threads_default_width(360.0, cx));
+    cx.update(|cx| set_threads_sidebar_default_width(360.0, cx));
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -921,7 +921,7 @@ async fn test_width_follows_settings_until_manually_resized(cx: &mut TestAppCont
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
 
-    cx.update(|_window, cx| set_threads_default_width(360.0, cx));
+    cx.update(|_window, cx| set_threads_sidebar_default_width(360.0, cx));
     cx.run_until_parked();
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(360.0));
     assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
@@ -929,7 +929,7 @@ async fn test_width_follows_settings_until_manually_resized(cx: &mut TestAppCont
     sidebar.update_in(cx, |sidebar, _window, cx| {
         sidebar.set_width(Some(px(420.0)), cx);
     });
-    cx.update(|_window, cx| set_threads_default_width(500.0, cx));
+    cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
     cx.run_until_parked();
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
 
@@ -944,7 +944,7 @@ async fn test_width_follows_settings_until_manually_resized(cx: &mut TestAppCont
         (360.0, px(360.0)),
         (5000.0, THREADS_LIST_MAX_WIDTH),
     ] {
-        cx.update(|_window, cx| set_threads_default_width(configured, cx));
+        cx.update(|_window, cx| set_threads_sidebar_default_width(configured, cx));
         cx.run_until_parked();
         assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), expected);
         let serialized = sidebar
@@ -969,7 +969,7 @@ async fn test_restored_width_preserves_legacy_resizes(cx: &mut TestAppContext) {
         (r#"{"width":420.0}"#, 420.0, true),
         (r#"{"width":300.0,"width_set_by_user":true}"#, 300.0, true),
     ] {
-        cx.update(|_window, cx| set_threads_default_width(360.0, cx));
+        cx.update(|_window, cx| set_threads_sidebar_default_width(360.0, cx));
         let sidebar =
             cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
         cx.run_until_parked();
@@ -994,7 +994,7 @@ async fn test_restored_width_preserves_legacy_resizes(cx: &mut TestAppContext) {
         assert_eq!(serialized.width, width_set_by_user.then_some(expected));
         assert_eq!(serialized.width_set_by_user, width_set_by_user);
 
-        cx.update(|_window, cx| set_threads_default_width(500.0, cx));
+        cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
         cx.run_until_parked();
         assert_eq!(
             sidebar.read_with(cx, |sidebar, _| sidebar.width),
@@ -1006,7 +1006,7 @@ async fn test_restored_width_preserves_legacy_resizes(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_configured_width_is_clamped_into_range(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
-    cx.update(|cx| set_threads_default_width(5000.0, cx));
+    cx.update(|cx| set_threads_sidebar_default_width(5000.0, cx));
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
@@ -1029,7 +1029,7 @@ async fn test_configured_width_is_clamped_into_range(cx: &mut TestAppContext) {
         "resetting the width should not restore the unclamped configured width"
     );
 
-    cx.update(|_window, cx| set_threads_default_width(5.0, cx));
+    cx.update(|_window, cx| set_threads_sidebar_default_width(5.0, cx));
     let narrow_sidebar =
         cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
     cx.run_until_parked();
@@ -1043,7 +1043,7 @@ async fn test_configured_width_is_clamped_into_range(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_only_a_user_chosen_width_is_persisted(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
-    cx.update(|cx| set_threads_default_width(360.0, cx));
+    cx.update(|cx| set_threads_sidebar_default_width(360.0, cx));
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
