@@ -25,3 +25,8 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 gpui_authoring.workspace = true
+
+[dev-dependencies]
+# The integration test drives a real frame through the pipeline SPI, so it needs
+# the authoring crate's test harness.
+gpui_authoring = { workspace = true, features = ["test-support"] }

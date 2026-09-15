@@ -3844,9 +3844,10 @@ impl Window<'_> {
 
     /// Draws the window's roots: everything on screen except the deferred draws.
     ///
-    /// The three passes above, in sequence. A [`FramePipeline`] that wants to
-    /// intervene between them drives them itself instead of calling this.
-    fn draw_roots(&mut self, cx: &mut App) {
+    /// The three passes above, in sequence, with no [`FramePipeline`] between
+    /// them. A pipeline composes its own passes instead of calling this, which is
+    /// what [`FramePipeline::draw_roots`] does.
+    pub fn draw_roots(&mut self, cx: &mut App) {
         let mut roots = self.evaluate_roots(cx);
         self.layout_roots(&mut roots, cx);
         self.paint_roots(roots, cx);

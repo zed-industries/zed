@@ -13,5 +13,7 @@
 #![warn(missing_docs)]
 
 mod application;
+mod pipeline;
 
 pub use application::{Application, ApplicationHandle};
+pub use pipeline::{InstrumentedPipeline, PhaseMetrics};

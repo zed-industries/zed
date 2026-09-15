@@ -9,7 +9,9 @@
 //! Every phase falls back to the `Window` method that implements it, so a
 //! pipeline can override one phase and leave the rest alone.
 
-use crate::{App, ArenaClearNeeded, FocusId, Window, WindowMetrics, window::ElementArenaScope};
+use crate::{
+    App, ArenaClearNeeded, FocusId, PreparedRoots, Window, WindowMetrics, window::ElementArenaScope,
+};
 
 /// The phases of drawing one frame, in the order [`FramePipeline::draw`] runs
 /// them.
@@ -45,10 +47,41 @@ pub trait FramePipeline: 'static {
         window.begin_frame(cx);
     }
 
+    /// Gathers the roots this frame will draw.
+    ///
+    /// The roots are not laid out yet, so this is where a pipeline can decide what
+    /// the frame is made of before any of it is measured.
+    fn evaluate_roots(&mut self, window: &mut Window<'_>, cx: &mut App) -> PreparedRoots {
+        window.evaluate_roots(cx)
+    }
+
+    /// Lays out and prepaints `roots`, then hit tests the pointer against what
+    /// they registered.
+    ///
+    /// Returning from here means the frame's geometry is settled and its hitboxes
+    /// are registered, so a pipeline can inspect or replace the roots before they
+    /// paint.
+    fn layout_roots(&mut self, window: &mut Window<'_>, roots: &mut PreparedRoots, cx: &mut App) {
+        window.layout_roots(roots, cx);
+    }
+
+    /// Paints `roots`, in the order they stack.
+    fn paint_roots(&mut self, window: &mut Window<'_>, roots: PreparedRoots, cx: &mut App) {
+        window.paint_roots(roots, cx);
+    }
+
     /// Lays out and paints the window's roots: the window's own view tree, plus
     /// a prompt, drag image or tooltip if the frame has one.
+    ///
+    /// Runs this pipeline's [evaluate](Self::evaluate_roots),
+    /// [layout](Self::layout_roots) and [paint](Self::paint_roots) passes in
+    /// sequence, so overriding one of those is enough to intervene between them.
+    /// [`Window::draw_roots`] is the same three passes with no pipeline in the
+    /// way.
     fn draw_roots(&mut self, window: &mut Window<'_>, cx: &mut App) {
-        window.draw_roots(cx);
+        let mut roots = self.evaluate_roots(window, cx);
+        self.layout_roots(window, &mut roots, cx);
+        self.paint_roots(window, roots, cx);
     }
 
     /// Closes the painted frame: records the views it touched and hands the
