@@ -8854,6 +8854,63 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     buffer.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
 }
 
+#[gpui::test(iterations = 20)]
+async fn test_dirty_buffer_follows_cross_directory_rename_after_rescan(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a": {"file.txt": "disk contents"},
+            "b": {},
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [Path::new(path!("/dir"))], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "unsaved ")], None, cx);
+        assert!(buffer.is_dirty());
+    });
+    cx.run_until_parked();
+
+    fs.pause_events();
+    fs.rename(
+        Path::new(path!("/dir/a/file.txt")),
+        Path::new(path!("/dir/b/file.txt")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.clear_buffered_events();
+    fs.emit_fs_event(path!("/dir"), Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        let file = buffer.file().unwrap();
+        assert_eq!(file.path().as_ref(), rel_path("b/file.txt"));
+        assert_ne!(file.disk_state(), DiskState::Deleted);
+        assert_eq!(buffer.text(), "unsaved disk contents");
+        assert!(buffer.is_dirty());
+    });
+    let destination_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/b/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(destination_buffer.entity_id(), buffer.entity_id());
+}
+
 #[gpui::test]
 async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
     init_test(cx);

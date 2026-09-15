@@ -1461,6 +1461,7 @@ struct FakeFsState {
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
     read_dir_errors: std::collections::HashMap<PathBuf, String>,
+    metadata_errors: std::collections::HashMap<PathBuf, String>,
     case_sensitive: bool,
 }
 
@@ -1832,6 +1833,7 @@ impl FakeFs {
             trash: Mutex::new(SlotMap::with_key()),
             remove_dir_errors: Default::default(),
             read_dir_errors: Default::default(),
+            metadata_errors: Default::default(),
             case_sensitive: true,
         }));
         let native_watcher = fs_watcher::OsWatcher::with_backend(
@@ -2635,6 +2637,16 @@ impl FakeFs {
         }
     }
 
+    pub fn set_metadata_error(&self, path: impl AsRef<Path>, message: Option<String>) {
+        let path = Self::error_key(path.as_ref());
+        let mut state = self.state.lock();
+        if let Some(message) = message {
+            state.metadata_errors.insert(path, message);
+        } else {
+            state.metadata_errors.remove(&path);
+        }
+    }
+
     /// Entry resolution in `try_entry` ignores drive prefixes, so the error
     /// injection map must too.
     /// Otherwise, on Windows, a key like `C:\workspace\dir` would never match a
@@ -3283,6 +3295,9 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         let mut state = self.state.lock();
         state.metadata_call_count += 1;
+        if let Some(message) = state.metadata_errors.get(&Self::error_key(&path)) {
+            anyhow::bail!("{message}");
+        }
         if let Some((mut entry, _)) = state.try_entry(&path, false) {
             let is_symlink = entry.is_symlink();
             if is_symlink {
