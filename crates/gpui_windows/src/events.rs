@@ -37,6 +37,34 @@ pub(crate) const WM_GPUI_END_SESSION: u32 = WM_USER + 9;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
+fn pointer_sample_time(info: &POINTER_INFO) -> std::time::Duration {
+    use std::{sync::OnceLock, time::Duration};
+    static FREQUENCY: OnceLock<Option<u64>> = OnceLock::new();
+    let frequency = FREQUENCY.get_or_init(|| {
+        let mut frequency = 0;
+        match unsafe {
+            windows::Win32::System::Performance::QueryPerformanceFrequency(&mut frequency)
+        } {
+            Ok(()) if frequency > 0 => Some(frequency as u64),
+            Ok(()) => None,
+            Err(error) => {
+                log::error!("failed to get performance frequency: {error}");
+                None
+            }
+        }
+    });
+    if let Some(frequency) = frequency.filter(|_| info.PerformanceCount != 0) {
+        return Duration::new(
+            info.PerformanceCount / frequency,
+            ((info.PerformanceCount % frequency) as u128 * 1_000_000_000 / frequency as u128)
+                as u32,
+        );
+    }
+    // dwTimeの32bit wrapを現在の64bit tickに対応づける。historyにも元の発生時刻を使う。
+    let current = unsafe { windows::Win32::System::SystemInformation::GetTickCount64() };
+    Duration::from_millis(current.saturating_sub((current as u32).wrapping_sub(info.dwTime) as u64))
+}
+
 /// Coordinates window draws on the UI thread. Owned by the platform and
 /// shared with every window (like `WindowsPlatformState::cursor_visible`),
 /// because the coordination is inherently cross-window: while window A is
@@ -495,12 +523,54 @@ impl WindowsWindowInner {
             return None;
         }
 
+        // 履歴は新しい順。callback中に別messageを取得する可能性があるため、先に全点を取得する。
+        if phase == TouchPhase::Moved && pointer_info.historyCount > 1 {
+            let capacity = pointer_info.historyCount.min(4096);
+            let mut history = vec![POINTER_INFO::default(); capacity as usize];
+            let mut count = capacity;
+            match unsafe {
+                GetPointerInfoHistory(pointer_id, &mut count, Some(history.as_mut_ptr()))
+            } {
+                Ok(()) if count > 0 => {
+                    history.truncate(count.min(capacity) as usize);
+                    let sample_count = history.len();
+                    let mut handled = None;
+                    for (index, sample) in history.into_iter().rev().enumerate() {
+                        let result = self.handle_pointer_sample(
+                            handle,
+                            pointer_id,
+                            sample,
+                            phase,
+                            index + 1 == sample_count,
+                        );
+                        // 未取得のcontactは、履歴がある場合も従来どおりOSへ処理を返す。
+                        handled = result.or(handled);
+                    }
+                    return handled;
+                }
+                Ok(()) => {}
+                Err(error) => log::error!("failed to get pointer history: {error}"),
+            }
+        }
+        self.handle_pointer_sample(handle, pointer_id, pointer_info, phase, true)
+    }
+
+    fn handle_pointer_sample(
+        &self,
+        handle: HWND,
+        pointer_id: u32,
+        pointer_info: POINTER_INFO,
+        phase: TouchPhase,
+        predict: bool,
+    ) -> Option<isize> {
+        let timestamp = pointer_sample_time(&pointer_info);
+
         // Windows adjusts ptPixelLocation with its input prediction. Gesture
         // classification and hit testing must use the unadjusted digitizer point.
         let Some(position) = self.pointer_position(handle, pointer_info.ptPixelLocationRaw) else {
             return self.cancel_active_touch(pointer_id, touch_phase_is_terminal(phase));
         };
-        let predicted_position = if phase == TouchPhase::Moved {
+        let predicted_position = if phase == TouchPhase::Moved && predict {
             self.pointer_position(handle, pointer_info.ptPixelLocation)
         } else {
             None
@@ -520,6 +590,7 @@ impl WindowsWindowInner {
                     .begin(pointer_id, position)?;
                 if let Some(replaced) = replaced {
                     self.dispatch_touch(TouchEvent {
+                        timestamp: Some(timestamp),
                         id: replaced.id,
                         phase: TouchPhase::Cancelled,
                         position: replaced.position,
@@ -543,6 +614,7 @@ impl WindowsWindowInner {
         };
 
         self.dispatch_touch(TouchEvent {
+            timestamp: Some(timestamp),
             id: touch.id,
             phase,
             position,
@@ -575,6 +647,7 @@ impl WindowsWindowInner {
             .cancel(pointer_id, terminal);
         if let Some(touch) = touch {
             self.dispatch_touch(TouchEvent {
+                timestamp: None,
                 id: touch.id,
                 phase: TouchPhase::Cancelled,
                 position: touch.position,
