@@ -710,12 +710,25 @@ pub fn init(cx: &mut App) {
 
                         agent_panel.update(cx, |panel, cx| {
                             panel.last_context_source = Some(source);
-                            cx.defer_in(window, move |panel, window, cx| {
-                                if let Some(conversation_view) = panel.active_conversation_view() {
-                                    conversation_view.update(cx, |conversation_view, cx| {
+                            if let Some(conversation_view) = panel.active_conversation_view() {
+                                conversation_view.update(cx, |conversation_view, cx| {
+                                    if conversation_view.active_thread().is_some() {
+                                        cx.defer_in(
+                                            window,
+                                            move |conversation_view, window, cx| {
+                                                conversation_view
+                                                    .insert_selection(selection, window, cx);
+                                            },
+                                        );
+                                    } else {
                                         conversation_view.insert_selection(selection, window, cx);
-                                    });
-                                } else if let Some(terminal_id) = panel.active_terminal_id()
+                                    }
+                                });
+                                return;
+                            }
+
+                            cx.defer_in(window, move |panel, window, cx| {
+                                if let Some(terminal_id) = panel.active_terminal_id()
                                     && let Some(agent_terminal) = panel.terminals.get(&terminal_id)
                                 {
                                     // Resolve mentions against the cwd: live cwd, else spawn dir.
@@ -1852,6 +1865,9 @@ impl AgentPanel {
 
     fn draft_has_content(&self, draft: &Entity<ConversationView>, cx: &App) -> bool {
         let cv = draft.read(cx);
+        if cv.has_pending_selections() {
+            return true;
+        }
         if let Some(thread_view) = cv.active_thread() {
             let text = thread_view.read(cx).message_editor.read(cx).text(cx);
             if !text.trim().is_empty() {
@@ -3031,7 +3047,11 @@ impl AgentPanel {
                     if conversation_view.entity_id() == draft_entity
             );
 
-            if agent_matches || has_editor_content || !draft_is_active {
+            if agent_matches
+                || has_editor_content
+                || draft.read(cx).has_pending_selections()
+                || !draft_is_active
+            {
                 return draft.clone();
             }
 
@@ -3339,10 +3359,11 @@ impl AgentPanel {
         }
 
         if self.active_thread_id(cx) == Some(id) {
+            // Activating another view must not retain the thread that was explicitly removed
+            self.base_view = BaseView::Uninitialized;
             if activate_draft_after_remove {
                 self.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
             } else {
-                self.base_view = BaseView::Uninitialized;
                 self.refresh_base_view_subscriptions(window, cx);
             }
             self.serialize(cx);
@@ -4234,7 +4255,11 @@ impl AgentPanel {
             .retained_threads
             .iter()
             .filter(|(_id, view)| {
-                let Some(thread_view) = view.read(cx).root_thread_view() else {
+                let view = view.read(cx);
+                if view.has_pending_selections() {
+                    return false;
+                }
+                let Some(thread_view) = view.root_thread_view() else {
                     return true;
                 };
                 let thread = thread_view.read(cx).thread.read(cx);
@@ -9238,6 +9263,258 @@ mod tests {
                 "empty workspace actions should not start the native agent connection"
             );
         });
+    }
+
+    struct DelayedSelectionAgentServer {
+        ready: async_channel::Receiver<()>,
+    }
+
+    impl AgentServer for DelayedSelectionAgentServer {
+        fn logo(&self) -> IconName {
+            IconName::ZedAgent
+        }
+
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("delayed-selection")
+        }
+
+        fn connect(
+            &self,
+            _delegate: agent_servers::AgentServerDelegate,
+            _project: Entity<Project>,
+            cx: &mut App,
+        ) -> Task<Result<Rc<dyn AgentConnection>>> {
+            let ready = self.ready.clone();
+            cx.spawn(async move |_| {
+                ready.recv().await?;
+                Ok(Rc::new(StubAgentConnection::new()) as Rc<dyn AgentConnection>)
+            })
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    #[gpui::test]
+    async fn test_add_selection_to_loading_thread(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        let (workspace, project, previous) = panel.read_with(&cx, |panel, _cx| {
+            (
+                panel.workspace.upgrade().expect("workspace must exist"),
+                panel.project.clone(),
+                panel
+                    .active_conversation_view()
+                    .cloned()
+                    .expect("previous conversation must exist"),
+            )
+        });
+        let previous_editor = previous.read_with(&cx, |view, cx| {
+            view.active_thread()
+                .expect("previous thread must be ready")
+                .read(cx)
+                .message_editor
+                .clone()
+        });
+        previous_editor.update_in(&mut cx, |editor, window, cx| {
+            editor.set_text("Keep this draft", window, cx);
+        });
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let buffer = project.update(cx, |project, cx| {
+                project.create_local_buffer("first selection\nsecond selection\n", None, false, cx)
+            });
+            let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor
+        });
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(0, 0)..text::Point::new(0, 15)]);
+            });
+        });
+
+        let (release, ready) = async_channel::bounded(1);
+        panel.update(&mut cx, |panel, cx| {
+            let server = Rc::new(DelayedSelectionAgentServer { ready });
+            let agent = Agent::Custom {
+                id: server.agent_id(),
+            };
+            install_custom_agent(server.agent_id().0.as_ref(), cx);
+            panel.connection_store.update(cx, |store, cx| {
+                store.request_connection(agent.clone(), server, cx);
+            });
+            panel.set_selected_agent_and_persist(agent, cx);
+            panel.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Thread, cx);
+        });
+        cx.update(|_, cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "ctrl-alt-q",
+                settings::ActionSequence(vec![
+                    ToggleFocus.boxed_clone(),
+                    NewThread.boxed_clone(),
+                    ToggleFocus.boxed_clone(),
+                    AddSelectionToThread.boxed_clone(),
+                ]),
+                Some("Workspace"),
+            )]);
+        });
+        cx.focus(&editor);
+        cx.simulate_keystrokes("ctrl-alt-q");
+        cx.run_until_parked();
+
+        let conversation = panel.read_with(&cx, |panel, _| {
+            panel
+                .active_conversation_view()
+                .cloned()
+                .expect("new conversation must exist")
+        });
+        assert_ne!(conversation.entity_id(), previous.entity_id());
+        assert!(conversation.read_with(&cx, |view, _| view.active_thread().is_none()));
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(1, 0)..text::Point::new(1, 16)]);
+            });
+        });
+        cx.focus(&editor);
+        workspace.update_in(&mut cx, |_, window, cx| {
+            window.dispatch_action(AddSelectionToThread.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(2, 0)..text::Point::new(2, 0)]);
+            });
+        });
+        cx.focus(&editor);
+        release.try_send(()).expect("startup gate must remain open");
+        cx.run_until_parked();
+
+        let message_editor = conversation.read_with(&cx, |view, cx| {
+            let thread = view
+                .active_thread()
+                .expect("thread must finish loading")
+                .read(cx);
+            assert!(thread.thread.read(cx).entries().is_empty());
+            thread.message_editor.clone()
+        });
+        let (contents, _) = message_editor
+            .update(&mut cx, |editor, cx| editor.contents(true, cx))
+            .await
+            .expect("selections must resolve");
+        let selections = contents
+            .iter()
+            .filter_map(|block| match block {
+                acp::ContentBlock::Resource(resource) => match &resource.resource {
+                    acp::EmbeddedResourceResource::TextResourceContents(content) => {
+                        Some(content.text.as_str())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(selections, ["first selection", "second selection"]);
+        assert_eq!(
+            previous_editor.read_with(&cx, |editor, cx| editor.text(cx)),
+            "Keep this draft"
+        );
+        cx.update(|window, cx| {
+            assert!(editor.focus_handle(cx).is_focused(window));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_loading_selection_survives_draft_retention(cx: &mut TestAppContext) {
+        assert_loading_selection_removal(cx, false).await;
+    }
+
+    #[gpui::test]
+    async fn test_loading_selection_is_discarded_with_active_draft(cx: &mut TestAppContext) {
+        assert_loading_selection_removal(cx, true).await;
+    }
+
+    async fn assert_loading_selection_removal(cx: &mut TestAppContext, remove_active: bool) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let (release, ready) = async_channel::bounded(1);
+        let conversation = panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_draft_with_server(
+                Rc::new(DelayedSelectionAgentServer { ready }),
+                window,
+                cx,
+            );
+            let conversation = panel
+                .active_conversation_view()
+                .cloned()
+                .expect("draft must exist");
+            conversation.update(cx, |view, cx| {
+                view.insert_selection(
+                    AgentContextSelection::Terminal(vec!["pending context".into()]),
+                    window,
+                    cx,
+                );
+            });
+            panel.selected_agent = Agent::Stub;
+            let draft = panel.ensure_draft(AgentThreadSource::AgentPanel, window, cx);
+            assert_eq!(draft.entity_id(), conversation.entity_id());
+            assert!(panel.draft_has_content(&conversation, cx));
+            cx.set_global(MaxIdleRetainedThreads(0));
+            panel.new_thread(&NewThread, window, cx);
+            panel.cleanup_retained_threads(cx);
+            assert!(
+                panel
+                    .retained_threads
+                    .contains_key(&conversation.read(cx).thread_id)
+            );
+            conversation
+        });
+        cx.run_until_parked();
+        let current = panel.read_with(&cx, |panel, _| {
+            panel
+                .active_conversation_view()
+                .cloned()
+                .expect("replacement draft must exist")
+        });
+        assert_ne!(conversation.entity_id(), current.entity_id());
+        if remove_active {
+            panel.update_in(&mut cx, |panel, window, cx| {
+                panel.set_base_view(
+                    BaseView::AgentThread {
+                        conversation_view: conversation.clone(),
+                    },
+                    false,
+                    window,
+                    cx,
+                );
+            });
+        }
+        let workspace = panel.read_with(&cx, |panel, _| {
+            panel.workspace.upgrade().expect("workspace must exist")
+        });
+        cx.focus(&workspace);
+        let focused = cx.update(|window, cx| window.focused(cx));
+        let thread_id = conversation.read_with(&cx, |view, _| view.thread_id);
+        let removed = conversation.downgrade();
+        drop(conversation);
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.remove_thread(thread_id, window, cx);
+        });
+        cx.run_until_parked();
+        assert!(removed.upgrade().is_none());
+        release
+            .try_send(())
+            .expect("connection store must retain the startup gate");
+        cx.run_until_parked();
+        current.read_with(&cx, |view, cx| {
+            let thread = view
+                .active_thread()
+                .expect("replacement must be ready")
+                .read(cx);
+            assert!(thread.message_editor.read(cx).text(cx).is_empty());
+            assert!(thread.thread.read(cx).entries().is_empty());
+        });
+        assert_eq!(cx.update(|window, cx| window.focused(cx)), focused);
     }
 
     #[gpui::test]
