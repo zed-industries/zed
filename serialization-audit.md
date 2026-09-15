@@ -2,182 +2,213 @@
 
 ## Status
 
-Implementation tip: `f4736cf3238c7a40318fcdeb95df2f955c1837c5` on `kb/serialization-fixes`.
-The series starts at `25b5569dd231e740922cfebafa26b1a6c08531e8`, the upstream-main baseline selected before implementation.
-There are 17 implementation/test commits, each validated against its own staged tree rather than the larger working tree.
-Nothing has been pushed and no PR has been opened.
-Automated validation is green; native and visual smoke checks below remain unverified.
-This is not a claim of lossless recovery under every interruption or storage failure.
+Implementation tip: `9705328c1532dce794fbaba67600a4fe181676d6` on `kb/serialization-fixes`.
+The upstream-main baseline is `25b5569dd231e740922cfebafa26b1a6c08531e8`, selected before implementation.
+There are 24 implementation/test commits: the original 17 plus seven append-only convergence repairs.
+The earlier audit's readiness assessment was disproved by further review and is superseded by this document.
+The final source passed 2,008 tests, with two existing tests ignored, and affected-package project Clippy.
+Each new commit also passed targeted validation against its own cumulative tree, without later working-tree changes.
+Native and visual behavior remains unverified.
+This is a review branch, not a claim of lossless recovery under every interruption or storage failure.
 
-## The model
+## The persistence contract
 
-Recovery needs both the saved contents and a saved route to those contents.
-The identities in that route must not be confused with runtime entity or window IDs.
+Recovery requires saved contents and a saved route to those contents.
+Runtime entity IDs alone cannot identify that route across launches.
 
 ```mermaid
 flowchart TD
-    Session[Recovery session ID] --> Window[Persisted window ID]
-    Window --> Workspace[Persisted workspace ID]
-    Workspace --> Graph[Pane graph and persisted item IDs]
-    Graph --> Payload[Editor or terminal payload]
+    Session[Recovery session] --> Window[Persisted window identity]
+    Window --> Workspace[Persisted workspace identity]
+    Workspace --> Graph[Pane graph and persisted item identities]
+    Graph --> Payload[Provider payloads]
+    Workspace --> TerminalGraph[Terminal layout]
+    TerminalGraph --> Payload
+    Workspace --> RecoveryGraph[One terminal recovery sidecar when needed]
+    RecoveryGraph --> Payload
 ```
 
-- Session lineage and runtime-to-persisted window mapping are in `crates/session/src/session.rs:18` and `:185`.
-- Workspace publication captures item writes, waits for them, and then saves the graph in `crates/workspace/src/workspace.rs:7723` and `:7847`.
-- Restoration owns its driving task and suppresses snapshots before installation in `crates/workspace/src/workspace.rs:7972`.
-- Terminal-panel shutdown captures state before awaiting background publication in `crates/terminal_view/src/terminal_panel.rs:1041` and `:1103`.
-- Whole-window membership is cleared only after grouped close consent in `crates/workspace/src/workspace.rs:12292` and `crates/workspace/src/persistence.rs:1929`.
-- Startup attempts the saved active member and remaining local/remote members by ID in `crates/zed/src/main.rs:1448` and `:1648`.
-- Live remote ownership is resolved before trusting an unflushed saved row in `crates/workspace/src/workspace.rs:11659`.
+The implementation has five responsibilities:
 
-These are coordinated writes, not one transaction spanning every editor, pane, window, and session.
-SQL completion is not a power-loss guarantee.
+1. **Identity and ownership.**
+   Window IDs are reserved before window construction, and allocation failure propagates without changing GPUI's construction APIs (`crates/session/src/session.rs:213`).
+   Saved-item reservations cover graph references and provider rows, while live owners and in-flight writes are tracked separately (`crates/workspace/src/workspace.rs:8227–8244`, `:8130–8168`, `crates/workspace/src/item.rs:502–510`).
+   Provider table keys use `(workspace_id, item_id)`, not globally unique item IDs.
+2. **Ordered publication.**
+   Workspace publication waits for captured payload tasks before writing the graph (`crates/workspace/src/workspace.rs:8099–8100`).
+   Terminal payload admission applies to both panel publication and the independent item queue (`crates/terminal_view/src/persistence.rs:27`, `crates/terminal_view/src/terminal_view.rs:423`).
+   These are coordinated writes, not one transaction spanning every payload, window, and session.
+3. **Owned restoration.**
+   Restoration survives cancellation of an outer waiter and preserves panes created while it awaits (`crates/workspace/src/workspace.rs:8391–8412`, `:8490–8502`).
+   Item failures become visible retained references alongside healthy items, rather than hiding the healthy panes (`crates/workspace/src/persistence/model.rs:431`).
+   Setup retry and final-publication retry are separate; publication retry does not deserialize the installed panes again (`crates/workspace/src/workspace.rs:7887`, `:12532`).
+4. **Explicit disposition.**
+   Failed references cannot report successful Save or Save As; Cancel retains them and explicit Discard removes them (`crates/workspace/src/item.rs:171`, `crates/workspace/src/pane.rs:2311`).
+   Retry cannot overwrite newer editor text, steal an existing pane item's persisted identity, or complete into a closed tab (`crates/editor/src/items.rs:1417–1432`, `crates/workspace/src/invalid_item_view.rs:89`).
+   Failed center tabs cannot move into a destination that cannot persist them, and failed terminals cannot move to another workspace (`crates/workspace/src/pane.rs:3950`, `crates/terminal_view/src/terminal_view.rs:2022–2028`).
+5. **Close and transfer barriers.**
+   Explicit Save/Discard is not invalidated by an unrelated center-graph publication failure.
+   Terminal publication remains fallible before closing or unbinding (`crates/workspace/src/workspace.rs:3932`).
+   An explicit project move waits for restoration, publication, and detach completion, then reopens the captured saved ID (`crates/workspace/src/multi_workspace.rs:1067`).
 
-## Commit boundaries
+### Independent opens versus restoration
 
-| #   | Commit       | Scope                                                                                                            |
-| --- | ------------ | ---------------------------------------------------------------------------------------------------------------- |
-| 1   | `261aba00a7` | Admit the instance before publishing recovery state; capture shutdown writes without a new foreground dependency |
-| 2   | `ea8ebc3089` | Order editor recovery writes                                                                                     |
-| 3   | `ec26da43b3` | Recover saved text when its backing file cannot be opened                                                        |
-| 4   | `2960adbd88` | Require persistent storage before suppressing save prompts                                                       |
-| 5   | `46dabb89fa` | Preserve distinct workspaces whose roots match                                                                   |
-| 6   | `8ed2a9364b` | Revalidate GC candidates and preserve candidates on filesystem errors                                            |
-| 7   | `55e90a5276` | Isolate Zed test databases between app contexts                                                                  |
-| 8   | `d64eb31dc8` | Add persisted session/window identity infrastructure                                                             |
-| 9   | `f189c84545` | Add persisted item-ID allocation, providers, and fallible publication primitives                                 |
-| 10  | `4c66c75462` | Use the same persisted item IDs in graphs, payloads, metadata, and cleanup                                       |
-| 11  | `956d7f6243` | Flush terminal-panel state at shutdown in publication order                                                      |
-| 12  | `550728123d` | Own restoration, preserve graphs on item failure, and require successful publication for hot exit                |
-| 13  | `6ef18899d0` | Separate independent workspace ownership, including pending remote opens                                         |
-| 14  | `66c5fe5e9a` | Coordinate close consent, session removal, and failure repair across a window                                    |
-| 15  | `c7640f345b` | Restore session members by saved identity and enable LastSession lineage preservation                            |
-| 16  | `932f9ec917` | Give the remote test transport independent identifier-scoped server endpoints                                    |
-| 17  | `f4736cf323` | Restore inactive remote members and continue after an active-member failure                                      |
+An independent open of an already-owned saved workspace gets a fresh saved identity and opens the requested paths without copying the owner's tabs or recovery metadata (`crates/workspace/src/workspace.rs:2229–2251`, `:12573–12615`).
+The original owner keeps its dirty editors.
+An unowned saved workspace restores normally, while an explicit by-ID open joins or reuses its owner.
+Explicit project moves use the transfer barrier described above rather than this independent-open path.
 
-Suggested stacked PR boundaries are **1**, **2–3**, **4**, **5–6**, **7–8**, **9**, **10–12**, **13**, **14**, and **15–17**.
-These boundaries separate review subjects without splitting the active graph/payload identity switch across PRs.
-The tested parents are the preceding commits in this series; arbitrary cherry-picks directly onto main are not claimed to be validated.
-Commit 8 deliberately leaves session-lineage preservation disabled until the later close and startup changes are present.
-Commit 15 is an intermediate integration step; inactive remote members require commit 17.
+## Why the follow-up repairs were necessary
 
-The implementation/test series is large: 28 files, 10,785 insertions and 1,438 deletions before this audit.
-Large regression modules and fixture changes are included in those figures, not hidden from them.
-Unnecessary residual test rearrangements were removed rather than committed as another large cleanup.
+| Review counterexample                                          | Final correction                                                                          |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Two workspaces use the same provider item ID                   | Remove global uniqueness from seven payload tables and keep workspace-scoped reads/writes |
+| Different item kinds allocate the same graph ID                | Reserve one workspace-wide graph namespace                                                |
+| A normal nonserializable editor or preview enters the graph    | Make eligibility explicit and omit items with no restorable source                        |
+| One saved item fails                                           | Install healthy panes and retain an actionable failed tab                                 |
+| Retry meets a newer live editor buffer                         | Keep differing recovery text in a separate fileless buffer                                |
+| A source queue drains after an item moves                      | Reject stale editor and terminal owners before rebinding or writing                       |
+| A terminal graph is unreadable while new terminals are created | Preserve the primary value and publish new state through one recovery sidecar             |
+| A terminal batch fails after its first split                   | Prepare the complete batch before pane activation or installation                         |
+| A repaired graph collides with a queued new terminal           | Check admission before every terminal payload submission                                  |
+| Empty hidden terminal panel is flushed and reopened            | Do not create an unsolicited shell for an entirely empty graph                            |
+| Old detached publication races a replacement owner             | Keep ownership through publication and final unbinding                                    |
+| Startup is interrupted after the back window restores first    | Preserve the saved relative window order while restoration is incomplete                  |
+| A Markdown preview moves without its source editor             | Resolve its saved path from the source editor and replace its workspace subscription      |
+| Cleanup treats all reserved IDs as live forever                | Retain committed, unresolved, live, and in-flight references, not bare reservations       |
 
-## Intentional behavior change
+The failed-item presentation extends the existing `InvalidItemView` UI.
+The terminal recovery presentation follows the existing failed-terminal UI rather than adding a separate recovery window.
+The terminal design uses at most two graph keys per workspace: primary and one recovery sidecar.
+Successful reconciliation writes the primary graph and deletes the sidecar in one savepoint (`crates/terminal_view/src/persistence.rs`, `TerminalDb::save_panel`).
+No extra journal, generic rollback framework, workspace-cloning framework, or fallible GPUI constructor layer was added.
 
-An independent open of a workspace that already has a live or pending owner receives a fresh saved identity and opens the requested paths without copying the owner's tabs or recovery metadata.
-The original workspace keeps its dirty editors and recovery records.
-An unowned saved workspace still restores under its existing identity, and an explicit by-ID open reuses its owner.
-This also preserves move-to-new-window restoration after the previous owner has been removed.
-The policy and its saved-root-order regression are in commit 13.
+## Commit map
 
-A cross-workspace cloning implementation was rejected and removed after tests exposed mixed source revisions and missing destination metadata.
-No generic snapshot or cloning framework is included.
+| #   | Commit       | Scope                                                                         |
+| --- | ------------ | ----------------------------------------------------------------------------- |
+| 1   | `261aba00a7` | Startup admission and foreground-independent shutdown capture                 |
+| 2   | `ea8ebc3089` | Ordered editor recovery writes                                                |
+| 3   | `ec26da43b3` | Saved-text fallback when the backing file cannot open                         |
+| 4   | `2960adbd88` | Persistent-storage requirement for hot exit                                   |
+| 5   | `46dabb89fa` | Distinct workspaces with matching roots                                       |
+| 6   | `8ed2a9364b` | GC candidate revalidation and metadata errors                                 |
+| 7   | `55e90a5276` | Per-app Zed test database isolation                                           |
+| 8   | `d64eb31dc8` | Logical session/window identity infrastructure                                |
+| 9   | `f189c84545` | Persisted item-ID and publication primitives                                  |
+| 10  | `4c66c75462` | Shared persisted graph/payload/metadata identities                            |
+| 11  | `956d7f6243` | Ordered terminal-panel shutdown publication                                   |
+| 12  | `550728123d` | Owned workspace restoration and hot-exit publication                          |
+| 13  | `6ef18899d0` | Independent-open ownership claims                                             |
+| 14  | `66c5fe5e9a` | Grouped close consent and session removal                                     |
+| 15  | `c7640f345b` | By-ID local session restoration                                               |
+| 16  | `932f9ec917` | Identifier-scoped remote mock endpoints                                       |
+| 17  | `f4736cf323` | Inactive remote-member restoration                                            |
+| 18  | `263ca68e9f` | Fresh mock starts versus reconnects                                           |
+| 19  | `48cb1b345d` | Fallible window reservations and interrupted window order                     |
+| 20  | `412ca9df70` | Workspace-scoped provider keys and payload-query errors                       |
+| 21  | `bcc324985e` | Editor recovery metadata and live-buffer protection                           |
+| 22  | `2f457a6bb5` | Failed-tab disposition, namespace liveness, Retry, and lifecycle repairs      |
+| 23  | `f5ea7d71e3` | Terminal recovery, payload admission, atomic installation, and close flushing |
+| 24  | `9705328c15` | Markdown eligibility and moved-preview ownership                              |
 
-## Regression evidence
+The series is substantial: before this audit update, 53 files, 21,820 insertions, and 1,965 deletions relative to the baseline.
+The two largest new commits are core restoration and terminal recovery; their regression cases remain with the mechanisms they exercise.
+Earlier commits were not rebased or rewritten.
 
-Expected results use distinct Unicode text sentinels, unchanged backing-file contents, exact raw database bindings, and explicit pane/member identities.
-Tests do not establish recovery merely by counting entities or checking that a payload row exists.
+### PR extraction constraints
 
-| Adversarial case                                        | Observed failing control                                               |
-| ------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Older editor write completes after the latest request   | Original serialization persisted the older text                        |
-| Backing file cannot be opened                           | Removing recovery fallback failed both opening routes                  |
-| Two saved workspaces acquire matching roots             | Original deletion/index behavior removed or rejected one identity      |
-| GC observes stale paths or a metadata error             | Original deletion behavior failed candidate-preservation assertions    |
-| Runtime item ID collides with another saved item        | Runtime-keyed payload writes overwrote the other editor's text         |
-| Item restoration fails after another item succeeds      | Suppressing error propagation replaced the saved graph                 |
-| Terminal graph remains behind the debounce at quit      | Disabling the quit callback left the old graph                         |
-| A second close prompt remains unanswered                | Parent close behavior removed the first workspace's session membership |
-| Saved root order differs from requested order           | The intermediate opener restored the requested order instead           |
-| Two remote opens are pending on the same saved identity | Disabling ownership separation gave both the same server identifier    |
-| Local session members have colliding roots              | Root lookup restored the wrong active workspace ID                     |
-| Local scratch is active above two saved remote members  | Skipping inactive remotes omitted both saved remote IDs                |
-| Two protocol clients share one mock endpoint            | Aliasing endpoints disconnected the first client                       |
-| A live remote owner's row has not been flushed          | Saved-row validation rejected the owner and waited for Retry/Cancel    |
+The small startup, ordered-write/fallback, persistent-storage, GC, and test-isolation subjects can be reviewed separately.
+Window reservations, provider schemas, editor recovery, core restoration, terminal recovery, and Markdown ownership are distinct follow-up review subjects.
+Do not merge the item-identity switch without the provider-schema and core/terminal follow-up repairs.
+Keep commits 22–23 in the same integration PR unless their intermediate behavior is explicitly accounted for.
+The tested parents are the preceding commits in this branch, not arbitrary cherry-picks onto main.
+Any extracted or reordered PR branch needs its own validation.
+No PR was opened by this work.
 
-Controls used either parent/baseline implementations with required test seams or narrowly disabled fixes.
-They were not all pristine bare-main builds, and additional boundary tests are not all red without the fix.
-The final remote tests cover two restarts, same-host identical roots, different roots, mixed hosts, root-free unsaved buffers, disabled-sidebar startup, and a failed active remote followed by healthy scratch recovery.
+## Automated evidence
 
-## Final automated validation
+| Suite             |    Passed | Ignored |
+| ----------------- | --------: | ------: |
+| Component preview |         6 |       0 |
+| DB                |         9 |       0 |
+| Editor            |     1,041 |       1 |
+| Git UI            |       159 |       0 |
+| Image viewer      |         6 |       0 |
+| Keymap editor     |        45 |       0 |
+| Markdown preview  |        34 |       0 |
+| Onboarding        |         2 |       0 |
+| Recent projects   |        35 |       0 |
+| Remote            |        36 |       0 |
+| Session           |        12 |       0 |
+| Sqlez             |        20 |       0 |
+| Terminal view     |       124 |       0 |
+| Workspace         |       374 |       0 |
+| Zed binary        |       105 |       1 |
+| **Total**         | **2,008** |   **2** |
 
-| Suite           |    Passed | Ignored |
-| --------------- | --------: | ------: |
-| Editor          |     1,035 |       1 |
-| Workspace       |       330 |       0 |
-| Terminal view   |        99 |       0 |
-| Session         |         6 |       0 |
-| DB              |         9 |       0 |
-| Sqlez           |        20 |       0 |
-| Remote          |        35 |       0 |
-| Recent projects |        35 |       0 |
-| Zed binary      |       104 |       1 |
-| **Total**       | **1,673** |   **2** |
+The affected-package `./script/clippy` run passed with release, all-targets, all-features, and denied warnings.
+It covered the provider crates and the changed agent, debugger, search, settings, collab, and visual-runner constructor consumers.
+Per-candidate validation also checked Zed targets and the component-preview example, using the existing runtime-shader feature where Command Line Tools lacked `metal`.
+Service-backed collab integration runtime tests were not run.
+The two ignored tests remain the existing editor line-joining and Zed restored-window edit-state tests.
 
-Zed and the component-preview example passed their build checks.
-The project Clippy command passed for all affected packages, with release, all-targets, all-features, and denied warnings as imposed by `script/clippy`.
-The final source hashes match the source validated by that Clippy run.
-All 11 session tests, the owner-reuse regression, and eight workspace/transport tests passed scheduler seeds 0–19 in the final validation.
-Earlier commit-specific sweeps also covered restoration, terminal shutdown, editor ordering, and grouped close.
+Scheduler sweeps cover window reservations, owner transfer, publication retry, terminal admission and failed batches, empty-panel reload, and both moved-preview modes.
+Red controls include the original provider-key constraints, project transfer without the detach barrier, failed publication without Retry, terminal installation before batch completion, empty-panel shell creation, and Markdown's destination-project path lookup.
+These controls used the relevant parent/WIP implementation or narrowly disabled fixes, not uniformly pristine bare-main builds.
+Expected outputs include exact text and filename/language values, unchanged failed payload bytes, saved workspace/item identities, pane selection/pins, and actual entity release before reopening.
+Healthy restored terminals may update their cwd; failure-preservation tests distinguish that legitimate update from mutation of an unresolved payload.
 
-The two ignored tests were already ignored: editor line joining and Zed restored-window edit state.
-Initial timeouts and failing fixtures were investigated; the final complete runs above finished successfully.
-Linker unwind-table and dependency future-compatibility warnings were observed during builds.
+Local logs, candidate patches, tree hashes, and validation manifests are under `target/serialization-series/`.
+The final candidate manifest is `convergence-split-final/final_validation.json`.
+Those ignored artifacts are not uploaded CI evidence.
+Temporary candidate overlays preserved all tracked file contents and logical index entries.
+Raw index bytes changed during the first overlay through an unverified writer; no source or staged-content change resulted, and the exception is recorded in that manifest.
 
-Local evidence is retained under `target/serialization-series/`, including `finalize-summary.json`, per-commit handoffs, reviewed patches, source hashes, and red/green logs.
-Those ignored build artifacts are not part of a published PR and must not be treated as uploaded CI evidence.
+## Unchanged limits
 
-## Limits and deferred policy
-
-### Native shutdown and storage
-
-The native shutdown deadline remains **200 ms** in `crates/gpui/src/app.rs:75`.
-When quit futures exceed that deadline, the existing path logs a timeout at `crates/gpui/src/app.rs:1007–1014`; this series does not guarantee completion beyond it.
-The database configuration remains WAL with `synchronous=NORMAL` in `crates/db/src/db.rs:168–173`.
-No power-loss experiment, native Windows session-end test, or native SSH/WSL/Docker smoke test was performed.
-
-### Failed restoration
-
-An item-deserialization failure leaves the workspace's restoration guard set rather than publishing a reduced graph.
-Automatic workspace snapshots remain suppressed while that guard is set (`crates/workspace/src/workspace.rs:7728`, `:7983–7999`).
-Healthy session members still restore, and the failure is reported through the existing prompt/toast paths.
-Fresh-instance retry is tested; in-place retry after repairing arbitrary provider/database failures is not claimed.
-The worst-case consequence is that the affected workspace cannot complete automatic recovery publication until restoration succeeds; users must handle its save prompts explicitly.
-
-### Historical-workspace retention
-
-The seven-day GC eligibility rule for applicable historical local workspaces remains in `crates/workspace/src/persistence.rs:2757`.
-This series fixes stale-candidate and metadata-error deletion, not a new indefinite-retention policy.
-A proposed guard retaining every workspace with graph items was kept out and preserved locally as `target/serialization-series/session-retention.patch`.
-That policy has no finite retention duration while references remain and can retain historical workspace records indefinitely.
-It needs an explicit product decision before a separate PR, not an undocumented safety tradeoff.
+- Native shutdown still allows **200 ms** for quit futures (`crates/gpui/src/app.rs:75`, `:1007–1014`).
+  Pending work beyond that deadline is not guaranteed to complete.
+- Database policy remains WAL with `synchronous=NORMAL` (`crates/db/src/db.rs:168–173`).
+  No power-loss durability experiment was performed.
+- Historical local-workspace GC still has its existing seven-day eligibility threshold (`crates/workspace/src/persistence.rs:2759`).
+  The proposed indefinite workspace-retention policy was not included.
+- Unreadable persistence is reported rather than overwritten speculatively.
+  An unrepaired storage fault can prevent pre-close publication and keep the window open.
+- Native Windows session-end and real SSH/WSL/Docker behavior remain unverified.
 
 ## Manual checks still required
 
-Use disposable data and this branch's built application, not another installed release.
-These checks start after building and, for the remote case, after configuring the connection.
+Use disposable data and an application built from this branch.
+These checks take about two minutes each after the build and any remote connection setup.
 
-### Local check: about two minutes
+### Local recovery and movement
 
 ```sh
 mkdir -p /tmp/zed-recovery-review
 printf 'ON_DISK\n' > /tmp/zed-recovery-review/note.txt
 ```
 
-1. Open the folder, edit `note.txt` without saving, and create an untitled editor with different text in another pane.
-2. Open the same folder independently in a new window and verify that it does not inherit the first window's tabs.
-3. Confirm the first window still contains both unsaved texts, then quit and reopen.
-4. Check the texts, active editor, pane arrangement, and sidebar state, then repeat quit/reopen once.
+1. Open the folder, change `note.txt` without saving, and create an untitled editor with different text in another pane.
+2. Pin a tab and use **Open Project in New Window**.
+3. Verify both texts, the pane arrangement, and the pin survive the move.
+4. Quit and reopen twice, verifying the texts and active workspace.
+5. With Terminal Panel unused, reload once and verify that no shell tab appears automatically.
 
-### Remote check: about two minutes with connections ready
+### Failed terminal recovery
 
-1. Keep two remote projects and a local scratch project in one window, with distinct unsaved text in each.
-2. Leave the local scratch project active, change a terminal tab name or split, and quit immediately.
-3. Reopen twice and check all three texts, the active scratch project, and terminal layout/title.
-4. Confirm the backing files remain unchanged on disk.
+1. Create two named terminal tabs in a split and pin one.
+2. In workspace settings, set `terminal.shell` to `{"program":"/nonexistent-zed-review-shell"}`, then quit and reopen.
+3. Verify failed slots remain visible and Cancel retains them.
+4. Reset `terminal.shell` to `"system"`, press Retry, and verify names, pins, and selection without duplicate tabs.
+5. Quit and reopen once more.
 
-Please run these checks before treating visual and native-process behavior as verified.
+### Markdown and remote members
+
+1. Move only a saved Markdown preview from folder A to an unrelated folder B, close A, then reopen B.
+2. Repeat with Follow mode and verify it follows B's active Markdown editor.
+3. With remote connections already configured, retain two remote projects and a local scratch project with distinct unsaved text.
+4. Leave scratch active, quit, and reopen twice, verifying all three texts and their workspace identities.
+
+Please run these checks before treating native or visual behavior as verified.
 Do not force a machine crash to validate this series.
