@@ -1,4 +1,6 @@
 import { danger, message, warn, fail, schedule } from "danger";
+import { releaseNotesSection } from "../lib/release-notes";
+
 const { prHygiene } = require("danger-plugin-pr-hygiene");
 
 prHygiene({
@@ -12,10 +14,9 @@ prHygiene({
   },
 });
 
-const RELEASE_NOTES_PATTERN = /Release Notes:(\r?\n)+- /gm;
 const body = danger.github.pr.body;
-
-const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(body);
+const releaseNotes = releaseNotesSection(body);
+const hasReleaseNotes = releaseNotes !== "";
 
 if (!hasReleaseNotes) {
   warn(
@@ -52,19 +53,10 @@ if (!hasReleaseNotes) {
 
 const GPUI_RELEASE_NOTES_PATTERN = /^- \[GPUI\]/im;
 
-// The release notes section is the last "Release Notes:" heading followed by a bullet, so an
-// earlier inline mention of "Release Notes:" in the body does not select the wrong text.
-function releaseNotesSection(body: string) {
-  const pattern = new RegExp(RELEASE_NOTES_PATTERN.source, RELEASE_NOTES_PATTERN.flags);
-  const headings = [...body.matchAll(pattern)];
-  const lastHeading = headings[headings.length - 1];
-  return lastHeading ? body.slice(lastHeading.index) : "";
-}
-
 const gpuiCrates = danger.git.fileMatch("crates/gpui*/**");
 
 if (gpuiCrates.edited || gpuiCrates.deleted) {
-  if (!GPUI_RELEASE_NOTES_PATTERN.test(releaseNotesSection(body))) {
+  if (!GPUI_RELEASE_NOTES_PATTERN.test(releaseNotes)) {
     const { edited, deleted } = gpuiCrates.getKeyedPaths();
     const touchedGpuiCratesStr = [...edited, ...deleted]
       .map((file) => "`" + file.split("/")[1] + "`")
@@ -91,7 +83,7 @@ if (gpuiCrates.edited || gpuiCrates.deleted) {
 const ISSUE_LINK_PATTERN =
   /(?:- )?(?<!(?:Close[sd]?|Fixe[sd]|Resolve[sd]|Implement[sed]|Follow-up of|Part of):?\s+)https:\/\/github\.com\/[\w-]+\/[\w-]+\/issues\/\d+/gi;
 
-const bodyWithoutReleaseNotes = hasReleaseNotes ? body.split(/Release Notes:/)[0] : body;
+const bodyWithoutReleaseNotes = hasReleaseNotes ? body.slice(0, body.length - releaseNotes.length) : body;
 const includesIssueUrl = ISSUE_LINK_PATTERN.test(bodyWithoutReleaseNotes);
 
 if (includesIssueUrl) {
