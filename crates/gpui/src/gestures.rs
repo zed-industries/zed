@@ -473,8 +473,8 @@ const VELOCITY_WINDOW: Duration = Duration::from_millis(100);
 /// reports movement every 8–16ms while the finger is in motion.
 const VELOCITY_ASSUME_STOPPED_GAP: Duration = Duration::from_millis(40);
 
-// 離す直前の同一座標の報告と、実際に指を止めた操作を区別する。
-// Chromium と同じく、移動履歴の区切りとは別に release には 80ms の猶予を持たせる。
+// Allow brief stationary reports near lift-off without treating them as a hold.
+// Like Chromium, use a separate 80ms release grace period from the movement gap.
 const VELOCITY_RELEASE_STOPPED_GAP: Duration = Duration::from_millis(80);
 
 const VELOCITY_MAX_SAMPLES: usize = 20;
@@ -1039,8 +1039,8 @@ struct VelocityTracker {
 
 impl VelocityTracker {
     fn push(&mut self, time: Instant, position: Point<Pixels>) {
-        // 同一座標の Move を近似へ入れると、離す直前に速度が消えたり逆転したりする。
-        // 時刻も更新しないことで、静止したまま離す操作では慣性を開始しない。
+        // Repeated positions can flatten or reverse the fit near lift-off.
+        // Keep the last movement time unchanged so a held finger still stops.
         if self
             .samples
             .back()
@@ -2274,7 +2274,7 @@ mod tests {
             let mut event = touch_event(TouchId(1), TouchPhase::Started, 0., 0.);
             event.timestamp = Some(Duration::from_secs(50));
             recognizer.handle_event_at(&event, start);
-            // 配送が一度にまとめられても、速度と停止判定には各点の発生時刻を使う。
+            // Batched delivery must not replace sample times in velocity or stop decisions.
             for time in (10..=130).step_by(10) {
                 event.phase = TouchPhase::Moved;
                 event.position.y = px(time.min(100) as f32);
