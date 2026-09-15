@@ -74,6 +74,7 @@ pub struct WindowsWindowState {
     pub force_render_pending: Cell<bool>,
 
     pub click_state: ClickState,
+    pub(crate) touch_state: RefCell<WindowsTouchState>,
     pub current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with [`WindowsPlatformState::cursor_visible`].
     pub cursor_visible: Arc<AtomicBool>,
@@ -177,6 +178,7 @@ impl WindowsWindowState {
             renderer: RefCell::new(renderer),
             force_render_pending: Cell::new(false),
             click_state,
+            touch_state: RefCell::new(WindowsTouchState::default()),
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),
