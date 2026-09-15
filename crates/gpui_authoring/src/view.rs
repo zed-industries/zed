@@ -283,14 +283,14 @@ impl<V: View> IntoElement for ViewElement<V> {
     }
 }
 
-struct ViewElementState {
+pub(crate) struct ViewElementState {
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
     cache_key: ViewElementCacheKey,
     accessed_entities: FxHashSet<EntityId>,
 }
 
-struct ViewElementCacheKey {
+pub(crate) struct ViewElementCacheKey {
     bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
@@ -376,61 +376,13 @@ impl<V: View> Element for ViewElement<V> {
                     return Some(element);
                 }
 
-                window.with_element_state::<ViewElementState, _>(
-                    global_id.unwrap(),
-                    |element_state, window| {
-                        let content_mask = window.content_mask();
-                        let text_style = window.text_style();
-
-                        if let Some(mut element_state) = element_state
-                            && element_state.cache_key.bounds == bounds
-                            && element_state.cache_key.content_mask == content_mask
-                            && element_state.cache_key.text_style == text_style
-                            && !window.frame_state.dirty_views.contains(&entity_id)
-                            && !window.core.refreshing
-                        {
-                            let prepaint_start = window.prepaint_index();
-                            window.reuse_prepaint(element_state.prepaint_range.clone());
-                            cx.entities
-                                .extend_accessed(&element_state.accessed_entities);
-                            let prepaint_end = window.prepaint_index();
-                            element_state.prepaint_range = prepaint_start..prepaint_end;
-
-                            return (None, element_state);
-                        }
-
-                        let refreshing = mem::replace(&mut window.core.refreshing, true);
-                        let prepaint_start = window.prepaint_index();
-                        let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                            let mut element = self
-                                .view
-                                .take()
-                                .unwrap()
-                                .render(window, cx)
-                                .into_any_element();
-                            element.layout_as_root(bounds.size.into(), window, cx);
-                            element.prepaint_at(bounds.origin, window, cx);
-                            element
-                        });
-
-                        let prepaint_end = window.prepaint_index();
-                        window.core.refreshing = refreshing;
-
-                        (
-                            Some(element),
-                            ViewElementState {
-                                accessed_entities,
-                                prepaint_range: prepaint_start..prepaint_end,
-                                paint_range: PaintIndex::default()..PaintIndex::default(),
-                                cache_key: ViewElementCacheKey {
-                                    bounds,
-                                    content_mask,
-                                    text_style,
-                                },
-                            },
-                        )
-                    },
-                )
+                prepaint_cached_view(entity_id, global_id, bounds, window, cx, |window, cx| {
+                    self.view
+                        .take()
+                        .unwrap()
+                        .render(window, cx)
+                        .into_any_element()
+                })
             })
         } else {
             // Stateless path: just prepaint the element.
@@ -479,8 +431,73 @@ impl Render for EmptyView {
     }
 }
 
+/// Prepaints a subtree that can be reused from the previous frame.
+///
+/// The subtree is built by `build` and cached against `entity_id`, the bounds it
+/// was laid out at, the content mask and text style in effect, and the element id
+/// of the caller. On a hit the previous frame's prepaint is replayed and `build`
+/// is not called at all.
+///
+/// Returns the new subtree, or `None` when the previous frame's was reused.
+pub(crate) fn prepaint_cached_view(
+    entity_id: EntityId,
+    global_id: Option<&GlobalElementId>,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+    build: impl FnOnce(&mut Window, &mut App) -> AnyElement,
+) -> Option<AnyElement> {
+    window.with_element_state::<ViewElementState, _>(global_id.unwrap(), |element_state, window| {
+        let content_mask = window.content_mask();
+        let text_style = window.text_style();
+
+        if let Some(mut element_state) = element_state
+            && element_state.cache_key.bounds == bounds
+            && element_state.cache_key.content_mask == content_mask
+            && element_state.cache_key.text_style == text_style
+            && !window.frame_state.dirty_views.contains(&entity_id)
+            && !window.core.refreshing
+        {
+            let prepaint_start = window.prepaint_index();
+            window.reuse_prepaint(element_state.prepaint_range.clone());
+            cx.entities
+                .extend_accessed(&element_state.accessed_entities);
+            let prepaint_end = window.prepaint_index();
+            element_state.prepaint_range = prepaint_start..prepaint_end;
+
+            return (None, element_state);
+        }
+
+        let refreshing = mem::replace(&mut window.core.refreshing, true);
+        let prepaint_start = window.prepaint_index();
+        let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+            let mut element = build(window, cx);
+            element.layout_as_root(bounds.size.into(), window, cx);
+            element.prepaint_at(bounds.origin, window, cx);
+            element
+        });
+
+        let prepaint_end = window.prepaint_index();
+        window.core.refreshing = refreshing;
+
+        (
+            Some(element),
+            ViewElementState {
+                accessed_entities,
+                prepaint_range: prepaint_start..prepaint_end,
+                paint_range: PaintIndex::default()..PaintIndex::default(),
+                cache_key: ViewElementCacheKey {
+                    bounds,
+                    content_mask,
+                    text_style,
+                },
+            },
+        )
+    })
+}
+
 #[inline(never)]
-fn paint_view(
+pub(crate) fn paint_view(
     entity_id: EntityId,
     cached: bool,
     global_id: Option<&GlobalElementId>,
