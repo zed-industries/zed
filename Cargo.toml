@@ -91,6 +91,8 @@ members = [
     "crates/google_ai",
     "crates/gpui",
     "crates/gpui_apple",
+    "crates/gpui_ios",
+    "crates/gpui_ios/examples/ios",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
@@ -359,6 +361,7 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false }
 gpui_apple = { path = "crates/gpui_apple" }
+gpui_ios = { path = "crates/gpui_ios" }
 gpui_linux = { path = "crates/gpui_linux", default-features = false }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
@@ -694,6 +697,41 @@ nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
 objc2 = "0.6"
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-quartz-core",
+    "objc2-core-foundation",
+    "NSText",
+    "UIApplication",
+    "UIEditMenuInteraction",
+    "UIEvent",
+    "UIGeometry",
+    "UIInteraction",
+    "UIInterface",
+    "UIOpenURLContext",
+    "UIPasteboard",
+    "UIResponder",
+    "UIScene",
+    "UISceneConfiguration",
+    "UISceneDefinitions",
+    "UISceneOptions",
+    "UISceneSession",
+    "UIScreen",
+    "UITextInput",
+    "UITextInputTraits",
+    "UITouch",
+    "UITraitCollection",
+    "UIView",
+    "UIViewController",
+    "UIWindow",
+    "UIWindowScene",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CADisplayLink", "CALayer", "CAMetalLayer"] }
+objc2-core-foundation = "0.3.2"
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor"] }
+objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
+dispatch2 = "0.3"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSAlert",
     "NSApplication",

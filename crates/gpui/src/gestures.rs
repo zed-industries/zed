@@ -1,14 +1,10 @@
 //! Touch gesture recognition vocabulary.
 //!
-//! GPUI recognizes gestures from raw [`TouchEvent`](crate::TouchEvent)s in a
-//! single, portable arena in gpui core: recognizers compete for in-flight
-//! touches, winners claim them, and losers are cancelled. Recognized gestures
-//! are surfaced through *existing* semantic events wherever possible, a tap
-//! becomes [`ClickEvent::Touch`](crate::ClickEvent), a pan becomes
-//! [`ScrollWheelEvent`](crate::ScrollWheelEvent)s carrying a
-//! [`TouchPhase`](crate::TouchPhase), and a pinch becomes
-//! [`PinchEvent`](crate::PinchEvent)s — so components written against
-//! `on_click` and scroll containers work untouched on mobile.
+//! GPUI recognizes gestures from raw [`TouchEvent`](crate::TouchEvent)s using
+//! a portable recognizer. Taps synthesize mouse presses and releases so
+//! existing click listeners and text selection work on mobile. Pans produce
+//! [`ScrollWheelEvent`](crate::ScrollWheelEvent)s, including post-release
+//! momentum. Long presses and touch drags can be claimed by element listeners.
 
 use std::collections::VecDeque;
 use std::mem;
@@ -351,7 +347,7 @@ mod friction_spline {
 /// portable recognizers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GestureKinds {
-    /// Tap (and multi-tap), surfaced as [`ClickEvent::Touch`](crate::ClickEvent).
+    /// Tap (and multi-tap), synthesized as mouse presses by the portable recognizer.
     pub tap: bool,
     /// Long press, surfaced as [`LongPressEvent`].
     pub long_press: bool,

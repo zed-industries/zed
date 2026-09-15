@@ -7562,22 +7562,68 @@ name = "gpui_apple"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-task",
  "block",
  "cbindgen",
- "cocoa 0.26.0",
  "collections",
  "core-foundation 0.10.0",
+ "core-graphics 0.24.0",
  "core-video",
  "derive_more",
+ "dispatch2",
  "etagere",
  "foreign-types 0.5.0",
  "gpui",
+ "gpui_util",
  "image",
+ "libc",
  "log",
+ "mach2 0.5.0",
  "metal",
  "objc",
  "objc2 0.6.3",
+ "objc2-foundation 0.3.2",
  "parking_lot",
+]
+
+[[package]]
+name = "gpui_ios"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "block2 0.6.2",
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "core-text",
+ "futures 0.3.34",
+ "gpui",
+ "gpui_apple",
+ "log",
+ "metal",
+ "objc2 0.6.3",
+ "objc2-core-foundation",
+ "objc2-core-text",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "objc2-security",
+ "objc2-ui-kit",
+ "parking_lot",
+ "pathfinder_geometry",
+ "raw-window-handle",
+ "smallvec",
+ "uuid",
+ "zed-font-kit",
+]
+
+[[package]]
+name = "gpui_ios_example"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui_ios",
+ "gpui_platform",
+ "log",
 ]
 
 [[package]]
@@ -7632,7 +7678,6 @@ dependencies = [
  "accesskit",
  "accesskit_macos",
  "anyhow",
- "async-task",
  "block",
  "block2 0.6.2",
  "cocoa 0.26.0",
@@ -7652,7 +7697,6 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "mach2 0.5.0",
  "media",
  "metal",
  "objc",
@@ -7688,6 +7732,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
+ "gpui_ios",
  "gpui_linux",
  "gpui_macos",
  "gpui_web",
@@ -11928,6 +11973,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-core-text"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cde0dfb48d25d2b4862161a4d5fcc0e3c24367869ad306b0c9ec0073bfed92d"
+dependencies = [
+ "bitflags 2.13.1",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "objc2-encode"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12052,6 +12107,29 @@ dependencies = [
  "objc2 0.6.3",
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "objc2-security"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "709fe137109bd1e8b5a99390f77a7d8b2961dafc1a1c5db8f2e60329ad6d895a"
+dependencies = [
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-ui-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d87d638e33c06f577498cbcc50491496a3ed4246998a7fbba7ccb98b1e7eab22"
+dependencies = [
+ "bitflags 2.13.1",
+ "block2 0.6.2",
+ "objc2 0.6.3",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
 ]
 
 [[package]]
