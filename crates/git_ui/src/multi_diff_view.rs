@@ -1,7 +1,8 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, HiddenUnstagedDiffHunkRenderer, MultiBuffer, multibuffer_context_lines,
+    Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer, MultiBuffer,
+    SplittableEditor, multibuffer_context_lines,
 };
 use git_ui_core::file_diff_view::build_buffer_diff;
 use gpui::{
@@ -11,6 +12,7 @@ use gpui::{
 use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     path::{Path, PathBuf},
@@ -26,7 +28,7 @@ use workspace::{
 };
 
 pub struct MultiDiffView {
-    editor: Entity<Editor>,
+    editor: Entity<SplittableEditor>,
     file_count: usize,
     _editor_event_subscription: Subscription,
 }
@@ -170,8 +172,16 @@ impl MultiDiffView {
                     register_entry(&multibuffer, entry, &common_root, context_lines, cx);
                 }
 
+                let workspace_handle = cx.entity();
                 let diff_view = cx.new(|cx| {
-                    Self::new(multibuffer.clone(), project.clone(), file_count, window, cx)
+                    Self::new(
+                        multibuffer.clone(),
+                        project.clone(),
+                        file_count,
+                        window,
+                        workspace_handle,
+                        cx,
+                    )
                 });
 
                 let pane = workspace.active_pane();
@@ -194,14 +204,19 @@ impl MultiDiffView {
         project: Entity<Project>,
         file_count: usize,
         window: &mut Window,
+        workspace: Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         let editor = cx.new(|cx| {
-            let mut editor =
-                Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+            let editor = SplittableEditor::new(
+                EditorSettings::get_global(cx).diff_view_style,
+                multibuffer,
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            );
             editor.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
-            editor.disable_diagnostics(cx);
-            editor.set_expand_all_diff_hunks(cx);
             editor
         });
 
@@ -268,14 +283,12 @@ impl Item for MultiDiffView {
         &'a self,
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
-        _: &'a App,
+        cx: &'a App,
     ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
-        } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.clone().into())
         } else {
-            None
+            self.editor.act_as_type(type_id, cx)
         }
     }
 
@@ -293,8 +306,10 @@ impl Item for MultiDiffView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
+        self.editor.update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, _| {
+                editor.set_nav_history(Some(nav_history));
+            });
         });
     }
 
