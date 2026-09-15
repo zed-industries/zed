@@ -1449,6 +1449,7 @@ mod tests {
     /// Rich outputs used to be dropped on save: `Output` renders only the richest
     /// mime type in a bundle, and images, tables and HTML had no path back to
     /// nbformat at all, so `filter_map` silently discarded them.
+    /// https://github.com/zed-industries/zed/pull/63064
     #[gpui::test]
     async fn test_rich_outputs_survive_a_round_trip(cx: &mut TestAppContext) {
         init_test(cx);
