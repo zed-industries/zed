@@ -3718,21 +3718,16 @@ impl Window {
     /// `offset`. Everything positioned — hitboxes, deferred draws — moves,
     /// and their content masks, which include whatever clipped them at the
     /// old position, move with them and are then cut down to the mask in
-    /// effect here.
+    /// effect here. The mask is cut down even for a zero offset: the records
+    /// may be reused in place under a mask that has since changed.
     pub(crate) fn reuse_prepaint_at(
         &mut self,
         range: Range<PrepaintStateIndex>,
         offset: Point<Pixels>,
     ) {
         let clip = self.content_mask();
-        let moved_mask = |mask: ContentMask<Pixels>| {
-            if offset.is_zero() {
-                mask
-            } else {
-                ContentMask {
-                    bounds: (mask.bounds + offset).intersect(&clip.bounds),
-                }
-            }
+        let moved_mask = |mask: ContentMask<Pixels>| ContentMask {
+            bounds: (mask.bounds + offset).intersect(&clip.bounds),
         };
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
@@ -3836,21 +3831,14 @@ impl Window {
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-        if offset.is_zero() {
-            self.next_frame.scene.replay(
-                range.start.scene_index..range.end.scene_index,
-                &self.rendered_frame.scene,
-            );
-        } else {
-            let scale_factor = self.scale_factor();
-            let clip = self.content_mask().scale(scale_factor);
-            self.next_frame.scene.replay_at(
-                range.start.scene_index..range.end.scene_index,
-                &self.rendered_frame.scene,
-                offset.scale(scale_factor),
-                &clip,
-            );
-        }
+        let scale_factor = self.scale_factor();
+        let clip = self.content_mask().scale(scale_factor);
+        self.next_frame.scene.replay_at(
+            range.start.scene_index..range.end.scene_index,
+            &self.rendered_frame.scene,
+            offset.scale(scale_factor),
+            &clip,
+        );
     }
 
     /// Push a text style onto the stack, and call a function with that style active.

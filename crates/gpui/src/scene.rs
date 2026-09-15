@@ -138,23 +138,13 @@ impl Scene {
             .push(PaintOperation::Primitive(primitive));
     }
 
-    pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
-        for operation in &prev_scene.paint_operations[range] {
-            match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
-                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
-                PaintOperation::EndLayer => self.pop_layer(),
-            }
-        }
-    }
-
     /// Replays `range` of `prev_scene` moved by `offset`, clipping every
     /// primitive to `content_mask` on top of its own (moved) mask.
     ///
-    /// This is how a cached view is painted again at a new position: its
-    /// primitives were recorded at the old one, and their masks include
-    /// whatever clipped them there, so the masks move with them and are
-    /// then cut down to what clips them here.
+    /// This is how a cached view is painted again, at the same position or a
+    /// new one: its primitives were recorded where it was, and their masks
+    /// include whatever clipped them there, so the masks move with them and
+    /// are then cut down to what clips them here.
     pub fn replay_at(
         &mut self,
         range: Range<usize>,
