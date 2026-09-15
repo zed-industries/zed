@@ -979,6 +979,9 @@ pub(crate) struct DeferredDraw {
 }
 
 pub(crate) struct Frame {
+    /// Which draw this frame is: one more each time the frames are swapped,
+    /// so a record of where something lies in a frame can say which frame.
+    pub(crate) id: usize,
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
@@ -1025,6 +1028,7 @@ pub(crate) struct PaintIndex {
 impl Frame {
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
+            id: 0,
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
@@ -3235,6 +3239,7 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        self.next_frame.id = self.rendered_frame.id + 1;
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
         let mut focus_before_listeners = self.focus;
