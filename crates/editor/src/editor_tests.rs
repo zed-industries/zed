@@ -20897,6 +20897,357 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    for (initial_state, completion_text, filter_text, expected_states) in [
+        (
+            "test(value1, ˇvalue2)",
+            "value2=",
+            "value2",
+            [
+                "test(value1, value2=ˇvalue2)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇvalue2)",
+            ],
+        ),
+        (
+            "test(value1, valˇvalue2)",
+            "value2=",
+            "value2",
+            [
+                "test(value1, value2=ˇvalue2)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇvalue2)",
+                "test(value1, value2=ˇvalue2)",
+            ],
+        ),
+        (
+            "ediˇtor",
+            "editor",
+            "edi",
+            ["editorˇtor", "editorˇ", "editorˇ", "editorˇ"],
+        ),
+        (
+            "strˇing",
+            "str",
+            "str",
+            ["strˇing", "strˇ", "strˇing", "strˇing"],
+        ),
+        (
+            "SuˇErr",
+            "SubscriptionError",
+            "Su",
+            [
+                "SubscriptionErrorˇErr",
+                "SubscriptionErrorˇ",
+                "SubscriptionErrorˇ",
+                "SubscriptionErrorˇErr",
+            ],
+        ),
+        (
+            "test(value1, valueˇ)",
+            "value2=",
+            "value",
+            ["test(value1, value2=ˇ)"; 4],
+        ),
+        (
+            "test(value1, ˇ)",
+            "value2=",
+            "v2",
+            ["test(value1, value2=ˇ)"; 4],
+        ),
+        (
+            "test(value1, ˇv2)",
+            "value2=",
+            "v2",
+            [
+                "test(value1, value2=ˇv2)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇv2)",
+            ],
+        ),
+        (
+            "test(\"😀\", 𐐀naïˇve)",
+            "𐐀naïve",
+            "𐐀naï",
+            [
+                "test(\"😀\", 𐐀naïveˇve)",
+                "test(\"😀\", 𐐀naïveˇ)",
+                "test(\"😀\", 𐐀naïveˇ)",
+                "test(\"😀\", 𐐀naïveˇ)",
+            ],
+        ),
+        (
+            "test(\n\tˇvalue2\n)",
+            "value2=",
+            "value2",
+            [
+                "test(\n\tvalue2=ˇvalue2\n)",
+                "test(\n\tvalue2=ˇ\n)",
+                "test(\n\tvalue2=ˇ\n)",
+                "test(\n\tvalue2=ˇvalue2\n)",
+            ],
+        ),
+        (
+            "ˇvalue2",
+            "value2=",
+            "value2",
+            ["value2=ˇvalue2", "value2=ˇ", "value2=ˇ", "value2=ˇvalue2"],
+        ),
+        ("valueˇ", "value2=", "value", ["value2=ˇ"; 4]),
+        ("ˇ", "value2=", "v2", ["value2=ˇ"; 4]),
+    ] {
+        for (lsp_insert_mode, expected_state) in [
+            LspInsertMode::Insert,
+            LspInsertMode::Replace,
+            LspInsertMode::ReplaceSubsequence,
+            LspInsertMode::ReplaceSuffix,
+        ]
+        .into_iter()
+        .zip(expected_states)
+        {
+            update_test_language_settings(&mut cx, &|settings| {
+                settings.defaults.completions = Some(CompletionSettingsContent {
+                    lsp_insert_mode: Some(lsp_insert_mode),
+                    words: Some(WordsCompletionMode::Disabled),
+                    ..CompletionSettingsContent::default()
+                });
+            });
+
+            for (insert_text, detail, description, use_filter_text) in [
+                (None, None, None, false),
+                (Some(completion_text), None, None, false),
+                (None, Some("string"), None, false),
+                (Some(completion_text), Some("string"), None, false),
+                (None, None, Some("string"), false),
+                (Some(completion_text), None, Some("string"), false),
+                (Some(completion_text), None, None, true),
+                (Some(completion_text), Some(filter_text), None, true),
+            ] {
+                eprintln!(
+                    "{initial_state:?}, {lsp_insert_mode:?}, {insert_text:?}, {detail:?}, {description:?}, {use_filter_text:?}"
+                );
+                cx.set_state(initial_state);
+                cx.set_request_handler::<lsp::request::Completion, _, _>(
+                    move |_, _, _| async move {
+                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                            is_incomplete: true,
+                            items: vec![lsp::CompletionItem {
+                                label: completion_text.to_string(),
+                                filter_text: use_filter_text.then(|| filter_text.to_string()),
+                                insert_text: insert_text.map(str::to_string),
+                                detail: detail.map(str::to_string),
+                                label_details: description.map(|description| {
+                                    lsp::CompletionItemLabelDetails {
+                                        detail: None,
+                                        description: Some(description.to_string()),
+                                    }
+                                }),
+                                ..lsp::CompletionItem::default()
+                            }],
+                            item_defaults: None,
+                        })))
+                    },
+                );
+                cx.update_editor(|editor, window, cx| {
+                    editor.show_completions(&ShowCompletions, window, cx);
+                });
+                cx.condition(|editor, _| editor.context_menu_visible())
+                    .await;
+                cx.update_editor(|editor, window, cx| {
+                    editor.confirm_completion(&ConfirmCompletion::default(), window, cx)
+                })
+                .expect("completion should be accepted")
+                .await
+                .expect("completion should succeed");
+                cx.assert_editor_state(expected_state);
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_completion_without_text_edit_after_typing(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            lsp_insert_mode: Some(LspInsertMode::Replace),
+            words: Some(WordsCompletionMode::Disabled),
+            ..CompletionSettingsContent::default()
+        });
+    });
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..lsp::CompletionOptions::default()
+            }),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let requests = Arc::new(AtomicUsize::new(0));
+    cx.set_request_handler::<lsp::request::Completion, _, _>({
+        let requests = requests.clone();
+        move |_, _, _| {
+            requests.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "value2=".to_string(),
+                        insert_text: Some("value2=".to_string()),
+                        ..lsp::CompletionItem::default()
+                    },
+                ])))
+            }
+        }
+    });
+    let mut resolved = cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
+        |_, mut item, _| async move {
+            item.documentation = Some(lsp::Documentation::String("resolved".to_string()));
+            Ok(item)
+        },
+    );
+    cx.set_state("test(value1, ˇvalue2)");
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions, window, cx);
+    });
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    resolved.next().await.expect("completion should resolve");
+    cx.run_until_parked();
+
+    cx.simulate_input("v");
+    cx.run_until_parked();
+    cx.simulate_input("a");
+    cx.run_until_parked();
+    assert_eq!(requests.load(atomic::Ordering::Acquire), 1);
+    cx.assert_editor_state("test(value1, vaˇvalue2)");
+    cx.update_editor(|editor, window, cx| {
+        editor.confirm_completion_insert(&ConfirmCompletionInsert, window, cx)
+    })
+    .expect("completion should be accepted")
+    .await
+    .expect("completion should succeed");
+    cx.assert_editor_state("test(value1, value2=ˇvalue2)");
+}
+
+#[gpui::test]
+async fn test_completion_with_explicit_replace_range(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            words: Some(WordsCompletionMode::Disabled),
+            ..CompletionSettingsContent::default()
+        });
+    });
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    for (lsp_insert_mode, expected_pair_state) in [
+        (LspInsertMode::ReplaceSuffix, "test(value1, value2=ˇvalue2)"),
+        (LspInsertMode::Insert, "test(value1, value2=ˇvalue2)"),
+        (LspInsertMode::Replace, "test(value1, value2=ˇ)"),
+        (LspInsertMode::ReplaceSubsequence, "test(value1, value2=ˇ)"),
+    ] {
+        update_test_language_settings(&mut cx, &|settings| {
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                lsp_insert_mode: Some(lsp_insert_mode),
+                words: Some(WordsCompletionMode::Disabled),
+                ..CompletionSettingsContent::default()
+            });
+        });
+        for (use_default_range, use_insert_range) in
+            [(false, true), (true, true), (false, false), (true, false)]
+        {
+            for filter_text in [Some("value2"), None] {
+                eprintln!(
+                    "{lsp_insert_mode:?}, {use_default_range:?}, {use_insert_range:?}, {filter_text:?}"
+                );
+                cx.set_state("test(value1, ˇvalue2)");
+                cx.set_request_handler::<lsp::request::Completion, _, _>(
+                    move |_, _, _| async move {
+                        let insert =
+                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 13));
+                        let replace =
+                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 19));
+                        let text_edit = if use_insert_range {
+                            lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
+                                insert,
+                                replace,
+                                new_text: "value2=".to_string(),
+                            })
+                        } else {
+                            lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: replace,
+                                new_text: "value2=".to_string(),
+                            })
+                        };
+                        let edit_range = if use_insert_range {
+                            lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
+                                insert,
+                                replace,
+                            }
+                        } else {
+                            lsp::CompletionListItemDefaultsEditRange::Range(replace)
+                        };
+                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                            items: vec![lsp::CompletionItem {
+                                label: "value2=".to_string(),
+                                filter_text: filter_text.map(str::to_string),
+                                text_edit: (!use_default_range).then_some(text_edit),
+                                ..lsp::CompletionItem::default()
+                            }],
+                            item_defaults: use_default_range.then(|| {
+                                lsp::CompletionListItemDefaults {
+                                    edit_range: Some(edit_range),
+                                    ..lsp::CompletionListItemDefaults::default()
+                                }
+                            }),
+                            ..lsp::CompletionList::default()
+                        })))
+                    },
+                );
+                cx.update_editor(|editor, window, cx| {
+                    editor.show_completions(&ShowCompletions, window, cx);
+                });
+                cx.condition(|editor, _| editor.context_menu_visible())
+                    .await;
+                cx.update_editor(|editor, window, cx| {
+                    editor.confirm_completion(&ConfirmCompletion::default(), window, cx)
+                })
+                .expect("completion should be accepted")
+                .await
+                .expect("completion should succeed");
+                cx.assert_editor_state(if use_insert_range {
+                    expected_pair_state
+                } else {
+                    "test(value1, value2=ˇ)"
+                });
+            }
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
