@@ -899,6 +899,29 @@ mod tests {
     }
 
     #[gpui::test]
+    fn image_outside_content_mask_is_not_painted(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let image = test_image_with_size(100, 100);
+
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            div()
+                .size(px(50.))
+                .overflow_hidden()
+                .child(
+                    img(ImageSource::Render(image.clone()))
+                        .size(px(10.))
+                        .mt(px(60.)),
+                )
+                .into_any_element()
+        });
+
+        window.update(|window, _| {
+            assert!(window.rendered_frame.scene.polychrome_sprites.is_empty());
+            assert!(!window.has_image_atlas_entry(&image));
+        });
+    }
+
+    #[gpui::test]
     fn explicit_aspect_ratio_is_not_overridden_by_intrinsic_ratio(cx: &mut TestAppContext) {
         let window = cx.add_empty_window();
 

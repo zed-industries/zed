@@ -4788,6 +4788,14 @@ impl Window {
         if visible_bounds.size.width <= Pixels::ZERO || visible_bounds.size.height <= Pixels::ZERO {
             return Ok(());
         }
+        let visible_bounds_snapped = self.snap_bounds(visible_bounds);
+        let content_mask = self.snapped_content_mask();
+        if visible_bounds_snapped
+            .intersect(&content_mask.bounds)
+            .is_empty()
+        {
+            return Ok(());
+        }
         if image_bounds.size.width <= Pixels::ZERO || image_bounds.size.height <= Pixels::ZERO {
             return Ok(());
         }
@@ -4809,8 +4817,6 @@ impl Window {
                 )))
             })?
             .expect("Callback above only returns Some");
-
-        let visible_bounds_snapped = self.snap_bounds(visible_bounds);
 
         let sub_tile = if visible_bounds == image_bounds {
             tile
@@ -4852,7 +4858,6 @@ impl Window {
             }
         };
 
-        let content_mask = self.snapped_content_mask();
         let corner_radii = corner_radii
             .clamp_radii_for_quad_size(visible_bounds.size)
             .scale(self.scale_factor());
