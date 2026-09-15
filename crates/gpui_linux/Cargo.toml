@@ -94,6 +94,7 @@ calloop-wayland-source = { version = "0.4.1", optional = true }
 wayland-backend = { version = "0.3.15", features = [
     "client_system",
     "dlopen",
+    "log",
 ], optional = true }
 wayland-client = { version = "0.31.11", optional = true }
 wayland-cursor = { version = "0.31.11", optional = true }
@@ -127,6 +128,9 @@ xim = { git = "https://github.com/zed-industries/xim-rs.git", rev = "16f35a2c881
     "x11rb-client",
 ], package = "zed-xim", version = "0.4.0-zed", optional = true }
 x11-clipboard = { version = "0.9.3", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-shear]
 ignored = ["bitflags", "scap", "x11-clipboard"]

@@ -140,7 +140,7 @@ pub struct ConfirmCodeAction {
 }
 
 /// Toggles comment markers for the selected lines.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ToggleComments {
@@ -148,6 +148,22 @@ pub struct ToggleComments {
     pub advance_downwards: bool,
     #[serde(default)]
     pub ignore_indent: bool,
+    /// Whether to add comment markers to blank lines inside a multi-line
+    /// selection. A line of only whitespace counts as blank. Defaults to true.
+    #[serde(default = "default_true")]
+    pub comment_empty_lines: bool,
+}
+
+// `Default` is written out rather than derived because `comment_empty_lines`
+// defaults to true.
+impl Default for ToggleComments {
+    fn default() -> Self {
+        Self {
+            advance_downwards: false,
+            ignore_indent: false,
+            comment_empty_lines: true,
+        }
+    }
 }
 
 /// Toggles block comment markers for the selected text.
@@ -487,7 +503,7 @@ actions!(
         CopyFileName,
         /// Copies the file name without extension to the clipboard.
         CopyFileNameWithoutExtension,
-        /// Copies a permalink to the current line.
+        /// Copies a permalink to the current line or selection.
         CopyPermalinkToLine,
         /// Cuts selected text to the clipboard.
         Cut,
@@ -711,7 +727,7 @@ actions!(
         OpenProposedChangesEditor,
         /// Opens documentation for the symbol at cursor.
         OpenDocs,
-        /// Opens a permalink to the current line.
+        /// Opens a permalink to the current line or selection.
         OpenPermalinkToLine,
         /// Opens the file whose name is selected in the editor.
         #[action(deprecated_aliases = ["editor::OpenFile"])]
@@ -938,6 +954,8 @@ actions!(
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
         WrapSelectionsInTag,
+        /// Wraps selections in an expanded Emmet abbreviation.
+        WrapWithAbbreviation,
         /// Aligns selections from different rows into the same column
         AlignSelections,
         /// Saves the current location to navigation history.

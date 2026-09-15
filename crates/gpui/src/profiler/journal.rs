@@ -553,8 +553,11 @@ pub(crate) fn install_foreground_journal() -> ForegroundJournal {
     })
 }
 
+/// Restores the previous foreground journal on drop, so a test's writer
+/// (turn depth, pending frames, retained-since-boundary state) never leaks
+/// into a later test that happens to reuse the same test-harness thread.
 #[cfg(test)]
-pub(super) struct TestForegroundJournalGuard {
+pub(crate) struct TestForegroundJournalGuard {
     previous: Option<ForegroundJournalWriter>,
     _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
 }
@@ -568,8 +571,12 @@ impl Drop for TestForegroundJournalGuard {
     }
 }
 
+/// Installs a fresh journal for the duration of a test, isolated from
+/// whatever a previous test left on this thread. Used by tests outside this
+/// module (e.g. `bench_context`) that need to observe journal entries
+/// without interference from the shared per-thread journal.
 #[cfg(test)]
-pub(super) fn install_test_foreground_journal(
+pub(crate) fn install_test_foreground_journal(
     capacity: usize,
     pending_capacity: usize,
 ) -> (ForegroundJournal, TestForegroundJournalGuard) {

@@ -348,11 +348,15 @@ impl LanguageModel for MistralLanguageModel {
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
         let stream = self.stream_completion(request, affinity, cx);
+        let executor = cx.background_executor().clone();
 
         async move {
             let stream = stream.await?;
             let mapper = MistralEventMapper::new();
-            Ok(mapper.map_stream(stream).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(stream).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }
@@ -363,6 +367,7 @@ pub fn into_mistral(
     model: mistral::Model,
     max_output_tokens: Option<u64>,
 ) -> Result<(mistral::Request, Option<String>)> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request.contains_custom_tool_input() {
         anyhow::bail!("Mistral does not support custom tools");
     }
@@ -846,7 +851,7 @@ mod tests {
 
     #[test]
     fn test_into_mistral_basic_conversion() {
-        let request = LanguageModelRequest {
+        let request = |max_output_tokens| LanguageModelRequest {
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::System,
@@ -879,16 +884,32 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_output_tokens,
         };
 
-        let (mistral_request, affinity) =
-            into_mistral(request, mistral::Model::MistralSmallLatest, None).unwrap();
-
-        assert_eq!(mistral_request.model, "mistral-small-latest");
-        assert_eq!(mistral_request.temperature, Some(0.5));
-        assert_eq!(mistral_request.messages.len(), 2);
-        assert!(mistral_request.stream);
-        assert_eq!(affinity, Some("abcdef".into()));
+        for (requested, maximum, expected) in [
+            (None, None, None),
+            (None, Some(4096), Some(4096)),
+            (Some(1024), Some(4096), Some(1024)),
+            (Some(8192), Some(4096), Some(4096)),
+            (Some(1024), None, Some(1024)),
+        ] {
+            let (mistral_request, affinity) = into_mistral(
+                request(requested),
+                mistral::Model::MistralSmallLatest,
+                maximum,
+            )
+            .unwrap();
+            assert_eq!(mistral_request.model, "mistral-small-latest");
+            assert_eq!(mistral_request.temperature, Some(0.5));
+            assert_eq!(mistral_request.messages.len(), 2);
+            assert!(mistral_request.stream);
+            assert_eq!(affinity, Some("abcdef".into()));
+            assert_eq!(
+                serde_json::to_value(mistral_request).unwrap()["max_tokens"].as_u64(),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -911,6 +932,7 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let (mistral_request, _) =
@@ -954,6 +976,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let (mistral_request, _) =
