@@ -572,9 +572,13 @@ impl LanguageRegistry {
         async move { rx.await? }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    /// Returns the name of the language with the given id, if one is registered.
     pub fn language_name_for_id(&self, id: LanguageId) -> Option<LanguageName> {
-        self.state.read().available_languages.name_for_id(id)
+        self.state
+            .read()
+            .available_languages
+            .get_language(id)
+            .map(|language| language.name.clone())
     }
 
     pub fn language_name_for_extension(self: &Arc<Self>, extension: &str) -> Option<LanguageName> {
