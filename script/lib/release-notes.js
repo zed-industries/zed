@@ -14,12 +14,7 @@ function releaseNotesEntries(section) {
       break;
     }
 
-    entries.push(
-      ...paragraph
-        .trimEnd()
-        .split(/\r?\n(?=- )/)
-        .map((entry) => entry.replace(/\r?\n/g, " ")),
-    );
+    entries.push(...paragraph.split(/\r?\n(?=- )/).map((entry) => entry.trimEnd().replace(/\r?\n/g, " ")));
   }
   return entries;
 }
