@@ -7991,7 +7991,7 @@ impl ThreadView {
             .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
                     div()
-                        .py_2()
+                        .pt_2()
                         .border_t_1()
                         .when(tool_failed || command_failed, |card| card.border_dashed())
                         .border_color(border_color)
