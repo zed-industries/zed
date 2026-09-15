@@ -39,7 +39,8 @@ use crate::completion_provider::{
     PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
 };
 use crate::mention_set::paste_images_as_context;
-use crate::mention_set::{MentionSet, crease_for_mention};
+use crate::mention_set::{MentionSet, crease_for_mention, insert_mentions_from_links};
+use crate::message_editor::parse_mention_links;
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{
     CycleFavoriteModels, CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext,
@@ -448,7 +449,10 @@ impl<T: 'static> PromptEditor<T> {
                             .log_edit_event("inline assist", is_via_ssh);
                     });
                 }
-                let prompt = snapshot.text();
+                // History entries store the raw buffer text (see `Editor::text`),
+                // so compare against the buffer text rather than the display text,
+                // which may differ (e.g. fold placeholders for mention creases).
+                let prompt = snapshot.buffer_snapshot().text();
                 if self
                     .prompt_history_ix
                     .is_none_or(|ix| self.prompt_history[ix] != prompt)
@@ -745,23 +749,68 @@ impl<T: 'static> PromptEditor<T> {
             .ok();
     }
 
+    fn restore_mentions_from_text(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let path_style = workspace.read(cx).project().read(cx).path_style(cx);
+        let parsed_mentions = parse_mention_links(text, path_style);
+        if parsed_mentions.is_empty() {
+            return;
+        }
+
+        let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+        let mentions = parsed_mentions
+            .into_iter()
+            .filter_map(|(range, mention_uri)| {
+                let anchor = snapshot.anchor_before(MultiBufferOffset(range.start));
+                Some((
+                    snapshot.anchor_to_buffer_anchor(anchor)?.0,
+                    range.end - range.start,
+                    mention_uri,
+                ))
+            })
+            .collect();
+
+        let supports_images = inline_assistant_model_supports_images(cx);
+        let http_client = workspace.read(cx).client().http_client();
+
+        insert_mentions_from_links(
+            &self.editor,
+            &self.mention_set,
+            workspace.downgrade(),
+            mentions,
+            supports_images,
+            http_client,
+            window,
+            cx,
+        );
+    }
+
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.prompt_history_ix {
             if ix > 0 {
                 self.prompt_history_ix = Some(ix - 1);
-                let prompt = self.prompt_history[ix - 1].as_str();
+                let prompt = self.prompt_history[ix - 1].clone();
                 self.editor.update(cx, |editor, cx| {
-                    editor.set_text(prompt, window, cx);
+                    editor.set_text(prompt.as_str(), window, cx);
                     editor.move_to_beginning(&Default::default(), window, cx);
                 });
+                self.restore_mentions_from_text(&prompt, window, cx);
             }
         } else if !self.prompt_history.is_empty() {
             self.prompt_history_ix = Some(self.prompt_history.len() - 1);
-            let prompt = self.prompt_history[self.prompt_history.len() - 1].as_str();
+            let prompt = self.prompt_history[self.prompt_history.len() - 1].clone();
             self.editor.update(cx, |editor, cx| {
-                editor.set_text(prompt, window, cx);
+                editor.set_text(prompt.as_str(), window, cx);
                 editor.move_to_beginning(&Default::default(), window, cx);
             });
+            self.restore_mentions_from_text(&prompt, window, cx);
         }
     }
 
@@ -769,18 +818,20 @@ impl<T: 'static> PromptEditor<T> {
         if let Some(ix) = self.prompt_history_ix {
             if ix < self.prompt_history.len() - 1 {
                 self.prompt_history_ix = Some(ix + 1);
-                let prompt = self.prompt_history[ix + 1].as_str();
+                let prompt = self.prompt_history[ix + 1].clone();
                 self.editor.update(cx, |editor, cx| {
-                    editor.set_text(prompt, window, cx);
+                    editor.set_text(prompt.as_str(), window, cx);
                     editor.move_to_end(&Default::default(), window, cx)
                 });
+                self.restore_mentions_from_text(&prompt, window, cx);
             } else {
                 self.prompt_history_ix = None;
-                let prompt = self.pending_prompt.as_str();
+                let prompt = self.pending_prompt.clone();
                 self.editor.update(cx, |editor, cx| {
-                    editor.set_text(prompt, window, cx);
+                    editor.set_text(prompt.as_str(), window, cx);
                     editor.move_to_end(&Default::default(), window, cx)
                 });
+                self.restore_mentions_from_text(&prompt, window, cx);
             }
         }
     }
@@ -1630,8 +1681,12 @@ fn insert_message_creases(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::load_context;
+    use crate::mention_set::Mention;
     use crate::terminal_codegen::TerminalCodegen;
+    use acp_thread::MentionUri;
     use agent::ThreadStore;
+    use agent_client_protocol::schema::v1 as acp;
     use collections::VecDeque;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
@@ -1639,7 +1694,8 @@ mod tests {
     use project::Project;
     use settings::SettingsStore;
     use std::cell::RefCell;
-    use std::path::Path;
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use terminal::TerminalBuilder;
     use terminal::terminal_settings::CursorShape;
@@ -1824,5 +1880,319 @@ mod tests {
             ),
             "Expected ConfirmRequested with execute: false"
         );
+    }
+
+    fn mention_set_for(
+        prompt_editor: &Entity<PromptEditor<TerminalCodegen>>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<MentionSet> {
+        cx.read(|cx| prompt_editor.read(cx).mention_set().clone())
+    }
+
+    fn prompt_text(
+        prompt_editor: &Entity<PromptEditor<TerminalCodegen>>,
+        cx: &mut VisualTestContext,
+    ) -> String {
+        cx.read(|cx| prompt_editor.read(cx).editor.read(cx).text(cx))
+    }
+
+    fn set_prompt_text(
+        prompt_editor: &Entity<PromptEditor<TerminalCodegen>>,
+        text: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        prompt_editor.update_in(cx, |prompt_editor, window, cx| {
+            prompt_editor.editor.update(cx, |editor, cx| {
+                editor.set_text(text, window, cx);
+            });
+        });
+    }
+
+    fn push_history(
+        prompt_editor: &Entity<PromptEditor<TerminalCodegen>>,
+        prompt: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        prompt_editor.update(cx, |editor, _| {
+            editor.prompt_history.push_back(prompt.to_string());
+        });
+    }
+
+    fn move_up_history(
+        prompt_editor: &Entity<PromptEditor<TerminalCodegen>>,
+        cx: &mut VisualTestContext,
+    ) {
+        prompt_editor.update_in(cx, |editor, window, cx| {
+            editor.move_up(&MoveUp, window, cx);
+        });
+    }
+
+    fn move_down_history(
+        prompt_editor: &Entity<PromptEditor<TerminalCodegen>>,
+        cx: &mut VisualTestContext,
+    ) {
+        prompt_editor.update_in(cx, |editor, window, cx| {
+            editor.move_down(&MoveDown, window, cx);
+        });
+    }
+
+    fn assert_mentions(
+        prompt_editor: &Entity<PromptEditor<TerminalCodegen>>,
+        cx: &mut VisualTestContext,
+        expected: collections::HashSet<MentionUri>,
+    ) {
+        let mention_set = mention_set_for(prompt_editor, cx);
+        cx.read(|cx| {
+            assert_eq!(mention_set.read(cx).mentions(), expected);
+            assert_eq!(mention_set.read(cx).creases().len(), expected.len());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_restores_file_context(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                "file.txt": "hello from file context",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+
+        // Simulate a submitted prompt whose mention was serialized as a
+        // markdown link in the prompt text.
+        let prompt = "Transform this: [@file.txt](file:///project/file.txt)";
+        set_prompt_text(&prompt_editor, prompt, cx);
+        push_history(&prompt_editor, prompt, cx);
+        move_up_history(&prompt_editor, cx);
+
+        // The restored prompt must keep its structured context: the mention
+        // must be registered with the mention set and rendered as a crease.
+        let mention_set = mention_set_for(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt);
+        cx.read(|cx| {
+            assert_eq!(
+                mention_set.read(cx).mentions(),
+                HashSet::from_iter([MentionUri::File {
+                    abs_path: PathBuf::from("/project/file.txt"),
+                }])
+            );
+            assert_eq!(mention_set.read(cx).creases().len(), 1);
+        });
+
+        // The context must resolve to the file content so the assistant
+        // receives it when the prompt is submitted.
+        let context_task = cx.update(|_, cx| load_context(&mention_set, cx));
+        let loaded = cx.foreground_executor().block_test(context_task);
+        let loaded = loaded.expect("file context should load");
+        assert!(loaded.text.contains("hello from file context"));
+    }
+
+    #[gpui::test]
+    async fn test_history_restores_plain_prompt_without_context(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+
+        let prompt = "Just a plain prompt";
+        set_prompt_text(&prompt_editor, prompt, cx);
+        push_history(&prompt_editor, prompt, cx);
+        move_up_history(&prompt_editor, cx);
+
+        let mention_set = mention_set_for(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt);
+        cx.read(|cx| {
+            assert!(mention_set.read(cx).mentions().is_empty());
+            assert!(mention_set.read(cx).creases().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_does_not_treat_regular_markdown_link_as_context(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+
+        let prompt = "See [docs](https://example.com/docs) for details";
+        set_prompt_text(&prompt_editor, prompt, cx);
+        push_history(&prompt_editor, prompt, cx);
+        move_up_history(&prompt_editor, cx);
+
+        let mention_set = mention_set_for(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt);
+        cx.read(|cx| {
+            assert!(mention_set.read(cx).mentions().is_empty());
+            assert!(mention_set.read(cx).creases().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_restores_missing_file_context_without_panicking(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                "existing.txt": "hello",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+
+        // The referenced file does not exist; restoring must not panic and
+        // must reuse the existing unresolved-mention behavior.
+        let prompt = "Transform this: [@gone.txt](file:///project/gone.txt)";
+        set_prompt_text(&prompt_editor, prompt, cx);
+        push_history(&prompt_editor, prompt, cx);
+        move_up_history(&prompt_editor, cx);
+        cx.run_until_parked();
+
+        let mention_set = mention_set_for(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt);
+        cx.read(|cx| {
+            assert_eq!(
+                mention_set.read(cx).mentions(),
+                HashSet::from_iter([MentionUri::File {
+                    abs_path: PathBuf::from("/project/gone.txt"),
+                }])
+            );
+            assert_eq!(mention_set.read(cx).creases().len(), 1);
+
+            // The missing file uses the existing unresolved-mention behavior
+            // and resolves to an empty text mention instead of content;
+            // restoring must not panic.
+            let crease_id = *mention_set.read(cx).creases().iter().next().unwrap();
+            let (_, mention) = mention_set
+                .read(cx)
+                .resolved_mention_for_crease(&crease_id)
+                .expect("mention should resolve");
+            assert!(matches!(
+                mention,
+                Some(Mention::Text { content, .. }) if content.is_empty()
+            ));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_restores_thread_mention_without_panicking(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+
+        let prompt = "Use this thread: [@My Thread](zed:///agent/thread/00000000-0000-0000-0000-000000000001?name=My+Thread)";
+        set_prompt_text(&prompt_editor, prompt, cx);
+        push_history(&prompt_editor, prompt, cx);
+        move_up_history(&prompt_editor, cx);
+        cx.run_until_parked();
+
+        let mention_set = mention_set_for(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt);
+        cx.read(|cx| {
+            assert_eq!(
+                mention_set.read(cx).mentions(),
+                HashSet::from_iter([MentionUri::Thread {
+                    id: acp::SessionId::new("00000000-0000-0000-0000-000000000001"),
+                    name: "My Thread".to_string(),
+                }])
+            );
+            assert_eq!(mention_set.read(cx).creases().len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_switches_between_contexts_without_stale_mentions(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                "a.txt": "contents of a",
+                "b.txt": "contents of b",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+
+        let draft = "draft without context";
+        let prompt_a = "Use [@a.txt](file:///project/a.txt)";
+        let prompt_b = "Use [@b.txt](file:///project/b.txt)";
+        set_prompt_text(&prompt_editor, draft, cx);
+        push_history(&prompt_editor, prompt_a, cx);
+        push_history(&prompt_editor, prompt_b, cx);
+
+        // Up to the newest history entry: b.
+        move_up_history(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt_b);
+        assert_mentions(
+            &prompt_editor,
+            cx,
+            collections::HashSet::from_iter([MentionUri::File {
+                abs_path: PathBuf::from("/project/b.txt"),
+            }]),
+        );
+
+        // Up to the older entry: a. b's context must not linger.
+        move_up_history(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt_a);
+        assert_mentions(
+            &prompt_editor,
+            cx,
+            collections::HashSet::from_iter([MentionUri::File {
+                abs_path: PathBuf::from("/project/a.txt"),
+            }]),
+        );
+
+        // Down back to b: a's context must not linger.
+        move_down_history(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt_b);
+        assert_mentions(
+            &prompt_editor,
+            cx,
+            collections::HashSet::from_iter([MentionUri::File {
+                abs_path: PathBuf::from("/project/b.txt"),
+            }]),
+        );
+
+        // Down to the pending draft: no context may linger.
+        move_down_history(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), draft);
+        assert_mentions(&prompt_editor, cx, collections::HashSet::default());
     }
 }

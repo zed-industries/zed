@@ -7,7 +7,9 @@ use crate::{
         PromptCompletionProviderDelegate, PromptContextAction, PromptContextType,
         PromptLocalCommand, SlashCommandCompletion,
     },
-    mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
+    mention_set::{
+        Mention, MentionImage, MentionSet, insert_crease_for_mention, insert_mentions_from_links,
+    },
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
@@ -1247,7 +1249,8 @@ impl MessageEditor {
                         let mention_start_offset = MultiBufferOffset(start_offset.0 + range.start);
                         let anchor = snapshot.anchor_before(mention_start_offset);
                         let content_len = range.end - range.start;
-                        all_mentions.push((anchor, content_len, mention_uri));
+                        let buffer_anchor = snapshot.anchor_to_buffer_anchor(anchor).unwrap().0;
+                        all_mentions.push((buffer_anchor, content_len, mention_uri));
                     }
                 }
 
@@ -1255,50 +1258,16 @@ impl MessageEditor {
                     let supports_images = self.session_capabilities.read().supports_images();
                     let http_client = workspace.read(cx).client().http_client();
 
-                    for (anchor, content_len, mention_uri) in all_mentions {
-                        let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
-                            snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
-                            content_len,
-                            mention_uri.name().into(),
-                            mention_uri.icon_path(cx),
-                            mention_uri.tooltip_text(),
-                            Some(mention_uri.clone()),
-                            Some(self.workspace.clone()),
-                            None,
-                            self.editor.clone(),
-                            window,
-                            cx,
-                        ) else {
-                            continue;
-                        };
-
-                        // Create the confirmation task based on the mention URI type.
-                        // This properly loads file content, fetches URLs, etc.
-                        let task = self.mention_set.update(cx, |mention_set, cx| {
-                            mention_set.confirm_mention_for_uri(
-                                mention_uri.clone(),
-                                supports_images,
-                                http_client.clone(),
-                                cx,
-                            )
-                        });
-                        let task = cx
-                            .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
-                            .shared();
-
-                        self.mention_set.update(cx, |mention_set, cx| {
-                            mention_set.insert_mention(
-                                crease_id,
-                                mention_uri.clone(),
-                                task.clone(),
-                                crease_entity,
-                                cx,
-                            )
-                        });
-
-                        // Drop the tx after inserting to signal the crease is ready
-                        drop(tx);
-                    }
+                    insert_mentions_from_links(
+                        &self.editor,
+                        &self.mention_set,
+                        self.workspace.clone(),
+                        all_mentions,
+                        supports_images,
+                        http_client,
+                        window,
+                        cx,
+                    );
                     return;
                 }
             }
@@ -2181,7 +2150,10 @@ fn mention_to_content_block(
 
 /// Parses markdown mention links in the format `[@name](uri)` from text.
 /// Returns a vector of (range, MentionUri) pairs where range is the byte range in the text.
-fn parse_mention_links(text: &str, path_style: PathStyle) -> Vec<(Range<usize>, MentionUri)> {
+pub(crate) fn parse_mention_links(
+    text: &str,
+    path_style: PathStyle,
+) -> Vec<(Range<usize>, MentionUri)> {
     let mut mentions = Vec::new();
     let mut search_start = 0;
 
