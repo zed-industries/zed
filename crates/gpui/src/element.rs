@@ -220,14 +220,31 @@ pub struct GlobalElementId {
     hash: u64,
 }
 
+/// The hash of an empty id path; every path hash is folded from it with
+/// [`extend_path_hash`], one id at a time, so the window can keep the hash
+/// of each prefix of its id stack and never re-hash a path.
+pub(crate) const EMPTY_PATH_HASH: u64 = 0;
+
+/// The hash of the path `prefix` + `id`, given the hash of `prefix`.
+pub(crate) fn extend_path_hash(prefix: u64, id: &ElementId) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = collections::FxHasher::with_seed(prefix as usize);
+    id.hash(&mut hasher);
+    hasher.finish()
+}
+
 impl GlobalElementId {
     pub(crate) fn new(ids: &[ElementId]) -> Self {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = collections::FxHasher::default();
-        ids.hash(&mut hasher);
+        let hash = ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash);
+        Self::with_hash(ids, hash)
+    }
+
+    /// `ids` with its hash already known, as the window's id stack keeps it.
+    pub(crate) fn with_hash(ids: &[ElementId], hash: u64) -> Self {
+        debug_assert_eq!(hash, ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash));
         Self {
             ids: Arc::from(ids),
-            hash: hasher.finish(),
+            hash,
         }
     }
 
@@ -342,7 +359,7 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::Start => {
                 let global_id = self.element.id().map(|element_id| {
                     window.element_id_stack.push(element_id);
-                    GlobalElementId::new(&window.element_id_stack)
+                    window.element_id_stack.global_id()
                 });
 
                 let inspector_id;
@@ -350,7 +367,7 @@ impl<E: Element> Drawable<E> {
                 {
                     inspector_id = self.element.source_location().map(|source| {
                         let path = crate::InspectorElementPath {
-                            global_id: GlobalElementId::new(&window.element_id_stack),
+                            global_id: window.element_id_stack.global_id(),
                             source_location: source,
                         };
                         window.build_inspector_element_id(path)
