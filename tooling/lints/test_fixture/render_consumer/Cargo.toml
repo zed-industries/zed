@@ -8,4 +8,4 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-gpui = { path = "../gpui" }
+gpui = { package = "gpui_lint_fixture", path = "../gpui" }
