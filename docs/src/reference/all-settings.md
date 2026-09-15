@@ -3319,6 +3319,7 @@ The following settings can be overridden for each specific language:
 - [`formatter`](#formatter)
 - [`hard_tabs`](#hard-tabs)
 - [`preferred_line_length`](#preferred-line-length)
+- [`prompt_for_large_file_parsing`](#prompt-for-large-file-parsing)
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
 - [`semantic_tokens`](#semantic-tokens)
 - [`show_edit_predictions`](#show-edit-predictions)
@@ -3326,6 +3327,7 @@ The following settings can be overridden for each specific language:
 - [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
+- [`tree_sitter_max_file_size_mib`](#tree-sitter-maximum-file-size)
 - [`use_autoclose`](#use-autoclose)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
 
@@ -3846,6 +3848,32 @@ Examples:
 **Options**
 
 List of `string` glob patterns
+
+## Prompt for Large File Parsing
+
+- Description: Whether to ask before enabling Tree-sitter parsing for a file above [Tree-sitter Maximum File Size](#tree-sitter-maximum-file-size).
+- Setting: `prompt_for_large_file_parsing`
+- Default: `true`
+
+In the Settings Editor, search for **Prompt for Large File Parsing**.
+
+**Options**
+
+- `true`: Show a notification when an oversized file is displayed in a standalone editor, offering **Enable Parsing** or **Keep Disabled**.
+- `false`: Leave parsing disabled for oversized files without showing a notification.
+
+Background buffer loading and multibuffer excerpts, including project search results, do not show this notification.
+Choosing **Keep Disabled** or closing the notification leaves parsing disabled for that buffer's lifetime.
+Splits and other editors sharing the buffer do not repeat the notification.
+This setting supports [per-language overrides](#languages).
+
+Or add this to your `settings.json` to suppress these notifications:
+
+```json [settings]
+{
+  "prompt_for_large_file_parsing": false
+}
+```
 
 ## Read-Only Files {#read-only-files}
 
@@ -5334,6 +5362,39 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 **Options**
 
 Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid theme names.
+
+## Tree-sitter Maximum File Size
+
+- Description: Maximum file size for automatic Tree-sitter parsing, measured in whole MiB (1 MiB = 1,048,576 decoded, line-ending-normalized UTF-8 bytes) rather than bytes on disk.
+- Setting: `tree_sitter_max_file_size_mib`
+- Default: `10` (10 MiB)
+
+In the Settings Editor, search for **Tree-sitter Maximum File Size (MiB)**.
+
+**Options**
+
+- A positive integer: Allow automatic parsing at or below this size in MiB.
+- `0`: Disable the size limit.
+
+Above the limit, parsing stays disabled unless you choose **Enable Parsing** in the notification controlled by [Prompt for Large File Parsing](#prompt-for-large-file-parsing).
+Both settings support [per-language overrides](#languages).
+
+Or add this to your `settings.json` to keep the 10 MiB default, allow automatic JSON parsing up to 20 MiB, and leave larger JSON files unparsed without a notification:
+
+```json [settings]
+{
+  "tree_sitter_max_file_size_mib": 10,
+  "languages": {
+    "JSON": {
+      "tree_sitter_max_file_size_mib": 20,
+      "prompt_for_large_file_parsing": false
+    }
+  }
+}
+```
+
+The VS Code settings importer maps an explicit global `editor.largeFileOptimizations: false` to `tree_sitter_max_file_size_mib: 0`.
+It does not infer a file-parsing threshold from line-tokenization or file-opening confirmation settings.
 
 ## Title Bar
 

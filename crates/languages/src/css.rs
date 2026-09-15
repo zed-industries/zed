@@ -201,10 +201,15 @@ async fn get_cached_server_binary(
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, TestAppContext};
+    use settings::SettingsStore;
     use unindent::Unindent;
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+        });
         let language = crate::language("css", tree_sitter_css::LANGUAGE.into());
 
         let text = r#"
@@ -239,7 +244,7 @@ mod tests {
             buffer
         });
         buffer
-            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
             .await;
         let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
         assert_eq!(

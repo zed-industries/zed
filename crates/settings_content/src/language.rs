@@ -510,6 +510,17 @@ impl<'de> Deserialize<'de> for ConfiguredLanguageServer {
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageSettingsContent {
+    /// Maximum file size in whole MiB for automatic Tree-sitter parsing.
+    /// One MiB is 1,048,576 decoded, line-ending-normalized UTF-8 bytes.
+    /// Set to 0 to disable the size limit.
+    ///
+    /// Default: 10
+    pub tree_sitter_max_file_size_mib: Option<u64>,
+    /// Whether to ask before enabling Tree-sitter parsing above `tree_sitter_max_file_size_mib`.
+    /// When false, parsing stays disabled without a notification.
+    ///
+    /// Default: true
+    pub prompt_for_large_file_parsing: Option<bool>,
     /// How many columns a tab should occupy.
     ///
     /// Default: 4

@@ -615,6 +615,7 @@ impl VsCodeSettings {
             linked_edits: self.read_bool("editor.linkedEditing"),
             preferred_line_length: self.read_u32("editor.wordWrapColumn"),
             prettier: None,
+            prompt_for_large_file_parsing: None,
             remove_trailing_whitespace_on_save: self.read_bool("editor.trimAutoWhitespace"),
             show_completion_documentation: None,
             colorize_brackets: self.read_bool("editor.bracketPairColorization.enabled"),
@@ -641,6 +642,10 @@ impl VsCodeSettings {
                 .read_u32("editor.tabSize")
                 .and_then(|n| NonZeroU32::new(n)),
             tasks: None,
+            // Preserve an explicit opt-out of size-based restrictions; otherwise keep Zed's default.
+            tree_sitter_max_file_size_mib: (self.read_bool("editor.largeFileOptimizations")
+                == Some(false))
+            .then_some(0),
             use_auto_surround: self.read_enum("editor.autoSurround", |s| match s {
                 "languageDefined" | "quotes" | "brackets" => Some(true),
                 "never" => Some(false),
@@ -1241,6 +1246,34 @@ mod tests {
             .unwrap()
             .settings_content()
             .reduce_motion
+    }
+
+    #[test]
+    fn test_import_large_file_parsing_settings() -> Result<()> {
+        for (content, expected_limit) in [
+            (r#"{"editor.largeFileOptimizations": false}"#, Some(0)),
+            (r#"{"editor.largeFileOptimizations": true}"#, None),
+            ("{}", None),
+            (r#"{"editor.largeFileOptimizations": "false"}"#, None),
+            (
+                r#"{"[rust]": {"editor.largeFileOptimizations": false}}"#,
+                None,
+            ),
+            (
+                r#"{"editor.maxTokenizationLineLength": 1, "workbench.editorLargeFileConfirmation": 1}"#,
+                None,
+            ),
+        ] {
+            let imported =
+                VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)?.settings_content();
+            let defaults = &imported.project.all_languages.defaults;
+            assert_eq!(
+                defaults.tree_sitter_max_file_size_mib, expected_limit,
+                "{content}",
+            );
+            assert_eq!(defaults.prompt_for_large_file_parsing, None, "{content}");
+        }
+        Ok(())
     }
 
     #[test]

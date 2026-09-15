@@ -1681,8 +1681,6 @@ impl GitStore {
             .spawn(async move |this, cx| {
                 let result: Result<Entity<BufferDiff>> = async {
                     let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-                    let language_registry =
-                        buffer.update(cx, |buffer, _| buffer.language_registry());
                     let content: Option<Arc<str>> = match oid {
                         None => None,
                         Some(oid) => Some({
@@ -1693,14 +1691,8 @@ impl GitStore {
                             content.into()
                         }),
                     };
-                    let buffer_diff = cx.new(|cx| {
-                        BufferDiff::new(
-                            &buffer_snapshot,
-                            buffer_snapshot.language().cloned(),
-                            language_registry,
-                            cx,
-                        )
-                    });
+                    let buffer_diff =
+                        cx.new(|cx| BufferDiff::new(&buffer_snapshot, None, None, cx));
 
                     buffer_diff
                         .update(cx, |buffer_diff, cx| {
@@ -1723,13 +1715,27 @@ impl GitStore {
                             .entry(buffer_id)
                             .or_insert_with(|| cx.new(|cx| BufferGitState::new(git_store, cx)));
 
-                        diff_state.update(cx, |state, _| {
+                        diff_state.update(cx, |state, cx| {
                             if let Some(oid) = oid {
                                 if let Some(content) = content {
                                     state.oid_texts.insert(oid, content);
                                 }
                             }
                             state.oid_diffs.insert(oid, buffer_diff.downgrade());
+                            let source = buffer.read(cx);
+                            let file = source.file().cloned();
+                            let language = source.language().cloned();
+                            let language_registry = source.language_registry();
+                            if let Some(file) = file {
+                                state.buffer_file_changed(file.as_ref(), cx);
+                            }
+                            let base = buffer_diff.read(cx).base_text_buffer().clone();
+                            base.update(cx, |base, cx| {
+                                if let Some(registry) = language_registry {
+                                    base.set_language_registry(registry);
+                                }
+                                base.set_language_async(language, cx);
+                            });
                         });
                     })?;
 
@@ -2005,6 +2011,9 @@ impl GitStore {
                     }
                 }
 
+                if let Some(file) = buffer_entity.read(cx).file().cloned() {
+                    diff_state.buffer_file_changed(file.as_ref(), cx);
+                }
                 diff_state.diff_bases_changed(text_snapshot, Some(diff_bases_change), cx);
                 let rx = diff_state.wait_for_recalculation();
 
@@ -3069,6 +3078,13 @@ impl GitStore {
                 // `BufferDiffState`, in case it already has one.
                 let buffer_id = buffer.read(cx).remote_id();
                 let diff_state = self.diffs.get(&buffer_id);
+                if let Some(diff_state) = diff_state
+                    && let Some(file) = buffer.read(cx).file().cloned()
+                {
+                    diff_state.update(cx, |diff_state, cx| {
+                        diff_state.buffer_file_changed(file.as_ref(), cx);
+                    });
+                }
                 let repo = self.repository_and_path_for_buffer_id(buffer_id, cx);
 
                 if let Some(diff_state) = diff_state
@@ -5386,8 +5402,35 @@ impl BufferGitState {
         buffer
     }
 
+    fn buffer_file_changed(&self, file: &dyn language::File, cx: &mut Context<Self>) {
+        if let Some(buffer) = self.index_text_buffer.upgrade() {
+            let index_file = Arc::new(IndexTextFile::new(file, cx));
+            buffer.update(cx, |buffer, cx| buffer.file_updated(index_file, cx));
+        }
+        let worktree_id = file.worktree_id(cx);
+        let path = file.path().clone();
+        let buffers = self
+            .head_text_buffer
+            .upgrade()
+            .into_iter()
+            .chain(
+                self.oid_diffs
+                    .values()
+                    .filter_map(|diff| Some(diff.upgrade()?.read(cx).base_text_buffer().clone())),
+            )
+            .collect::<Vec<_>>();
+        for buffer in buffers {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_settings_location(worktree_id, path.clone(), cx);
+            });
+        }
+    }
+
     #[ztracing::instrument(skip_all)]
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        if let Some(file) = buffer.read(cx).file().cloned() {
+            self.buffer_file_changed(file.as_ref(), cx);
+        }
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
         let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);

@@ -782,8 +782,10 @@ impl LocalBufferStore {
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |buffer_store, cx| {
             let buffer = cx.new(|cx| {
-                let mut buffer = Buffer::local("", cx)
-                    .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx);
+                let mut buffer = Buffer::local("", cx).with_language_async(
+                    language.unwrap_or_else(|| language::PLAIN_TEXT.clone()),
+                    cx,
+                );
                 apply_initial_line_ending(&mut buffer, cx);
                 buffer
             });
@@ -1716,7 +1718,7 @@ impl BufferStore {
     ) -> Entity<Buffer> {
         let buffer = cx.new(|cx| {
             let mut buffer = Buffer::local(text, cx)
-                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx);
+                .with_language_async(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx);
             apply_initial_line_ending(&mut buffer, cx);
             buffer
         });

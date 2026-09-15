@@ -212,6 +212,9 @@ impl RelatedExcerptStore {
         position: Anchor,
         cx: &mut AsyncApp,
     ) -> Result<()> {
+        buffer
+            .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+            .await;
         let (project, snapshot, file_extension, identifier_line_count) =
             this.read_with(cx, |this, cx| {
                 let snapshot = buffer.read(cx).snapshot();
@@ -443,7 +446,7 @@ async fn rebuild_related_files(
             if let hash_map::Entry::Vacant(e) = snapshots.entry(definition.buffer.entity_id()) {
                 definition
                     .buffer
-                    .read_with(cx, |buffer, _| buffer.parsing_idle())
+                    .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
                     .await;
                 e.insert(
                     definition

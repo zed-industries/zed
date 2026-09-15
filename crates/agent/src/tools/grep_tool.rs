@@ -4,7 +4,7 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
-use language::{OffsetRangeExt, ParseStatus, Point};
+use language::{OffsetRangeExt, Point};
 use project::{
     Project, ProjectPath, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
@@ -206,20 +206,17 @@ impl AgentTool for GrepTool {
                     continue;
                 }
 
-                let (Some((path, project_path)), mut parse_status) =
+                let Some((path, project_path)) =
                     buffer.read_with(cx, |buffer, cx| {
-                        (
-                            buffer.file().map(|file| {
-                                (
-                                    file.full_path(cx),
-                                    ProjectPath {
-                                        worktree_id: file.worktree_id(cx),
-                                        path: file.path().clone(),
-                                    },
-                                )
-                            }),
-                            buffer.parse_status(),
-                        )
+                        buffer.file().map(|file| {
+                            (
+                                file.full_path(cx),
+                                ProjectPath {
+                                    worktree_id: file.worktree_id(cx),
+                                    path: file.path().clone(),
+                                },
+                            )
+                        })
                     })
                 else {
                     continue;
@@ -239,9 +236,9 @@ impl AgentTool for GrepTool {
                     .ok()
                     .flatten();
 
-                while *parse_status.borrow() != ParseStatus::Idle {
-                    parse_status.changed().await.map_err(|e| e.to_string())?;
-                }
+                buffer
+                    .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+                    .await;
 
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
@@ -999,6 +996,113 @@ mod tests {
             "#
         .unindent();
         assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_requests_deferred_parsing_with_size_limit(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .tree_sitter_max_file_size_mib = Some(1);
+                });
+            });
+        });
+
+        let source = "fn unopened() {\n    let a = 1;\n    let b = 2;\n    let needle = a + b;\n    let c = needle;\n    let d = c;\n}\n";
+        let oversized_source = format!("{source}{}", " ".repeat(1024 * 1024 + 1 - source.len()));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "small.rs": source,
+                "oversized.rs": oversized_source,
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        project.update(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        for (filename, should_parse, expected) in [
+            (
+                "small.rs",
+                true,
+                r#"
+                    ### fn unopened › L1-7
+                    ```
+                    fn unopened() {
+                        let a = 1;
+                        let b = 2;
+                        let needle = a + b;
+                        let c = needle;
+                        let d = c;
+                    }
+                    ```
+                "#,
+            ),
+            (
+                "oversized.rs",
+                false,
+                r#"
+                    ### L2-6
+                    ```
+                        let a = 1;
+                        let b = 2;
+                        let needle = a + b;
+                        let c = needle;
+                        let d = c;
+                    ```
+                "#,
+            ),
+        ] {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(PathBuf::from(path!("/root")).join(filename), cx)
+                })
+                .await
+                .expect("buffer should open");
+            cx.run_until_parked();
+            buffer.read_with(cx, |buffer, _| {
+                assert!(!buffer.parsing_enabled());
+                assert_eq!(buffer.snapshot().syntax_layers().count(), 0);
+            });
+
+            let result = run_grep_tool(
+                GrepToolInput {
+                    regex: "let needle".to_owned(),
+                    include_pattern: Some(format!("root/{filename}")),
+                    offset: 0,
+                    case_sensitive: true,
+                },
+                project.clone(),
+                cx,
+            )
+            .await;
+            assert_eq!(
+                result,
+                format!(
+                    "Found 1 matches:\n\n## Matches in root/{filename}\n\n{}",
+                    expected.unindent(),
+                ),
+            );
+            buffer.update(cx, |buffer, cx| {
+                assert_eq!(buffer.parsing_enabled(), should_parse);
+                assert_eq!(
+                    buffer.snapshot().syntax_layers().count(),
+                    usize::from(should_parse)
+                );
+                if !should_parse {
+                    assert!(buffer.claim_large_file_parsing_prompt(cx));
+                }
+            });
+        }
     }
 
     async fn run_grep_tool(

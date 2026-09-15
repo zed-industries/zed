@@ -272,7 +272,10 @@ use workspace::{
     OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
     TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
-    notifications::{DetachAndPromptErr, NotificationId, NotifyResultExt, NotifyTaskExt},
+    notifications::{
+        DetachAndPromptErr, NotificationId, NotifyResultExt, NotifyTaskExt,
+        simple_message_notification::MessageNotification,
+    },
     searchable::SearchEvent,
 };
 pub use zed_actions::editor::RevealInFileManager;
@@ -12421,6 +12424,120 @@ impl Focusable for Editor {
 impl Render for Editor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         EditorElement::new(&cx.entity(), self.create_style(cx))
+    }
+}
+
+struct LargeFileParsingNotification;
+
+impl Editor {
+    fn request_visible_buffer_parsing(
+        &self,
+        buffers: Vec<(WeakEntity<Buffer>, BufferId)>,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace();
+        if let Some(workspace) = workspace.as_ref() {
+            let workspace_state = workspace.read(cx);
+            if workspace_state
+                .multi_workspace()
+                .and_then(WeakEntity::upgrade)
+                .is_some_and(|multi_workspace| multi_workspace.read(cx).workspace() != workspace)
+            {
+                return;
+            }
+            let zoomed = workspace_state
+                .zoomed_item()
+                .and_then(|view| view.upgrade());
+            if !workspace_state.panes().iter().any(|pane| {
+                zoomed
+                    .as_ref()
+                    .is_none_or(|view| view.entity_id() == pane.entity_id())
+                    && workspace_state
+                        .maximized_pane()
+                        .is_none_or(|maximized| maximized.entity_id() == pane.entity_id())
+                    && pane.read(cx).active_item().is_some_and(|item| {
+                        item.item_id() == cx.entity_id()
+                            || item
+                                .act_as::<Editor>(cx)
+                                .is_some_and(|editor| editor.entity_id() == cx.entity_id())
+                            || item.act_as::<SplittableEditor>(cx).is_some_and(|split| {
+                                split
+                                    .read(cx)
+                                    .lhs_editor()
+                                    .is_some_and(|editor| editor.entity_id() == cx.entity_id())
+                            })
+                    })
+            }) {
+                return;
+            }
+        }
+
+        let singleton = self.buffer.read(cx).as_singleton();
+        for (buffer, owner) in buffers {
+            let Some(buffer) = buffer
+                .upgrade()
+                .filter(|buffer| buffer.read(cx).needs_parsing())
+            else {
+                continue;
+            };
+            let multi_buffer = self.buffer.read(cx);
+            if multi_buffer.buffer(owner).as_ref() != Some(&buffer)
+                && multi_buffer
+                    .diff_for(owner)
+                    .is_none_or(|diff| diff.read(cx).base_text_buffer() != &buffer)
+            {
+                continue;
+            }
+            buffer.update(cx, |buffer, cx| buffer.request_parsing(cx));
+            if singleton.as_ref() != Some(&buffer) {
+                continue;
+            }
+            let Some(workspace) = workspace.as_ref() else {
+                continue;
+            };
+            workspace.update(cx, |workspace, cx| {
+                let notification_id = NotificationId::composite::<LargeFileParsingNotification>((
+                    "buffer", buffer.entity_id(),
+                ));
+                if workspace.has_notification(&notification_id)
+                    || workspace.is_notification_suppressed(notification_id.clone())
+                {
+                    return;
+                }
+                let message = buffer.update(cx, |buffer, cx| {
+                    if !buffer.claim_large_file_parsing_prompt(cx) {
+                        return None;
+                    }
+                    let language = buffer.language()?.name();
+                    let filename = buffer.file().map(|file| file.file_name(cx).to_owned())
+                        .unwrap_or_else(|| "Untitled".to_owned());
+                    let size = buffer.len();
+                    Some(format!(
+                        "{filename} ({language}, {size} bytes) exceeds the automatic parsing limit.\n\
+                         Enable syntax parsing? This may slow down Zed."
+                    ))
+                });
+                let Some(message) = message else {
+                    return;
+                };
+                workspace.show_notification(notification_id, cx, |cx| {
+                    cx.new(|cx| {
+                        cx.observe_release(&buffer, |notification: &mut MessageNotification, _, cx| {
+                            notification.dismiss(cx);
+                        })
+                        .detach();
+                        let buffer = buffer.downgrade();
+                        MessageNotification::new(message, cx)
+                            .primary_message("Enable Parsing")
+                            .primary_on_click(move |_, cx| {
+                                buffer.update(cx, |buffer, cx| buffer.enable_parsing(cx)).ok();
+                            })
+                            .secondary_message("Keep Disabled")
+                            .show_suppress_button(false)
+                    })
+                });
+            });
+        }
     }
 }
 

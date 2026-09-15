@@ -14758,6 +14758,213 @@ async fn test_staged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_git_base_parsing_uses_project_settings(cx: &mut TestAppContext) {
+    init_test(cx);
+    let prefix = "fn main() {}\n";
+    let text = format!("{prefix}{}", " ".repeat(2 * 1024 * 1024 - prefix.len()));
+    let oid = git::Oid::from_bytes(&[1; 20]).expect("valid blob id");
+
+    for (global_limit, project_limit, should_parse) in [(1, 0, true), (0, 1, false)] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .tree_sitter_max_file_size_mib = Some(global_limit);
+                });
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/parsing"),
+            json!({
+                ".git": {},
+                ".zed": {
+                    "settings.json": json!({
+                        "languages": { "Rust": { "tree_sitter_max_file_size_mib": project_limit } }
+                    }).to_string()
+                },
+                "other": {
+                    ".zed": {
+                        "settings.json": json!({
+                            "languages": { "Rust": { "tree_sitter_max_file_size_mib": global_limit } }
+                        }).to_string()
+                    }
+                },
+                "main.rs": text,
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/parsing/.git")),
+            &[("main.rs", text.clone())],
+        );
+        fs.with_git_state(Path::new(path!("/parsing/.git")), false, |state| {
+            state.oids.insert(oid, text.as_bytes().to_vec());
+        })
+        .expect("repository exists");
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/parsing"))], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/parsing/main.rs"), cx)
+            })
+            .await
+            .expect("working buffer opens");
+        let uncommitted = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(buffer.clone(), cx)
+            })
+            .await
+            .expect("uncommitted diff opens");
+        let (staged, index) = project
+            .update(cx, |project, cx| {
+                project.open_staged_diff(buffer.clone(), cx)
+            })
+            .await
+            .expect("staged diff opens");
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let repository = git_store.read_with(cx, |git_store, cx| {
+            git_store
+                .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+                .expect("buffer belongs to repository")
+                .0
+        });
+        let since_oid = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_diff_since(Some(oid), buffer.clone(), repository.clone(), cx)
+            })
+            .await
+            .expect("OID diff opens");
+        let head = uncommitted.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+        assert_eq!(
+            staged.read_with(cx, |diff, _| diff.base_text_buffer().clone()),
+            head
+        );
+        let oid_base = since_oid.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+
+        let buffers = [
+            ("working", buffer),
+            ("HEAD", head),
+            ("index", index),
+            ("OID", oid_base),
+        ];
+        for (kind, buffer) in &buffers {
+            buffer.read_with(cx, |buffer, cx| {
+                assert_eq!(buffer.len(), text.len(), "{kind}");
+                assert_eq!(
+                    buffer.file().map(|file| file.path().as_ref()),
+                    if *kind == "working" || *kind == "index" {
+                        Some(rel_path("main.rs"))
+                    } else {
+                        None
+                    },
+                    "{kind}"
+                );
+                assert_eq!(buffer.snapshot().syntax_layers().count(), 0, "{kind}");
+                assert_eq!(
+                    LanguageSettings::resolve(Some(buffer), None, cx).tree_sitter_max_file_size_mib,
+                    project_limit,
+                    "{kind}"
+                );
+            });
+            buffer
+                .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+                .await;
+            buffer.read_with(cx, |buffer, _| {
+                assert_eq!(buffer.parsing_enabled(), should_parse, "{kind}");
+                assert_eq!(
+                    buffer.snapshot().syntax_layers().map(|layer| layer.node().to_sexp()).collect::<Vec<_>>(),
+                    if should_parse {
+                        vec!["(source_file (function_item name: (identifier) parameters: (parameters) body: (block)))"]
+                    } else {
+                        Vec::new()
+                    },
+                    "{kind}"
+                );
+            });
+        }
+
+        fs.rename(
+            Path::new(path!("/parsing/main.rs")),
+            Path::new(path!("/parsing/other/main.rs")),
+            fs::RenameOptions::default(),
+        )
+        .await
+        .expect("source file moves");
+        cx.run_until_parked();
+        for (kind, buffer) in &buffers {
+            buffer.read_with(cx, |buffer, cx| {
+                assert_eq!(
+                    buffer.file().map(|file| file.path().as_ref()),
+                    if *kind == "working" || *kind == "index" {
+                        Some(rel_path("other/main.rs"))
+                    } else {
+                        None
+                    },
+                    "{kind}"
+                );
+                assert_eq!(
+                    LanguageSettings::resolve(Some(buffer), None, cx).tree_sitter_max_file_size_mib,
+                    global_limit,
+                    "{kind}"
+                );
+            });
+        }
+
+        let next_oid = git::Oid::from_bytes(&[2; 20]).expect("valid blob id");
+        fs.with_git_state(Path::new(path!("/parsing/.git")), false, |state| {
+            state.oids.insert(next_oid, text.as_bytes().to_vec());
+        })
+        .expect("repository exists");
+        let (_, source) = buffers.first().expect("working buffer");
+        let opening = git_store.update(cx, |git_store, cx| {
+            git_store.open_diff_since(Some(next_oid), source.clone(), repository, cx)
+        });
+        fs.rename(
+            Path::new(path!("/parsing/other/main.rs")),
+            Path::new(path!("/parsing/main.rs")),
+            fs::RenameOptions::default(),
+        )
+        .await
+        .expect("source file moves while OID diff loads");
+        let diff = opening.await.expect("OID diff opens during rename");
+        cx.run_until_parked();
+        let base = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+        base.read_with(cx, |buffer, cx| {
+            assert!(buffer.file().is_none());
+            assert_eq!(
+                LanguageSettings::resolve(Some(buffer), None, cx).tree_sitter_max_file_size_mib,
+                project_limit
+            );
+        });
+
+        fs.atomic_write(
+            PathBuf::from(path!("/parsing/.zed/settings.json")),
+            json!({
+                "languages": { "Rust": { "tree_sitter_max_file_size_mib": global_limit } }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("project settings update");
+        cx.run_until_parked();
+        for (kind, buffer) in buffers.iter().chain([&("OID during rename", base)]) {
+            buffer.read_with(cx, |buffer, cx| {
+                assert_eq!(
+                    LanguageSettings::resolve(Some(buffer), None, cx).tree_sitter_max_file_size_mib,
+                    global_limit,
+                    "{kind}"
+                );
+            });
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_base_text_buffers_released_when_diffs_dropped(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

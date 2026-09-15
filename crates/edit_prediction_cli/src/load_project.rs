@@ -57,7 +57,7 @@ pub async fn run_load_project(
     let (buffer, cursor_position) =
         cursor_position(example, &project, &open_buffers, &mut cx).await?;
     buffer
-        .read_with(&cx, |buffer, _| buffer.parsing_idle())
+        .update(&mut cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
         .await;
 
     let events: Vec<Arc<zeta_prompt::Event>> = ep_store.update(&mut cx, |store, cx| {

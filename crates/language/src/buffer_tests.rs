@@ -1,5 +1,5 @@
 use super::*;
-use crate::Buffer;
+use crate::{Buffer, language_settings::LanguageSettings};
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
@@ -12,11 +12,15 @@ use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
-use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
+use settings::{
+    AllLanguageSettingsContent, LanguageSettingsContent, LocalSettingsKind, LocalSettingsPath,
+    WorktreeId,
+};
 use std::collections::BTreeSet;
 use std::{
     env,
     ops::Range,
+    path::PathBuf,
     sync::LazyLock,
     time::{Duration, Instant},
 };
@@ -26,9 +30,12 @@ use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
 use theme::ActiveTheme;
 use unindent::Unindent as _;
-use util::rel_path::rel_path;
 use util::test::marked_text_offsets;
 use util::{RandomCharIter, assert_set_eq, post_inc, test::marked_text_ranges};
+use util::{
+    paths::PathStyle,
+    rel_path::{RelPath, rel_path},
+};
 
 pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
     RegexBuilder::new(r"[ \t]+$")
@@ -919,6 +926,719 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
             "arguments: (arguments (identifier)))))))",
         )
     );
+}
+
+#[gpui::test]
+async fn test_deferred_parsing_size_limit(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |settings| {
+            settings.defaults.tree_sitter_max_file_size_mib = Some(2);
+            settings.languages.0.insert(
+                "JSON".to_owned(),
+                LanguageSettingsContent {
+                    tree_sitter_max_file_size_mib: Some(1),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+    });
+    let limit = 1024 * 1024;
+    for (padding, suffix, size, should_parse) in [
+        (0, "", 0, true),
+        (limit - 4, "{} ", limit - 1, true),
+        (limit - 4, "{}  ", limit, true),
+        (limit - 4, "{}   ", limit + 1, false),
+        (limit - 4, "\"é\"", limit, true),
+        (limit - 5, "\"€\"", limit, true),
+        (limit - 4, "\"€\"", limit + 1, false),
+        (limit - 6, "\"😀\"", limit, true),
+        (limit - 5, "\"😀\"", limit + 1, false),
+        (limit - 3, "{}\r\n", limit, true),
+        (limit - 4, "{}\n\n\n", limit + 1, false),
+    ] {
+        let text = format!("{}{suffix}", " ".repeat(padding));
+        for has_file in [true, false] {
+            let buffer = cx.new(|cx| {
+                let mut buffer = if has_file {
+                    file_buffer(&text, cx)
+                } else {
+                    Buffer::local(text.as_str(), cx)
+                };
+                buffer.set_language(Some(json_lang()), cx);
+                buffer
+            });
+            cx.run_until_parked();
+            buffer
+                .update(cx, |buffer, cx| {
+                    assert_eq!(buffer.len(), size);
+                    assert!(buffer.snapshot().syntax.is_empty());
+                    assert!(!buffer.claim_large_file_parsing_prompt(cx));
+                    buffer.request_parsing_and_wait(cx)
+                })
+                .await;
+            buffer.update(cx, |buffer, cx| {
+                assert_eq!(
+                    buffer.parsing_enabled(),
+                    should_parse,
+                    "{padding}, {suffix:?}"
+                );
+                assert_eq!(
+                    !buffer.snapshot().syntax.is_empty(),
+                    should_parse,
+                    "{padding}, {suffix:?}"
+                );
+                assert_eq!(buffer.claim_large_file_parsing_prompt(cx), !should_parse);
+                assert!(!buffer.claim_large_file_parsing_prompt(cx));
+            });
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_disabled_parsing_edits_and_previews(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |settings| {
+            settings.defaults.tree_sitter_max_file_size_mib = Some(1);
+            settings.defaults.prompt_for_large_file_parsing = Some(false);
+        });
+    });
+    let text = format!("{{}}{}", " ".repeat(1024 * 1024));
+    let buffer = cx.new(|cx| {
+        let mut buffer = file_buffer(&text, cx);
+        buffer.set_language(Some(json_lang()), cx);
+        buffer.request_parsing(cx);
+        assert!(!buffer.claim_large_file_parsing_prompt(cx));
+        assert!(!buffer.needs_parsing());
+        buffer
+    });
+    let branch = buffer.update(cx, |buffer, cx| buffer.branch(cx));
+    let preview = buffer
+        .update(cx, |buffer, cx| {
+            buffer.preview_edits(
+                Arc::from([(
+                    buffer.anchor_before(1)..buffer.anchor_after(1),
+                    Arc::from(" "),
+                )]),
+                cx,
+            )
+        })
+        .await;
+    assert!(preview.result_syntax_snapshot().is_empty());
+    let edited = buffer
+        .update(cx, |buffer, cx| {
+            buffer.snapshot_with_edits([(1..1, " ")], cx)
+        })
+        .await;
+    assert!(edited.snapshot().syntax.is_empty());
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(1..1, "\n")], Some(AutoindentMode::EachLine), cx);
+        assert!(buffer.wait_for_autoindent_applied().is_none());
+        buffer.set_language(Some(rust_lang()), cx);
+        buffer.set_language(Some(json_lang()), cx);
+        assert!(!buffer.claim_large_file_parsing_prompt(cx));
+    });
+    cx.run_until_parked();
+    assert!(branch.read_with(cx, |buffer, _| buffer.snapshot().syntax.is_empty()));
+    assert!(buffer.read_with(cx, |buffer, _| buffer.snapshot().syntax.is_empty()));
+    buffer
+        .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+        .await;
+    buffer.update(cx, |buffer, cx| buffer.enable_parsing(cx));
+    cx.run_until_parked();
+    assert_eq!(get_tree_sexp(&buffer, cx), "(document (object))");
+
+    for limit in [0, u64::MAX] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .tree_sitter_max_file_size_mib = Some(limit);
+                });
+            });
+        });
+        let unlimited = cx.new(|cx| {
+            let mut buffer = file_buffer(&text, cx);
+            buffer.request_parsing(cx);
+            buffer.set_language(Some(json_lang()), cx);
+            buffer
+        });
+        cx.run_until_parked();
+        assert_eq!(get_tree_sexp(&unlimited, cx), "(document (object))");
+    }
+}
+
+#[gpui::test]
+async fn test_fast_forward_after_enabling_parsing(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |settings| {
+            settings.defaults.tab_size = Some(2.try_into().expect("nonzero tab size"));
+        })
+    });
+
+    for wait_for_parse in [true, false] {
+        for change_language in [false, true] {
+            for has_edits in [true, false] {
+                let buffer = cx.new(|cx| {
+                    let mut buffer = Buffer::local("{}", cx);
+                    buffer.set_language(Some(json_lang()), cx);
+                    buffer.set_sync_parse_timeout(None);
+                    buffer
+                });
+                let edited = buffer
+                    .update(cx, |buffer, cx| {
+                        buffer.snapshot_with_edits(has_edits.then_some((1..1, " ")), cx)
+                    })
+                    .await;
+                assert!(edited.snapshot().syntax.is_empty());
+                let parsing = buffer.update(cx, |buffer, cx| {
+                    if change_language {
+                        buffer.set_language(Some(rust_lang()), cx);
+                    }
+                    buffer.enable_parsing(cx);
+                    assert!(buffer.is_parsing());
+                    buffer.parsing_idle()
+                });
+                if wait_for_parse {
+                    parsing.await;
+                }
+                let mut events = cx.events(&buffer);
+                buffer
+                    .update(cx, |buffer, cx| {
+                        buffer.fast_forward(edited, cx);
+                        buffer.parsing_idle()
+                    })
+                    .await;
+                cx.run_until_parked();
+                buffer.read_with(cx, |buffer, _| {
+                    assert_eq!(buffer.text(), if has_edits { "{ }" } else { "{}" });
+                    assert!(!buffer.is_parsing());
+                    assert_eq!(
+                        syntax_sexps(buffer),
+                        [if change_language {
+                            "(source_file (expression_statement (block)))"
+                        } else {
+                            "(document (object))"
+                        }],
+                        "wait_for_parse={wait_for_parse}, change_language={change_language}, has_edits={has_edits}"
+                    );
+                });
+                assert_eq!(
+                    std::iter::from_fn(|| events.try_recv().ok())
+                        .filter(|event| matches!(event, BufferEvent::Edited { .. }))
+                        .collect::<Vec<_>>(),
+                    has_edits
+                        .then_some(BufferEvent::Edited {
+                            source: BufferEditSource::User
+                        })
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                );
+                if has_edits && !change_language {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit(
+                            [(1..2, "\n\"key\": 1\n")],
+                            Some(AutoindentMode::EachLine),
+                            cx,
+                        );
+                    });
+                    cx.run_until_parked();
+                    assert_eq!(
+                        buffer.read_with(cx, |buffer, _| buffer.text()),
+                        "{\n  \"key\": 1\n}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_fast_forward_preserves_disabled_parsing(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |settings| {
+            settings.defaults.tree_sitter_max_file_size_mib = Some(1);
+            settings.defaults.prompt_for_large_file_parsing = Some(true);
+        });
+    });
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(format!("{{}}{}", " ".repeat(1024 * 1024)), cx);
+        buffer.set_language(Some(json_lang()), cx);
+        buffer.request_parsing(cx);
+        buffer
+    });
+    let edited = buffer
+        .update(cx, |buffer, cx| {
+            buffer.snapshot_with_edits([(0..buffer.len(), "{ }")], cx)
+        })
+        .await;
+    assert!(edited.snapshot().syntax.is_empty());
+    buffer.update(cx, |buffer, cx| {
+        assert!(buffer.claim_large_file_parsing_prompt(cx));
+        buffer.fast_forward(edited, cx);
+        buffer.request_parsing(cx);
+    });
+    cx.run_until_parked();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "{ }");
+        assert!(!buffer.parsing_enabled());
+        assert!(buffer.snapshot().syntax.is_empty());
+        assert!(!buffer.is_parsing());
+    });
+}
+
+#[gpui::test]
+async fn test_preview_result_parsing_permission(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |settings| {
+            settings.defaults.tree_sitter_max_file_size_mib = Some(1);
+            settings.defaults.prompt_for_large_file_parsing = Some(true);
+        });
+    });
+    let text = format!("{{}}{}", " ".repeat(2 * 1024 * 1024 - 2));
+    let language = json_lang();
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
+    registry.add(language.clone());
+
+    for permission in ["deferred", "pending", "disabled", "enabled"] {
+        let source = cx.new(|cx| {
+            let mut buffer = Buffer::local(text.clone(), cx);
+            buffer.set_language_registry(registry.clone());
+            buffer.set_language(Some(language.clone()), cx);
+            if permission != "deferred" {
+                buffer.request_parsing(cx);
+            }
+            if permission == "disabled" {
+                assert!(buffer.claim_large_file_parsing_prompt(cx));
+            } else if permission == "enabled" {
+                buffer.enable_parsing(cx);
+            }
+
+            buffer
+        });
+        source
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
+
+        for edits in [
+            None,
+            Some([].as_slice()),
+            Some([(0..text.len(), "{ }")].as_slice()),
+        ] {
+            let shrinks = edits.is_some_and(|edits| !edits.is_empty());
+            let result = preview_result(&source, edits, cx).await;
+            for demand in [false, true] {
+                if demand {
+                    result
+                        .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+                        .await;
+                }
+                let should_parse = permission == "enabled"
+                    || (shrinks
+                        && (permission == "pending" || (demand && permission == "deferred")));
+                result.read_with(cx, |buffer, _| {
+                    assert_eq!(buffer.language(), Some(&language));
+                    assert!(Arc::ptr_eq(
+                        &buffer.language_registry().expect("missing registry"),
+                        &registry
+                    ));
+                    assert_eq!(buffer.text(), if shrinks { "{ }" } else { &text });
+                    assert_eq!(
+                        syntax_sexps(buffer),
+                        Vec::from_iter(should_parse.then_some("(document (object))")),
+                        "permission={permission}, shrinks={shrinks}, demand={demand}"
+                    );
+                });
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_file_updated_worktree_parsing_limit(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |_| {});
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            for (worktree_id, limit) in [(1, 10), (2, 1)] {
+                let content = serde_json::json!({
+                    "languages": {"Rust": {"tree_sitter_max_file_size_mib": limit}}
+                })
+                .to_string();
+                store
+                    .set_local_settings(
+                        WorktreeId::from_usize(worktree_id),
+                        LocalSettingsPath::InWorktree(RelPath::empty_arc()),
+                        LocalSettingsKind::Settings,
+                        Some(&content),
+                        cx,
+                    )
+                    .expect("valid worktree settings");
+            }
+        });
+    });
+    let code = "fn main() {}";
+    let text = format!("{code}{}", " ".repeat(2 * 1024 * 1024 - code.len()));
+    for (old_worktree, new_worktree, old_limit, new_limit) in [(1, 2, 10, 1), (2, 1, 1, 10)] {
+        for was_deleted in [false, true] {
+            let old_file: Arc<dyn File> = Arc::new(HistoricWorktreeFile {
+                worktree_id: WorktreeId::from_usize(old_worktree),
+                file: file("main.rs"),
+                was_deleted,
+            });
+            let new_file: Arc<dyn File> = Arc::new(HistoricWorktreeFile {
+                worktree_id: WorktreeId::from_usize(new_worktree),
+                file: file("main.rs"),
+                was_deleted,
+            });
+            assert_eq!(old_file.path(), new_file.path());
+            assert_eq!(old_file.disk_state(), new_file.disk_state());
+            let buffer = cx.new(|cx| {
+                let mut buffer = Buffer::build(
+                    text::Buffer::new(
+                        ReplicaId::LOCAL,
+                        cx.entity_id().as_non_zero_u64().into(),
+                        text.clone(),
+                    ),
+                    Some(old_file.clone()),
+                    Capability::ReadOnly,
+                    cx,
+                );
+                buffer.set_language(Some(rust_lang()), cx);
+                assert_eq!(
+                    LanguageSettings::resolve(Some(&buffer), None, cx)
+                        .tree_sitter_max_file_size_mib,
+                    old_limit
+                );
+                buffer
+            });
+            let mut events = cx.events(&buffer);
+            buffer.update(cx, |buffer, cx| buffer.file_updated(old_file, cx));
+            assert_eq!(events.try_recv().ok(), None);
+            buffer
+                .update(cx, |buffer, cx| {
+                    buffer.file_updated(new_file.clone(), cx);
+                    buffer.request_parsing_and_wait(cx)
+                })
+                .await;
+            buffer.read_with(cx, |buffer, cx| {
+                let should_parse = new_limit == 10;
+                assert_eq!(LanguageSettings::resolve(Some(buffer), None, cx).tree_sitter_max_file_size_mib, new_limit);
+                let snapshot = buffer.snapshot();
+                assert_eq!(snapshot.settings_location().expect("missing settings location").worktree_id, WorktreeId::from_usize(new_worktree));
+                assert_eq!(LanguageSettings::for_buffer_snapshot(&snapshot, None, cx).tree_sitter_max_file_size_mib, new_limit);
+                assert_eq!(
+                    syntax_sexps(buffer),
+                    should_parse.then_some("(source_file (function_item name: (identifier) parameters: (parameters) body: (block)))")
+                        .into_iter().collect::<Vec<_>>(),
+                    "worktree {old_worktree} -> {new_worktree}, was_deleted={was_deleted}"
+                );
+            });
+            assert_eq!(
+                std::iter::from_fn(|| events.try_recv().ok())
+                    .filter(|event| *event != BufferEvent::Reparsed)
+                    .collect::<Vec<_>>(),
+                [BufferEvent::SettingsChanged, BufferEvent::FileHandleChanged]
+            );
+            buffer.update(cx, |buffer, cx| buffer.file_updated(new_file, cx));
+            assert_eq!(events.try_recv().ok(), None);
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_preview_result_worktree_parsing_limit(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+    let text = format!("{{}}{}", " ".repeat(2 * 1024 * 1024 - 2));
+    let language = json_lang();
+
+    for (global_limit, worktree_limit) in [(10, 1), (1, 10)] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .tree_sitter_max_file_size_mib = Some(global_limit);
+                });
+            });
+            set_preview_worktree_limit(Some(worktree_limit), cx);
+        });
+        for (requested, enabled) in [(true, false), (false, false), (true, true)] {
+            let source = cx.new(|cx| {
+                let mut buffer = file_buffer(&text, cx);
+                buffer.file_updated(file("preview/file.json"), cx);
+                buffer.set_language(Some(language.clone()), cx);
+                if requested {
+                    buffer.request_parsing(cx);
+                }
+                if enabled {
+                    buffer.enable_parsing(cx);
+                }
+                buffer
+            });
+            source
+                .read_with(cx, |buffer, _| buffer.parsing_idle())
+                .await;
+            for edits in [None, Some([].as_slice()), Some([(1..1, " ")].as_slice())] {
+                let result = preview_result(&source, edits, cx).await;
+                for demand in [false, true] {
+                    if demand {
+                        result
+                            .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+                            .await;
+                    }
+                    let should_parse = enabled || ((requested || demand) && worktree_limit == 10);
+                    result.read_with(cx, |buffer, cx| {
+                        assert!(buffer.file().is_none());
+                        assert_eq!(buffer.language(), Some(&language));
+                        assert_eq!(
+                            syntax_sexps(buffer),
+                            Vec::from_iter(should_parse.then_some("(document (object))")),
+                            "global={global_limit}, worktree={worktree_limit}, requested={requested}, enabled={enabled}, edits={edits:?}, demand={demand}"
+                        );
+                        let settings = LanguageSettings::resolve(Some(buffer), None, cx);
+                        assert_eq!(settings.tree_sitter_max_file_size_mib, worktree_limit);
+                        assert_eq!(settings.tab_size.get(), 6);
+                        assert_eq!(
+                            LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx)
+                                .tree_sitter_max_file_size_mib,
+                            worktree_limit
+                        );
+                    });
+                }
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_preview_result_worktree_before_language_assignment(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |settings| {
+            settings.defaults.tree_sitter_max_file_size_mib = Some(10);
+        });
+        set_preview_worktree_limit(Some(1), cx);
+    });
+    let source = cx.new(|cx| {
+        let mut buffer = file_buffer(&format!("{{}}{}", " ".repeat(2 * 1024 * 1024 - 2)), cx);
+        buffer.file_updated(file("preview/file.json"), cx);
+        buffer.request_parsing(cx);
+        buffer
+    });
+    let result = preview_result(&source, None, cx).await;
+    result.update(cx, |buffer, cx| {
+        assert!(buffer.file().is_none());
+        assert!(buffer.language().is_none());
+        assert_eq!(
+            LanguageSettings::resolve(Some(buffer), None, cx)
+                .tab_size
+                .get(),
+            6
+        );
+        buffer.set_language(Some(json_lang()), cx);
+        buffer.request_parsing(cx);
+    });
+    cx.run_until_parked();
+    result.read_with(cx, |buffer, _| {
+        assert!(!buffer.parsing_enabled());
+        assert!(buffer.needs_parsing());
+        assert!(buffer.snapshot().syntax.is_empty());
+    });
+}
+
+#[gpui::test]
+async fn test_preview_result_worktree_settings_updates(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |settings| {
+            settings.defaults.tree_sitter_max_file_size_mib = Some(10);
+        });
+    });
+    let text = format!("{{}}{}", " ".repeat(2 * 1024 * 1024 - 2));
+    for requested in [false, true] {
+        cx.update(|cx| set_preview_worktree_limit(Some(1), cx));
+        let source = cx.new(|cx| {
+            let mut buffer = file_buffer(&text, cx);
+            buffer.file_updated(file("preview/file.json"), cx);
+            buffer.set_language(Some(json_lang()), cx);
+            if requested {
+                buffer.request_parsing(cx);
+            }
+            buffer
+        });
+        let preview = source.read_with(cx, |buffer, _| EditPreview::unchanged(&buffer.snapshot()));
+        source.update(cx, |buffer, cx| {
+            buffer.file_updated(file("elsewhere.json"), cx)
+        });
+        let result = cx.update(|cx| preview.build_result_buffer(cx));
+        let nested_result = preview_result(&result, None, cx).await;
+        let branch = result.update(cx, |buffer, cx| buffer.branch(cx));
+        for limit in [1, 10, 1] {
+            cx.update(|cx| set_preview_worktree_limit(Some(limit), cx));
+            cx.run_until_parked();
+            for buffer in [&result, &nested_result, &branch] {
+                buffer.read_with(cx, |buffer, cx| {
+                    assert!(buffer.file().is_none());
+                    assert!(!buffer.parsing_enabled());
+                    assert!(buffer.snapshot().syntax.is_empty());
+                    assert_eq!(
+                        LanguageSettings::resolve(Some(buffer), None, cx)
+                            .tree_sitter_max_file_size_mib,
+                        limit
+                    );
+                });
+            }
+        }
+        for buffer in [&result, &nested_result, &branch] {
+            buffer
+                .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+                .await;
+            assert!(!buffer.read_with(cx, |buffer, _| buffer.parsing_enabled()));
+        }
+        cx.update(|cx| {
+            set_preview_worktree_limit(None, cx);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .tree_sitter_max_file_size_mib = Some(7);
+                });
+            });
+        });
+        cx.run_until_parked();
+        for buffer in [&result, &nested_result, &branch] {
+            buffer.read_with(cx, |buffer, cx| {
+                assert_eq!(
+                    LanguageSettings::resolve_uncached(buffer, None, cx)
+                        .tree_sitter_max_file_size_mib,
+                    7,
+                    "uncached settings after removing the override"
+                );
+                assert_eq!(
+                    LanguageSettings::resolve(Some(buffer), None, cx).tree_sitter_max_file_size_mib,
+                    7
+                );
+                assert!(!buffer.parsing_enabled());
+            });
+            buffer
+                .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+                .await;
+            assert_eq!(get_tree_sexp(buffer, cx), "(document (object))");
+        }
+        cx.update(|cx| set_preview_worktree_limit(Some(1), cx));
+        result.update(cx, |buffer, cx| buffer.file_updated(file("saved.json"), cx));
+        result.read_with(cx, |buffer, cx| {
+            assert_eq!(
+                buffer.file().expect("missing new file").path().as_ref(),
+                rel_path("saved.json")
+            );
+            assert_eq!(
+                LanguageSettings::resolve(Some(buffer), None, cx).tree_sitter_max_file_size_mib,
+                7
+            );
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_preview_result_injections(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |_| {});
+        set_preview_worktree_limit(Some(1), cx);
+    });
+    let language = markdown_lang();
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
+    registry.add(language.clone());
+    registry.add(Arc::new(markdown_inline_lang()));
+    registry.add(rust_lang());
+
+    for enabled in [false, true] {
+        let source = cx.new(|cx| {
+            let mut buffer = Buffer::local("```rs\nfn main() {}\n```", cx);
+            buffer.file_updated(file("preview/readme.md"), cx);
+            buffer.set_language_registry(registry.clone());
+            buffer.set_language(Some(language.clone()), cx);
+            if enabled {
+                buffer.enable_parsing(cx);
+            }
+            buffer
+        });
+        for edits in [None, Some([(6..6, " ")].as_slice())] {
+            let result = preview_result(&source, edits, cx).await;
+            result.read_with(cx, |buffer, _| {
+                assert_eq!(buffer.language(), Some(&language));
+                assert_eq!(buffer.snapshot().syntax.is_empty(), !enabled);
+            });
+            result
+                .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+                .await;
+            result.read_with(cx, |buffer, cx| {
+                let snapshot = buffer.snapshot();
+                let offset = Point::new(1, 4).to_offset(&snapshot);
+                assert_eq!(
+                    LanguageSettings::for_buffer_snapshot(&snapshot, Some(offset), cx)
+                        .tab_size
+                        .get(),
+                    6
+                );
+                assert_eq!(
+                    buffer
+                        .language_at(Point::new(1, 4))
+                        .expect("missing injection")
+                        .name()
+                        .as_ref(),
+                    "Rust"
+                );
+            });
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_branch_parsing_language_size_limit(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |settings| {
+            settings.defaults.tree_sitter_max_file_size_mib = Some(10);
+            settings.languages.0.insert(
+                "JSON".to_owned(),
+                LanguageSettingsContent {
+                    tree_sitter_max_file_size_mib: Some(1),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+    });
+    let text = format!("{{}}{}", " ".repeat(2 * 1024 * 1024 - 2));
+    for requested in [true, false] {
+        let parent = cx.new(|cx| {
+            let mut buffer = Buffer::local(text.clone(), cx);
+            buffer.set_language(Some(json_lang()), cx);
+            if requested {
+                buffer.request_parsing(cx);
+            }
+            buffer
+        });
+        let branch = parent.update(cx, |buffer, cx| buffer.branch(cx));
+        for buffer in [&parent, &branch] {
+            buffer
+                .update(cx, |buffer, cx| buffer.request_parsing_and_wait(cx))
+                .await;
+            buffer.read_with(cx, |buffer, cx| {
+                assert_eq!(
+                    LanguageSettings::resolve(Some(buffer), None, cx).tree_sitter_max_file_size_mib,
+                    1
+                );
+                assert!(!buffer.parsing_enabled());
+                assert!(buffer.needs_parsing());
+                assert!(!buffer.is_parsing());
+                assert!(buffer.snapshot().syntax.is_empty());
+            });
+        }
+    }
 }
 
 #[gpui::test]
@@ -2964,6 +3684,7 @@ fn test_autoindent_with_injected_languages(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry);
+        buffer.enable_parsing(cx);
         buffer.set_language(Some(html_language), cx);
         buffer.edit(
             ranges.into_iter().map(|range| (range, "\na")),
@@ -3464,6 +4185,7 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
             .language_for_name("HTML+ERB")
             .now_or_never()
             .and_then(Result::ok);
+        buffer.enable_parsing(cx);
         buffer.set_language(language, cx);
 
         let snapshot = buffer.snapshot();
@@ -3503,6 +4225,7 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
+        buffer.enable_parsing(cx);
         buffer.set_language(
             language_registry
                 .language_for_name("Markdown")
@@ -3546,6 +4269,7 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
+        buffer.enable_parsing(cx);
         buffer.set_language(
             language_registry
                 .language_for_name("Markdown")
@@ -3630,6 +4354,7 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry);
+        buffer.enable_parsing(cx);
         buffer.set_language(Some(markdown_language), cx);
         buffer
     });
@@ -3701,6 +4426,7 @@ fn test_syntax_layer_at_for_combined_injections(cx: &mut App) {
             .language_for_name("HTML+ERB")
             .now_or_never()
             .and_then(Result::ok);
+        buffer.enable_parsing(cx);
         buffer.set_language(language, cx);
 
         let snapshot = buffer.snapshot();
@@ -3762,6 +4488,7 @@ fn test_languages_at_for_combined_injections(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
+        buffer.enable_parsing(cx);
         buffer.set_language(
             language_registry
                 .language_for_name("HTML+ERB")
@@ -5319,6 +6046,19 @@ fn assert_bracket_pairs(
     );
 }
 
+fn file_buffer(text: &str, cx: &mut gpui::Context<Buffer>) -> Buffer {
+    Buffer::build(
+        text::Buffer::new(
+            ReplicaId::LOCAL,
+            cx.entity_id().as_non_zero_u64().into(),
+            text.to_owned(),
+        ),
+        Some(file("file.json")),
+        Capability::ReadWrite,
+        cx,
+    )
+}
+
 fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
@@ -5399,6 +6139,7 @@ fn test_chunk_highlights_follow_edits_and_theme_changes(cx: &mut TestAppContext)
 
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local("fn main() {}", cx);
+        buffer.enable_parsing(cx);
         buffer.set_language(Some(language.clone()), cx);
         buffer
     });
@@ -5522,6 +6263,7 @@ fn test_chunk_highlights_across_row_chunk_seeks(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local(text, cx);
+        buffer.enable_parsing(cx);
         buffer.set_language(Some(language.clone()), cx);
         buffer
     });
@@ -5584,6 +6326,7 @@ fn test_oversized_chunks_bypass_the_highlight_cache(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local(text, cx);
+        buffer.enable_parsing(cx);
         buffer.set_language(Some(language.clone()), cx);
         buffer
     });
@@ -5661,6 +6404,7 @@ fn test_language_change_invalidates_cached_chunk_highlights(cx: &mut TestAppCont
 
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local("fn main() {}", cx);
+        buffer.enable_parsing(cx);
         buffer.set_language(Some(rust), cx);
         buffer
     });
@@ -5881,4 +6625,111 @@ fn keyword_and_function_theme() -> SyntaxTheme {
 
 fn theme_highlight_id(theme: &SyntaxTheme, capture_name: &str) -> HighlightId {
     HighlightId::new(theme.highlight_id(capture_name).unwrap())
+}
+
+async fn preview_result(
+    source: &Entity<Buffer>,
+    edits: Option<&[(Range<usize>, &str)]>,
+    cx: &mut TestAppContext,
+) -> Entity<Buffer> {
+    let preview = if let Some(edits) = edits {
+        source
+            .read_with(cx, |buffer, cx| {
+                buffer.preview_edits(
+                    edits
+                        .iter()
+                        .map(|(range, text)| {
+                            (
+                                buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
+                                Arc::from(*text),
+                            )
+                        })
+                        .collect(),
+                    cx,
+                )
+            })
+            .await
+    } else {
+        source.read_with(cx, |buffer, _| EditPreview::unchanged(&buffer.snapshot()))
+    };
+    let result = cx.update(|cx| preview.build_result_buffer(cx));
+    result
+        .read_with(cx, |buffer, _| buffer.parsing_idle())
+        .await;
+    result
+}
+
+fn syntax_sexps(buffer: &Buffer) -> Vec<String> {
+    let snapshot = buffer.snapshot();
+    snapshot
+        .syntax
+        .layers(&snapshot.text)
+        .iter()
+        .map(|layer| layer.node().to_sexp())
+        .collect()
+}
+
+fn set_preview_worktree_limit(limit: Option<u64>, cx: &mut App) {
+    let content = serde_json::json!({
+        "tab_size": 6,
+        "languages": {"JSON": {"tree_sitter_max_file_size_mib": limit}}
+    })
+    .to_string();
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store
+            .set_local_settings(
+                WorktreeId::from_usize(0),
+                LocalSettingsPath::InWorktree(Arc::from(rel_path("preview"))),
+                LocalSettingsKind::Settings,
+                Some(&content),
+                cx,
+            )
+            .expect("valid worktree settings");
+    });
+}
+
+struct HistoricWorktreeFile {
+    worktree_id: WorktreeId,
+    file: Arc<dyn File>,
+    was_deleted: bool,
+}
+
+impl File for HistoricWorktreeFile {
+    fn as_local(&self) -> Option<&dyn LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> DiskState {
+        DiskState::Historic {
+            was_deleted: self.was_deleted,
+        }
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
+        self.file.path()
+    }
+
+    fn full_path(&self, cx: &App) -> PathBuf {
+        self.file.full_path(cx)
+    }
+
+    fn path_style(&self, cx: &App) -> PathStyle {
+        self.file.path_style(cx)
+    }
+
+    fn file_name<'a>(&'a self, cx: &'a App) -> &'a str {
+        self.file.file_name(cx)
+    }
+
+    fn worktree_id(&self, _: &App) -> WorktreeId {
+        self.worktree_id
+    }
+
+    fn to_proto(&self, cx: &App) -> rpc::proto::File {
+        self.file.to_proto(cx)
+    }
+
+    fn is_private(&self) -> bool {
+        self.file.is_private()
+    }
 }

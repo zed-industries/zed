@@ -9520,6 +9520,52 @@ impl Element for EditorElement {
                             )
                         };
 
+                    if !is_minimap
+                        && visible_height > Pixels::ZERO
+                        && bounds.right().min(visible_bounds.right())
+                            > bounds.left().max(visible_bounds.left())
+                    {
+                        let multi_buffer = self.editor.read(cx).buffer.read(cx);
+                        let buffer_snapshot = snapshot.buffer_snapshot();
+                        let buffers = buffer_snapshot
+                            .range_to_buffer_ranges_with_deleted_hunks(start_anchor..end_anchor)
+                            .filter(|(_, range, _)| !range.is_empty())
+                            .filter_map(|(buffer, _, deleted_hunk)| {
+                                if let Some((anchor, _)) = deleted_hunk.and_then(|anchor| {
+                                    buffer_snapshot.anchor_to_buffer_anchor(anchor)
+                                }) {
+                                    let diff = multi_buffer.diff_for(anchor.buffer_id)?;
+                                    Some((
+                                        diff.read(cx).base_text_buffer().clone(),
+                                        anchor.buffer_id,
+                                    ))
+                                } else {
+                                    Some((
+                                        multi_buffer.buffer(buffer.remote_id())?,
+                                        buffer.remote_id(),
+                                    ))
+                                }
+                            })
+                            .chain(multi_buffer.as_singleton().map(|buffer| {
+                                let buffer_id = buffer.read(cx).remote_id();
+                                (buffer, buffer_id)
+                            }))
+                            .unique_by(|(buffer, _)| buffer.entity_id())
+                            .filter(|(buffer, _)| buffer.read(cx).needs_parsing())
+                            .map(|(buffer, owner)| (buffer.downgrade(), owner))
+                            .collect::<Vec<_>>();
+                        if !buffers.is_empty() {
+                            let editor = self.editor.downgrade();
+                            cx.defer(move |cx| {
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.request_visible_buffer_parsing(buffers, cx);
+                                    })
+                                    .ok();
+                            });
+                        }
+                    }
+
                     let position_map = Rc::new(PositionMap {
                         size: bounds.size,
                         visible_row_range,

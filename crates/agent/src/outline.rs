@@ -36,7 +36,9 @@ pub async fn get_buffer_content_or_outline(
         // For large files, use outline instead of full content
         // Wait until the buffer has been fully parsed, so we can read its outline
         buffer
-            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .update(&mut cx.clone(), |buffer, cx| {
+                buffer.request_parsing_and_wait(cx)
+            })
             .await;
 
         let outline_items = buffer.read_with(cx, |buffer, _| {

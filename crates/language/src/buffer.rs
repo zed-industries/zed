@@ -40,7 +40,7 @@ use language_core::highlight_cache::{ChunkHighlightCache, ResolvedHighlights};
 
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use settings::{SettingsStore, WorktreeId};
+use settings::{SettingsLocation, SettingsStore, WorktreeId};
 use smallvec::SmallVec;
 use std::{
     any::Any,
@@ -105,6 +105,7 @@ pub struct Buffer {
     branch_state: Option<BufferBranchState>,
     /// Filesystem state, `None` when there is no path.
     file: Option<Arc<dyn File>>,
+    settings_location: Option<(WorktreeId, Arc<RelPath>)>,
     /// The mtime of the file when this buffer was last loaded from
     /// or saved to disk.
     saved_mtime: Option<MTime>,
@@ -121,6 +122,7 @@ pub struct Buffer {
     wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Option<Duration>,
+    parsing_permission: ParsingPermission,
     syntax_map: Mutex<SyntaxMap>,
     reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
@@ -184,6 +186,14 @@ pub enum ParseStatus {
     Parsing,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ParsingPermission {
+    Deferred,
+    Pending,
+    Enabled,
+    Disabled,
+}
+
 struct BufferBranchState {
     base_buffer: Entity<Buffer>,
     merged_operations: Vec<Lamport>,
@@ -198,7 +208,10 @@ pub struct BufferSnapshot {
     diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    parsing_permission: ParsingPermission,
     file: Option<Arc<dyn File>>,
+    settings_location: Option<(WorktreeId, Arc<RelPath>)>,
     non_text_state_update_count: usize,
     pub capability: Capability,
     modeline: Option<Arc<ModelineSettings>>,
@@ -788,6 +801,11 @@ pub struct EditPreview {
     old_snapshot: text::BufferSnapshot,
     applied_edits_snapshot: text::BufferSnapshot,
     syntax_snapshot: SyntaxSnapshot,
+    language: Option<Arc<Language>>,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    parsing_permission: ParsingPermission,
+    settings_location: Option<(WorktreeId, Arc<RelPath>)>,
+    modeline: Option<Arc<ModelineSettings>>,
 }
 
 impl EditPreview {
@@ -796,6 +814,11 @@ impl EditPreview {
             old_snapshot: snapshot.text.clone(),
             applied_edits_snapshot: snapshot.text.clone(),
             syntax_snapshot: snapshot.syntax.clone(),
+            language: snapshot.language.clone(),
+            language_registry: snapshot.language_registry.clone(),
+            parsing_permission: snapshot.parsing_permission,
+            settings_location: snapshot.settings_location.clone(),
+            modeline: snapshot.modeline.clone(),
         }
     }
 
@@ -929,7 +952,14 @@ impl EditPreview {
                 self.applied_edits_snapshot.line_ending(),
                 cx,
             );
-            buffer.set_language_async(self.syntax_snapshot.root_language(), cx);
+            buffer.settings_location = self.settings_location.clone();
+            buffer.modeline = self.modeline.clone();
+            buffer.refresh_resolved_settings(cx);
+            buffer.parsing_permission = self.parsing_permission;
+            if let Some(registry) = &self.language_registry {
+                buffer.set_language_registry(registry.clone());
+            }
+            buffer.set_language_async(self.language.clone(), cx);
             buffer
         })
     }
@@ -1119,13 +1149,6 @@ impl Buffer {
         self
     }
 
-    /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer, returning the buffer.
-    #[ztracing::instrument(skip_all, fields(lang = language.config.name.0.as_str()))]
-    pub fn with_language(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
-        self.set_language(Some(language), cx);
-        self
-    }
-
     /// Returns the [`Capability`] of this buffer.
     pub fn capability(&self) -> Capability {
         self.capability
@@ -1158,6 +1181,10 @@ impl Buffer {
             has_unsaved_edits: Cell::new((buffer.version(), false)),
             text: buffer,
             branch_state: None,
+            parsing_permission: ParsingPermission::Deferred,
+            settings_location: file
+                .as_ref()
+                .map(|file| (file.worktree_id(cx), file.path().clone())),
             file,
             capability,
             syntax_map,
@@ -1197,6 +1224,19 @@ impl Buffer {
         this
     }
 
+    pub fn set_settings_location(
+        &mut self,
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+        cx: &mut Context<Self>,
+    ) {
+        let location = Some((worktree_id, path));
+        if self.settings_location != location {
+            self.settings_location = location;
+            self.refresh_resolved_settings(cx);
+        }
+    }
+
     fn compute_resolved_settings(&self, cx: &App) -> Option<Arc<LanguageSettings>> {
         cx.try_global::<SettingsStore>()?;
         Some(LanguageSettings::resolve_uncached(self, None, cx))
@@ -1215,6 +1255,15 @@ impl Buffer {
 
     pub(crate) fn resolved_settings(&self) -> Option<&Arc<LanguageSettings>> {
         self.resolved_settings.as_ref()
+    }
+
+    pub(crate) fn settings_location(&self) -> Option<SettingsLocation<'_>> {
+        self.settings_location
+            .as_ref()
+            .map(|(worktree_id, path)| SettingsLocation {
+                worktree_id: *worktree_id,
+                path,
+            })
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1241,10 +1290,13 @@ impl Buffer {
                 text,
                 syntax,
                 file: None,
+                settings_location: None,
                 diagnostics: Default::default(),
                 remote_selections: Default::default(),
                 tree_sitter_data: Arc::new(tree_sitter_data),
                 language,
+                language_registry,
+                parsing_permission: ParsingPermission::Enabled,
                 non_text_state_update_count: 0,
                 capability: Capability::ReadOnly,
                 modeline,
@@ -1270,9 +1322,12 @@ impl Buffer {
             syntax,
             tree_sitter_data: Arc::new(tree_sitter_data),
             file: None,
+            settings_location: None,
             diagnostics: Default::default(),
             remote_selections: Default::default(),
             language: None,
+            language_registry: None,
+            parsing_permission: ParsingPermission::Deferred,
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
             modeline: None,
@@ -1294,7 +1349,7 @@ impl Buffer {
                 .into_snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
-            syntax.reparse(&text, language_registry, language);
+            syntax.reparse(&text, language_registry.clone(), language);
         }
         let tree_sitter_data = TreeSitterData::new(&text);
         BufferSnapshot {
@@ -1302,9 +1357,12 @@ impl Buffer {
             syntax,
             tree_sitter_data: Arc::new(tree_sitter_data),
             file: None,
+            settings_location: None,
             diagnostics: Default::default(),
             remote_selections: Default::default(),
             language,
+            language_registry,
+            parsing_permission: ParsingPermission::Enabled,
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
             modeline: None,
@@ -1317,10 +1375,10 @@ impl Buffer {
     pub fn snapshot(&self) -> BufferSnapshot {
         let text = self.text.snapshot();
 
-        let syntax = {
+        let (syntax, language_registry) = {
             let mut syntax_map = self.syntax_map.lock();
             syntax_map.interpolate(text);
-            syntax_map.snapshot()
+            (syntax_map.snapshot(), syntax_map.language_registry())
         };
 
         let tree_sitter_data = if self.text.version() != *self.tree_sitter_data.version() {
@@ -1334,9 +1392,12 @@ impl Buffer {
             syntax,
             tree_sitter_data,
             file: self.file.clone(),
+            settings_location: self.settings_location.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             language: self.language.clone(),
+            language_registry,
+            parsing_permission: self.parsing_permission,
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
             modeline: self.modeline.clone(),
@@ -1353,12 +1414,16 @@ impl Buffer {
                     merged_operations: Default::default(),
                 }),
                 language: self.language.clone(),
+                parsing_permission: self.parsing_permission,
+                settings_location: self.settings_location.clone(),
+                modeline: self.modeline.clone(),
                 content_language_detection_enabled: self.content_language_detection_enabled,
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
                 _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
                 ..Self::build(self.text.branch(), self.file.clone(), self.capability(), cx)
             };
+            branch.resolved_settings = branch.compute_resolved_settings(cx);
             if let Some(language_registry) = self.language_registry() {
                 branch.set_language_registry(language_registry);
             }
@@ -1378,12 +1443,18 @@ impl Buffer {
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
         let language = self.language().cloned();
+        let parsing_permission = self.parsing_permission;
+        let settings_location = self.settings_location.clone();
+        let modeline = self.modeline.clone();
         let old_snapshot = self.text.snapshot().clone();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_spawn(async move {
             if !edits.is_empty() {
-                if let Some(language) = language.clone() {
+                let parsing_language = language
+                    .clone()
+                    .filter(|_| parsing_permission == ParsingPermission::Enabled);
+                if let Some(language) = parsing_language.clone() {
                     syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
                 }
 
@@ -1391,14 +1462,19 @@ impl Buffer {
                 let snapshot = branch_buffer.snapshot();
                 syntax_snapshot.interpolate(&snapshot);
 
-                if let Some(language) = language {
-                    syntax_snapshot.reparse(&snapshot, registry, language);
+                if let Some(language) = parsing_language {
+                    syntax_snapshot.reparse(&snapshot, registry.clone(), language);
                 }
             }
             EditPreview {
                 old_snapshot,
                 applied_edits_snapshot: branch_buffer.into_snapshot(),
                 syntax_snapshot,
+                language,
+                language_registry: registry,
+                parsing_permission,
+                settings_location,
+                modeline,
             }
         })
     }
@@ -1780,7 +1856,9 @@ impl Buffer {
         let mut file_changed = false;
 
         if let Some(old_file) = self.file.as_ref() {
-            if new_file.path() != old_file.path() {
+            if new_file.path() != old_file.path()
+                || new_file.worktree_id(cx) != old_file.worktree_id(cx)
+            {
                 file_changed = true;
             }
 
@@ -1796,6 +1874,7 @@ impl Buffer {
             file_changed = true;
         };
 
+        self.settings_location = Some((new_file.worktree_id(cx), new_file.path().clone()));
         self.file = Some(new_file);
         if file_changed {
             self.refresh_resolved_settings(cx);
@@ -1867,6 +1946,58 @@ impl Buffer {
         self.non_text_state_update_count
     }
 
+    pub fn needs_parsing(&self) -> bool {
+        self.parsing_permission == ParsingPermission::Deferred
+            || self.parsing_permission == ParsingPermission::Pending
+    }
+
+    pub fn request_parsing(&mut self, cx: &mut Context<Self>) {
+        if self.parsing_permission == ParsingPermission::Deferred {
+            self.parsing_permission = ParsingPermission::Pending;
+        }
+        if self.parsing_permission == ParsingPermission::Pending {
+            self.reparse(cx, false);
+        }
+    }
+
+    pub fn request_parsing_and_wait(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        self.request_parsing(cx);
+        self.parsing_idle()
+    }
+
+    pub fn claim_large_file_parsing_prompt(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.parsing_permission != ParsingPermission::Pending
+            || self
+                .language
+                .as_ref()
+                .is_none_or(|language| language.grammar().is_none())
+        {
+            return false;
+        }
+        let settings = LanguageSettings::resolve(Some(self), None, cx);
+        if settings.tree_sitter_max_file_size_mib == 0
+            || (self.len() as u64).div_ceil(1024 * 1024) <= settings.tree_sitter_max_file_size_mib
+        {
+            return false;
+        }
+        self.parsing_permission = ParsingPermission::Disabled;
+        settings.prompt_for_large_file_parsing
+    }
+
+    pub fn enable_parsing(&mut self, cx: &mut Context<Self>) {
+        if !self.parsing_enabled() {
+            self.parsing_permission = ParsingPermission::Enabled;
+            self.reparse(cx, false);
+        }
+    }
+
+    pub fn parsing_enabled(&self) -> bool {
+        self.parsing_permission == ParsingPermission::Enabled
+    }
+
     /// Whether the buffer is being parsed in the background.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
@@ -1924,6 +2055,27 @@ impl Buffer {
     /// parsing in the background.
     #[ztracing::instrument(skip_all)]
     pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
+        if self.parsing_permission == ParsingPermission::Pending
+            && self
+                .language
+                .as_ref()
+                .is_some_and(|language| language.grammar().is_some())
+        {
+            let settings = LanguageSettings::resolve(Some(self), None, cx);
+            if settings.tree_sitter_max_file_size_mib == 0
+                || (self.len() as u64).div_ceil(1024 * 1024)
+                    <= settings.tree_sitter_max_file_size_mib
+            {
+                self.parsing_permission = ParsingPermission::Enabled;
+            }
+        }
+        if !self.parsing_enabled() {
+            self.autoindent_requests.clear();
+            for sender in self.wait_for_autoindent_txs.drain(..) {
+                sender.send(()).ok();
+            }
+            return;
+        }
         if self.text.version() != *self.tree_sitter_data.version() {
             Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, self.text.snapshot());
         }
@@ -3535,7 +3687,7 @@ impl Buffer {
         let mut snapshot = self.snapshot();
         let text = snapshot.text.clone();
         let mut syntax = snapshot.syntax.clone();
-        let language = self.language().cloned();
+        let language = self.language().filter(|_| self.parsing_enabled()).cloned();
         let registry = self.language_registry();
         let new_text = self.text.snapshot_with_edits(edits);
         cx.background_spawn(async move {
@@ -3563,8 +3715,12 @@ impl Buffer {
     pub fn fast_forward(&mut self, edited: EditedBufferSnapshot, cx: &mut Context<Self>) {
         let base_version = edited.text.base_version.clone();
         let did_edit = edited.text.did_edit;
+        let was_dirty = self.is_dirty();
         self.text.fast_forward(edited.text);
-        if edited.snapshot.language == self.language {
+        if self.parsing_enabled()
+            && edited.snapshot.parsing_permission == ParsingPermission::Enabled
+            && edited.snapshot.language == self.language
+        {
             self.reparse = None;
             self.did_finish_parsing(edited.snapshot.syntax, None, false, cx);
             if did_edit {
@@ -3573,7 +3729,7 @@ impl Buffer {
                 });
             }
         } else {
-            self.did_edit(&base_version, false, BufferEditSource::User, cx);
+            self.did_edit(&base_version, was_dirty, BufferEditSource::User, cx);
         }
     }
 }
@@ -3596,6 +3752,14 @@ impl EditedBufferSnapshot {
 #[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
+    /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer, returning the buffer.
+    #[ztracing::instrument(skip_all, fields(lang = language.config.name.0.as_str()))]
+    pub fn with_language(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
+        self.enable_parsing(cx);
+        self.set_language(Some(language), cx);
+        self
+    }
+
     pub fn edit_via_marked_text(
         &mut self,
         marked_string: &str,
@@ -4353,6 +4517,15 @@ impl BufferSnapshot {
 
     pub(crate) fn resolved_settings(&self) -> Option<&Arc<LanguageSettings>> {
         self.resolved_settings.as_ref()
+    }
+
+    pub(crate) fn settings_location(&self) -> Option<SettingsLocation<'_>> {
+        self.settings_location
+            .as_ref()
+            .map(|(worktree_id, path)| SettingsLocation {
+                worktree_id: *worktree_id,
+                path,
+            })
     }
 
     /// Returns the main [`Language`].
@@ -5601,9 +5774,12 @@ impl Clone for BufferSnapshot {
             text: self.text.clone(),
             syntax: self.syntax.clone(),
             file: self.file.clone(),
+            settings_location: self.settings_location.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             language: self.language.clone(),
+            language_registry: self.language_registry.clone(),
+            parsing_permission: self.parsing_permission,
             tree_sitter_data: self.tree_sitter_data.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
@@ -6092,7 +6268,7 @@ impl File for TestFile {
     }
 
     fn disk_state(&self) -> DiskState {
-        unimplemented!()
+        DiskState::New
     }
 
     fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a str {

@@ -2,7 +2,7 @@ use super::*;
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use gpui::{App, Entity, TestAppContext};
 use indoc::indoc;
-use language::{Buffer, Rope};
+use language::{Buffer, Rope, rust_lang};
 use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
@@ -606,6 +606,155 @@ async fn test_inverted_diff_hunks_in_range(cx: &mut TestAppContext) {
         snapshot.diff_hunk_before(Point::new(4, 0)),
         Some(MultiBufferRow(1))
     );
+}
+
+#[gpui::test]
+async fn test_deferred_diff_base_parsing(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+    let language = rust_lang();
+    language.set_theme(&SyntaxTheme::new([(
+        "function".to_owned(),
+        gpui::HighlightStyle::default(),
+    )]));
+
+    for inverted in [false, true] {
+        let base_text = "fn previous() {}\n";
+        let buffer = cx.new(|cx| Buffer::local("fn current() {}\n", cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new(
+                &buffer.read(cx).text_snapshot(),
+                Some(language.clone()),
+                None,
+                cx,
+            )
+        });
+        diff.update(cx, |diff, cx| {
+            diff.set_base_text(
+                Some(Arc::from(base_text)),
+                buffer.read(cx).text_snapshot(),
+                cx,
+            )
+        })
+        .await;
+        let base_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+        let owner = if inverted { &base_buffer } else { &buffer };
+        let owner_id = owner.read_with(cx, |buffer, _| buffer.remote_id());
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::singleton(owner.clone(), cx);
+            if inverted {
+                multibuffer.add_inverted_diff(diff.clone(), buffer.clone(), cx);
+            } else {
+                multibuffer.add_diff(diff.clone(), cx);
+                multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
+            }
+            multibuffer
+        });
+        cx.run_until_parked();
+
+        let before = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        assert_eq!(
+            before.text(),
+            if inverted {
+                base_text
+            } else {
+                "fn previous() {}\nfn current() {}\n"
+            }
+        );
+        assert_eq!(
+            before
+                .diff_state(owner_id)
+                .unwrap()
+                .base_text()
+                .syntax_layers()
+                .count(),
+            0
+        );
+        assert_eq!(
+            before
+                .range_to_buffer_ranges_with_deleted_hunks(
+                    MultiBufferOffset(0)..MultiBufferOffset(base_text.len())
+                )
+                .filter(|(_, range, _)| !range.is_empty())
+                .map(|(buffer, _, deleted_hunk)| (buffer.remote_id(), deleted_hunk.is_some()))
+                .collect::<Vec<_>>(),
+            vec![(
+                base_buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                !inverted
+            )]
+        );
+        let notified = Rc::new(Cell::new(false));
+        let _observation = multibuffer.update(cx, |_, cx| {
+            cx.observe(&multibuffer, {
+                let notified = notified.clone();
+                move |_, _, _| notified.set(true)
+            })
+        });
+        let edits = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
+
+        base_buffer.update(cx, |buffer, cx| buffer.request_parsing(cx));
+        cx.run_until_parked();
+
+        let after = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        assert_eq!(
+            after
+                .diff_state(owner_id)
+                .unwrap()
+                .base_text()
+                .syntax_layers()
+                .count(),
+            1
+        );
+        assert_eq!(
+            after
+                .chunks(
+                    MultiBufferOffset(0)..MultiBufferOffset(base_text.len()),
+                    LanguageAwareStyling {
+                        tree_sitter: true,
+                        diagnostics: false
+                    }
+                )
+                .filter_map(|chunk| chunk.syntax_highlight_id.map(|_| chunk.text))
+                .collect::<Vec<_>>(),
+            vec!["previous"]
+        );
+        assert_eq!(after.text(), before.text());
+        assert_eq!(after.edit_count(), before.edit_count());
+        assert!(after.non_text_state_update_count() > before.non_text_state_update_count());
+        assert_eq!(edits.consume().into_inner(), Vec::new());
+        assert!(notified.get());
+        assert_eq!(
+            before
+                .diff_state(owner_id)
+                .unwrap()
+                .base_text()
+                .syntax_layers()
+                .count(),
+            0
+        );
+
+        if !inverted {
+            base_buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..buffer.len(), "")], None, cx);
+            });
+            cx.run_until_parked();
+            let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+            assert_eq!(snapshot.text(), after.text());
+            assert_eq!(
+                snapshot
+                    .diff_state(owner_id)
+                    .unwrap()
+                    .base_text()
+                    .syntax_layers()
+                    .count(),
+                1
+            );
+            assert_eq!(
+                snapshot.non_text_state_update_count(),
+                after.non_text_state_update_count()
+            );
+        }
+    }
 }
 
 #[gpui::test]

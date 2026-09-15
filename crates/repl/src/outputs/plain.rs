@@ -456,7 +456,7 @@ impl OutputContent for TerminalOutput {
 
         let buffer = cx.new(|cx| {
             let mut buffer = Buffer::local(self.full_text(cx), cx)
-                .with_language(language::PLAIN_TEXT.clone(), cx);
+                .with_language_async(language::PLAIN_TEXT.clone(), cx);
             buffer.set_capability(language::Capability::ReadOnly, cx);
             buffer
         });

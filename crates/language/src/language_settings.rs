@@ -58,6 +58,11 @@ pub struct WhitespaceMap {
 /// The settings for a particular language.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LanguageSettings {
+    /// Maximum file size in whole MiB for automatic Tree-sitter parsing; 0 means unlimited.
+    /// One MiB is 1,048,576 decoded, line-ending-normalized UTF-8 bytes.
+    pub tree_sitter_max_file_size_mib: u64,
+    /// Whether to offer a parsing notification above the size limit instead of silently leaving parsing disabled.
+    pub prompt_for_large_file_parsing: bool,
     /// How many columns a tab should occupy.
     pub tab_size: NonZeroU32,
     /// Whether to indent lines using tab characters, as opposed to multiple
@@ -307,10 +312,13 @@ impl LanguageSettings {
             return Arc::clone(resolved);
         }
 
-        let location = buffer.file().map(|f| SettingsLocation {
-            worktree_id: f.worktree_id(cx),
-            path: f.path().as_ref(),
-        });
+        let location = buffer
+            .file()
+            .map(|f| SettingsLocation {
+                worktree_id: f.worktree_id(cx),
+                path: f.path().as_ref(),
+            })
+            .or_else(|| buffer.settings_location());
 
         let mut settings = AllLanguageSettings::get(location, cx).language(
             location,
@@ -350,10 +358,13 @@ impl LanguageSettings {
         override_language: Option<&LanguageName>,
         cx: &App,
     ) -> Arc<LanguageSettings> {
-        let location = buffer.file().map(|f| SettingsLocation {
-            worktree_id: f.worktree_id(cx),
-            path: f.path().as_ref(),
-        });
+        let location = buffer
+            .file()
+            .map(|f| SettingsLocation {
+                worktree_id: f.worktree_id(cx),
+                path: f.path().as_ref(),
+            })
+            .or_else(|| buffer.settings_location());
         let buffer_language = buffer.language().map(|l| l.name());
         let language_name = override_language.or(buffer_language.as_ref());
         let mut settings =
@@ -808,6 +819,8 @@ impl settings::Settings for AllLanguageSettings {
             let whitespace_map = settings.whitespace_map.unwrap();
 
             LanguageSettings {
+                tree_sitter_max_file_size_mib: settings.tree_sitter_max_file_size_mib.unwrap(),
+                prompt_for_large_file_parsing: settings.prompt_for_large_file_parsing.unwrap(),
                 tab_size: settings.tab_size.unwrap(),
                 hard_tabs: settings.hard_tabs.unwrap(),
                 soft_wrap: settings.soft_wrap.unwrap(),

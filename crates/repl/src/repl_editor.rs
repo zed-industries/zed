@@ -904,6 +904,7 @@ mod tests {
                 cx,
             );
             buffer.set_language_registry(language_registry.clone());
+            buffer.enable_parsing(cx);
             buffer.set_language(Some(markdown.clone()), cx);
             buffer
         });
@@ -949,6 +950,7 @@ mod tests {
                 cx,
             );
             buffer.set_language_registry(language_registry.clone());
+            buffer.enable_parsing(cx);
             buffer.set_language(Some(markdown.clone()), cx);
             buffer
         });
@@ -988,6 +990,7 @@ mod tests {
                 cx,
             );
             buffer.set_language_registry(language_registry.clone());
+            buffer.enable_parsing(cx);
             buffer.set_language(Some(markdown.clone()), cx);
             buffer
         });

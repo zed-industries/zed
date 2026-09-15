@@ -9275,6 +9275,52 @@ fn language_settings_field_mut<T>(
 }
 
 fn language_settings_data() -> Box<[SettingsPageItem]> {
+    fn parsing_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Parsing"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Tree-sitter Maximum File Size (MiB)",
+                description: "Maximum file size in whole MiB (1,048,576 decoded, line-ending-normalized UTF-8 bytes) for automatic Tree-sitter parsing; 0 means unlimited.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("languages.$(language).tree_sitter_max_file_size_mib"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.tree_sitter_max_file_size_mib.as_ref()
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.tree_sitter_max_file_size_mib = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prompt for Large File Parsing",
+                description: "Ask before enabling Tree-sitter parsing for files above the size limit; when off, leave parsing disabled without prompting.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("languages.$(language).prompt_for_large_file_parsing"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.prompt_for_large_file_parsing.as_ref()
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.prompt_for_large_file_parsing = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
     fn indentation_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Indentation"),
@@ -10656,6 +10702,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
             indentation_section(),
             wrapping_section(),
             indent_guides_section(),
+            parsing_section(),
             formatting_section(),
             autoclose_section(),
             whitespace_section(),
@@ -10672,6 +10719,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
             indentation_section(),
             wrapping_section(),
             indent_guides_section(),
+            parsing_section(),
             formatting_section(),
             autoclose_section(),
             whitespace_section(),

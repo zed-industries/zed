@@ -8616,6 +8616,10 @@ impl Workspace {
         self.maximized_pane.is_some()
     }
 
+    pub fn maximized_pane(&self) -> Option<&WeakEntity<Pane>> {
+        self.maximized_pane.as_ref()
+    }
+
     fn adjust_padding(padding: Option<f32>) -> f32 {
         padding
             .unwrap_or(CenteredPaddingSettings::default().0)

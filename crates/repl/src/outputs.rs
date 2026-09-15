@@ -343,7 +343,10 @@ impl Output {
                                             format!("{}: {}\n{}", ename, evalue, traceback_text);
                                         let buffer = cx.new(|cx| {
                                             let mut buffer = Buffer::local(full_error, cx)
-                                                .with_language(language::PLAIN_TEXT.clone(), cx);
+                                                .with_language_async(
+                                                    language::PLAIN_TEXT.clone(),
+                                                    cx,
+                                                );
                                             buffer
                                                 .set_capability(language::Capability::ReadOnly, cx);
                                             buffer
