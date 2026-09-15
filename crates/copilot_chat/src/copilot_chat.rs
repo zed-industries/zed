@@ -279,6 +279,11 @@ impl Model {
         self.capabilities.limits.max_context_window_tokens as u64
     }
 
+    pub fn max_prompt_tokens(&self) -> Option<u64> {
+        let limit = self.capabilities.limits.max_prompt_tokens;
+        (limit > 0).then_some(limit)
+    }
+
     pub fn max_output_tokens(&self) -> Option<u64> {
         let limit = self.capabilities.limits.max_output_tokens as u64;
         (limit > 0).then_some(limit)

@@ -127,7 +127,17 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+        self.model
+            .max_prompt_tokens()
+            .unwrap_or_else(|| self.model.max_token_count())
+    }
+
+    fn max_total_tokens(&self) -> Option<u64> {
+        Some(self.model.max_token_count())
+    }
+
+    fn max_output_tokens(&self) -> Option<u64> {
+        self.model.max_output_tokens()
     }
 
     fn stream_completion(
@@ -1300,6 +1310,84 @@ mod tests {
     use futures::StreamExt;
     use language_model::ProviderErrorCategory;
     use serde_json::json;
+
+    #[gpui::test]
+    fn language_model_exposes_token_limits(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
+
+        let copilot_chat = cx.new(|cx| {
+            CopilotChat::new(
+                Arc::new(http_client::BlockedHttpClient::new()),
+                Arc::new(EmptyCredentialsProvider),
+                crate::CopilotChatConfiguration::default(),
+                cx,
+            )
+        });
+        for (limits, input, context, output) in [
+            (
+                json!({"max_context_window_tokens": 200_000, "max_prompt_tokens": 90_000, "max_output_tokens": 16_384}),
+                90_000,
+                200_000,
+                Some(16_384),
+            ),
+            (
+                json!({"max_context_window_tokens": 128_000, "max_output_tokens": 4096}),
+                128_000,
+                128_000,
+                Some(4096),
+            ),
+            (
+                json!({"max_context_window_tokens": 128_000, "max_prompt_tokens": 100_000}),
+                100_000,
+                128_000,
+                None,
+            ),
+            (
+                json!({"max_context_window_tokens": 128_000, "max_prompt_tokens": 0, "max_output_tokens": 0}),
+                128_000,
+                128_000,
+                None,
+            ),
+        ] {
+            let mut value = serde_json::to_value(test_responses_model()).unwrap();
+            value["capabilities"]["limits"] = limits;
+            let descriptor = serde_json::from_value(value).unwrap();
+            let model = create_language_model(descriptor, copilot_chat.clone());
+            assert_eq!(model.max_token_count(), input);
+            assert_eq!(model.max_total_tokens(), Some(context));
+            assert_eq!(model.max_output_tokens(), output);
+        }
+    }
+
+    struct EmptyCredentialsProvider;
+
+    impl credentials_provider::CredentialsProvider for EmptyCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
 
     fn map_events(events: Vec<responses::StreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         futures::executor::block_on(async {
