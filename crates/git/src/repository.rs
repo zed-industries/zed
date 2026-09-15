@@ -1466,7 +1466,7 @@ impl GitRepository for RealGitRepository {
             let show_output = git
                 .build_command(&[
                     "show",
-                    "--format=",
+                    "--format=%P%x00",
                     "-z",
                     "--no-renames",
                     "--raw",
@@ -1488,7 +1488,54 @@ impl GitRepository for RealGitRepository {
             );
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-            let changes = parse_git_diff_raw(&show_stdout);
+            let (parents, diff) = show_stdout.split_once('\0').unwrap_or(("", &show_stdout));
+            let diff = diff.trim_start_matches(|c| c == '\0' || c == '\n' || c == '\r');
+            let changes_primary = parse_git_diff_raw(diff);
+
+            // A stash that includes untracked files records them in a third parent. The
+            // `--first-parent` diff above omits them, so chain the untracked commit's diff
+            // so the stash shows every file it captured.
+            let untracked_stdout = if parents.split_ascii_whitespace().count() == 3 {
+                let untracked_commit = format!("{commit}^3");
+                git.build_command(&[
+                    "show",
+                    "--format=%s%x00",
+                    "-z",
+                    "--no-renames",
+                    "--raw",
+                    "--no-abbrev",
+                ])
+                .arg(&untracked_commit)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .log_err()
+                .filter(|output| output.status.success())
+                .and_then(|output| {
+                    let text = String::from_utf8_lossy(&output.stdout).to_string();
+                    let (subject, diff) = text.split_once('\0')?;
+                    if subject.trim().starts_with("untracked files") {
+                        Some(
+                            diff.trim_start_matches(|c| c == '\0' || c == '\n' || c == '\r')
+                                .to_string(),
+                        )
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+
+            let changes = changes_primary.chain(
+                untracked_stdout
+                    .as_deref()
+                    .map(parse_git_diff_raw)
+                    .into_iter()
+                    .flatten(),
+            );
 
             let mut cat_file_process = git
                 .build_command(&["cat-file", "--batch=%(objectsize)"])

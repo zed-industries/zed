@@ -43,7 +43,7 @@ use git::{
 };
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
-    StashAll, StashApply, StashPop, StashStaged, StashTracked, ToggleFillCommitEditor,
+    StashAll, StashApply, StashFile, StashPop, StashStaged, StashTracked, ToggleFillCommitEditor,
     TrashUntrackedFiles, UnstageAll, ViewFile, parse_git_remote_url,
 };
 use gpui::{
@@ -200,27 +200,30 @@ struct GitPanelViewOptionsMenuState {
     tree_view: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum StashKind {
     All,
     Tracked,
     Staged,
+    Selected(Vec<RepoPath>),
 }
 
 impl StashKind {
-    fn title(self) -> &'static str {
+    fn title(&self) -> &'static str {
         match self {
             StashKind::All => "Stash All",
             StashKind::Tracked => "Stash Tracked",
             StashKind::Staged => "Stash Staged",
+            StashKind::Selected(_) => "Stash Selected Files",
         }
     }
 
-    fn error_action(self) -> &'static str {
+    fn error_action(&self) -> &'static str {
         match self {
             StashKind::All => "stash",
             StashKind::Tracked => "stash tracked",
             StashKind::Staged => "stash staged",
+            StashKind::Selected(_) => "stash selected",
         }
     }
 }
@@ -259,7 +262,7 @@ impl StashMessageModal {
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         let message = self.editor.read(cx).text(cx).trim().to_owned();
         let message = (!message.is_empty()).then_some(message);
-        let kind = self.kind;
+        let kind = self.kind.clone();
         self.panel
             .update(cx, |panel, cx| panel.perform_stash(kind, message, cx))
             .ok();
@@ -304,6 +307,7 @@ fn git_panel_context_menu(
     has_unstaged_changes: bool,
     has_new_changes: bool,
     has_stash_items: bool,
+    has_stash_selection: bool,
     group_by: GitPanelGroupBy,
     include_copy_paths: bool,
     focus_handle: FocusHandle,
@@ -325,6 +329,11 @@ fn git_panel_context_menu(
                 !(has_new_changes || has_tracked_changes),
                 "Stash All",
                 StashAll.boxed_clone(),
+            )
+            .action_disabled_when(
+                !has_stash_selection,
+                "Stash Selected Files",
+                StashFile.boxed_clone(),
             )
             // Offer the stash variant that matches how the list is currently grouped,
             // so the menu mirrors the sections the user can actually see.
@@ -1633,6 +1642,26 @@ impl GitPanel {
             }
         }
         self.marked_file_entries()
+    }
+
+    /// The files and directories the "Stash Selected Files" action operates on:
+    /// the multi-selection when present, otherwise the selected entry.
+    fn stash_selection_paths(&self) -> Vec<RepoPath> {
+        self.effective_status_entries()
+            .into_iter()
+            .map(|entry| entry.repo_path)
+            .collect()
+    }
+
+    /// Whether there is a file or directory selection available to stash.
+    fn has_stash_selection(&self) -> bool {
+        !self.marked_entries.is_empty()
+            || !self.marked_directories.is_empty()
+            || self
+                .selected_entry
+                .and_then(|ix| self.entries.get(ix))
+                .and_then(|entry| entry.status_entry())
+                .is_some()
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -3317,6 +3346,14 @@ impl GitPanel {
         self.prompt_for_stash_message(StashKind::Staged, window, cx);
     }
 
+    pub fn stash_selected(&mut self, _: &StashFile, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = self.stash_selection_paths();
+        if paths.is_empty() {
+            return;
+        }
+        self.prompt_for_stash_message(StashKind::Selected(paths), window, cx);
+    }
+
     fn prompt_for_stash_message(
         &mut self,
         kind: StashKind,
@@ -3344,6 +3381,7 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
+        let error_action = kind.error_action();
 
         cx.spawn({
             async move |this, cx| {
@@ -3352,12 +3390,13 @@ impl GitPanel {
                         StashKind::All => repo.stash_all(message, cx),
                         StashKind::Tracked => repo.stash_tracked(message, cx),
                         StashKind::Staged => repo.stash_staged(message, cx),
+                        StashKind::Selected(paths) => repo.stash_entries(paths, message, cx),
                     })
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
                         .map_err(|e| {
-                            this.show_error_toast(kind.error_action(), e, cx);
+                            this.show_error_toast(error_action, e, cx);
                         })
                         .ok();
                     cx.notify();
@@ -6333,6 +6372,7 @@ impl GitPanel {
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
         let has_stash_items = self.stash_entries.entries.len() > 0;
+        let has_stash_selection = self.has_stash_selection();
         let group_by = GitPanelSettings::get_global(cx).group_by;
 
         let focus_handle = self.focus_handle.clone();
@@ -6352,6 +6392,7 @@ impl GitPanel {
                     has_unstaged_changes,
                     has_new_changes,
                     has_stash_items,
+                    has_stash_selection,
                     group_by,
                     false,
                     focus_handle.clone(),
@@ -8086,6 +8127,8 @@ impl GitPanel {
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile::default().boxed_clone())
                 .separator()
+                .action("Stash Selected Files", StashFile.boxed_clone())
+                .separator()
                 .action("Unstaged Changes", ViewUnstagedChanges.boxed_clone())
                 .action("Staged Changes", ViewStagedChanges.boxed_clone())
                 .separator()
@@ -8124,6 +8167,7 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         let has_stash_items = self.stash_entries.entries.len() > 0;
+        let has_stash_selection = self.has_stash_selection();
         let has_tracked_changes = self.has_tracked_changes();
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
@@ -8142,6 +8186,7 @@ impl GitPanel {
             has_unstaged_changes,
             has_new_changes,
             has_stash_items,
+            has_stash_selection,
             GitPanelSettings::get_global(cx).group_by,
             include_copy_paths,
             self.focus_handle.clone(),
@@ -8986,6 +9031,7 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::stash_all))
                     .on_action(cx.listener(Self::stash_tracked))
                     .on_action(cx.listener(Self::stash_staged))
+                    .on_action(cx.listener(Self::stash_selected))
                     .on_action(cx.listener(Self::stash_pop))
             })
             .on_action(cx.listener(Self::cancel))
@@ -14894,6 +14940,36 @@ mod tests {
                 vec![repo_path("b.txt"), repo_path("c.txt")],
                 "multiple marks win, in panel order",
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_stash_selected_resolves_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, _project, panel, mut cx) = setup_flat_marks_fixture(cx).await;
+
+        panel.update_in(&mut cx, |panel, _window, _cx| {
+            panel.selected_entry = None;
+            panel.clear_marks();
+            assert!(
+                !panel.has_stash_selection(),
+                "nothing selected means the stash selected item is disabled",
+            );
+            assert!(panel.stash_selection_paths().is_empty());
+
+            let a_ix = entry_index_for_repo_path(panel, &repo_path("a.txt")).unwrap();
+            panel.selected_entry = Some(a_ix);
+            assert!(panel.has_stash_selection());
+            assert_eq!(panel.stash_selection_paths(), vec![repo_path("a.txt")]);
+
+            panel.marked_entries.insert(repo_path("b.txt"));
+            panel.marked_entries.insert(repo_path("c.txt"));
+            assert_eq!(
+                panel.stash_selection_paths(),
+                vec![repo_path("b.txt"), repo_path("c.txt")],
+                "multiple marks win over the selected entry",
+            );
+            assert!(panel.has_stash_selection());
         });
     }
 

@@ -8225,16 +8225,31 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         let id = self.id;
+        let updates_tx = self.stash_updates_tx(cx);
 
         cx.spawn(async move |this, cx| {
-            this.update(cx, |this, _| {
-                this.send_job("stash_entries", None, move |git_repo, _cx| async move {
+            this.update(cx, |this, cx| {
+                let repository = cx.weak_entity();
+                this.send_job("stash_entries", None, move |git_repo, mut cx| async move {
                     match git_repo {
                         RepositoryState::Local(LocalRepositoryState {
                             backend,
                             environment,
                             ..
-                        }) => backend.stash_paths(entries, message, environment).await,
+                        }) => {
+                            let result = backend.stash_paths(entries, message, environment).await;
+                            if result.is_ok() {
+                                Repository::refresh_stash_entries(
+                                    &repository,
+                                    backend,
+                                    updates_tx,
+                                    &mut cx,
+                                )
+                                .await
+                                .log_err();
+                            }
+                            result
+                        }
                         RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                             client
                                 .request(proto::Stash {
@@ -8264,16 +8279,31 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         let id = self.id;
+        let updates_tx = self.stash_updates_tx(cx);
 
         cx.spawn(async move |this, cx| {
-            this.update(cx, |this, _| {
-                this.send_job("stash_staged", None, move |git_repo, _cx| async move {
+            this.update(cx, |this, cx| {
+                let repository = cx.weak_entity();
+                this.send_job("stash_staged", None, move |git_repo, mut cx| async move {
                     match git_repo {
                         RepositoryState::Local(LocalRepositoryState {
                             backend,
                             environment,
                             ..
-                        }) => backend.stash_staged(message, environment).await,
+                        }) => {
+                            let result = backend.stash_staged(message, environment).await;
+                            if result.is_ok() {
+                                Repository::refresh_stash_entries(
+                                    &repository,
+                                    backend,
+                                    updates_tx,
+                                    &mut cx,
+                                )
+                                .await
+                                .log_err();
+                            }
+                            result
+                        }
                         RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                             client
                                 .request(proto::Stash {
@@ -8300,15 +8330,30 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         let id = self.id;
+        let updates_tx = self.stash_updates_tx(cx);
         cx.spawn(async move |this, cx| {
-            this.update(cx, |this, _| {
-                this.send_job("stash_pop", None, move |git_repo, _cx| async move {
+            this.update(cx, |this, cx| {
+                let repository = cx.weak_entity();
+                this.send_job("stash_pop", None, move |git_repo, mut cx| async move {
                     match git_repo {
                         RepositoryState::Local(LocalRepositoryState {
                             backend,
                             environment,
                             ..
-                        }) => backend.stash_pop(index, environment).await,
+                        }) => {
+                            let result = backend.stash_pop(index, environment).await;
+                            if result.is_ok() {
+                                Repository::refresh_stash_entries(
+                                    &repository,
+                                    backend,
+                                    updates_tx,
+                                    &mut cx,
+                                )
+                                .await
+                                .log_err();
+                            }
+                            result
+                        }
                         RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                             client
                                 .request(proto::StashPop {
@@ -8334,15 +8379,30 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         let id = self.id;
+        let updates_tx = self.stash_updates_tx(cx);
         cx.spawn(async move |this, cx| {
-            this.update(cx, |this, _| {
-                this.send_job("stash_apply", None, move |git_repo, _cx| async move {
+            this.update(cx, |this, cx| {
+                let repository = cx.weak_entity();
+                this.send_job("stash_apply", None, move |git_repo, mut cx| async move {
                     match git_repo {
                         RepositoryState::Local(LocalRepositoryState {
                             backend,
                             environment,
                             ..
-                        }) => backend.stash_apply(index, environment).await,
+                        }) => {
+                            let result = backend.stash_apply(index, environment).await;
+                            if result.is_ok() {
+                                Repository::refresh_stash_entries(
+                                    &repository,
+                                    backend,
+                                    updates_tx,
+                                    &mut cx,
+                                )
+                                .await
+                                .log_err();
+                            }
+                            result
+                        }
                         RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                             client
                                 .request(proto::StashApply {
@@ -8458,14 +8518,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
         let id = self.id;
-        let updates_tx = self
-            .git_store()
-            .and_then(|git_store| match &git_store.read(cx).state {
-                GitStoreState::Local { downstream, .. } => downstream
-                    .as_ref()
-                    .map(|downstream| downstream.updates_tx.clone()),
-                _ => None,
-            });
+        let updates_tx = self.stash_updates_tx(cx);
         let this = cx.weak_entity();
         self.send_job("stash_drop", None, move |git_repo, mut cx| async move {
             match git_repo {
@@ -8474,23 +8527,13 @@ impl Repository {
                     environment,
                     ..
                 }) => {
-                    // TODO would be nice to not have to do this manually
                     let result = backend.stash_drop(index, environment).await;
-                    if result.is_ok()
-                        && let Ok(stash_entries) = backend.stash_entries().await
-                    {
-                        let snapshot = this.update(&mut cx, |this, cx| {
-                            this.snapshot.stash_entries = stash_entries;
-                            cx.emit(RepositoryEvent::StashEntriesChanged);
-                            this.snapshot.clone()
-                        })?;
-                        if let Some(updates_tx) = updates_tx {
-                            updates_tx
-                                .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
-                                .ok();
-                        }
+                    if result.is_ok() {
+                        // TODO would be nice to not have to do this manually
+                        Repository::refresh_stash_entries(&this, backend, updates_tx, &mut cx)
+                            .await
+                            .log_err();
                     }
-
                     result
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
@@ -8593,6 +8636,43 @@ impl Repository {
                 }
             },
         )
+    }
+
+    /// The downstream update sender used to broadcast refreshed stash state.
+    fn stash_updates_tx(&self, cx: &App) -> Option<mpsc::UnboundedSender<DownstreamUpdate>> {
+        self.git_store()
+            .and_then(|git_store| match &git_store.read(cx).state {
+                GitStoreState::Local { downstream, .. } => downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone()),
+                _ => None,
+            })
+    }
+
+    /// Refreshes the cached stash entries after a stash operation and notifies
+    /// listeners. The git fs watcher does not reliably pick up changes to
+    /// `.git/refs/stash`, so this has to be done manually.
+    async fn refresh_stash_entries(
+        this: &WeakEntity<Self>,
+        backend: Arc<dyn GitRepository>,
+        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let stash_entries = backend.stash_entries().await?;
+        let snapshot = this.update(cx, |this, cx| {
+            let changed = stash_entries != this.snapshot.stash_entries;
+            this.snapshot.stash_entries = stash_entries;
+            if changed {
+                cx.emit(RepositoryEvent::StashEntriesChanged);
+            }
+            this.snapshot.clone()
+        })?;
+        if let Some(updates_tx) = updates_tx {
+            updates_tx
+                .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                .ok();
+        }
+        Ok(())
     }
 
     async fn refresh_branch_list(
