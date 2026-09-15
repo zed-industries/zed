@@ -9547,9 +9547,11 @@ impl Render for Workspace {
             log::info!("Rendered first frame");
         }
 
-        let centered_layout = self.centered_layout
+        let should_use_centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
+        let should_use_zoomed_and_centered_layout =
+            self.centered_layout && self.zoomed.is_some() && self.zoomed_position.is_none();
         let render_padding = |size| {
             (size > 0.0).then(|| {
                 div()
@@ -9559,7 +9561,10 @@ impl Render for Workspace {
                     .border_color(cx.theme().colors().pane_group_border)
             })
         };
-        let paddings = if centered_layout {
+        let centered_paddings = |is_padding_enabled: bool| {
+            if !is_padding_enabled {
+                return (None, None);
+            }
             let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
                 render_padding(Self::adjust_padding(
@@ -9569,9 +9574,9 @@ impl Render for Workspace {
                     settings.right_padding.map(|padding| padding.0),
                 )),
             )
-        } else {
-            (None, None)
         };
+        let paddings = centered_paddings(should_use_centered_layout);
+        let zoomed_paddings = centered_paddings(should_use_zoomed_and_centered_layout);
         let ui_font = theme_settings::setup_ui_font(window, cx);
 
         let theme = cx.theme().clone();
@@ -9983,13 +9988,30 @@ impl Render for Workspace {
                             })
                             .children(self.zoomed.as_ref().and_then(|view| {
                                 let zoomed_view = view.upgrade()?;
+                                let zoomed_element = match zoomed_paddings {
+                                    (None, None) => zoomed_view.into_any_element(),
+                                    (left, right) => h_flex()
+                                        .size_full()
+                                        .when_some(left, |this, padding| {
+                                            this.child(padding.border_r_1().debug_selector(|| {
+                                                "zoomed_centered_layout_left_padding".into()
+                                            }))
+                                        })
+                                        .child(div().size_full().child(zoomed_view))
+                                        .when_some(right, |this, padding| {
+                                            this.child(padding.border_l_1().debug_selector(|| {
+                                                "zoomed_centered_layout_right_padding".into()
+                                            }))
+                                        })
+                                        .into_any_element(),
+                                };
                                 let div = div()
                                     .occlude()
                                     .absolute()
                                     .overflow_hidden()
                                     .border_color(colors.border)
                                     .bg(colors.background)
-                                    .child(zoomed_view)
+                                    .child(zoomed_element)
                                     .inset_0()
                                     .shadow_lg();
 
@@ -15551,6 +15573,67 @@ mod tests {
             let result = render_center_group(workspace, window, cx);
             assert_eq!(result.decorated_pane_ix, Some(1));
         });
+    }
+
+    #[gpui::test]
+    async fn test_centered_layout_pads_a_zoomed_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        add_an_item_to_active_pane(cx, &workspace, 1);
+        let second_pane = split_pane(cx, &workspace);
+        add_an_item_to_active_pane(cx, &workspace, 2);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_centered_layout(&ToggleCenteredLayout, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("zoomed_centered_layout_left_padding")
+                .is_none()
+                && cx
+                    .debug_bounds("zoomed_centered_layout_right_padding")
+                    .is_none(),
+            "nothing is zoomed, so the zoom overlay should not be padded"
+        );
+
+        second_pane.update_in(cx, |pane, window, cx| pane.zoom_in(&ZoomIn, window, cx));
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, _| {
+            assert!(workspace.zoomed.is_some(), "the pane should be zoomed");
+            assert!(
+                workspace.center.panes().len() > 1,
+                "the split should survive the zoom"
+            );
+        });
+
+        let left = cx
+            .debug_bounds("zoomed_centered_layout_left_padding")
+            .expect("a zoomed pane should be padded while the layout is centered");
+        let right = cx
+            .debug_bounds("zoomed_centered_layout_right_padding")
+            .expect("a zoomed pane should be padded while the layout is centered");
+        assert!(left.size.width > px(0.));
+        assert!(right.size.width > px(0.));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_centered_layout(&ToggleCenteredLayout, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("zoomed_centered_layout_left_padding")
+                .is_none()
+                && cx
+                    .debug_bounds("zoomed_centered_layout_right_padding")
+                    .is_none(),
+            "turning the centered layout off should remove the padding"
+        );
     }
 
     #[gpui::test]
