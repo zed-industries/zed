@@ -148,17 +148,18 @@ impl Scene {
         }
     }
 
+    /// Orders every kind of primitive by its layer, keeping the paint order
+    /// within a layer. Primitives are inserted in paint order, and a layer's
+    /// order is at least that of everything it overlaps, so the vectors are
+    /// already nearly sorted and the sort mostly walks them once.
     pub fn finish(&mut self) {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
         self.paths.sort_by_key(|path| path.order);
         self.underlines.sort_by_key(|underline| underline.order);
-        self.monochrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.subpixel_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.polychrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
+        self.monochrome_sprites.sort_by_key(|sprite| sprite.order);
+        self.subpixel_sprites.sort_by_key(|sprite| sprite.order);
+        self.polychrome_sprites.sort_by_key(|sprite| sprite.order);
         self.surfaces.sort_by_key(|surface| surface.order);
     }
 
@@ -945,5 +946,317 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        AnyElement, AnyWindowHandle, AppContext as _, AtlasTextureKind, Context, DevicePixels,
+        Font, FontId, FontMetrics, FontRun, FontWeight, GlyphId, InteractiveElement as _,
+        IntoElement, LineLayout, ListAlignment, ListState, NoopTextSystem, ParentElement as _,
+        PlatformTextSystem, Render, RenderGlyphParams, SharedString, Styled as _, TestAppContext,
+        TestDispatcher, TextRenderingMode, TileId, Window, div, list, px, rgb, size,
+    };
+    use anyhow::Result;
+    use std::{borrow::Cow, time::Instant};
+
+    /// A sprite in layer `order` drawing tile `tile_id`, with `pad` recording
+    /// where it was inserted.
+    fn sprite(order: DrawOrder, tile_id: u32, ix: u32) -> MonochromeSprite {
+        MonochromeSprite {
+            order,
+            pad: ix,
+            bounds: Bounds::default(),
+            content_mask: ContentMask::default(),
+            color: Hsla::default(),
+            tile: AtlasTile {
+                texture_id: AtlasTextureId {
+                    index: 0,
+                    kind: AtlasTextureKind::Monochrome,
+                },
+                tile_id: TileId(tile_id),
+                padding: 0,
+                bounds: Bounds::default(),
+            },
+            transformation: TransformationMatrix::unit(),
+        }
+    }
+
+    #[test]
+    fn sprites_are_sorted_by_layer_in_paint_order() {
+        let mut scene = Scene::default();
+        let inserted = [(2, 7), (1, 9), (2, 3), (1, 9), (0, 5), (2, 3), (1, 4)];
+        for (ix, &(order, tile_id)) in inserted.iter().enumerate() {
+            scene
+                .monochrome_sprites
+                .push(sprite(order, tile_id, ix as u32));
+        }
+        scene.finish();
+
+        let sorted: Vec<_> = scene
+            .monochrome_sprites
+            .iter()
+            .map(|sprite| (sprite.order, sprite.tile.tile_id.0, sprite.pad))
+            .collect();
+        assert_eq!(
+            sorted,
+            vec![
+                (0, 5, 4),
+                (1, 9, 1),
+                (1, 9, 3),
+                (1, 4, 6),
+                (2, 7, 0),
+                (2, 3, 2),
+                (2, 3, 5),
+            ]
+        );
+    }
+
+    /// The test text system, except that every glyph rasterizes to a tile,
+    /// so painting text puts a sprite in the scene as it does on a platform.
+    struct GlyphTextSystem(NoopTextSystem);
+
+    impl PlatformTextSystem for GlyphTextSystem {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+            self.0.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            self.0.all_font_names()
+        }
+
+        fn font_id(&self, descriptor: &Font) -> Result<FontId> {
+            self.0.font_id(descriptor)
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            self.0.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
+            self.0.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
+            self.0.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            self.0.glyph_for_char(font_id, ch)
+        }
+
+        fn glyph_raster_bounds(&self, _: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+            Ok(Bounds {
+                origin: Point::default(),
+                size: size(DevicePixels(8), DevicePixels(12)),
+            })
+        }
+
+        fn rasterize_glyph(
+            &self,
+            _: &RenderGlyphParams,
+            raster_bounds: Bounds<DevicePixels>,
+        ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+            let size = raster_bounds.size;
+            Ok((size, vec![0; (size.width.0 * size.height.0) as usize]))
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.0.layout_line(text, font_size, runs)
+        }
+
+        fn recommended_rendering_mode(
+            &self,
+            font_id: FontId,
+            font_size: Pixels,
+        ) -> TextRenderingMode {
+            self.0.recommended_rendering_mode(font_id, font_size)
+        }
+    }
+
+    /// A transcript of message-like rows: a header, wrapped paragraphs, a
+    /// code block and a few tags each, in a `list`.
+    struct Transcript {
+        list_state: ListState,
+        paragraphs: Vec<SharedString>,
+        code_lines: Vec<SharedString>,
+    }
+
+    impl Transcript {
+        fn new(rows: usize) -> Self {
+            let words = [
+                "the",
+                "layout",
+                "engine",
+                "wraps",
+                "each",
+                "paragraph",
+                "at",
+                "the",
+                "width",
+                "of",
+                "its",
+                "container",
+                "and",
+                "shapes",
+                "every",
+                "line",
+                "once",
+                "per",
+                "frame",
+                "unless",
+                "the",
+                "cache",
+                "hits",
+                "which",
+                "it",
+                "should",
+                "while",
+                "scrolling",
+            ];
+            let paragraphs = (0..17)
+                .map(|p| {
+                    let n = 18 + (p * 7) % 30;
+                    let text: Vec<&str> =
+                        (0..n).map(|w| words[(p * 3 + w) % words.len()]).collect();
+                    SharedString::from(text.join(" "))
+                })
+                .collect();
+            let code_lines = (0..13)
+                .map(|l| {
+                    SharedString::from(format!(
+                        "    let value_{l} = compute(input[{l}], {});",
+                        l * 3
+                    ))
+                })
+                .collect();
+            Self {
+                list_state: ListState::new(rows, ListAlignment::Top, px(300.)),
+                paragraphs,
+                code_lines,
+            }
+        }
+
+        fn render_row(&self, ix: usize) -> AnyElement {
+            let paragraphs = &self.paragraphs;
+            let code_lines = &self.code_lines;
+            div()
+                .id(("row", ix as u64))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .px_4()
+                .py_2()
+                .hover(|style| style.bg(rgb(0xf5f5f5)))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(div().size_6().rounded_full().bg(rgb(0x8888ff)))
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::BOLD)
+                                .child(if ix.is_multiple_of(2) { "Alice" } else { "Bob" }),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x888888))
+                                .child(SharedString::from(format!("12:{:02}", ix % 60))),
+                        ),
+                )
+                .children((0..3).map(|p| {
+                    div()
+                        .text_sm()
+                        .child(paragraphs[(ix + p) % paragraphs.len()].clone())
+                }))
+                .child(
+                    div()
+                        .id(("code", ix as u64))
+                        .rounded_md()
+                        .bg(rgb(0xeeeeee))
+                        .p_2()
+                        .font_family("Menlo")
+                        .text_xs()
+                        .flex()
+                        .flex_col()
+                        .children(
+                            (0..6).map(|l| {
+                                div().child(code_lines[(ix + l) % code_lines.len()].clone())
+                            }),
+                        ),
+                )
+                .child(div().flex().flex_row().gap_1().children((0..3).map(|t| {
+                    div()
+                        .id(("tag", (ix * 3 + t) as u64))
+                        .px_1()
+                        .rounded_sm()
+                        .bg(rgb(0xddeeff))
+                        .text_xs()
+                        .hover(|style| style.bg(rgb(0xccddff)))
+                        .child(SharedString::from(format!("tag-{}", (ix + t) % 7)))
+                })))
+                .into_any_element()
+        }
+    }
+
+    impl Render for Transcript {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let this = cx.entity();
+            div().w(px(700.)).h(px(800.)).bg(rgb(0xffffff)).child(
+                list(self.list_state.clone(), move |ix, _, cx| {
+                    this.read(cx).render_row(ix)
+                })
+                .size_full(),
+            )
+        }
+    }
+
+    /// Frame cost of scrolling a transcript of 300 rows by 20px per frame,
+    /// with every glyph reaching the scene as a sprite.
+    ///
+    /// `cargo test -p gpui --release --lib scene::tests::scrolling_frame_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore = "prints timings; run by hand"]
+    fn scrolling_frame_cost() {
+        let mut cx = TestAppContext::build_with_text_system(
+            TestDispatcher::new(0),
+            None,
+            std::sync::Arc::new(GlyphTextSystem(NoopTextSystem)),
+        );
+        let window = cx.add_window(|_, _| Transcript::new(300));
+        let window = AnyWindowHandle::from(window);
+        let mut frame = |cx: &mut TestAppContext| {
+            cx.update_window(window, |root, window, cx| {
+                let root = root.downcast::<Transcript>().unwrap();
+                root.update(cx, |this, cx| {
+                    this.list_state.scroll_by(px(20.));
+                    cx.notify();
+                });
+                let started = Instant::now();
+                window.draw(cx).clear(cx);
+                let elapsed = started.elapsed();
+                (
+                    elapsed,
+                    window.rendered_frame.scene.monochrome_sprites.len(),
+                )
+            })
+            .unwrap()
+        };
+        for _ in 0..10 {
+            frame(&mut cx);
+        }
+        let mut samples: Vec<_> = (0..200).map(|_| frame(&mut cx)).collect();
+        samples.sort();
+        let (median, sprites) = samples[samples.len() / 2];
+        eprintln!(
+            "300 rows scrolled 20px per frame, {sprites} glyph sprites in the frame: median frame {:.3} ms",
+            median.as_secs_f64() * 1e3,
+        );
     }
 }
