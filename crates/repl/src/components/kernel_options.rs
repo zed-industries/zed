@@ -5,6 +5,7 @@ use crate::repl_store::ReplStore;
 use gpui::{AnyView, DismissEvent, FontWeight, SharedString, Task};
 use picker::{Picker, PickerDelegate};
 use project::WorktreeId;
+use std::rc::Rc;
 use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 
@@ -136,6 +137,7 @@ where
     trigger: T,
     tooltip: TT,
     info_text: Option<SharedString>,
+    on_open: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     worktree_id: WorktreeId,
 }
 
@@ -159,6 +161,7 @@ where
             trigger,
             tooltip,
             info_text: None,
+            on_open: None,
             worktree_id,
         }
     }
@@ -172,9 +175,31 @@ where
         self.info_text = Some(text.into());
         self
     }
+
+    /// Runs each time the picker opens, whether from its trigger or its handle.
+    pub fn on_open(mut self, on_open: Rc<dyn Fn(&mut Window, &mut App)>) -> Self {
+        self.on_open = Some(on_open);
+        self
+    }
 }
 
 impl KernelPickerDelegate {
+    fn spec_at(&self, index: usize) -> Option<&KernelSpecification> {
+        match self.filtered_entries.get(index)? {
+            KernelPickerEntry::Kernel { spec, .. } => Some(spec),
+            KernelPickerEntry::SectionHeader(_) => None,
+        }
+    }
+
+    fn index_of(&self, spec: &KernelSpecification) -> Option<usize> {
+        self.filtered_entries.iter().position(|entry| match entry {
+            KernelPickerEntry::Kernel {
+                spec: candidate, ..
+            } => candidate == spec,
+            KernelPickerEntry::SectionHeader(_) => false,
+        })
+    }
+
     fn first_selectable_index(entries: &[KernelPickerEntry]) -> usize {
         entries
             .iter()
@@ -455,10 +480,10 @@ where
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let store = ReplStore::global(cx);
         store.update(cx, |store, cx| store.ensure_kernelspecs(cx));
-        let store = store.read(cx);
 
-        let all_entries = build_grouped_entries(store, self.worktree_id);
-        let selected_kernelspec = store.active_kernelspec(self.worktree_id, None, cx);
+        let worktree_id = self.worktree_id;
+        let all_entries = build_grouped_entries(store.read(cx), worktree_id);
+        let selected_kernelspec = store.read(cx).active_kernelspec(worktree_id, None, cx);
         let selected_index = all_entries
             .iter()
             .position(|entry| {
@@ -478,7 +503,23 @@ where
             selected_index,
         };
 
-        let picker_view = cx.new(|cx| {
+        let picker_view = cx.new(|cx: &mut Context<Picker<KernelPickerDelegate>>| {
+            // The popover keeps this entity until it is dismissed, so a kernel list
+            // that changes while it is open (a rescan from `on_open`, an ipykernel
+            // install finishing) has to be pushed into it.
+            cx.observe_in(&store, window, move |picker, store, window, cx| {
+                let highlighted = picker
+                    .delegate
+                    .spec_at(picker.delegate.selected_index)
+                    .cloned();
+                picker.delegate.all_entries = build_grouped_entries(store.read(cx), worktree_id);
+                picker.refresh(window, cx);
+                if let Some(index) = highlighted.and_then(|spec| picker.delegate.index_of(&spec)) {
+                    picker.set_selected_index(index, None, true, window, cx);
+                }
+            })
+            .detach();
+
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .popover()
@@ -489,5 +530,6 @@ where
             .trigger_with_tooltip(self.trigger, self.tooltip)
             .attach(gpui::Anchor::BottomLeft)
             .when_some(self.handle, |menu, handle| menu.with_handle(handle))
+            .when_some(self.on_open, |menu, on_open| menu.on_open(on_open))
     }
 }

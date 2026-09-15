@@ -8,6 +8,7 @@ use repl::{
     components::{KernelPickerDelegate, KernelSelector},
     worktree_id_for_editor,
 };
+use std::rc::Rc;
 use ui::{
     ButtonLike, CommonAnimationExt, ContextMenu, IconWithIndicator, Indicator, IntoElement,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
@@ -287,16 +288,17 @@ impl QuickActionBar {
             return div().into_any_element();
         };
 
+        let project = editor
+            .read(cx)
+            .workspace()
+            .map(|workspace| workspace.read(cx).project().clone());
+
         let store = repl::ReplStore::global(cx);
         if !store.read(cx).has_python_kernelspecs(worktree_id) {
-            if let Some(project) = editor
-                .read(cx)
-                .workspace()
-                .map(|workspace| workspace.read(cx).project().clone())
-            {
+            if let Some(project) = &project {
                 store
                     .update(cx, |store, cx| {
-                        store.refresh_python_kernelspecs(worktree_id, &project, cx)
+                        store.refresh_python_kernelspecs(worktree_id, project, cx)
                     })
                     .detach_and_log_err(cx);
             }
@@ -370,6 +372,17 @@ impl QuickActionBar {
             Tooltip::text("Select Kernel"),
         )
         .with_handle(menu_handle)
+        // Environments created after the list was cached, such as a fresh `.venv`,
+        // only show up if the picker rescans when it opens.
+        .when_some(project, |selector, project| {
+            selector.on_open(Rc::new(move |_window, cx| {
+                repl::ReplStore::global(cx)
+                    .update(cx, |store, cx| {
+                        store.refresh_python_kernelspecs(worktree_id, &project, cx)
+                    })
+                    .detach_and_log_err(cx);
+            }))
+        })
         .into_any_element()
     }
 
