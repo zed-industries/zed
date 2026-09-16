@@ -10,6 +10,7 @@
 
 #![warn(missing_docs)]
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
@@ -24,18 +25,27 @@ pub use gpui_engine::{PlatformTextSystem, TextSystem};
 use gpui_shared_string::SharedString;
 use gpui_types::{Bounds, DevicePixels, Hsla, Pixels, Point, Size, px};
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, IndentOptions, LayoutContext,
-    PositionedLayoutItem, StyleProperty, YieldData,
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
+    LayoutContext, PositionedLayoutItem, StyleProperty, YieldData,
 };
 use smallvec::SmallVec;
 
-/// The embedded fallback font used for shaping.
+/// The embedded regular font.
 const FONT_DATA: &[u8] =
     include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
-/// The family name of the embedded font.
+/// The embedded italic font.
+const FONT_DATA_ITALIC: &[u8] =
+    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf");
+/// The embedded semibold font.
+const FONT_DATA_SEMIBOLD: &[u8] =
+    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf");
+/// The embedded semibold italic font.
+const FONT_DATA_SEMIBOLD_ITALIC: &[u8] =
+    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf");
+/// The family name shared by the embedded fonts.
 pub const FONT_FAMILY: &str = "IBM Plex Sans";
 
-/// Builds a [`parley::FontContext`] pre-loaded with the embedded font.
+/// Builds a [`parley::FontContext`] pre-loaded with the embedded fonts.
 ///
 /// This is exposed so examples and consumers can use Parley's advanced layout
 /// features directly, outside the shared [`TextSystem`] shaping boundary.
@@ -44,14 +54,43 @@ pub fn font_context() -> parley::FontContext {
         shared: false,
         system_fonts: false,
     });
-    collection.register_fonts(
-        parley::fontique::Blob::new(Arc::new(FONT_DATA.to_vec())),
-        None,
-    );
+    for data in [
+        FONT_DATA,
+        FONT_DATA_ITALIC,
+        FONT_DATA_SEMIBOLD,
+        FONT_DATA_SEMIBOLD_ITALIC,
+    ] {
+        collection.register_fonts(parley::fontique::Blob::new(Arc::new(data.to_vec())), None);
+    }
     parley::FontContext {
         collection,
         source_cache: parley::fontique::SourceCache::default(),
     }
+}
+
+/// Maps GPUI's font weight onto Parley's.
+fn map_weight(weight: gpui_engine::FontWeight) -> FontWeight {
+    FontWeight::new(weight.0)
+}
+
+/// Maps GPUI's font style onto Parley's.
+fn map_style(style: gpui_engine::FontStyle) -> FontStyle {
+    match style {
+        gpui_engine::FontStyle::Normal => FontStyle::Normal,
+        gpui_engine::FontStyle::Italic | gpui_engine::FontStyle::Oblique => FontStyle::Italic,
+    }
+}
+
+/// Returns the `font_id` of the run that covers `byte`, if any.
+fn font_id_for_byte(runs: &[FontRun], byte: usize) -> Option<FontId> {
+    let mut offset = 0;
+    for run in runs {
+        if byte < offset + run.len {
+            return Some(run.font_id);
+        }
+        offset += run.len;
+    }
+    runs.last().map(|run| run.font_id)
 }
 
 /// A per-line layout box used by [`ParleyTextSystem::layout_with_boxes`].
@@ -67,24 +106,18 @@ pub struct LineBox {
 pub struct ParleyTextSystem {
     platform: Arc<ParleyPlatformTextSystem>,
     platform_dyn: Arc<dyn PlatformTextSystem>,
-    font: Font,
-    font_id: FontId,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     wrapper_pool: Mutex<Vec<LineWrapper>>,
 }
 
 impl ParleyTextSystem {
-    /// Creates a text system that shapes with the embedded IBM Plex Sans font.
+    /// Creates a text system that shapes with the embedded IBM Plex Sans fonts.
     pub fn new() -> Arc<Self> {
-        let font = font(FONT_FAMILY);
-        let font_id = FontId(0);
-        let platform = Arc::new(ParleyPlatformTextSystem::new(font_id));
+        let platform = Arc::new(ParleyPlatformTextSystem::new());
         let platform_dyn: Arc<dyn PlatformTextSystem> = platform.clone();
         Arc::new(Self {
             platform,
             platform_dyn,
-            font,
-            font_id,
             font_runs_pool: Mutex::new(Vec::new()),
             wrapper_pool: Mutex::new(Vec::new()),
         })
@@ -184,11 +217,11 @@ impl TextSystem for ParleyTextSystem {
     }
 
     fn get_font_for_id(&self, id: FontId) -> Option<Font> {
-        (id == self.font_id).then(|| self.font.clone())
+        self.platform.font_for_id(id)
     }
 
-    fn resolve_font(&self, _font: &Font) -> FontId {
-        self.font_id
+    fn resolve_font(&self, font: &Font) -> FontId {
+        self.platform.resolve_font(font)
     }
 
     fn prewarm_fonts(&self, _fonts: &[Font]) {}
@@ -390,16 +423,49 @@ impl TextSystem for ParleyTextSystem {
 struct ParleyPlatformTextSystem {
     font_context: Mutex<FontContext>,
     layout_context: Mutex<LayoutContext>,
-    font_id: FontId,
+    font_registry: Mutex<FontRegistry>,
+}
+
+/// Maps GPUI [`Font`]s to stable [`FontId`]s and back.
+#[derive(Default)]
+struct FontRegistry {
+    ids_by_font: HashMap<Font, FontId>,
+    fonts_by_id: HashMap<FontId, Font>,
+    next_id: usize,
+}
+
+impl FontRegistry {
+    fn resolve(&mut self, font: &Font) -> FontId {
+        if let Some(id) = self.ids_by_font.get(font) {
+            return *id;
+        }
+        let id = FontId(self.next_id);
+        self.next_id += 1;
+        self.ids_by_font.insert(font.clone(), id);
+        self.fonts_by_id.insert(id, font.clone());
+        id
+    }
+
+    fn font_for_id(&self, id: FontId) -> Option<Font> {
+        self.fonts_by_id.get(&id).cloned()
+    }
 }
 
 impl ParleyPlatformTextSystem {
-    fn new(font_id: FontId) -> Self {
+    fn new() -> Self {
         Self {
             font_context: Mutex::new(font_context()),
             layout_context: Mutex::new(LayoutContext::new()),
-            font_id,
+            font_registry: Mutex::new(FontRegistry::default()),
         }
+    }
+
+    fn resolve_font(&self, font: &Font) -> FontId {
+        self.font_registry.lock().unwrap().resolve(font)
+    }
+
+    fn font_for_id(&self, id: FontId) -> Option<Font> {
+        self.font_registry.lock().unwrap().font_for_id(id)
     }
 }
 
@@ -412,8 +478,8 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
         vec![FONT_FAMILY.to_string()]
     }
 
-    fn font_id(&self, _descriptor: &Font) -> Result<FontId> {
-        Ok(self.font_id)
+    fn font_id(&self, descriptor: &Font) -> Result<FontId> {
+        Ok(self.resolve_font(descriptor))
     }
 
     fn font_metrics(&self, _font_id: FontId) -> FontMetrics {
@@ -472,13 +538,27 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
         Ok((raster_bounds.size, Vec::new()))
     }
 
-    fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+        let default_font_id = self.resolve_font(&font(FONT_FAMILY));
         let mut font_context = self.font_context.lock().unwrap();
         let mut layout_context = self.layout_context.lock().unwrap();
 
         let mut builder = layout_context.ranged_builder(&mut font_context, text, 1.0, true);
         builder.push_default(StyleProperty::FontFamily(FontFamily::from(FONT_FAMILY)));
         builder.push_default(StyleProperty::FontSize(font_size.0));
+
+        let mut byte = 0;
+        for run in runs {
+            let end = byte + run.len;
+            if let Some(font) = self.font_for_id(run.font_id) {
+                builder.push(
+                    StyleProperty::FontWeight(map_weight(font.weight)),
+                    byte..end,
+                );
+                builder.push(StyleProperty::FontStyle(map_style(font.style)), byte..end);
+            }
+            byte = end;
+        }
 
         let mut layout = builder.build(text);
         layout.break_all_lines(None);
@@ -500,6 +580,8 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
 
             for item in line.items() {
                 if let PositionedLayoutItem::GlyphRun(glyph_run) = item {
+                    let run_byte = glyph_run.run().text_range().start;
+                    let font_id = font_id_for_byte(runs, run_byte).unwrap_or(default_font_id);
                     let mut glyphs = Vec::new();
                     let mut offset = glyph_run.offset();
                     let baseline = glyph_run.baseline();
@@ -521,10 +603,7 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
                             });
                         }
                     }
-                    result.runs.push(ShapedRun {
-                        font_id: self.font_id,
-                        glyphs,
-                    });
+                    result.runs.push(ShapedRun { font_id, glyphs });
                 }
             }
         }
@@ -544,6 +623,7 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
 #[cfg(test)]
 mod tests {
     use crate::{ParleyTextSystem, TextSystem};
+    use gpui_engine::{FontRun, font};
     use gpui_types::px;
 
     #[test]
@@ -578,5 +658,49 @@ mod tests {
         let layout =
             parley.layout_indented("hello world this is a longer string", 16.0, 32.0, 120.0);
         assert!(layout.lines().len() > 1);
+    }
+
+    #[test]
+    fn resolves_distinct_fonts_to_distinct_ids_and_back() {
+        let text_system = ParleyTextSystem::new();
+        let regular = font("IBM Plex Sans");
+        let bold = font("IBM Plex Sans").bold();
+        let regular_id = text_system.resolve_font(&regular);
+        let bold_id = text_system.resolve_font(&bold);
+
+        assert_ne!(regular_id, bold_id);
+        assert_eq!(
+            text_system.get_font_for_id(regular_id),
+            Some(regular.clone())
+        );
+        assert_eq!(text_system.get_font_for_id(bold_id), Some(bold.clone()));
+        assert_eq!(text_system.resolve_font(&regular), regular_id);
+    }
+
+    #[test]
+    fn shapes_mixed_weight_runs() {
+        let text_system = ParleyTextSystem::new();
+        let regular = font("IBM Plex Sans");
+        let bold = font("IBM Plex Sans").bold();
+        let regular_id = text_system.resolve_font(&regular);
+        let bold_id = text_system.resolve_font(&bold);
+
+        let runs = [
+            FontRun {
+                len: 7,
+                font_id: regular_id,
+            },
+            FontRun {
+                len: 4,
+                font_id: bold_id,
+            },
+        ];
+        let layout = text_system.layout_line("regularbold", px(16.0), &runs, None);
+
+        assert_eq!(layout.len, 11);
+        assert!(layout.width > px(0.0));
+        assert!(!layout.runs.is_empty());
+        assert!(layout.runs.iter().any(|run| run.font_id == regular_id));
+        assert!(layout.runs.iter().any(|run| run.font_id == bold_id));
     }
 }
