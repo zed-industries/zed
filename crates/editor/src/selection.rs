@@ -77,12 +77,7 @@ impl Editor {
         let already_deferred = self.defer_selection_effects;
         self.defer_selection_effects = true;
         let result = update(self, window, cx);
-        if !already_deferred {
-            self.defer_selection_effects = false;
-            if let Some(state) = self.deferred_selection_effects_state.take() {
-                self.apply_selection_effects(state, window, cx);
-            }
-        }
+        self.finish_deferred_selection_effects(already_deferred, window, cx);
         result
     }
 
@@ -1730,12 +1725,47 @@ impl Editor {
         cx.notify();
     }
 
+    #[inline(never)]
+    fn prepare_selection_effects(
+        &self,
+        effects: SelectionEffects,
+        history_entry: Option<SelectionHistoryEntry>,
+    ) -> DeferredSelectionEffectsState {
+        DeferredSelectionEffectsState {
+            changed: false,
+            effects,
+            old_cursor_position: self.selections.newest_anchor().head(),
+            history_entry: history_entry.unwrap_or_else(|| self.selection_history_entry()),
+        }
+    }
+
+    #[inline(never)]
+    fn finish_deferred_selection_effects(
+        &mut self,
+        already_deferred: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !already_deferred {
+            self.defer_selection_effects = false;
+            if let Some(state) = self.deferred_selection_effects_state.take() {
+                self.apply_selection_effects(state, window, cx);
+            }
+        }
+    }
+
+    #[inline(never)]
     fn apply_selection_effects(
         &mut self,
         state: DeferredSelectionEffectsState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_selection_effects {
+            self.deferred_selection_effects_state = Some(state);
+            return;
+        }
+
         if state.changed {
             self.selection_history.push(state.history_entry);
 
@@ -2053,19 +2083,10 @@ impl Editor {
             }
             return result;
         }
-        let mut state = DeferredSelectionEffectsState {
-            changed: false,
-            effects,
-            old_cursor_position: self.selections.newest_anchor().head(),
-            history_entry: history_entry.unwrap_or_else(|| self.selection_history_entry()),
-        };
+        let mut state = self.prepare_selection_effects(effects, history_entry);
         let (changed, result) = self.change_selections_without_effects(&snapshot, change);
         state.changed = state.changed || changed;
-        if self.defer_selection_effects {
-            self.deferred_selection_effects_state = Some(state);
-        } else {
-            self.apply_selection_effects(state, window, cx);
-        }
+        self.apply_selection_effects(state, window, cx);
         result
     }
 

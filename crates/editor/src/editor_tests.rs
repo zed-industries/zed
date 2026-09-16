@@ -5190,6 +5190,213 @@ async fn test_newline_below_with_cursor_on_deleted_hunk(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn test_expand_excerpts_with_selection_ending_at_excerpt_boundary(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    for (direction, expected) in [
+        (ExpandExcerptDirection::Up, "a0\na1\na2\na3\nb1\nb2\nb3"),
+        (ExpandExcerptDirection::Down, "a1\na2\na3\na4\nb1\nb2\nb3"),
+        (
+            ExpandExcerptDirection::UpAndDown,
+            "a0\na1\na2\na3\na4\nb1\nb2\nb3",
+        ),
+    ] {
+        let mut cx = EditorTestContext::new_multibuffer(
+            cx,
+            ["a0\n«a1\na2\na3»\na4", "b0\n«b1\nb2\nb3»\nb4"],
+        );
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([Point::zero()..Point::new(3, 0)]);
+            });
+            match direction {
+                ExpandExcerptDirection::Up => {
+                    editor.expand_excerpts_up(&ExpandExcerptsUp { lines: 1 }, window, cx)
+                }
+                ExpandExcerptDirection::Down => {
+                    editor.expand_excerpts_down(&ExpandExcerptsDown { lines: 1 }, window, cx)
+                }
+                ExpandExcerptDirection::UpAndDown => {
+                    editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx)
+                }
+            }
+        });
+        assert_eq!(cx.buffer_text(), expected, "{direction:?}");
+    }
+}
+
+#[gpui::test]
+fn test_expand_excerpts_with_trailing_empty_excerpt(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    for (direction, expected) in [
+        (ExpandExcerptDirection::Up, "aaa\none\n"),
+        (ExpandExcerptDirection::Down, "aaa\n"),
+        (ExpandExcerptDirection::UpAndDown, "aaa\none\n"),
+    ] {
+        for select_all in [false, true] {
+            let mut cx = EditorTestContext::new_multibuffer(cx, ["«aaa»", "zero\none\n«»"]);
+            cx.update_editor(|editor, window, cx| {
+                if select_all {
+                    editor.select_all(&SelectAll, window, cx);
+                } else {
+                    editor.move_to_end(&MoveToEnd, window, cx);
+                }
+                match direction {
+                    ExpandExcerptDirection::Up => {
+                        editor.expand_excerpts_up(&ExpandExcerptsUp { lines: 1 }, window, cx)
+                    }
+                    ExpandExcerptDirection::Down => {
+                        editor.expand_excerpts_down(&ExpandExcerptsDown { lines: 1 }, window, cx)
+                    }
+                    ExpandExcerptDirection::UpAndDown => {
+                        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx)
+                    }
+                }
+            });
+            assert_eq!(
+                cx.buffer_text(),
+                expected,
+                "{direction:?}, select_all={select_all}"
+            );
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_expand_excerpts_with_selection_on_deleted_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("zero\none\ntwo\nthree\nfour\nfive\nsix\nsevenˇ");
+    let buffer = cx.multibuffer(|multi_buffer, _| multi_buffer.as_singleton().unwrap());
+    cx.update_multibuffer(|multi_buffer, cx| {
+        let path_key = PathKey::for_buffer(&buffer, cx);
+        multi_buffer.set_excerpts_for_path(
+            path_key,
+            buffer,
+            [Point::new(2, 0)..Point::new(5, 4)],
+            0,
+            cx,
+        );
+    });
+    cx.set_head_text("zero\none\ntwo\nthree\ndeleted\nfour\nfive\nsix\nseven");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.buffer_text(), "two\nthree\ndeleted\nfour\nfive");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            let cursor = DisplayPoint::new(DisplayRow(2), 0);
+            selections.select_display_ranges([cursor..cursor]);
+        });
+    });
+    assert!(cx.update_editor(|editor, _, _| {
+        editor
+            .selections
+            .newest_anchor()
+            .head()
+            .diff_base_anchor()
+            .is_some()
+    }));
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx);
+    });
+    assert_eq!(
+        cx.buffer_text(),
+        "one\ntwo\nthree\ndeleted\nfour\nfive\nsix"
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 4)
+            ]);
+        });
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx);
+    });
+    assert_eq!(
+        cx.buffer_text(),
+        "zero\none\ntwo\nthree\ndeleted\nfour\nfive\nsix\nseven"
+    );
+}
+
+#[gpui::test]
+async fn test_expand_excerpts_with_selection_in_removed_path(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer_a = cx.new(|cx| Buffer::local("a0\na1\na2\na3\na4", cx));
+    let buffer_b = cx.new(|cx| Buffer::local("b0\nb1\nb2\nb3\nb4", cx));
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a,
+            [Point::new(1, 0)..Point::new(3, 2)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_b.clone(),
+            [Point::new(1, 0)..Point::new(3, 2)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project, multibuffer.clone(), window, cx)
+    });
+    // The second path's excerpt begins with a deleted hunk.
+    editor.update_in(cx, |editor, window, cx| {
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(
+                "b0\ndeleted\nb1\nb2\nb3\nb4",
+                &buffer_b.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+        editor
+            .buffer
+            .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
+        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "a1\na2\na3\ndeleted\nb1\nb2\nb3");
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
+        });
+    });
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(0), cx);
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "deleted\nb1\nb2\nb3");
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "b0\ndeleted\nb1\nb2\nb3\nb4");
+    });
+}
+
+#[gpui::test]
 fn test_newline_below_multibuffer(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -22874,6 +23081,357 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    for (initial_state, completion_text, filter_text, expected_states) in [
+        (
+            "test(value1, ˇvalue2)",
+            "value2=",
+            "value2",
+            [
+                "test(value1, value2=ˇvalue2)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇvalue2)",
+            ],
+        ),
+        (
+            "test(value1, valˇvalue2)",
+            "value2=",
+            "value2",
+            [
+                "test(value1, value2=ˇvalue2)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇvalue2)",
+                "test(value1, value2=ˇvalue2)",
+            ],
+        ),
+        (
+            "ediˇtor",
+            "editor",
+            "edi",
+            ["editorˇtor", "editorˇ", "editorˇ", "editorˇ"],
+        ),
+        (
+            "strˇing",
+            "str",
+            "str",
+            ["strˇing", "strˇ", "strˇing", "strˇing"],
+        ),
+        (
+            "SuˇErr",
+            "SubscriptionError",
+            "Su",
+            [
+                "SubscriptionErrorˇErr",
+                "SubscriptionErrorˇ",
+                "SubscriptionErrorˇ",
+                "SubscriptionErrorˇErr",
+            ],
+        ),
+        (
+            "test(value1, valueˇ)",
+            "value2=",
+            "value",
+            ["test(value1, value2=ˇ)"; 4],
+        ),
+        (
+            "test(value1, ˇ)",
+            "value2=",
+            "v2",
+            ["test(value1, value2=ˇ)"; 4],
+        ),
+        (
+            "test(value1, ˇv2)",
+            "value2=",
+            "v2",
+            [
+                "test(value1, value2=ˇv2)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇ)",
+                "test(value1, value2=ˇv2)",
+            ],
+        ),
+        (
+            "test(\"😀\", 𐐀naïˇve)",
+            "𐐀naïve",
+            "𐐀naï",
+            [
+                "test(\"😀\", 𐐀naïveˇve)",
+                "test(\"😀\", 𐐀naïveˇ)",
+                "test(\"😀\", 𐐀naïveˇ)",
+                "test(\"😀\", 𐐀naïveˇ)",
+            ],
+        ),
+        (
+            "test(\n\tˇvalue2\n)",
+            "value2=",
+            "value2",
+            [
+                "test(\n\tvalue2=ˇvalue2\n)",
+                "test(\n\tvalue2=ˇ\n)",
+                "test(\n\tvalue2=ˇ\n)",
+                "test(\n\tvalue2=ˇvalue2\n)",
+            ],
+        ),
+        (
+            "ˇvalue2",
+            "value2=",
+            "value2",
+            ["value2=ˇvalue2", "value2=ˇ", "value2=ˇ", "value2=ˇvalue2"],
+        ),
+        ("valueˇ", "value2=", "value", ["value2=ˇ"; 4]),
+        ("ˇ", "value2=", "v2", ["value2=ˇ"; 4]),
+    ] {
+        for (lsp_insert_mode, expected_state) in [
+            LspInsertMode::Insert,
+            LspInsertMode::Replace,
+            LspInsertMode::ReplaceSubsequence,
+            LspInsertMode::ReplaceSuffix,
+        ]
+        .into_iter()
+        .zip(expected_states)
+        {
+            update_test_language_settings(&mut cx, &|settings| {
+                settings.defaults.completions = Some(CompletionSettingsContent {
+                    lsp_insert_mode: Some(lsp_insert_mode),
+                    words: Some(WordsCompletionMode::Disabled),
+                    ..CompletionSettingsContent::default()
+                });
+            });
+
+            for (insert_text, detail, description, use_filter_text) in [
+                (None, None, None, false),
+                (Some(completion_text), None, None, false),
+                (None, Some("string"), None, false),
+                (Some(completion_text), Some("string"), None, false),
+                (None, None, Some("string"), false),
+                (Some(completion_text), None, Some("string"), false),
+                (Some(completion_text), None, None, true),
+                (Some(completion_text), Some(filter_text), None, true),
+            ] {
+                eprintln!(
+                    "{initial_state:?}, {lsp_insert_mode:?}, {insert_text:?}, {detail:?}, {description:?}, {use_filter_text:?}"
+                );
+                cx.set_state(initial_state);
+                cx.set_request_handler::<lsp::request::Completion, _, _>(
+                    move |_, _, _| async move {
+                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                            is_incomplete: true,
+                            items: vec![lsp::CompletionItem {
+                                label: completion_text.to_string(),
+                                filter_text: use_filter_text.then(|| filter_text.to_string()),
+                                insert_text: insert_text.map(str::to_string),
+                                detail: detail.map(str::to_string),
+                                label_details: description.map(|description| {
+                                    lsp::CompletionItemLabelDetails {
+                                        detail: None,
+                                        description: Some(description.to_string()),
+                                    }
+                                }),
+                                ..lsp::CompletionItem::default()
+                            }],
+                            item_defaults: None,
+                        })))
+                    },
+                );
+                cx.update_editor(|editor, window, cx| {
+                    editor.show_completions(&ShowCompletions, window, cx);
+                });
+                cx.condition(|editor, _| editor.context_menu_visible())
+                    .await;
+                cx.update_editor(|editor, window, cx| {
+                    editor.confirm_completion(&ConfirmCompletion::default(), window, cx)
+                })
+                .expect("completion should be accepted")
+                .await
+                .expect("completion should succeed");
+                cx.assert_editor_state(expected_state);
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_completion_without_text_edit_after_typing(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            lsp_insert_mode: Some(LspInsertMode::Replace),
+            words: Some(WordsCompletionMode::Disabled),
+            ..CompletionSettingsContent::default()
+        });
+    });
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..lsp::CompletionOptions::default()
+            }),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let requests = Arc::new(AtomicUsize::new(0));
+    cx.set_request_handler::<lsp::request::Completion, _, _>({
+        let requests = requests.clone();
+        move |_, _, _| {
+            requests.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "value2=".to_string(),
+                        insert_text: Some("value2=".to_string()),
+                        ..lsp::CompletionItem::default()
+                    },
+                ])))
+            }
+        }
+    });
+    let mut resolved = cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
+        |_, mut item, _| async move {
+            item.documentation = Some(lsp::Documentation::String("resolved".to_string()));
+            Ok(item)
+        },
+    );
+    cx.set_state("test(value1, ˇvalue2)");
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions, window, cx);
+    });
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    resolved.next().await.expect("completion should resolve");
+    cx.run_until_parked();
+
+    cx.simulate_input("v");
+    cx.run_until_parked();
+    cx.simulate_input("a");
+    cx.run_until_parked();
+    assert_eq!(requests.load(atomic::Ordering::Acquire), 1);
+    cx.assert_editor_state("test(value1, vaˇvalue2)");
+    cx.update_editor(|editor, window, cx| {
+        editor.confirm_completion_insert(&ConfirmCompletionInsert, window, cx)
+    })
+    .expect("completion should be accepted")
+    .await
+    .expect("completion should succeed");
+    cx.assert_editor_state("test(value1, value2=ˇvalue2)");
+}
+
+#[gpui::test]
+async fn test_completion_with_explicit_replace_range(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            words: Some(WordsCompletionMode::Disabled),
+            ..CompletionSettingsContent::default()
+        });
+    });
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    for (lsp_insert_mode, expected_pair_state) in [
+        (LspInsertMode::ReplaceSuffix, "test(value1, value2=ˇvalue2)"),
+        (LspInsertMode::Insert, "test(value1, value2=ˇvalue2)"),
+        (LspInsertMode::Replace, "test(value1, value2=ˇ)"),
+        (LspInsertMode::ReplaceSubsequence, "test(value1, value2=ˇ)"),
+    ] {
+        update_test_language_settings(&mut cx, &|settings| {
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                lsp_insert_mode: Some(lsp_insert_mode),
+                words: Some(WordsCompletionMode::Disabled),
+                ..CompletionSettingsContent::default()
+            });
+        });
+        for (use_default_range, use_insert_range) in
+            [(false, true), (true, true), (false, false), (true, false)]
+        {
+            for filter_text in [Some("value2"), None] {
+                eprintln!(
+                    "{lsp_insert_mode:?}, {use_default_range:?}, {use_insert_range:?}, {filter_text:?}"
+                );
+                cx.set_state("test(value1, ˇvalue2)");
+                cx.set_request_handler::<lsp::request::Completion, _, _>(
+                    move |_, _, _| async move {
+                        let insert =
+                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 13));
+                        let replace =
+                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 19));
+                        let text_edit = if use_insert_range {
+                            lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
+                                insert,
+                                replace,
+                                new_text: "value2=".to_string(),
+                            })
+                        } else {
+                            lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: replace,
+                                new_text: "value2=".to_string(),
+                            })
+                        };
+                        let edit_range = if use_insert_range {
+                            lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
+                                insert,
+                                replace,
+                            }
+                        } else {
+                            lsp::CompletionListItemDefaultsEditRange::Range(replace)
+                        };
+                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                            items: vec![lsp::CompletionItem {
+                                label: "value2=".to_string(),
+                                filter_text: filter_text.map(str::to_string),
+                                text_edit: (!use_default_range).then_some(text_edit),
+                                ..lsp::CompletionItem::default()
+                            }],
+                            item_defaults: use_default_range.then(|| {
+                                lsp::CompletionListItemDefaults {
+                                    edit_range: Some(edit_range),
+                                    ..lsp::CompletionListItemDefaults::default()
+                                }
+                            }),
+                            ..lsp::CompletionList::default()
+                        })))
+                    },
+                );
+                cx.update_editor(|editor, window, cx| {
+                    editor.show_completions(&ShowCompletions, window, cx);
+                });
+                cx.condition(|editor, _| editor.context_menu_visible())
+                    .await;
+                cx.update_editor(|editor, window, cx| {
+                    editor.confirm_completion(&ConfirmCompletion::default(), window, cx)
+                })
+                .expect("completion should be accepted")
+                .await
+                .expect("completion should succeed");
+                cx.assert_editor_state(if use_insert_range {
+                    expected_pair_state
+                } else {
+                    "test(value1, value2=ˇ)"
+                });
+            }
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
@@ -25248,7 +25806,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
         }
     "});
 
-    // If a selection span multiple lines, empty lines are not toggled.
+    // If a selection spans multiple lines, empty lines are also toggled.
     cx.set_state(indoc! {"
         fn a() {
             «a();
@@ -25261,9 +25819,9 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
 
     cx.assert_editor_state(indoc! {"
         fn a() {
-            // «a();
-
-            // c();ˇ»
+        //     «a();
+        //•
+        //     c();ˇ»
         }
     "});
 
@@ -25303,6 +25861,7 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
     let toggle_comments = &ToggleComments {
         advance_downwards: false,
         ignore_indent: true,
+        comment_empty_lines: false,
     };
 
     // If multiple selections intersect a line, the line is only toggled once.
@@ -25413,6 +25972,160 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_comment_commenting_blank_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    // A prefix without a trailing space keeps every expectation below free of
+    // trailing whitespace, which would otherwise be stripped on save and break
+    // the assertions on commented blank lines.
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments::default();
+
+    cx.set_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //«fn a() {
+        //    b();
+        //
+        //    c();
+        //}ˇ»
+    "});
+
+    // Toggling again removes the prefix from every line, blank ones included.
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    // All prefixes in a block go at one shared column so they line up: the
+    // smallest indent among the rows being commented. A blank line contributes
+    // 0 and drags that to 0 - shifting every line in the block left. VS Code
+    // does the same.
+    cx.set_state(indoc! {"
+        fn a() {
+            «b();
+
+            c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    «b();
+        //
+        //    c();ˇ»
+        }
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_uncomments_after_parameter_change(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let skip_blank_lines = &ToggleComments {
+        comment_empty_lines: false,
+        ..Default::default()
+    };
+    let comment_blank_lines = &ToggleComments::default();
+
+    cx.set_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    // Comment with one binding: the blank line gets no marker.
+    cx.update_editor(|e, window, cx| e.toggle_comments(skip_blank_lines, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //«fn a() {
+        //    b();
+
+        //    c();
+        //}ˇ»
+    "});
+
+    // Toggle with the other binding. The blank line still has no marker, but it must
+    // not make the block look uncommented: the markers are removed, not doubled.
+    cx.update_editor(|e, window, cx| e.toggle_comments(comment_blank_lines, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_selection_of_only_blank_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments::default();
+
+    // No line carries a marker, so there is nothing to remove: comment them.
+    cx.set_state(indoc! {"
+        fn a() {
+        «
+
+        ˇ»}
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //«
+        //
+        ˇ»}
+    "});
+}
+
+#[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -25434,6 +26147,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     let toggle_comments = &ToggleComments {
         advance_downwards: true,
         ignore_indent: false,
+        comment_empty_lines: false,
     };
 
     // Single cursor on one line -> advance
@@ -34965,6 +35679,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         primary: GutterButtonIntent::SetBreakpoint,
         secondary: GutterButtonIntent::SetBookmark,
         focus_handle,
+        on_render: None,
     };
 
     let primary_intent = tooltip.active_intent(Modifiers::none());
@@ -34977,11 +35692,10 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
 
     // When both features are enabled, the meta text advertises the
     // modifier-click alternative.
-    let meta = tooltip.meta_text(primary_intent);
+    let meta = tooltip.meta_text();
     assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+    assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
     assert!(meta.contains("right-click for more options"));
-    let meta = tooltip.meta_text(secondary_intent);
-    assert!(meta.contains("-click to add a breakpoint"), "got: {meta}");
 
     // When only one feature is enabled (primary == secondary), a
     // modifier-click repeats the primary action, so the tooltip must not
@@ -34990,9 +35704,46 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         primary: GutterButtonIntent::SetBreakpoint,
         secondary: GutterButtonIntent::SetBreakpoint,
         focus_handle: tooltip.focus_handle,
+        on_render: None,
     };
-    let meta = single_feature_tooltip.meta_text(GutterButtonIntent::SetBreakpoint);
+    let meta = single_feature_tooltip.meta_text();
     assert_eq!(meta, "right-click for more options");
+}
+
+#[gpui::test]
+fn test_gutter_button_tooltip_renders_modifier_transitions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let renders = Rc::new(RefCell::new(Vec::new()));
+    let (tooltip, cx) = cx.add_window_view({
+        let renders = renders.clone();
+        move |_window, cx| GutterButtonTooltip {
+            primary: GutterButtonIntent::SetBreakpoint,
+            secondary: GutterButtonIntent::SetBookmark,
+            focus_handle: cx.focus_handle(),
+            on_render: Some(renders),
+        }
+    });
+    cx.run_until_parked();
+
+    let assert_render = |expected_title: &str| {
+        let (title, meta) = renders.borrow().last().cloned().expect("tooltip rendered");
+        assert_eq!(title, expected_title);
+        assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+        assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
+    };
+
+    assert_render("Set Breakpoint");
+
+    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    tooltip.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+    assert_render("Set Bookmark");
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    tooltip.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+    assert_render("Set Breakpoint");
 }
 
 #[gpui::test]
@@ -37104,6 +37855,37 @@ async fn test_bookmarks_tab_highlights_bookmark_on_trailing_empty_line(cx: &mut 
         highlighted_display_rows_of(&bookmarks_editor, &mut cx),
         vec![last_display_row(&bookmarks_editor, &mut cx)],
         "a bookmark on the trailing empty line should still highlight its row"
+    );
+}
+
+#[gpui::test]
+async fn test_expand_excerpts_in_bookmarks_tab_with_trailing_empty_excerpt(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, _pane, project, editor, mut cx) =
+        init_bookmarks_tab_test(cx, json!({ "main.rs": "aaa", "other.rs": "zero\none\n" })).await;
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.excerpt_context_lines = Some(0);
+            });
+        });
+    });
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
+    let other_editor = open_bookmarks_test_editor(&workspace, &project, "other.rs", &mut cx).await;
+    toggle_bookmark_on_row(&other_editor, 2, &mut cx);
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        bookmarks_editor.read_with(&cx, |editor, cx| editor.text(cx)),
+        "aaa\n"
+    );
+    cx.dispatch_action(SelectAll);
+    cx.dispatch_action(ExpandExcerptsUp { lines: 1 });
+    cx.run_until_parked();
+    assert_eq!(
+        bookmarks_editor.read_with(&cx, |editor, cx| editor.text(cx)),
+        "aaa\none\n"
     );
 }
 

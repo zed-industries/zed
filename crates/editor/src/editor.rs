@@ -1736,6 +1736,8 @@ struct GutterButtonTooltip {
     primary: GutterButtonIntent,
     secondary: GutterButtonIntent,
     focus_handle: FocusHandle,
+    #[cfg(test)]
+    on_render: Option<Rc<RefCell<Vec<(String, String)>>>>,
 }
 
 impl GutterButtonTooltip {
@@ -1747,7 +1749,7 @@ impl GutterButtonTooltip {
         }
     }
 
-    fn meta_text(&self, intent: GutterButtonIntent) -> String {
+    fn meta_text(&self) -> String {
         const RIGHT_CLICK_HINT: &str = "right-click for more options";
 
         if self.primary == self.secondary {
@@ -1757,11 +1759,11 @@ impl GutterButtonTooltip {
             modifiers: Modifiers::secondary_key(),
             ..Default::default()
         };
-        let other = match intent {
-            GutterButtonIntent::SetBookmark => "breakpoint",
-            GutterButtonIntent::SetBreakpoint => "bookmark",
+        let secondary = match self.secondary {
+            GutterButtonIntent::SetBookmark => "bookmark",
+            GutterButtonIntent::SetBreakpoint => "breakpoint",
         };
-        format!("{modifier_as_text}-click to add a {other}\n{RIGHT_CLICK_HINT}")
+        format!("{modifier_as_text}-click to add a {secondary}\n{RIGHT_CLICK_HINT}")
     }
 }
 
@@ -1769,7 +1771,14 @@ impl Render for GutterButtonTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let intent = self.active_intent(window.modifiers());
         let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
-        let meta_text = self.meta_text(intent);
+        let meta_text = self.meta_text();
+
+        #[cfg(test)]
+        if let Some(on_render) = &self.on_render {
+            on_render
+                .borrow_mut()
+                .push((intent.as_str().to_owned(), meta_text.clone()));
+        }
 
         tooltip_container(cx, move |this, _| {
             this.child(
@@ -4834,6 +4843,8 @@ impl Editor {
                         primary,
                         secondary,
                         focus_handle: focus_handle.clone(),
+                        #[cfg(test)]
+                        on_render: None,
                     })
                     .into()
                 })
@@ -11332,7 +11343,7 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    pub(crate) fn lsp_data_enabled(&self) -> bool {
+    pub fn lsp_data_enabled(&self) -> bool {
         self.enable_lsp_data && self.mode().is_full()
     }
 
@@ -11650,6 +11661,7 @@ fn process_completion_for_edit(
         let replace_range = &completion.replace_range;
         if let CompletionSource::Lsp {
             insert_range: Some(insert_range),
+            lsp_completion,
             ..
         } = &completion.source
         {
@@ -11688,7 +11700,7 @@ fn process_completion_for_edit(
                                     ..buffer.anchor_after(replace_range.end),
                             );
                             let mut current_needle = text_to_replace.next();
-                            for haystack_ch in completion.label.text.chars() {
+                            for haystack_ch in lsp_completion.label.chars() {
                                 if let Some(needle_ch) = current_needle
                                     && haystack_ch.eq_ignore_ascii_case(&needle_ch)
                                 {
@@ -11711,9 +11723,8 @@ fn process_completion_for_edit(
                                     )
                                     .collect::<String>()
                                     .to_ascii_lowercase();
-                                completion
+                                lsp_completion
                                     .label
-                                    .text
                                     .to_ascii_lowercase()
                                     .ends_with(&text_after_cursor)
                             } else {

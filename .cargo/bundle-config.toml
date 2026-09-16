@@ -1,5 +1,14 @@
 [env]
 RUSTC_BOOTSTRAP = "1"
 
-[build]
+[target.'cfg(all())']
 rustflags = ["-Z", "share-generics=y"]
+
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-args=-Wl,--disable-new-dtags,-rpath,$ORIGIN/../lib"]
+
+[target.'cfg(all(target_os = "linux", target_env = "musl"))']
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
