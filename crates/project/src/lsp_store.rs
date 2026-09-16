@@ -1194,11 +1194,11 @@ impl LocalLspStore {
 
         language_server
             .on_request::<lsp::request::ShowMessageRequest, _, _>({
-                let this = lsp_store.clone();
+                let lsp_store = lsp_store.clone();
                 let name = name.to_string();
                 let adapter = adapter.clone();
                 move |params, cx| {
-                    let this = this.clone();
+                    let lsp_store = lsp_store.clone();
                     let name = name.to_string();
                     let adapter = adapter.clone();
                     let mut cx = cx.clone();
@@ -1219,29 +1219,49 @@ impl LocalLspStore {
                             tx,
                         );
 
-                        let did_update = this
-                            .update(&mut cx, |_, cx| {
-                                cx.emit(LspStoreEvent::LanguageServerPrompt(request));
-                            })
-                            .is_ok();
-                        if did_update {
-                            let response = rx.recv().await.ok();
-                            if let Some(ref selected_action) = response {
-                                let context = language::PromptResponseContext {
-                                    message,
-                                    selected_action: selected_action.clone(),
-                                };
-                                adapter.process_prompt_response(&context, &mut cx)
-                            }
-
-                            Ok(response)
-                        } else {
-                            Ok(None)
+                        lsp_store.update(&mut cx, |_, cx| {
+                            cx.emit(LspStoreEvent::LanguageServerPrompt(request));
+                        })?;
+                        let response = rx.recv().await.ok();
+                        if let Some(ref selected_action) = response {
+                            let context = language::PromptResponseContext {
+                                message,
+                                selected_action: selected_action.clone(),
+                            };
+                            adapter.process_prompt_response(&context, &mut cx)
                         }
+
+                        Ok(response)
                     }
                 }
             })
             .detach();
+
+        language_server
+            .on_request::<lsp::request::ShowDocument, _, _>({
+                let lsp_store = lsp_store.clone();
+                move |params, cx| {
+                    let lsp_store = lsp_store.clone();
+                    let mut cx = cx.clone();
+                    async move {
+                        let (tx, rx) = async_channel::bounded(1);
+                        let request = LanguageServerShowDocumentRequest {
+                            uri: params.uri,
+                            external: params.external.unwrap_or(false),
+                            take_focus: params.take_focus.unwrap_or(false),
+                            selection: params.selection,
+                            response_channel: tx,
+                        };
+                        lsp_store.update(&mut cx, |_, cx| {
+                            cx.emit(LspStoreEvent::LanguageServerShowDocument(request));
+                        })?;
+                        let success = rx.recv().await.unwrap_or(false);
+                        Ok(lsp::ShowDocumentResult { success })
+                    }
+                }
+            })
+            .detach();
+
         language_server
             .on_notification::<lsp::notification::ShowMessage, _>({
                 let this = lsp_store.clone();
@@ -4606,6 +4626,7 @@ pub enum LspStoreEvent {
         new_language: Option<Arc<Language>>,
     },
     Notification(String),
+    LanguageServerShowDocument(LanguageServerShowDocumentRequest),
     RefreshInlayHints {
         server_id: LanguageServerId,
     },
@@ -4619,6 +4640,9 @@ pub enum LspStoreEvent {
         server_id: Option<LanguageServerId>,
     },
     RefreshDocumentLinks {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentHighlights {
         server_id: Option<LanguageServerId>,
     },
     RefreshFoldingRanges {
@@ -4736,6 +4760,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
         client.add_entity_request_handler(Self::handle_refresh_document_colors);
         client.add_entity_request_handler(Self::handle_refresh_document_links);
+        client.add_entity_request_handler(Self::handle_refresh_document_highlights);
         client.add_entity_request_handler(Self::handle_refresh_folding_ranges);
         client.add_entity_request_handler(Self::handle_refresh_document_symbols);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
@@ -4757,6 +4782,7 @@ impl LspStore {
         });
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
 
+        client.add_entity_request_handler(Self::handle_execute_lsp_command);
         client.add_entity_request_handler(Self::handle_lsp_ext_cancel_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_ext_run_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_ext_clear_flycheck);
@@ -5715,7 +5741,7 @@ impl LspStore {
         )
     }
 
-    fn relevant_server_ids_for_capability_check(
+    pub fn relevant_server_ids_for_capability_check(
         &self,
         buffer: &Entity<Buffer>,
         cx: &App,
@@ -5788,32 +5814,44 @@ impl LspStore {
     }
 
     fn notify_server_capabilities_updated(&self, server: &LanguageServer, cx: &mut Context<Self>) {
-        if let Some(capabilities) = self.serialize_synced_server_capabilities(server).log_err() {
-            cx.emit(LspStoreEvent::LanguageServerUpdate {
-                language_server_id: server.server_id(),
-                name: Some(server.name()),
-                message: proto::update_language_server::Variant::MetadataUpdated(
-                    proto::ServerMetadataUpdated {
-                        capabilities: Some(capabilities),
-                        binary: Some(proto::LanguageServerBinaryInfo {
-                            path: server.binary().path.to_string_lossy().into_owned(),
-                            arguments: server
-                                .binary()
-                                .arguments
-                                .iter()
-                                .map(|arg| arg.to_string_lossy().into_owned())
-                                .collect(),
-                        }),
-                        configuration: serde_json::to_string(server.configuration()).ok(),
-                        workspace_folders: server
-                            .workspace_folders()
-                            .iter()
-                            .map(|uri| uri.to_string())
-                            .collect(),
-                    },
-                ),
+        let Some(capabilities) = self.serialize_synced_server_capabilities(server).log_err() else {
+            return;
+        };
+        let message =
+            proto::update_language_server::Variant::MetadataUpdated(proto::ServerMetadataUpdated {
+                capabilities: Some(capabilities),
+                binary: Some(proto::LanguageServerBinaryInfo {
+                    path: server.binary().path.to_string_lossy().into_owned(),
+                    arguments: server
+                        .binary()
+                        .arguments
+                        .iter()
+                        .map(|arg| arg.to_string_lossy().into_owned())
+                        .collect(),
+                }),
+                configuration: serde_json::to_string(server.configuration()).ok(),
+                workspace_folders: server
+                    .workspace_folders()
+                    .iter()
+                    .map(|uri| uri.to_string())
+                    .collect(),
             });
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::UpdateLanguageServer {
+                    project_id: *project_id,
+                    server_name: Some(server.name().to_string()),
+                    language_server_id: server.server_id().to_proto(),
+                    variant: Some(message.clone()),
+                })
+                .context("sending server metadata downstream")
+                .log_err();
         }
+        cx.emit(LspStoreEvent::LanguageServerUpdate {
+            language_server_id: server.server_id(),
+            name: Some(server.name()),
+            message,
+        });
     }
 
     pub(crate) fn insert_synced_server_capabilities(
@@ -5846,6 +5884,37 @@ impl LspStore {
                 }
             }
         }
+    }
+
+    fn refresh_document_highlights(
+        &mut self,
+        for_server: Option<LanguageServerId>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(LspStoreEvent::RefreshDocumentHighlights {
+            server_id: for_server,
+        });
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::RefreshDocumentHighlights {
+                    project_id: *project_id,
+                    server_id: for_server.map(|server_id| server_id.to_proto()),
+                })
+                .context("sending refresh document highlights downstream")
+                .log_err();
+        }
+    }
+
+    async fn handle_refresh_document_highlights(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::RefreshDocumentHighlights>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            let server_id = envelope.payload.server_id.map(LanguageServerId::from_proto);
+            lsp_store.refresh_document_highlights(server_id, cx);
+        });
+        Ok(proto::Ack {})
     }
 
     fn remote_document_selector_context(
@@ -6549,6 +6618,67 @@ impl LspStore {
                         .remove(&lang_server.server_id())
                         .unwrap_or_default()
                 });
+            })
+        } else {
+            Task::ready(Err(anyhow!("no upstream client and not local")))
+        }
+    }
+
+    pub fn execute_lsp_command(
+        &self,
+        server_id: LanguageServerId,
+        command: String,
+        arguments: Vec<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<serde_json::Value>>> {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = upstream_client.request(proto::ExecuteLspCommand {
+                project_id,
+                language_server_id: server_id.to_proto(),
+                command,
+                arguments: arguments
+                    .iter()
+                    .map(|argument| argument.to_string())
+                    .collect(),
+            });
+            cx.background_spawn(async move {
+                let response = request.await?;
+                response
+                    .result
+                    .map(|result| serde_json::from_str(&result))
+                    .transpose()
+                    .context("deserializing executeCommand result")
+            })
+        } else if self.mode.is_local() {
+            let Some(server) = self.language_server_for_id(server_id) else {
+                return Task::ready(Err(anyhow!("language server {server_id} not found")));
+            };
+            let available_commands = server
+                .capabilities()
+                .execute_command_provider
+                .as_ref()
+                .map(|options| options.commands.clone())
+                .unwrap_or_default();
+            if !available_commands.contains(&command) {
+                return Task::ready(Err(anyhow!(
+                    "command {command} is not advertised by the language server"
+                )));
+            }
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+            cx.background_spawn(async move {
+                server
+                    .request::<lsp::request::ExecuteCommand>(
+                        lsp::ExecuteCommandParams {
+                            command,
+                            arguments,
+                            ..lsp::ExecuteCommandParams::default()
+                        },
+                        request_timeout,
+                    )
+                    .await
+                    .into_response()
             })
         } else {
             Task::ready(Err(anyhow!("no upstream client and not local")))
@@ -10016,7 +10146,7 @@ impl LspStore {
                 self.worktree_store.read(cx).find_worktree(abs_path, cx)
             else {
                 log::warn!("skipping diagnostics update, no worktree found for path {abs_path:?}");
-                return Ok(());
+                continue;
             };
 
             let worktree_id = worktree.read(cx).id();
@@ -11401,6 +11531,29 @@ impl LspStore {
         }
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_execute_lsp_command(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExecuteLspCommand>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ExecuteLspCommandResponse> {
+        let server_id = LanguageServerId::from_proto(envelope.payload.language_server_id);
+        let arguments = envelope
+            .payload
+            .arguments
+            .iter()
+            .map(|argument| serde_json::from_str(argument))
+            .collect::<Result<Vec<serde_json::Value>, _>>()
+            .context("deserializing executeCommand arguments")?;
+        let result = lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.execute_lsp_command(server_id, envelope.payload.command, arguments, cx)
+            })
+            .await?;
+        Ok(proto::ExecuteLspCommandResponse {
+            result: result.map(|result| result.to_string()),
+        })
     }
 
     async fn handle_lsp_ext_run_flycheck(
@@ -15804,6 +15957,30 @@ impl PartialEq for LanguageServerPromptRequest {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct LanguageServerShowDocumentRequest {
+    pub uri: lsp::Uri,
+    pub external: bool,
+    pub take_focus: bool,
+    pub selection: Option<lsp::Range>,
+    pub(crate) response_channel: async_channel::Sender<bool>,
+}
+
+impl LanguageServerShowDocumentRequest {
+    pub fn respond(self, success: bool) {
+        self.response_channel.try_send(success).ok();
+    }
+}
+
+impl PartialEq for LanguageServerShowDocumentRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.uri == other.uri
+            && self.external == other.external
+            && self.take_focus == other.take_focus
+            && self.selection == other.selection
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum LanguageServerLogType {
     Log(MessageType),
@@ -16545,11 +16722,11 @@ pub fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
         offset_map[idx] = new_idx;
 
         match c {
-            '\n' if last_char_was_space => {
+            '\r' | '\n' if last_char_was_space => {
                 newlines_removed = true;
             }
             '\t' | ' ' if last_char_was_space => {}
-            '\n' if !last_char_was_space => {
+            '\r' | '\n' if !last_char_was_space => {
                 new_text.push(' ');
                 new_idx += 1;
                 last_char_was_space = true;
