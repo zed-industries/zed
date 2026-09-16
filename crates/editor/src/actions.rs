@@ -140,7 +140,7 @@ pub struct ConfirmCodeAction {
 }
 
 /// Toggles comment markers for the selected lines.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ToggleComments {
@@ -148,6 +148,22 @@ pub struct ToggleComments {
     pub advance_downwards: bool,
     #[serde(default)]
     pub ignore_indent: bool,
+    /// Whether to add comment markers to blank lines inside a multi-line
+    /// selection. A line of only whitespace counts as blank. Defaults to true.
+    #[serde(default = "default_true")]
+    pub comment_empty_lines: bool,
+}
+
+// `Default` is written out rather than derived because `comment_empty_lines`
+// defaults to true.
+impl Default for ToggleComments {
+    fn default() -> Self {
+        Self {
+            advance_downwards: false,
+            ignore_indent: false,
+            comment_empty_lines: true,
+        }
+    }
 }
 
 /// Toggles block comment markers for the selected text.
