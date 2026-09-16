@@ -1341,6 +1341,17 @@ pub struct StatusColorsContent {
     #[serde(rename = "unreachable.border")]
     pub unreachable_border: Option<ThemeColor>,
 
+    /// Indicates something new that Git does not yet track, like a file that
+    /// has not been staged/added to the index.
+    #[serde(rename = "untracked")]
+    pub untracked: Option<ThemeColor>,
+
+    #[serde(rename = "untracked.background")]
+    pub untracked_background: Option<ThemeColor>,
+
+    #[serde(rename = "untracked.border")]
+    pub untracked_border: Option<ThemeColor>,
+
     /// Represents a warning status, like an operation that is about to fail.
     #[serde(rename = "warning")]
     pub warning: Option<ThemeColor>,
