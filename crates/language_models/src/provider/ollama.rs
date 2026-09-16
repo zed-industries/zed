@@ -390,9 +390,18 @@ impl OllamaLanguageModel {
                     {
                         match tool_result {
                             MessageContent::ToolResult(tool_result) => {
+                                let images = tool_result
+                                    .images()
+                                    .map(|image| image.source.to_string())
+                                    .collect::<Vec<_>>();
                                 messages.push(ChatMessage::Tool {
                                     tool_name: tool_result.tool_name.to_string(),
                                     content: tool_result.text_contents(),
+                                    images: if images.is_empty() {
+                                        None
+                                    } else {
+                                        Some(images)
+                                    },
                                 })
                             }
                             _ => unreachable!("Only tool result should be extracted"),

@@ -83,9 +83,7 @@ pub(crate) fn run_tests() -> Workflow {
             .and_not_in_merge_queue()
             .then(build_visual_tests_binary()),
         should_run_tests.and_not_in_merge_queue().then(check_wasm()),
-        should_run_tests
-            .and_not_in_merge_queue()
-            .then(check_dependencies()), // could be more specific here?
+        should_run_tests.and_always().then(check_dependencies()), // could be more specific here?
         should_check_docs
             .and_not_in_merge_queue()
             .then(deploy_docs::check_docs()),
@@ -713,7 +711,7 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_DEFAULT)
+            .runs_on(runners::LINUX_LARGE)
             .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
             .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
