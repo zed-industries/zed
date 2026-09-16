@@ -9,7 +9,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    ProviderSettingsView, RateLimiter, SubPageProviderSettings,
+    PromptCompactionStrategy, ProviderSettingsView, RateLimiter, SubPageProviderSettings,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -367,6 +367,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelToolChoice::Any => self.model.capabilities.tools,
             LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn prompt_compaction_strategy(&self) -> PromptCompactionStrategy {
+        PromptCompactionStrategy::PreserveRequestPrefix
     }
 
     fn supports_streaming_tools(&self) -> bool {

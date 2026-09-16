@@ -10,7 +10,8 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, ProviderSettingsView, RateLimiter, env_var, stream_in_background,
+    OPEN_AI_PROVIDER_NAME, PromptCompactionStrategy, ProviderSettingsView, RateLimiter, env_var,
+    stream_in_background,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -540,6 +541,10 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn supports_server_side_compaction(&self) -> bool {
         self.model.supports_compaction()
+    }
+
+    fn prompt_compaction_strategy(&self) -> PromptCompactionStrategy {
+        PromptCompactionStrategy::PreserveRequestPrefix
     }
 
     fn supports_explicit_compaction(&self) -> bool {

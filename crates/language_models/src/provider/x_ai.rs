@@ -10,7 +10,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, ProviderSettingsView, RateLimiter, env_var,
+    LanguageModelToolChoice, PromptCompactionStrategy, ProviderSettingsView, RateLimiter, env_var,
 };
 pub use settings::XaiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -373,6 +373,10 @@ impl LanguageModel for XAiLanguageModel {
             | LanguageModelToolChoice::Any
             | LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn prompt_compaction_strategy(&self) -> PromptCompactionStrategy {
+        PromptCompactionStrategy::PreserveRequestPrefix
     }
 
     fn supports_thinking(&self) -> bool {

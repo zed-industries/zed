@@ -10,8 +10,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderSettingsView,
-    RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, PromptCompactionStrategy,
+    ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
@@ -313,6 +313,10 @@ impl LanguageModel for MistralLanguageModel {
 
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
         self.model.supports_tools()
+    }
+
+    fn prompt_compaction_strategy(&self) -> PromptCompactionStrategy {
+        PromptCompactionStrategy::PreserveRequestPrefix
     }
 
     fn supports_images(&self) -> bool {
