@@ -184,6 +184,36 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     buffer.update(cx, |buffer, _| {
         assert_eq!(&**buffer.file().unwrap().path(), rel_path("src/lib2.rs"));
     });
+    let renamed_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("src/lib2.rs")), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(renamed_buffer, buffer);
+
+    fs.insert_file(
+        path!("/code/project1/src/lib.rs"),
+        b"fn two() -> usize { 2 }".to_vec(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    let recreated_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    assert_ne!(recreated_buffer, buffer);
+    recreated_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(&**buffer.file().unwrap().path(), rel_path("src/lib.rs"));
+        assert_eq!(buffer.text(), "fn two() -> usize { 2 }");
+    });
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(&**buffer.file().unwrap().path(), rel_path("src/lib2.rs"));
+        assert_eq!(buffer.text(), "fn one() -> usize { 100 }");
+    });
 
     fs.set_index_for_repo(
         Path::new(path!("/code/project1/.git")),
@@ -196,6 +226,68 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
             "fn one() -> usize { 100 }"
         );
     });
+}
+
+#[gpui::test]
+async fn test_remote_buffer_path_swap(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code/project"),
+        json!({ "a.txt": "first", "b.txt": "second" }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let first_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let second_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("b.txt")), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    for updates in [
+        [(&first_buffer, "b.txt"), (&second_buffer, "a.txt")],
+        [(&second_buffer, "b.txt"), (&first_buffer, "a.txt")],
+    ] {
+        for (buffer, path) in updates {
+            let message = buffer.read_with(cx, |buffer, cx| {
+                let mut file = buffer.file().unwrap().to_proto(cx);
+                file.path = path.to_owned();
+                proto::UpdateBufferFile {
+                    project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                    buffer_id: buffer.remote_id().to_proto(),
+                    file: Some(file),
+                }
+            });
+            session.send(message).unwrap();
+            cx.run_until_parked();
+        }
+        for (buffer, path) in updates {
+            buffer.read_with(cx, |buffer, _| {
+                assert_eq!(&**buffer.file().unwrap().path(), rel_path(path));
+            });
+            project.read_with(cx, |project, cx| {
+                assert_eq!(
+                    project.get_open_buffer(&(worktree_id, rel_path(path)).into(), cx),
+                    Some(buffer.clone())
+                );
+            });
+        }
+    }
 }
 
 #[gpui::test]
