@@ -713,7 +713,7 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_DEFAULT)
+            .runs_on(runners::LINUX_LARGE)
             .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
             .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
