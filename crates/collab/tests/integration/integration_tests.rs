@@ -34,7 +34,7 @@ use project::{
     DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
     lsp_store::{
         FormatTrigger, LspFormatTarget, SymbolLocation,
-        log_store::{self, LanguageServerKind, LanguageServerLogKey, LogKind, LogMessage},
+        log_store::{self, LanguageServerKind, LanguageServerLogKey, LogKind},
     },
     search::{SearchQuery, SearchResult},
 };
