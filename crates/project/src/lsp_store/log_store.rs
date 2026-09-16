@@ -714,9 +714,9 @@ impl LogStore {
                                 );
                             }
                             crate::Event::Rejoined | crate::Event::HostReshared => {
-                                // The host can miss a peer-ID update while offline. Replay on
+                                // The host can miss a peer-ID update while offline. Synchronize on
                                 // either side's return, since the guest can rejoin first.
-                                log_store.replay_log_streams(&project.downgrade(), cx);
+                                log_store.synchronize_log_streams(&project.downgrade(), cx);
                             }
                             _ => {}
                         }
@@ -1204,16 +1204,16 @@ impl LogStore {
         Some(())
     }
 
-    fn replay_log_streams(&self, project: &WeakEntity<Project>, cx: &mut App) {
+    fn synchronize_log_streams(&self, project: &WeakEntity<Project>, cx: &mut App) {
         for (key, state) in &self.language_servers {
             if !matches!(&key.kind, LanguageServerKind::Remote { project: server_project } if server_project == project)
             {
                 continue;
             }
+            // Disables sent while disconnected were lost, but the host may have
+            // migrated those obsolete subscriptions to our new peer ID.
             for log_kind in [LogKind::Logs, LogKind::Trace, LogKind::Rpc] {
-                if state.has_log_stream(log_kind) {
-                    Self::send_toggle_log_message(key, true, log_kind, cx);
-                }
+                Self::send_toggle_log_message(key, state.has_log_stream(log_kind), log_kind, cx);
             }
         }
     }

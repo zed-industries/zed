@@ -1487,7 +1487,13 @@ async fn test_lsp_log_streams_reconnect_guest_first(
     cx_host: &mut TestAppContext,
     cx_guest: &mut TestAppContext,
 ) {
-    assert_lsp_log_streams_reconnect(executor, cx_host, cx_guest, true).await;
+    assert_lsp_log_streams_reconnect(
+        executor,
+        cx_host,
+        cx_guest,
+        LspLogStreamsReconnectScenario::BothPeers { guest_first: true },
+    )
+    .await;
 }
 
 #[gpui::test(iterations = 10)]
@@ -1496,14 +1502,73 @@ async fn test_lsp_log_streams_reconnect_host_first(
     cx_host: &mut TestAppContext,
     cx_guest: &mut TestAppContext,
 ) {
-    assert_lsp_log_streams_reconnect(executor, cx_host, cx_guest, false).await;
+    assert_lsp_log_streams_reconnect(
+        executor,
+        cx_host,
+        cx_guest,
+        LspLogStreamsReconnectScenario::BothPeers { guest_first: false },
+    )
+    .await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_lsp_log_streams_reconnect_guest_only_switch_to_trace(
+    executor: BackgroundExecutor,
+    cx_host: &mut TestAppContext,
+    cx_guest: &mut TestAppContext,
+) {
+    assert_lsp_log_streams_reconnect(
+        executor,
+        cx_host,
+        cx_guest,
+        LspLogStreamsReconnectScenario::SwitchToTraceWhileOffline,
+    )
+    .await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_lsp_log_streams_reconnect_guest_only_close(
+    executor: BackgroundExecutor,
+    cx_host: &mut TestAppContext,
+    cx_guest: &mut TestAppContext,
+) {
+    assert_lsp_log_streams_reconnect(
+        executor,
+        cx_host,
+        cx_guest,
+        LspLogStreamsReconnectScenario::CloseWhileOffline,
+    )
+    .await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_lsp_log_streams_reconnect_guest_only_close_one_view(
+    executor: BackgroundExecutor,
+    cx_host: &mut TestAppContext,
+    cx_guest: &mut TestAppContext,
+) {
+    assert_lsp_log_streams_reconnect(
+        executor,
+        cx_host,
+        cx_guest,
+        LspLogStreamsReconnectScenario::CloseOneViewWhileOffline,
+    )
+    .await;
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LspLogStreamsReconnectScenario {
+    BothPeers { guest_first: bool },
+    SwitchToTraceWhileOffline,
+    CloseWhileOffline,
+    CloseOneViewWhileOffline,
 }
 
 async fn assert_lsp_log_streams_reconnect(
     executor: BackgroundExecutor,
     cx_host: &mut TestAppContext,
     cx_guest: &mut TestAppContext,
-    guest_first: bool,
+    scenario: LspLogStreamsReconnectScenario,
 ) {
     let mut server = TestServer::start(executor.clone()).await;
     let host = server.create_client(cx_host, "host").await;
@@ -1555,6 +1620,8 @@ async fn assert_lsp_log_streams_reconnect(
         })
         .await
         .expect("host should share the project");
+    // Sharing publishes language servers asynchronously; include them in the join snapshot.
+    executor.run_until_parked();
     let guest_project = guest.join_remote_project(project_id, cx_guest).await;
     guest_logs.update(cx_guest, |store, cx| store.add_project(&guest_project, cx));
     executor.run_until_parked();
@@ -1572,11 +1639,23 @@ async fn assert_lsp_log_streams_reconnect(
         },
         server_id,
     );
+    let initial_log_kinds: &[LogKind] = match scenario {
+        LspLogStreamsReconnectScenario::SwitchToTraceWhileOffline => &[LogKind::Logs],
+        _ => &[LogKind::Logs, LogKind::Trace, LogKind::Rpc],
+    };
     guest_logs.update(cx_guest, |store, cx| {
-        for kind in [LogKind::Logs, LogKind::Trace, LogKind::Rpc] {
+        for &kind in initial_log_kinds {
             store
                 .retain_view_log_stream(&guest_key, kind, cx)
                 .expect("guest should retain the existing server's stream");
+            if matches!(
+                scenario,
+                LspLogStreamsReconnectScenario::CloseOneViewWhileOffline
+            ) {
+                store
+                    .retain_view_log_stream(&guest_key, kind, cx)
+                    .expect("a second view should retain the same stream");
+            }
         }
     });
     executor.run_until_parked();
@@ -1591,42 +1670,41 @@ async fn assert_lsp_log_streams_reconnect(
             verbose: None,
         });
     };
-    let assert_guest_received = |marker: &str, cx: &TestAppContext| {
+    let guest_received = |marker: &str, cx: &TestAppContext| {
         guest_logs.read_with(cx, |store, _| {
-            assert!(
+            [
                 store
                     .server_logs(&guest_key)
                     .expect("guest server logs should remain registered")
                     .iter()
                     .any(|message| message.as_ref() == marker),
-                "guest did not receive log marker {marker:?} (guest_first={guest_first})"
-            );
-            assert!(
                 store
                     .server_trace(&guest_key)
                     .expect("guest server trace should remain registered")
                     .iter()
                     .any(|message| message.as_ref() == marker),
-                "guest did not receive trace marker {marker:?} (guest_first={guest_first})"
-            );
-            assert!(
                 store
                     .language_servers
                     .get(&guest_key)
                     .expect("guest server should remain registered")
                     .rpc_state
                     .as_ref()
-                    .expect("guest RPC capture should remain enabled")
-                    .rpc_messages
-                    .iter()
-                    .any(|message| message.as_ref().contains(marker)),
-                "guest did not receive RPC marker {marker:?} (guest_first={guest_first})"
-            );
-        });
+                    .is_some_and(|state| {
+                        state
+                            .rpc_messages
+                            .iter()
+                            .any(|message| message.as_ref().contains(marker))
+                    }),
+            ]
+        })
     };
     send_marker("before reconnect");
     executor.run_until_parked();
-    assert_guest_received("before reconnect", cx_guest);
+    assert_eq!(
+        guest_received("before reconnect", cx_guest),
+        [LogKind::Logs, LogKind::Trace, LogKind::Rpc].map(|kind| initial_log_kinds.contains(&kind)),
+        "initial [Logs, Trace, Rpc] forwarding ({scenario:?})"
+    );
 
     let rejoined = Rc::new(Cell::new(false));
     let _subscription = cx_guest.update(|cx| {
@@ -1644,55 +1722,93 @@ async fn assert_lsp_log_streams_reconnect(
         .peer_id()
         .expect("guest should initially be connected");
     server.forbid_connections();
-    server.disconnect_client(old_host_peer);
+    if matches!(scenario, LspLogStreamsReconnectScenario::BothPeers { .. }) {
+        server.disconnect_client(old_host_peer);
+    }
     server.disconnect_client(old_guest_peer);
     executor.advance_clock(RECEIVE_TIMEOUT);
     executor.run_until_parked();
-    assert!(!host.status().borrow().is_connected());
     assert!(!guest.status().borrow().is_connected());
 
-    server.allow_connections();
-    let (first, first_context, second, second_context) = if guest_first {
-        (&guest, &mut *cx_guest, &host, &mut *cx_host)
-    } else {
-        (&host, &mut *cx_host, &guest, &mut *cx_guest)
-    };
-    first
-        .connect(false, &first_context.to_async())
-        .await
-        .into_response()
-        .expect("first peer should reconnect without losing room membership");
-    executor.run_until_parked();
-    assert!(!second.status().borrow().is_connected());
-    assert_ne!(
-        first.peer_id().expect("first peer should be connected"),
-        if guest_first {
-            old_guest_peer
+    if let LspLogStreamsReconnectScenario::BothPeers { guest_first } = scenario {
+        assert!(!host.status().borrow().is_connected());
+        server.allow_connections();
+        let (first, first_context, second, second_context) = if guest_first {
+            (&guest, &mut *cx_guest, &host, &mut *cx_host)
         } else {
-            old_host_peer
-        }
-    );
-    if guest_first {
-        assert!(
-            rejoined.get(),
-            "guest should rejoin before the host returns"
+            (&host, &mut *cx_host, &guest, &mut *cx_guest)
+        };
+        first
+            .connect(false, &first_context.to_async())
+            .await
+            .into_response()
+            .expect("first peer should reconnect without losing room membership");
+        executor.run_until_parked();
+        assert!(!second.status().borrow().is_connected());
+        assert_ne!(
+            first.peer_id().expect("first peer should be connected"),
+            if guest_first {
+                old_guest_peer
+            } else {
+                old_host_peer
+            }
         );
-        // The disconnected host must miss the incremental peer update so its
-        // reshare snapshot removes the old guest's stream ownership.
-        host_project.read_with(second_context, |project, _| {
+        if guest_first {
+            assert!(
+                rejoined.get(),
+                "guest should rejoin before the host returns"
+            );
+            // The disconnected host must miss the incremental peer update so its
+            // reshare snapshot removes the old guest's stream ownership.
+            host_project.read_with(second_context, |project, _| {
+                assert!(project.collaborators().contains_key(&old_guest_peer));
+            });
+        }
+        second
+            .connect(false, &second_context.to_async())
+            .await
+            .into_response()
+            .expect("second peer should reconnect without losing room membership");
+    } else {
+        assert!(host.status().borrow().is_connected());
+        host_project.read_with(cx_host, |project, _| {
             assert!(project.collaborators().contains_key(&old_guest_peer));
         });
+        // These disables cannot reach the online host; rejoin must reconcile
+        // ownership without replacing the project/store or toggling again.
+        guest_logs.update(cx_guest, |store, cx| {
+            for &kind in initial_log_kinds {
+                store
+                    .release_view_log_stream(&guest_key, kind, cx)
+                    .expect("guest should release its view while offline");
+            }
+            if matches!(
+                scenario,
+                LspLogStreamsReconnectScenario::SwitchToTraceWhileOffline
+            ) {
+                store
+                    .retain_view_log_stream(&guest_key, LogKind::Trace, cx)
+                    .expect("guest should switch to Trace while offline");
+            }
+        });
+        executor.run_until_parked();
+        assert!(!guest.status().borrow().is_connected());
+        server.allow_connections();
+        guest
+            .connect(false, &cx_guest.to_async())
+            .await
+            .into_response()
+            .expect("guest should reconnect without losing room membership");
     }
-    second
-        .connect(false, &second_context.to_async())
-        .await
-        .into_response()
-        .expect("second peer should reconnect without losing room membership");
     executor.run_until_parked();
     assert!(rejoined.get());
     let new_host_peer = host.peer_id().expect("host should have reconnected");
     let new_guest_peer = guest.peer_id().expect("guest should have reconnected");
-    assert_ne!(old_host_peer, new_host_peer);
+    if matches!(scenario, LspLogStreamsReconnectScenario::BothPeers { .. }) {
+        assert_ne!(old_host_peer, new_host_peer);
+    } else {
+        assert_eq!(old_host_peer, new_host_peer, "host must stay online");
+    }
     assert_ne!(old_guest_peer, new_guest_peer);
     host_project.read_with(cx_host, |project, _| {
         assert!(project.collaborators().contains_key(&new_guest_peer));
@@ -1701,16 +1817,34 @@ async fn assert_lsp_log_streams_reconnect(
     guest_project.read_with(cx_guest, |project, cx| {
         assert!(!project.is_disconnected(cx));
         assert!(project.collaborators().contains_key(&new_host_peer));
-        assert!(!project.collaborators().contains_key(&old_host_peer));
+        if old_host_peer != new_host_peer {
+            assert!(!project.collaborators().contains_key(&old_host_peer));
+        }
     });
 
+    let remaining_log_kinds: &[LogKind] = match scenario {
+        LspLogStreamsReconnectScenario::SwitchToTraceWhileOffline => &[LogKind::Trace],
+        LspLogStreamsReconnectScenario::CloseWhileOffline => &[],
+        _ => initial_log_kinds,
+    };
     send_marker("after reconnect");
     executor.run_until_parked();
-    assert_guest_received("after reconnect", cx_guest);
+    let received_after_reconnect = guest_received("after reconnect", cx_guest);
+    for (kind, received) in [LogKind::Logs, LogKind::Trace, LogKind::Rpc]
+        .into_iter()
+        .zip(received_after_reconnect)
+    {
+        if remaining_log_kinds.contains(&kind) {
+            assert!(
+                received,
+                "{kind:?} should resume after reconnect ({scenario:?})"
+            );
+        }
+    }
 
     // A replay must not acquire another view reference or retain the old peer.
     guest_logs.update(cx_guest, |store, cx| {
-        for kind in [LogKind::Logs, LogKind::Trace, LogKind::Rpc] {
+        for &kind in remaining_log_kinds {
             store
                 .release_view_log_stream(&guest_key, kind, cx)
                 .expect("one release should disable the retained stream");
@@ -1729,6 +1863,26 @@ async fn assert_lsp_log_streams_reconnect(
         );
         assert!(
             store
+                .server_trace(&host_key)
+                .expect("host server trace should remain registered")
+                .iter()
+                .any(|message| message.as_ref() == "after disabling")
+        );
+    });
+    assert_eq!(
+        guest_received("after disabling", cx_guest),
+        [false; 3],
+        "[Logs, Trace, Rpc] forwarding must stop after the final release ({scenario:?})"
+    );
+    assert_eq!(
+        received_after_reconnect,
+        [LogKind::Logs, LogKind::Trace, LogKind::Rpc]
+            .map(|kind| remaining_log_kinds.contains(&kind)),
+        "rejoin must restore only the current [Logs, Trace, Rpc] streams ({scenario:?})"
+    );
+    host_logs.read_with(cx_host, |store, _| {
+        assert!(
+            store
                 .language_servers
                 .get(&host_key)
                 .expect("host server should remain registered")
@@ -1738,22 +1892,6 @@ async fn assert_lsp_log_streams_reconnect(
         );
     });
     guest_logs.read_with(cx_guest, |store, _| {
-        assert!(
-            store
-                .server_logs(&guest_key)
-                .expect("guest server logs should remain registered")
-                .iter()
-                .all(|message| message.as_ref() != "after disabling"),
-            "log forwarding should stop after one release"
-        );
-        assert!(
-            store
-                .server_trace(&guest_key)
-                .expect("guest server trace should remain registered")
-                .iter()
-                .all(|message| message.as_ref() != "after disabling"),
-            "trace forwarding should stop after one release"
-        );
         assert!(
             store
                 .language_servers
