@@ -68,7 +68,7 @@ use rpc::{
 use serde::Deserialize;
 use settings::{GitDiffBaseSetting, Settings, SettingsLocation, SettingsStore, WorktreeId};
 use smallvec::SmallVec;
-use smol::future::yield_now;
+use smol::{future::yield_now, lock::Semaphore};
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashSet, VecDeque, hash_map::Entry},
@@ -109,6 +109,7 @@ pub struct GitStore {
     display_diffs: HashMap<RepositoryId, DisplayDiff>,
     worktree_ids: HashMap<RepositoryId, HashSet<WorktreeId>>,
     active_repo_id: Option<RepositoryId>,
+    git_scan_semaphore: Arc<Semaphore>,
     #[allow(clippy::type_complexity)]
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
@@ -489,6 +490,20 @@ pub struct GitStoreCheckpoint {
     checkpoints_by_work_dir_abs_path: HashMap<Arc<Path>, GitRepositoryCheckpoint>,
 }
 
+/// Bounds how many git subprocesses the status-scan path may run at once
+/// across all repositories. Each repository shells out to `git` several times
+/// while computing its snapshot, and every repository scans independently, so
+/// an N-repo workspace would otherwise fan out N × several git subprocesses at
+/// once and peg every core. Override with `ZED_GIT_SCAN_CONCURRENCY` to tune.
+const DEFAULT_GIT_SCAN_CONCURRENCY: usize = 4;
+
+fn git_scan_concurrency() -> usize {
+    std::env::var("ZED_GIT_SCAN_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_GIT_SCAN_CONCURRENCY)
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
     pub repo_path: RepoPath,
@@ -1016,6 +1031,7 @@ impl GitStore {
             display_diffs: HashMap::default(),
             worktree_ids: HashMap::default(),
             active_repo_id: None,
+            git_scan_semaphore: Arc::new(Semaphore::new(git_scan_concurrency())),
             _subscriptions,
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
@@ -12302,26 +12318,44 @@ async fn compute_snapshot(
 ) -> RepositorySnapshot {
     log::debug!("starting compute snapshot");
 
-    let (id, work_directory_abs_path, prev_snapshot) = this.update(cx, |this, _| {
-        this.paths_needing_status_update.clear();
-        (
-            this.id,
-            this.work_directory_abs_path.clone(),
-            this.snapshot.clone(),
-        )
-    });
+    let (id, work_directory_abs_path, prev_snapshot, scan_semaphore) =
+        this.update(cx, |this, cx| {
+            this.paths_needing_status_update.clear();
+            let scan_semaphore = this
+                .git_store()
+                .map(|store| store.read(cx).git_scan_semaphore.clone())
+                .unwrap_or_else(|| Arc::new(Semaphore::new(git_scan_concurrency())));
+            (
+                this.id,
+                this.work_directory_abs_path.clone(),
+                this.snapshot.clone(),
+                scan_semaphore,
+            )
+        });
 
     let branches_future = {
         let backend = backend.clone();
-        async move { backend.branches().await.log_err().unwrap_or_default() }
+        let scan_semaphore = scan_semaphore.clone();
+        async move {
+            let _permit = scan_semaphore.acquire().await;
+            backend.branches().await.log_err().unwrap_or_default()
+        }
     };
     let head_commit_future = {
         let backend = backend.clone();
-        async move { backend.show("HEAD".to_string()).await.ok() }
+        let scan_semaphore = scan_semaphore.clone();
+        async move {
+            let _permit = scan_semaphore.acquire().await;
+            backend.show("HEAD".to_string()).await.ok()
+        }
     };
     let worktrees_future = {
         let backend = backend.clone();
-        async move { backend.worktrees().await.log_err().unwrap_or_default() }
+        let scan_semaphore = scan_semaphore.clone();
+        async move {
+            let _permit = scan_semaphore.acquire().await;
+            backend.worktrees().await.log_err().unwrap_or_default()
+        }
     };
     let (branches, head_commit, all_worktrees) =
         futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
@@ -12339,7 +12373,10 @@ async fn compute_snapshot(
         .filter(|wt| wt.path != *work_directory_abs_path)
         .collect();
 
-    let mut remote_urls = backend.remote_urls().await;
+    let mut remote_urls = {
+        let _permit = scan_semaphore.acquire().await;
+        backend.remote_urls().await
+    };
     let remote_origin_url = remote_urls.remove("origin");
     let remote_upstream_url = remote_urls.remove("upstream");
 
@@ -12383,7 +12420,9 @@ async fn compute_snapshot(
 
     let statuses_future = {
         let backend = backend.clone();
+        let scan_semaphore = scan_semaphore.clone();
         async move {
+            let _permit = scan_semaphore.acquire().await;
             backend
                 .status(&[RepoPath::from_rel_path(
                     &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
@@ -12396,14 +12435,34 @@ async fn compute_snapshot(
     let diff_stats_future = {
         let snapshot = snapshot.clone();
         let backend = backend.clone();
+        let scan_semaphore = scan_semaphore.clone();
         async move {
             if snapshot.head_commit.is_some() {
-                futures::future::join3(
-                    backend.diff_stat(DiffStatType::HeadToWorktree, &[]),
-                    backend.diff_stat(DiffStatType::HeadToIndex, &[]),
-                    backend.diff_stat(DiffStatType::IndexToWorktree, &[]),
-                )
-                .await
+                let head_to_worktree = {
+                    let backend = backend.clone();
+                    let scan_semaphore = scan_semaphore.clone();
+                    async move {
+                        let _permit = scan_semaphore.acquire().await;
+                        backend.diff_stat(DiffStatType::HeadToWorktree, &[]).await
+                    }
+                };
+                let head_to_index = {
+                    let backend = backend.clone();
+                    let scan_semaphore = scan_semaphore.clone();
+                    async move {
+                        let _permit = scan_semaphore.acquire().await;
+                        backend.diff_stat(DiffStatType::HeadToIndex, &[]).await
+                    }
+                };
+                let index_to_worktree = {
+                    let backend = backend.clone();
+                    let scan_semaphore = scan_semaphore.clone();
+                    async move {
+                        let _permit = scan_semaphore.acquire().await;
+                        backend.diff_stat(DiffStatType::IndexToWorktree, &[]).await
+                    }
+                };
+                futures::future::join3(head_to_worktree, head_to_index, index_to_worktree).await
             } else {
                 (
                     Ok(status::GitDiffStat::default()),
@@ -12415,7 +12474,11 @@ async fn compute_snapshot(
     };
     let stash_entries_future = {
         let backend = backend.clone();
-        async move { backend.stash_entries().await.log_err().unwrap_or_default() }
+        let scan_semaphore = scan_semaphore.clone();
+        async move {
+            let _permit = scan_semaphore.acquire().await;
+            backend.stash_entries().await.log_err().unwrap_or_default()
+        }
     };
 
     let (statuses, diff_stats, stash_entries) =
