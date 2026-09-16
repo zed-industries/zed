@@ -753,8 +753,6 @@ pub struct App {
     pub(crate) foreground_executor: ForegroundExecutor,
     #[cfg(feature = "profiler")]
     foreground_journal: crate::profiler::journal::ForegroundJournal,
-    #[cfg(feature = "profiler")]
-    foreground_journal_watchdog: Option<Task<()>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
@@ -881,8 +879,6 @@ impl App {
                 foreground_executor,
                 #[cfg(feature = "profiler")]
                 foreground_journal,
-                #[cfg(feature = "profiler")]
-                foreground_journal_watchdog: None,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
@@ -944,10 +940,10 @@ impl App {
             }),
         });
 
-        #[cfg(feature = "profiler")]
-        app.borrow_mut().start_foreground_journal_watchdog();
         init_app_menus(platform.as_ref(), &app.borrow());
         SystemWindowTabController::init(&mut app.borrow_mut());
+        #[cfg(feature = "profiler")]
+        crate::profiler::journal::observe_power(&app.borrow());
 
         platform.on_keyboard_layout_change(Box::new({
             let app = Rc::downgrade(&app);
@@ -978,8 +974,6 @@ impl App {
         platform.on_system_sleep(Box::new({
             let app = Rc::downgrade(&app);
             move || {
-                #[cfg(feature = "profiler")]
-                crate::profiler::journal::record_power_transition(false);
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
                     cx.system_sleep_observers
@@ -992,8 +986,6 @@ impl App {
         platform.on_system_wake(Box::new({
             let app = Rc::downgrade(&app);
             move || {
-                #[cfg(feature = "profiler")]
-                crate::profiler::journal::record_power_transition(true);
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
                     cx.system_wake_observers
@@ -2071,23 +2063,6 @@ impl App {
     #[cfg(feature = "profiler")]
     pub fn foreground_journal(&self) -> crate::profiler::journal::ForegroundJournal {
         self.foreground_journal.clone()
-    }
-
-    #[cfg(feature = "profiler")]
-    pub(crate) fn start_foreground_journal_watchdog(&mut self) {
-        self.foreground_journal_watchdog = Some(self.foreground_executor.spawn({
-            let background_executor = self.background_executor.clone();
-            async move {
-                loop {
-                    background_executor
-                        .timer(crate::profiler::journal::FRAME_DEADLINE)
-                        .await;
-                    // A pending frame may never get another platform callback.
-                    // Give its expired presentation barrier an idle checkpoint.
-                    let _turn = crate::profiler::journal::foreground_turn();
-                }
-            }
-        }));
     }
 
     /// Spawns the future returned by the given function on the main thread. The closure will be invoked

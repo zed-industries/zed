@@ -165,7 +165,6 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
         frames_with_3_events = frames_with_3_events,
         report_window_seconds = report_window_seconds,
         measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
-        lifecycle_coverage = "delivered_platform_callbacks",
     );
 }
 
@@ -285,7 +284,6 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         root_entity_type_name = window_handle.root_entity_type_name(),
         report_window_seconds = report_window_seconds,
         measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
-        lifecycle_coverage = "delivered_platform_callbacks",
     );
 }
 

@@ -44,8 +44,6 @@ pub(crate) struct TestPlatform {
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
     pub(crate) system_notifications: RefCell<TestSystemNotifications>,
-    system_sleep_callback: RefCell<Option<Box<dyn FnMut()>>>,
-    system_wake_callback: RefCell<Option<Box<dyn FnMut()>>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart:
         RefCell<Option<oneshot::Sender<(Option<PathBuf>, Vec<std::ffi::OsString>)>>>,
@@ -122,18 +120,6 @@ pub(crate) struct TestPrompts {
 }
 
 impl TestPlatform {
-    pub(crate) fn simulate_system_sleep(&self) {
-        if let Some(callback) = self.system_sleep_callback.borrow_mut().as_mut() {
-            callback();
-        }
-    }
-
-    pub(crate) fn simulate_system_wake(&self) {
-        if let Some(callback) = self.system_wake_callback.borrow_mut().as_mut() {
-            callback();
-        }
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
         Self::with_platform(
@@ -182,8 +168,6 @@ impl TestPlatform {
             weak: weak.clone(),
             opened_url: Default::default(),
             system_notifications: Default::default(),
-            system_sleep_callback: Default::default(),
-            system_wake_callback: Default::default(),
             text_system,
             headless_renderer_factory,
             menus: Default::default(),
@@ -600,13 +584,9 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn on_system_sleep(&self, callback: Box<dyn FnMut()>) {
-        *self.system_sleep_callback.borrow_mut() = Some(callback);
-    }
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
-        *self.system_wake_callback.borrow_mut() = Some(callback);
-    }
+    fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 
     fn set_app_identity(&self, identifier: &str, name: &str) {
         self.system_notifications.borrow_mut().app_identity =

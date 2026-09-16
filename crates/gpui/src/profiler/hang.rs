@@ -15,24 +15,22 @@ use std::time::Duration;
 use scheduler::Instant;
 use serde::Serialize;
 
+/// Version of the power/visibility-aware measurement rules.
+pub const MEASUREMENT_VERSION: u32 = 2;
+
 use super::SerializedLocation;
 use super::journal::{
     ForegroundEvent, ForegroundJournal, ForegroundJournalCollector, ForegroundJournalEntry,
-    FrameSnapshot, IntervalBoundary, IntervalSealer, LifecycleCounts,
+    FrameSnapshot, IntervalBoundary, IntervalSealer,
 };
-
-/// Version of lifecycle-aware foreground measurements.
-pub const MEASUREMENT_VERSION: u32 = 2;
 
 /// Detects foreground hangs by polling the journal.
 ///
-/// Detection is post-hoc: a hang is reported once an explicit presentation,
-/// foreground-idle, or delivered lifecycle boundary completes its interval. Work that never
+/// Detection is post-hoc: a hang is reported once an explicit presentation
+/// or foreground-idle boundary completes its interval. Work that never
 /// yields back to the foreground is not observed until it does.
 pub struct HangDetector {
     collector: ForegroundJournalCollector,
-    journal: ForegroundJournal,
-    previous_lifecycle_counts: LifecycleCounts,
     sealer: IntervalSealer,
     threshold: Duration,
     frame_budget: Duration,
@@ -76,8 +74,6 @@ impl HangDetector {
     pub fn new(journal: ForegroundJournal, threshold: Duration, frame_budget: Duration) -> Self {
         Self {
             collector: journal.collector(),
-            previous_lifecycle_counts: journal.lifecycle_counts(),
-            journal,
             sealer: IntervalSealer::new(Instant::now()),
             threshold,
             frame_budget,
@@ -89,19 +85,6 @@ impl HangDetector {
     /// platform submission. `None` until a presentation boundary is observed.
     pub fn first_present_at(&self) -> Option<Instant> {
         self.first_present_at
-    }
-
-    /// Exclusions since the previous call, including when no hang qualified.
-    /// These counters survive ring loss; each detector has its own baseline.
-    pub fn take_lifecycle_counts(&mut self) -> LifecycleCounts {
-        let counts = self.journal.lifecycle_counts();
-        let previous = std::mem::replace(&mut self.previous_lifecycle_counts, counts);
-        LifecycleCounts {
-            interrupted_spans: counts.interrupted_spans - previous.interrupted_spans,
-            sleep_transitions: counts.sleep_transitions - previous.sleep_transitions,
-            wake_transitions: counts.wake_transitions - previous.wake_transitions,
-            excluded_frame_samples: counts.excluded_frame_samples - previous.excluded_frame_samples,
-        }
     }
 
     /// Drains newly recorded events and returns the incidents sealed since
@@ -131,7 +114,7 @@ impl HangDetector {
 /// locations as plain data, contributor count capped by the converter.
 #[derive(Debug, Clone, Serialize)]
 pub struct SerializedHangIncident {
-    /// Lifecycle-aware measurement schema version.
+    /// Identifies the rules used to exclude interrupted measurements.
     pub measurement_version: u32,
     /// `"startup"` when the active window began before the first observed
     /// newly drawn frame finished platform submission (see
@@ -155,7 +138,7 @@ pub struct SerializedHangIncident {
     /// For presentation-sealed incidents, how long the submitted frame had
     /// been dirty, in milliseconds.
     pub dirty_to_present_ms: Option<f64>,
-    /// What closed the incident: `"present"`, `"idle"`, or `"lifecycle"`. This labels the
+    /// What closed the incident: `"present"`, `"idle"`, or `"power_transition"`. This labels the
     /// boundary, not the hang's cause — the cause is the first contributor.
     pub sealed_by: &'static str,
     /// Fraction of the active window the foreground spent working,
@@ -287,11 +270,11 @@ impl SerializedHangIncident {
                 .min(1.0)
         };
         Self {
-            measurement_version: MEASUREMENT_VERSION,
             phase: match first_present_at {
                 Some(first_present_at) if active_start >= first_present_at => "steady",
                 _ => "startup",
             },
+            measurement_version: MEASUREMENT_VERSION,
             trigger: incident.trigger,
             start_ms: since_startup(active_start),
             active_ms: as_millis(active),
@@ -304,12 +287,12 @@ impl SerializedHangIncident {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration().map(as_millis)
                 }
-                IntervalBoundary::Idle { .. } | IntervalBoundary::Lifecycle { .. } => None,
+                IntervalBoundary::Idle { .. } | IntervalBoundary::PowerTransition { .. } => None,
             },
             sealed_by: match snapshot.boundary {
                 IntervalBoundary::Presented(_) => "present",
                 IntervalBoundary::Idle { .. } => "idle",
-                IntervalBoundary::Lifecycle { .. } => "lifecycle",
+                IntervalBoundary::PowerTransition { .. } => "power_transition",
             },
             busy_fraction: (busy_fraction * 1000.0).round() / 1000.0,
             event_count: snapshot.events.len(),
