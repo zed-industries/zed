@@ -2238,7 +2238,7 @@ impl GitStore {
             }
         }
         cx.background_spawn(async move {
-            Ok(future::try_join_all(tasks)
+            Ok(join_with_concurrency_limit(tasks, git_checkpoint_concurrency())
                 .await?
                 .into_iter()
                 .all(|result| result))
