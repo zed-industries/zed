@@ -3,13 +3,13 @@
 <!--
 What problem does this solve, why does it matter, and how?
 Use "Fixes #123" for each issue resolved.
-Show user-facing changes with a screenshot, GIF, or video (before/after).
+For UI changes, attach before/after screenshots, GIFs, or a video.
 -->
 
 ## Testing
 
 <!--
-What did you test, and how? Include platforms and remaining gaps.
+Manually test your changes; then report results, automated tests, platforms, and gaps.
 How can reviewers test this? Include setup and steps.
 -->
 
