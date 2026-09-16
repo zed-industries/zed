@@ -986,6 +986,19 @@ impl RemoteClient {
         connection.build_forward_ports_command(forwards)
     }
 
+    pub async fn update_port_forwards(
+        &self,
+        previous_forwards: &[(u16, String, u16)],
+        new_forwards: &[(u16, String, u16)],
+    ) -> Result<()> {
+        let Some(connection) = self.remote_connection() else {
+            return Err(anyhow!("no remote connection"));
+        };
+        connection
+            .update_port_forwards(previous_forwards, new_forwards)
+            .await
+    }
+
     pub fn upload_directory(
         &self,
         src_path: PathBuf,
@@ -1660,6 +1673,14 @@ pub trait RemoteConnection: Send + Sync {
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
     fn has_wsl_interop(&self) -> bool;
+
+    async fn update_port_forwards(
+        &self,
+        _previous_forwards: &[(u16, String, u16)],
+        _new_forwards: &[(u16, String, u16)],
+    ) -> Result<()> {
+        Ok(())
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}
