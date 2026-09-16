@@ -1,3 +1,4 @@
+use git_hosting_providers::{GITHUB_PUBLIC_BASE_URL, GITLAB_PUBLIC_BASE_URL};
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
@@ -8068,7 +8069,10 @@ fn version_control_page() -> SettingsPage {
                             .repository_search_providers
                             .as_ref()?
                             .iter()
-                            .any(|provider| provider == "https://github.com");
+                            .any(|provider| {
+                                provider.trim_end_matches('/')
+                                    == GITHUB_PUBLIC_BASE_URL.trim_end_matches('/')
+                            });
                         Some(if enabled {
                             &DEFAULT_TRUE
                         } else {
@@ -8081,9 +8085,12 @@ fn version_control_page() -> SettingsPage {
                             .get_or_insert_default()
                             .repository_search_providers;
                         let providers = providers.get_or_insert_default();
-                        providers.retain(|provider| provider != "https://github.com");
+                        providers.retain(|provider| {
+                            provider.trim_end_matches('/')
+                                != GITHUB_PUBLIC_BASE_URL.trim_end_matches('/')
+                        });
                         if value == Some(true) {
-                            providers.push("https://github.com".to_string());
+                            providers.push(GITHUB_PUBLIC_BASE_URL.to_string());
                         }
                     },
                 }),
@@ -8103,7 +8110,10 @@ fn version_control_page() -> SettingsPage {
                             .repository_search_providers
                             .as_ref()?
                             .iter()
-                            .any(|provider| provider == "https://gitlab.com");
+                            .any(|provider| {
+                                provider.trim_end_matches('/')
+                                    == GITLAB_PUBLIC_BASE_URL.trim_end_matches('/')
+                            });
                         Some(if enabled {
                             &DEFAULT_TRUE
                         } else {
@@ -8116,9 +8126,12 @@ fn version_control_page() -> SettingsPage {
                             .get_or_insert_default()
                             .repository_search_providers;
                         let providers = providers.get_or_insert_default();
-                        providers.retain(|provider| provider != "https://gitlab.com");
+                        providers.retain(|provider| {
+                            provider.trim_end_matches('/')
+                                != GITLAB_PUBLIC_BASE_URL.trim_end_matches('/')
+                        });
                         if value == Some(true) {
-                            providers.push("https://gitlab.com".to_string());
+                            providers.push(GITLAB_PUBLIC_BASE_URL.to_string());
                         }
                     },
                 }),

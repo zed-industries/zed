@@ -27,7 +27,7 @@ fn merge_request_number_regex() -> &'static Regex {
     &MERGE_REQUEST_NUMBER_REGEX
 }
 
-use crate::get_host_from_git_remote_url;
+use crate::{GITLAB_PUBLIC_BASE_URL, get_host_from_git_remote_url};
 
 const REPOSITORY_SEARCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPOSITORY_SEARCH_RESULTS: usize = 8;
@@ -79,7 +79,7 @@ impl Gitlab {
     }
 
     pub fn public_instance() -> Self {
-        Self::new("GitLab", Url::parse("https://gitlab.com").unwrap())
+        Self::new("GitLab", Url::parse(GITLAB_PUBLIC_BASE_URL).unwrap())
     }
 
     pub fn from_remote_url(remote_url: &str) -> Result<Self> {

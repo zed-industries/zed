@@ -14,6 +14,9 @@ use util::maybe;
 pub use crate::providers::*;
 pub use crate::settings::*;
 
+pub const GITHUB_PUBLIC_BASE_URL: &str = "https://github.com/";
+pub const GITLAB_PUBLIC_BASE_URL: &str = "https://gitlab.com/";
+
 /// Initializes the Git hosting providers.
 pub fn init(cx: &mut App) {
     crate::settings::init(cx);

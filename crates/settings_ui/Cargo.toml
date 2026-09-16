@@ -38,6 +38,7 @@ extension_host.workspace = true
 fs.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
+git_hosting_providers.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 heck.workspace = true

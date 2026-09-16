@@ -17,7 +17,7 @@ use git::{
     PullRequest, RemoteUrl, RepositorySearchResult,
 };
 
-use crate::get_host_from_git_remote_url;
+use crate::{GITHUB_PUBLIC_BASE_URL, get_host_from_git_remote_url};
 
 const REPOSITORY_SEARCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPOSITORY_SEARCH_RESULTS: usize = 8;
@@ -135,7 +135,7 @@ impl Github {
     }
 
     pub fn public_instance() -> Self {
-        Self::new("GitHub", Url::parse("https://github.com").unwrap())
+        Self::new("GitHub", Url::parse(GITHUB_PUBLIC_BASE_URL).unwrap())
     }
 
     pub fn from_remote_url(remote_url: &str) -> Result<Self> {
