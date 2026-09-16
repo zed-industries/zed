@@ -1,89 +1,32 @@
 # Contributing to Zed
 
-Thank you for helping us make Zed better!
+Thank you for helping us make Zed better! Start small, pick one thing, and see it through.
 
-All activity in Zed forums is subject to our [Code of
-Conduct](https://zed.dev/code-of-conduct). Additionally, contributors must sign
-our [Contributor License Agreement](https://zed.dev/cla) before their
-contributions can be merged.
+## Before you start
 
-## Contribution ideas
+- **Fixing a bug or improving docs?** A pull request is the best place to start. Looking for a task? See [contribution ideas](#contribution-ideas).
+- **Adding a feature? Confirm interest before investing effort.** If there isn't a GitHub issue with staff confirmation that we want it, start a [GitHub discussion](https://github.com/zed-industries/zed/discussions), not a PR or a new issue. This especially applies to changes to the Zed Extension API.
+  - For larger features, read the [Zed Feature Process](./docs/src/development/feature-process.md) before writing a proposal. It covers the context, integration points, and design decisions a strong proposal needs.
+- **Keep each PR about one thing.** A bugfix should not arrive with two features and a refactoring in tow.
+- **No more than three open PRs per author.** Landing your first PR improves the odds for the next; a stack of open PRs goes stale against a moving `main`. This cap also keeps review manageable when contributions outpace us, including automated bursts.
+- **Sign the [Contributor License Agreement](https://zed.dev/cla)** before your contribution can be merged. All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/code-of-conduct).
 
-Zed is a large project with a number of priorities. We spend most of
-our time working on what we believe the product needs, but we also love working
-with the community to improve the product in ways we haven't thought of (or had time to get to yet!)
+Read the [AI policy](#ai-policy) below, then see [sending changes](#sending-changes) for build guides and PR requirements. Working on UI? Keep the [UI/UX checklist](./docs/src/development/ui-checklist.md) handy.
 
-In particular **we love PRs that are**:
+### Things we will (probably) not merge
 
-- Fixing or extending the **docs**.
-- Fixing **bugs**.
-- **Small** enhancements to existing features to **make them work for more people** (making things work on more platforms/modes/whatever).
-- **Small** extra features, like keybindings or actions you miss from other editors or extensions.
-- Part of a **Community Program** like [Let's Git Together](https://github.com/zed-industries/zed/issues/41541) or [The Guild](https://zed.dev/community/guild).
-- Features we **explicitly called out as open to community contributions**
+There are few hard-and-fast rules, but we typically don't merge:
 
-If you're looking for concrete ideas:
+- **Changes that can be provided by an extension**, such as new languages or themes. See the [extension development docs](https://zed.dev/docs/extensions/developing-extensions).
+- **Extension API changes without prior discussion** involving Zed staff.
+- **New file icons.** Our default icons are hand-designed to fit together; please don't submit off-the-shelf SVGs.
+- **Features whose complexity outweighs their benefit**, in our judgement, for the number of people who would use them.
+- **Giant refactorings.**
+- **Non-trivial changes without tests.**
+- **Style-only code changes that don't alter app logic.** Reducing allocations, removing `.unwrap()`s, and fixing typos are welcome; making code "more readable" alone may not be.
+- **AI-generated work the author doesn't understand.** You are responsible for the output, not just the prompt.
 
-- [Docs issues](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ADocs)
-- Issues suitable for [first-time contributors](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20first%20issue%22) and [returning contributors](https://github.com/zed-industries/zed/issues?q=state%3Aopen%20label%3A%22.contrib%2Fgood%20non-first%20issue%22)
-- [Triaged bugs with confirmed steps to reproduce](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ABug%20label%3Astate%3Areproducible)
-- [Area labels](https://github.com/zed-industries/zed/labels?q=area%3A*) to browse bugs in a specific part of the product you care about (after clicking on an area label, add type:Bug to the search)
-- [The board with the features](https://github.com/orgs/zed-industries/projects/78/views/4) we explicitly invited the community's contributions for.
-
-**Thinking about proposing or building a larger feature? Don't start with a PR**, start with reading the [Zed Feature Process](./docs/src/development/feature-process.md) for how we think about feature design — what context to provide, what integration points to consider, and how to put together a strong proposal. The right place for the proposals is [GitHub discussions](https://github.com/zed-industries/zed/discussions) (not GitHub issues).
-
-## Sending changes
-
-The Zed culture values working code and synchronous conversations over long
-discussion threads.
-
-The best way to get us to take a look at a proposed change (excluding new features) is to send a pull request. We will get back to you (though this sometimes takes longer than we'd like, sorry). **Pinging the maintainers by their username or writing them emails spends their time but does not bump the priority of a particular PR.**
-
-If you need more feedback from us: the best way is to be responsive to
-GitHub comments, or to offer up time to pair with us.
-
-If you need help deciding how to fix a bug, or finish implementing a feature
-that we've agreed we want, please open a PR early so we can discuss how to make
-the change with code in hand.
-
-Although we will take a look, we tend to only merge about half the PRs that are
-submitted. **If you'd like your PR to have the best chance of being merged**:
-
-- Make sure the change is **desired**: we're always happy to accept bugfixes,
-  but **features should be confirmed with us first** if you aim to avoid wasted
-  effort. If there isn't already a GitHub issue for your feature with staff
-  confirmation that we want it, start with a [GitHub discussion](https://github.com/zed-industries/zed/discussions) rather than a PR.
-  - This especially applies to any changes proposed to the Zed Extension API.
-- Include a clear description of **what you're solving**, and why it's important.
-- Include **tests**. For UI changes, consider updating visual regression tests (see [Building Zed for macOS](./docs/src/development/macos.md#visual-regression-tests)).
-- If the change is visible in the UI, attach **screenshots or screen recordings**.
-- Make the PR about **one thing only**, e.g. if it's a bugfix, don't add two
-  features and a refactoring on top of that.
-- Keep AI assistance under your judgement and responsibility: it's unlikely
-  we'll merge a vibe-coded PR that the author doesn't understand.
-
-**A note on open pull requests:** currently we cap them at **three per author**.
-We're lucky to get a lot of contributions, and the pattern we've seen is that landing
-your first PR dramatically improves the odds for every PR after it. A stack of
-simultaneous PRs, by contrast, tends to just sit and rot against a moving `main`
-branch. It's better to start with one, see it through, then bring on the next.
-It also keeps things sane when the contributions are coming in faster than we can
-review them, including the occasional automated burst.
-
-## Things we will (probably) not merge
-
-Although there are few hard and fast rules, **typically we don't merge**:
-
-- Anything that can be provided by an extension. For example a new language, or theme. For adding themes or support for a new language to Zed, check out our [docs on developing extensions](https://zed.dev/docs/extensions/developing-extensions).
-- Changes to the Zed Extension API submitted without prior discussion involving Zed staff.
-- New file icons. Zed's default icon theme consists of icons that are hand-designed to fit together in a cohesive manner, please don't submit PRs with off-the-shelf SVGs.
-- Features where (in our subjective opinion) the extra complexity isn't worth it for the number of people who will benefit.
-- Giant refactorings.
-- Non-trivial changes with no tests.
-- Stylistic code changes that do not alter any app logic. Reducing allocations, removing `.unwrap()`s, fixing typos is great; making code "more readable" — maybe not so much.
-- Anything that seems AI-generated without understanding the output.
-
-### AI Policy
+## AI Policy
 
 We welcome the use of LLMs for coding, but we hold a high bar for all contributions, and **we expect a human in the loop who genuinely understands the work an LLM produces** on their behalf. For that reason, we **don't accept contributions from autonomous agents**. Pull requests that appear to violate this may be closed, sometimes without notice.
 
@@ -93,73 +36,43 @@ If you think it's helpful/necessary to **share context from a chat with an LLM**
 
 This policy was adapted from [ripgrep's AI policy](https://github.com/BurntSushi/ripgrep/blob/f0cec341ab95c25c691ad3d5754d4bd9eedde21f/AI_POLICY.md).
 
-### Internal advice for reviewers
+## Sending changes
 
-- If the fix/feature is obviously great, and the code is great. Hit merge.
-- If the fix/feature is obviously great, and the code is nearly great. Send PR comments, or offer to pair to get things perfect.
-- If the fix/feature is not obviously great, or the code needs rewriting from scratch. Close the PR with a thank you and some explanation.
+**Need a local build?** Follow the guide for [macOS](./docs/src/development/macos.md), [Linux](./docs/src/development/linux.md), [Windows](./docs/src/development/windows.md), or [FreeBSD](./docs/src/development/freebsd.md). For help finding your way around the code, see the [bird's-eye view](#birds-eye-view-of-zed).
 
-### UI/UX checklist
+You don't need a finished patch to start a useful conversation. If you need help fixing a bug or implementing a feature we've agreed we want, **open a PR early** so we can discuss it with code in hand.
 
-When your changes affect UI, consult this checklist:
+When preparing your PR:
 
-**Accessibility / Ergonomics**
+- **Explain the problem and why it matters**, then describe your solution.
+- **Include tests.** For UI changes, consider updating [visual regression tests](./docs/src/development/macos.md#visual-regression-tests).
+- **Show visible changes** with screenshots or screen recordings, and work through the [UI/UX checklist](./docs/src/development/ui-checklist.md).
+- **Review your own work**, including any AI-assisted code. Follow the [pull request template](./.github/pull_request_template.md?plain=1) for testing details and the self-review checklist.
 
-- Do all keyboard shortcuts work as intended?
-- Are shortcuts discoverable (tooltips, menus, docs)?
-- Is it usable without a mouse (keyboard-only navigation)?
-- Do all mouse actions work (drag, context menus, resizing, scrolling)?
-- Does the feature look great in light and dark mode themes?
-- Are hover states and focus indicators clear and consistent?
+### What to expect from review
 
-**Responsiveness**
+**Opening a PR does not guarantee a merge.** We may decline a change that doesn't fit Zed's direction or quality standards, even after you've put work into it. Confirming interest early and following this guide give your PR the best chance.
 
-- Does the UI scale gracefully on:
-  - Narrow panes (e.g., side-by-side split views)?
-  - Short panes (e.g., laptops with 13" displays)?
-  - High-DPI / Retina displays?
-- Does resizing panes or windows keep the UI usable and attractive?
-- Do dialogs or modals stay centered and within viewport bounds?
+We value working code and synchronous conversations over long discussion threads. Respond to GitHub comments, or offer time to pair if you need more feedback.
 
-**Platform Consistency**
+We'll get back to you, though sometimes more slowly than we'd like. **Pinging maintainers by username or emailing them does not raise your PR's priority**; it takes time away from review.
 
-- Is the feature fully usable on Windows, Linux, and macOS?
-- Does it respect system-level settings (fonts, scaling, input methods)?
+## Contribution ideas
 
-**Performance**
+We spend most of our time on Zed's core priorities, but welcome community improvements we haven't thought of or had time to tackle. In particular, we love PRs that:
 
-- All user interactions must have instant feedback.
-  - If the user requests something slow (e.g. an LLM generation) there should be some indication of the work in progress.
-- Does it handle large files, big projects, or heavy workloads without degrading?
-- Frames must take no more than 8ms (120fps)
+- **Fix or extend the docs.** Browse [docs issues](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ADocs).
+- **Fix bugs.** Start with [triaged bugs with confirmed reproduction steps](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ABug%20label%3Astate%3Areproducible), or browse [area labels](https://github.com/zed-industries/zed/labels?q=area%3A*) for parts of Zed you care about. Select a label, then add `type:Bug` to the search.
+- **Make existing features work for more people** through small enhancements, such as support for more platforms or modes.
+- **Add small features**, like keybindings or actions you miss from other editors or extensions.
+- **Join a Community Program** like [Let's Git Together](https://github.com/zed-industries/zed/issues/41541) or [The Guild](https://zed.dev/community/guild).
+- **Build features we've explicitly invited contributions for.** Find them on the [community feature board](https://github.com/orgs/zed-industries/projects/78/views/4).
 
-**Consistency**
+You can also browse tasks for [first-time contributors](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20first%20issue%22) and [returning contributors](https://github.com/zed-industries/zed/issues?q=state%3Aopen%20label%3A%22.contrib%2Fgood%20non-first%20issue%22).
 
-- Does it match Zed’s design language (spacing, typography, icons)?
-  - Make sure to visit [the icon design guidelines](https://github.com/zed-industries/zed/blob/main/crates/icons/README.md)
-- Are terminology, labels, and tone consistent with the rest of Zed?
-- Are interactions consistent (e.g., how tabs close, how modals dismiss, how errors show)?
+## UI/UX checklist
 
-**Internationalization & Text**
-
-- Are strings concise, clear, and unambiguous?
-- Do we avoid internal Zed jargon that only insiders would know?
-
-**User Paths & Edge Cases**
-
-- What does the happy path look like?
-- What does the unhappy path look like? (errors, rejections, invalid states)
-- How does it work in offline vs. online states?
-- How does it work in unauthenticated vs. authenticated states?
-- How does it behave if data is missing, corrupted, or delayed?
-- Are error messages actionable and consistent with Zed’s voice?
-
-**Discoverability & Learning**
-
-- Can a first-time user figure it out without docs?
-- Is there an intuitive way to undo/redo actions?
-- Are power features discoverable but not intrusive?
-- Is there a path from beginner → expert usage (progressive disclosure)?
+For UI changes, use the [UI/UX checklist](./docs/src/development/ui-checklist.md) in the development docs.
 
 ## Bird's-eye view of Zed
 
