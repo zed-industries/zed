@@ -5376,6 +5376,57 @@ async fn test_remote_log_streams_follow_aggregate_demand(
         "releasing a local view must preserve downstream demand on the remote host"
     );
 
+    let other_project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.add_project(&other_project, cx);
+    });
+    for event in [project::Event::Rejoined, project::Event::HostReshared] {
+        // Forget upstream ownership without changing the remaining downstream demand.
+        headless_log_store.update(server_cx, |log_store, cx| {
+            assert!(
+                log_store
+                    .language_servers
+                    .remove(&headless_server_key)
+                    .is_some()
+            );
+            log_store.add_language_server(
+                headless_server_key.kind.clone(),
+                server_id,
+                None,
+                None,
+                None,
+                cx,
+            );
+        });
+        other_project.update(cx, |_, cx| cx.emit(event.clone()));
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        assert!(
+            headless_log_store.read_with(server_cx, |log_store, _| {
+                log_store
+                    .language_servers
+                    .get(&headless_server_key)
+                    .is_some_and(|state| state.rpc_state.is_none())
+            }),
+            "reconnecting another project must not replay this project's streams"
+        );
+
+        for _ in 0..2 {
+            project.update(cx, |_, cx| cx.emit(event.clone()));
+            cx.run_until_parked();
+            server_cx.run_until_parked();
+            assert!(
+                headless_log_store.read_with(server_cx, |log_store, _| {
+                    log_store
+                        .language_servers
+                        .get(&headless_server_key)
+                        .is_some_and(|state| state.rpc_state.is_some())
+                }),
+                "{event:?} must replay downstream-only demand without a local view"
+            );
+        }
+    }
+
     project.update(cx, |_, cx| {
         cx.emit(project::Event::CollaboratorLeft(peer_id));
     });
@@ -5442,6 +5493,21 @@ async fn test_remote_log_streams_follow_aggregate_demand(
             .get(&headless_server_key)
             .is_some_and(|state| state.rpc_state.is_none())
     }));
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::Rejoined);
+        cx.emit(project::Event::HostReshared);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_none())
+        }),
+        "reconnecting must not replay streams without any remaining demand"
+    );
 
     for has_local_view in [false, true] {
         project

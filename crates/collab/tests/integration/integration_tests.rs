@@ -31,9 +31,9 @@ use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
-    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
-    lsp_store::{FormatTrigger, LspFormatTarget, SymbolLocation},
-    search::{SearchQuery, SearchResult},
+    DiagnosticSummary, HoverBlockKind, Project, ProjectPath, lsp_store::{
+        FormatTrigger, LspFormatTarget, SymbolLocation, log_store::{self, LanguageServerKind, LanguageServerLogKey, LogKind, LogMessage},
+    }, search::{SearchQuery, SearchResult},
 };
 use rand::prelude::*;
 use serde_json::json;
@@ -1475,6 +1475,291 @@ async fn test_unshare_project(
     project_c2.read_with(cx_c, |project, cx| {
         assert!(project.is_disconnected(cx));
         assert!(project.collaborators().is_empty());
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_lsp_log_streams_reconnect_guest_first(
+    executor: BackgroundExecutor,
+    cx_host: &mut TestAppContext,
+    cx_guest: &mut TestAppContext,
+) {
+    assert_lsp_log_streams_reconnect(executor, cx_host, cx_guest, true).await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_lsp_log_streams_reconnect_host_first(
+    executor: BackgroundExecutor,
+    cx_host: &mut TestAppContext,
+    cx_guest: &mut TestAppContext,
+) {
+    assert_lsp_log_streams_reconnect(executor, cx_host, cx_guest, false).await;
+}
+
+async fn assert_lsp_log_streams_reconnect(
+    executor: BackgroundExecutor,
+    cx_host: &mut TestAppContext,
+    cx_guest: &mut TestAppContext,
+    guest_first: bool,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let host = server.create_client(cx_host, "host").await;
+    let guest = server.create_client(cx_guest, "guest").await;
+    let host_logs = cx_host.update(|cx| log_store::init(false, cx));
+    let guest_logs = cx_guest.update(|cx| log_store::init(false, cx));
+    server
+        .create_room(&mut [(&host, cx_host), (&guest, cx_guest)])
+        .await;
+
+    host.language_registry().add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )));
+    let mut language_servers = host
+        .language_registry()
+        .register_fake_lsp("Rust", Default::default());
+    host.fs()
+        .insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+    let (host_project, _) = host.build_local_project(path!("/project"), cx_host).await;
+    host_logs.update(cx_host, |store, cx| store.add_project(&host_project, cx));
+    let _buffer = host_project
+        .update(cx_host, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/project/main.rs"), cx)
+        })
+        .await
+        .expect("host should open the buffer and start its language server");
+    let mut language_server = language_servers
+        .next()
+        .await
+        .expect("host should start the fake Rust language server");
+    language_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+
+    let active_call = cx_host.read(ActiveCall::global);
+    let project_id = active_call
+        .update(cx_host, |call, cx| {
+            call.share_project(host_project.clone(), cx)
+        })
+        .await
+        .expect("host should share the project");
+    let guest_project = guest.join_remote_project(project_id, cx_guest).await;
+    guest_logs.update(cx_guest, |store, cx| store.add_project(&guest_project, cx));
+    executor.run_until_parked();
+
+    let server_id = language_server.server.server_id();
+    let host_key = LanguageServerLogKey::new(
+        LanguageServerKind::Local {
+            project: host_project.downgrade(),
+        },
+        server_id,
+    );
+    let guest_key = LanguageServerLogKey::new(
+        LanguageServerKind::Remote {
+            project: guest_project.downgrade(),
+        },
+        server_id,
+    );
+    guest_logs.update(cx_guest, |store, cx| {
+        for kind in [LogKind::Logs, LogKind::Trace, LogKind::Rpc] {
+            store
+                .retain_view_log_stream(&guest_key, kind, cx)
+                .expect("guest should retain the existing server's stream");
+        }
+    });
+    executor.run_until_parked();
+
+    let send_marker = |marker: &str| {
+        language_server.notify::<lsp::notification::LogMessage>(lsp::LogMessageParams {
+            typ: lsp::MessageType::INFO,
+            message: marker.to_string(),
+        });
+        language_server.notify::<lsp::notification::LogTrace>(lsp::LogTraceParams {
+            message: marker.to_string(),
+            verbose: None,
+        });
+    };
+    let assert_guest_received = |marker: &str, cx: &TestAppContext| {
+        guest_logs.read_with(cx, |store, _| {
+            assert!(
+                store
+                    .server_logs(&guest_key)
+                    .expect("guest server logs should remain registered")
+                    .iter()
+                    .any(|message| message.as_ref() == marker),
+                "guest did not receive log marker {marker:?} (guest_first={guest_first})"
+            );
+            assert!(
+                store
+                    .server_trace(&guest_key)
+                    .expect("guest server trace should remain registered")
+                    .iter()
+                    .any(|message| message.as_ref() == marker),
+                "guest did not receive trace marker {marker:?} (guest_first={guest_first})"
+            );
+            assert!(
+                store
+                    .language_servers
+                    .get(&guest_key)
+                    .expect("guest server should remain registered")
+                    .rpc_state
+                    .as_ref()
+                    .expect("guest RPC capture should remain enabled")
+                    .rpc_messages
+                    .iter()
+                    .any(|message| message.as_ref().contains(marker)),
+                "guest did not receive RPC marker {marker:?} (guest_first={guest_first})"
+            );
+        });
+    };
+    send_marker("before reconnect");
+    executor.run_until_parked();
+    assert_guest_received("before reconnect", cx_guest);
+
+    let rejoined = Rc::new(Cell::new(false));
+    let _subscription = cx_guest.update(|cx| {
+        cx.subscribe(&guest_project, {
+            let rejoined = rejoined.clone();
+            move |_, event, _| {
+                if matches!(event, project::Event::Rejoined) {
+                    rejoined.set(true);
+                }
+            }
+        })
+    });
+    let old_host_peer = host.peer_id().expect("host should initially be connected");
+    let old_guest_peer = guest
+        .peer_id()
+        .expect("guest should initially be connected");
+    server.forbid_connections();
+    server.disconnect_client(old_host_peer);
+    server.disconnect_client(old_guest_peer);
+    executor.advance_clock(RECEIVE_TIMEOUT);
+    executor.run_until_parked();
+    assert!(!host.status().borrow().is_connected());
+    assert!(!guest.status().borrow().is_connected());
+
+    server.allow_connections();
+    let (first, first_context, second, second_context) = if guest_first {
+        (&guest, &mut *cx_guest, &host, &mut *cx_host)
+    } else {
+        (&host, &mut *cx_host, &guest, &mut *cx_guest)
+    };
+    first
+        .connect(false, &first_context.to_async())
+        .await
+        .into_response()
+        .expect("first peer should reconnect without losing room membership");
+    executor.run_until_parked();
+    assert!(!second.status().borrow().is_connected());
+    assert_ne!(
+        first.peer_id().expect("first peer should be connected"),
+        if guest_first {
+            old_guest_peer
+        } else {
+            old_host_peer
+        }
+    );
+    if guest_first {
+        assert!(
+            rejoined.get(),
+            "guest should rejoin before the host returns"
+        );
+        // The disconnected host must miss the incremental peer update so its
+        // reshare snapshot removes the old guest's stream ownership.
+        host_project.read_with(second_context, |project, _| {
+            assert!(project.collaborators().contains_key(&old_guest_peer));
+        });
+    }
+    second
+        .connect(false, &second_context.to_async())
+        .await
+        .into_response()
+        .expect("second peer should reconnect without losing room membership");
+    executor.run_until_parked();
+    assert!(rejoined.get());
+    let new_host_peer = host.peer_id().expect("host should have reconnected");
+    let new_guest_peer = guest.peer_id().expect("guest should have reconnected");
+    assert_ne!(old_host_peer, new_host_peer);
+    assert_ne!(old_guest_peer, new_guest_peer);
+    host_project.read_with(cx_host, |project, _| {
+        assert!(project.collaborators().contains_key(&new_guest_peer));
+        assert!(!project.collaborators().contains_key(&old_guest_peer));
+    });
+    guest_project.read_with(cx_guest, |project, cx| {
+        assert!(!project.is_disconnected(cx));
+        assert!(project.collaborators().contains_key(&new_host_peer));
+        assert!(!project.collaborators().contains_key(&old_host_peer));
+    });
+
+    send_marker("after reconnect");
+    executor.run_until_parked();
+    assert_guest_received("after reconnect", cx_guest);
+
+    // A replay must not acquire another view reference or retain the old peer.
+    guest_logs.update(cx_guest, |store, cx| {
+        for kind in [LogKind::Logs, LogKind::Trace, LogKind::Rpc] {
+            store
+                .release_view_log_stream(&guest_key, kind, cx)
+                .expect("one release should disable the retained stream");
+        }
+    });
+    executor.run_until_parked();
+    send_marker("after disabling");
+    executor.run_until_parked();
+    host_logs.read_with(cx_host, |store, _| {
+        assert!(
+            store
+                .server_logs(&host_key)
+                .expect("host server logs should remain registered")
+                .iter()
+                .any(|message| message.as_ref() == "after disabling")
+        );
+        assert!(
+            store
+                .language_servers
+                .get(&host_key)
+                .expect("host server should remain registered")
+                .rpc_state
+                .is_none(),
+            "host should stop RPC capture after the guest releases its only reference"
+        );
+    });
+    guest_logs.read_with(cx_guest, |store, _| {
+        assert!(
+            store
+                .server_logs(&guest_key)
+                .expect("guest server logs should remain registered")
+                .iter()
+                .all(|message| message.as_ref() != "after disabling"),
+            "log forwarding should stop after one release"
+        );
+        assert!(
+            store
+                .server_trace(&guest_key)
+                .expect("guest server trace should remain registered")
+                .iter()
+                .all(|message| message.as_ref() != "after disabling"),
+            "trace forwarding should stop after one release"
+        );
+        assert!(
+            store
+                .language_servers
+                .get(&guest_key)
+                .expect("guest server should remain registered")
+                .rpc_state
+                .is_none(),
+            "reconnect replay should not inflate the guest's view reference count"
+        );
     });
 }
 
