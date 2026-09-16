@@ -504,6 +504,19 @@ fn git_scan_concurrency() -> usize {
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_GIT_SCAN_CONCURRENCY)
 }
+
+/// Runs a git subprocess operation while holding a permit from the shared scan
+/// semaphore, bounding the total concurrent git subprocesses on the status-scan
+/// path across the workspace. The operation closure is invoked only after the
+/// permit is acquired, so the permit spans the subprocess lifetime.
+async fn with_scan_permit<T, F, Fut>(scan_semaphore: &Arc<Semaphore>, operation: F) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = T>,
+{
+    let _permit = scan_semaphore.acquire().await;
+    operation().await
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
     pub repo_path: RepoPath,
@@ -11393,6 +11406,44 @@ mod tests {
         });
     }
 
+
+    #[gpui::test]
+    async fn with_scan_permit_bounds_concurrent_operations(cx: &mut TestAppContext) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let executor = cx.background_executor.clone();
+        let scan_semaphore = Arc::new(Semaphore::new(3));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let operations = (0..9)
+            .map(|_| {
+                let scan_semaphore = scan_semaphore.clone();
+                let in_flight = in_flight.clone();
+                let peak = peak.clone();
+                let executor = executor.clone();
+                async move {
+                    with_scan_permit(&scan_semaphore, || {
+                        let in_flight = in_flight.clone();
+                        let peak = peak.clone();
+                        let executor = executor.clone();
+                        async move {
+                            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                            peak.fetch_max(now, Ordering::SeqCst);
+                            executor.timer(Duration::from_millis(5)).await;
+                            in_flight.fetch_sub(1, Ordering::SeqCst);
+                        }
+                    })
+                    .await;
+                }
+            })
+            .collect::<Vec<_>>();
+
+        futures::future::join_all(operations).await;
+        assert_eq!(in_flight.load(Ordering::SeqCst), 0);
+        assert_eq!(peak.load(Ordering::SeqCst), 3);
+    }
     type TestPasswordPrompt = (
         String,
         oneshot::Sender<EncryptedPassword>,
@@ -12337,24 +12388,29 @@ async fn compute_snapshot(
         let backend = backend.clone();
         let scan_semaphore = scan_semaphore.clone();
         async move {
-            let _permit = scan_semaphore.acquire().await;
-            backend.branches().await.log_err().unwrap_or_default()
+            with_scan_permit(&scan_semaphore, || backend.branches())
+                .await
+                .log_err()
+                .unwrap_or_default()
         }
     };
     let head_commit_future = {
         let backend = backend.clone();
         let scan_semaphore = scan_semaphore.clone();
         async move {
-            let _permit = scan_semaphore.acquire().await;
-            backend.show("HEAD".to_string()).await.ok()
+            with_scan_permit(&scan_semaphore, || backend.show("HEAD".to_string()))
+                .await
+                .ok()
         }
     };
     let worktrees_future = {
         let backend = backend.clone();
         let scan_semaphore = scan_semaphore.clone();
         async move {
-            let _permit = scan_semaphore.acquire().await;
-            backend.worktrees().await.log_err().unwrap_or_default()
+            with_scan_permit(&scan_semaphore, || backend.worktrees())
+                .await
+                .log_err()
+                .unwrap_or_default()
         }
     };
     let (branches, head_commit, all_worktrees) =
@@ -12373,10 +12429,7 @@ async fn compute_snapshot(
         .filter(|wt| wt.path != *work_directory_abs_path)
         .collect();
 
-    let mut remote_urls = {
-        let _permit = scan_semaphore.acquire().await;
-        backend.remote_urls().await
-    };
+    let mut remote_urls = with_scan_permit(&scan_semaphore, || backend.remote_urls()).await;
     let remote_origin_url = remote_urls.remove("origin");
     let remote_upstream_url = remote_urls.remove("upstream");
 
@@ -12422,14 +12475,14 @@ async fn compute_snapshot(
         let backend = backend.clone();
         let scan_semaphore = scan_semaphore.clone();
         async move {
-            let _permit = scan_semaphore.acquire().await;
-            backend
-                .status(&[RepoPath::from_rel_path(
+            with_scan_permit(&scan_semaphore, || {
+                backend.status(&[RepoPath::from_rel_path(
                     &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
                 )])
-                .await
-                .log_err()
-                .unwrap_or_default()
+            })
+            .await
+            .log_err()
+            .unwrap_or_default()
         }
     };
     let diff_stats_future = {
@@ -12442,24 +12495,30 @@ async fn compute_snapshot(
                     let backend = backend.clone();
                     let scan_semaphore = scan_semaphore.clone();
                     async move {
-                        let _permit = scan_semaphore.acquire().await;
-                        backend.diff_stat(DiffStatType::HeadToWorktree, &[]).await
+                        with_scan_permit(&scan_semaphore, || {
+                            backend.diff_stat(DiffStatType::HeadToWorktree, &[])
+                        })
+                        .await
                     }
                 };
                 let head_to_index = {
                     let backend = backend.clone();
                     let scan_semaphore = scan_semaphore.clone();
                     async move {
-                        let _permit = scan_semaphore.acquire().await;
-                        backend.diff_stat(DiffStatType::HeadToIndex, &[]).await
+                        with_scan_permit(&scan_semaphore, || {
+                            backend.diff_stat(DiffStatType::HeadToIndex, &[])
+                        })
+                        .await
                     }
                 };
                 let index_to_worktree = {
                     let backend = backend.clone();
                     let scan_semaphore = scan_semaphore.clone();
                     async move {
-                        let _permit = scan_semaphore.acquire().await;
-                        backend.diff_stat(DiffStatType::IndexToWorktree, &[]).await
+                        with_scan_permit(&scan_semaphore, || {
+                            backend.diff_stat(DiffStatType::IndexToWorktree, &[])
+                        })
+                        .await
                     }
                 };
                 futures::future::join3(head_to_worktree, head_to_index, index_to_worktree).await
@@ -12476,8 +12535,10 @@ async fn compute_snapshot(
         let backend = backend.clone();
         let scan_semaphore = scan_semaphore.clone();
         async move {
-            let _permit = scan_semaphore.acquire().await;
-            backend.stash_entries().await.log_err().unwrap_or_default()
+            with_scan_permit(&scan_semaphore, || backend.stash_entries())
+                .await
+                .log_err()
+                .unwrap_or_default()
         }
     };
 
