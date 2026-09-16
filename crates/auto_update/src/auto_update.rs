@@ -3,8 +3,8 @@ use client::Client;
 use db::kvp::KeyValueStore;
 use futures_lite::StreamExt;
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, TaskExt,
-    Window, actions,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Global,
+    Task, TaskExt, Window, actions,
 };
 use http_client::{HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -171,6 +171,11 @@ impl AutoUpdateStatus {
     pub fn is_updated(&self) -> bool {
         matches!(self, Self::Updated { .. })
     }
+}
+
+pub enum AutoUpdateEvent {
+    /// A manual check received a release response and found no newer version.
+    UpToDate,
 }
 
 pub struct AutoUpdater {
@@ -419,6 +424,8 @@ impl UpdateCheckType {
     }
 }
 
+impl EventEmitter<AutoUpdateEvent> for AutoUpdater {}
+
 impl AutoUpdater {
     pub fn get(cx: &mut App) -> Option<Entity<Self>> {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
@@ -476,8 +483,7 @@ impl AutoUpdater {
 
         let check_type = self.update_check_type;
         self.pending_poll.take();
-        // Passing through `Idle` would read as a completed check.
-        self.status = AutoUpdateStatus::Checking;
+        self.status = AutoUpdateStatus::Idle;
         self.poll(check_type, cx);
     }
 
@@ -764,11 +770,15 @@ impl AutoUpdater {
 
         let Some(newer_version) = newer_version else {
             this.update(cx, |this, cx| {
-                let status = match previous_status {
+                this.status = match previous_status {
                     AutoUpdateStatus::Updated { .. } => previous_status,
-                    _ => AutoUpdateStatus::Idle,
+                    _ => {
+                        if this.update_check_type.is_manual() {
+                            cx.emit(AutoUpdateEvent::UpToDate);
+                        }
+                        AutoUpdateStatus::Idle
+                    }
                 };
-                this.status = status;
                 cx.notify();
             });
             return Ok(());

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
-use auto_update::{AutoUpdateStatus, AutoUpdater, UpdateCheckType};
+use auto_update::{AutoUpdateEvent, AutoUpdateStatus, AutoUpdater, UpdateCheckType};
 use gpui::{Empty, Render, Task};
 use semver::Version;
 use ui::{Tooltip, UpdateButton, prelude::*};
@@ -21,25 +21,18 @@ impl UpdateVersion {
     pub fn new(cx: &mut Context<Self>) -> Self {
         if let Some(auto_updater) = AutoUpdater::get(cx) {
             cx.observe(&auto_updater, |this, auto_update, cx| {
-                let (status, update_check_type, dismissed_status) = {
-                    let auto_update = auto_update.read(cx);
-                    (
-                        auto_update.status(),
-                        auto_update.update_check_type(),
-                        auto_update.dismissed_status(),
-                    )
-                };
-                let finished_manual_check =
-                    Self::is_up_to_date(&this.status, &status, update_check_type);
-                this.status = status;
-                this.update_check_type = update_check_type;
-                this.dismissed_status = dismissed_status;
-                if finished_manual_check {
-                    this.show_up_to_date(cx);
-                } else if !matches!(this.status, AutoUpdateStatus::Idle) {
+                let auto_update = auto_update.read(cx);
+                this.status = auto_update.status();
+                this.update_check_type = auto_update.update_check_type();
+                this.dismissed_status = auto_update.dismissed_status();
+                if !matches!(this.status, AutoUpdateStatus::Idle) {
                     this.hide_up_to_date();
                 }
                 cx.notify();
+            })
+            .detach();
+            cx.subscribe(&auto_updater, |this, _, event, cx| match event {
+                AutoUpdateEvent::UpToDate => this.show_up_to_date(cx),
             })
             .detach();
             Self {
@@ -58,16 +51,6 @@ impl UpdateVersion {
                 _up_to_date_timer: None,
             }
         }
-    }
-
-    fn is_up_to_date(
-        previous_status: &AutoUpdateStatus,
-        status: &AutoUpdateStatus,
-        update_check_type: UpdateCheckType,
-    ) -> bool {
-        update_check_type.is_manual()
-            && matches!(previous_status, AutoUpdateStatus::Checking)
-            && matches!(status, AutoUpdateStatus::Idle)
     }
 
     fn show_up_to_date(&mut self, cx: &mut Context<Self>) {
@@ -215,36 +198,6 @@ mod tests {
             message,
             "Update to Version: 1.0.0+nightly.14d9a4189f058d8736339b06ff2340101eaea5af"
         );
-    }
-
-    #[test]
-    fn test_is_up_to_date() {
-        assert!(UpdateVersion::is_up_to_date(
-            &AutoUpdateStatus::Checking,
-            &AutoUpdateStatus::Idle,
-            UpdateCheckType::Manual
-        ));
-
-        assert!(!UpdateVersion::is_up_to_date(
-            &AutoUpdateStatus::Checking,
-            &AutoUpdateStatus::Idle,
-            UpdateCheckType::Automatic
-        ));
-
-        assert!(!UpdateVersion::is_up_to_date(
-            &AutoUpdateStatus::Checking,
-            &AutoUpdateStatus::Downloading {
-                version: Version::new(1, 99, 0),
-                progress: None,
-            },
-            UpdateCheckType::Manual
-        ));
-
-        assert!(!UpdateVersion::is_up_to_date(
-            &AutoUpdateStatus::Idle,
-            &AutoUpdateStatus::Idle,
-            UpdateCheckType::Manual
-        ));
     }
 
     #[test]
