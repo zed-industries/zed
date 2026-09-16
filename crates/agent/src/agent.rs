@@ -3440,14 +3440,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     }
 }
 
-#[derive(Debug, Clone)]
-enum SubagentPromptResult {
-    Completed,
-    Cancelled,
-    ContextWindowWarning,
-    Error(String),
-}
-
 pub struct NativeSubagentHandle {
     session_id: acp::SessionId,
     parent_thread: WeakEntity<Thread>,
@@ -3487,98 +3479,86 @@ impl SubagentHandle for NativeSubagentHandle {
         let parent_thread = self.parent_thread.clone();
 
         cx.spawn(async move |cx| {
-            let (task, _subscription) = cx.update(|cx| {
-                let ratio_before_prompt = thread
-                    .read(cx)
-                    .latest_token_usage()
-                    .map(|usage| usage.ratio());
-
+            let (task, token_limit_rx, _subscription) = cx.update(|cx| {
                 parent_thread
                     .update(cx, |parent_thread, _cx| {
                         parent_thread.register_running_subagent(thread.downgrade())
                     })
                     .ok();
 
-                let task = acp_thread.update(cx, |acp_thread, cx| {
-                    acp_thread.send(vec![message.into()], cx)
-                });
-
-                let (token_limit_tx, token_limit_rx) = oneshot::channel::<()>();
+                let ratio_before_prompt = thread
+                    .read(cx)
+                    .latest_token_usage()
+                    .map_or(TokenUsageRatio::Normal, |usage| usage.ratio());
+                let (token_limit_tx, token_limit_rx) = oneshot::channel();
                 let mut token_limit_tx = Some(token_limit_tx);
-
                 let subscription = cx.subscribe(
                     &thread,
-                    move |_thread, event: &TokenUsageUpdated, _cx| {
-                        if let Some(usage) = &event.0 {
-                            let old_ratio = ratio_before_prompt
-                                .clone()
-                                .unwrap_or(TokenUsageRatio::Normal);
-                            let new_ratio = usage.ratio();
-                            if old_ratio == TokenUsageRatio::Normal
-                                && new_ratio == TokenUsageRatio::Warning
-                            {
-                                if let Some(tx) = token_limit_tx.take() {
-                                    tx.send(()).ok();
-                                }
-                            }
+                    move |thread, event: &TokenUsageUpdated, cx| {
+                        if !thread.read(cx).auto_compaction_enabled(cx)
+                            && event.0.as_ref().is_some_and(|usage| usage.ratio() > ratio_before_prompt)
+                            && let Some(sender) = token_limit_tx.take()
+                        {
+                            sender.send(()).ok();
                         }
                     },
                 );
-
-                let wait_for_prompt = cx
-                    .background_spawn(async move {
-                        futures::select! {
-                            response = task.fuse() => match response {
-                                Ok(Some(response)) => {
-                                    match response.stop_reason {
-                                        acp::StopReason::Cancelled => SubagentPromptResult::Cancelled,
-                                        acp::StopReason::MaxTokens => SubagentPromptResult::Error("The agent reached the maximum number of tokens.".into()),
-                                        acp::StopReason::MaxTurnRequests => SubagentPromptResult::Error("The agent reached the maximum number of allowed requests between user turns. Try prompting again.".into()),
-                                        acp::StopReason::Refusal => SubagentPromptResult::Error("The agent refused to process that prompt. Try again.".into()),
-                                        acp::StopReason::EndTurn | _ => SubagentPromptResult::Completed,
-                                    }
-                                }
-                                Ok(None) => SubagentPromptResult::Error("No response from the agent. You can try messaging again.".into()),
-                                Err(error) => SubagentPromptResult::Error(error.to_string()),
-                            },
-                            _ = token_limit_rx.fuse() => SubagentPromptResult::ContextWindowWarning,
-                        }
-                    });
-
-                (wait_for_prompt, subscription)
+                let task = acp_thread.update(cx, |acp_thread, cx| {
+                    acp_thread.send(vec![message.into()], cx)
+                });
+                (task, token_limit_rx, subscription)
             });
 
-            let result = match task.await {
-                SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
-                    thread
-                        .last_message()
-                        .and_then(|message| {
-                            let content = message.as_agent_message()?
-                                .content
-                                .iter()
-                                .filter_map(|c| match c {
-                                    AgentMessageContent::Text(text) => Some(text.as_str()),
-                                    _ => None,
-                                })
-                                .join("\n\n");
-                            if content.is_empty() {
-                                None
-                            } else {
-                                Some( content)
-                            }
-                        })
-                        .context("No response from subagent")
-                }),
-                SubagentPromptResult::Cancelled => Err(anyhow!("User canceled")),
-                SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
-                SubagentPromptResult::ContextWindowWarning => {
-                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
-                    Err(anyhow!(
-                        "The agent is nearing the end of its context window and has been \
-                         stopped. You can prompt the thread again to have the agent wrap up \
-                         or hand off its work."
-                    ))
+            let mut task = task.fuse();
+            let response = futures::select_biased! {
+                response = task => response,
+                _ = token_limit_rx.fuse() => {
+                    if thread.read_with(cx, |thread, _| thread.is_turn_complete()) {
+                        task.await
+                    } else {
+                        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                        Err(anyhow!(
+                            "The agent is nearing the end of its context window and has been \
+                             stopped. You can prompt the thread again to have the agent wrap up \
+                             or hand off its work."
+                        ))
+                    }
                 }
+            };
+            let discard_partial_output = matches!(
+                &response,
+                Ok(Some(response)) if response.stop_reason == acp::StopReason::Cancelled
+                    || response.stop_reason == acp::StopReason::Refusal
+            );
+            let result = match response {
+                Ok(Some(response)) => match response.stop_reason {
+                    acp::StopReason::Cancelled => Err(anyhow!("User canceled")),
+                    acp::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
+                    acp::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
+                    acp::StopReason::Refusal => Err(anyhow!("The agent refused to process that prompt. Try again.")),
+                    _ => thread.read_with(cx, |thread, _cx| {
+                        thread
+                            .last_message()
+                            .and_then(|message| {
+                                let content = message.as_agent_message()?
+                                    .content
+                                    .iter()
+                                    .filter_map(|content| match content {
+                                        AgentMessageContent::Text(text) => Some(text.as_str()),
+                                        _ => None,
+                                    })
+                                    .join("\n\n");
+                                if content.is_empty() {
+                                    None
+                                } else {
+                                    Some(content)
+                                }
+                            })
+                            .context("No response from subagent")
+                    }),
+                },
+                Ok(None) => Err(anyhow!("No response from the agent. You can try messaging again.")),
+                Err(error) => Err(error),
             };
 
             parent_thread
@@ -3587,7 +3567,18 @@ impl SubagentHandle for NativeSubagentHandle {
                 })
                 .ok();
 
-            result
+            if discard_partial_output {
+                result
+            } else {
+                result.map_err(|error| {
+                    let partial_output = thread.read_with(cx, |thread, _| thread.subagent_partial_output());
+                    if partial_output.is_empty() {
+                        anyhow!("{error:#}")
+                    } else {
+                        anyhow!("{error:#}\n\nPartial subagent output (last 3 messages, up to 4096 characters each):\n\n{partial_output}")
+                    }
+                })
+            }
         })
     }
 }

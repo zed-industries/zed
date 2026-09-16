@@ -2835,7 +2835,9 @@ impl Thread {
                                             Some(error_message),
                                         )
                                     })?;
-                                    return Err(retry_error);
+                                    return Err(
+                                        retry_error.context("Automatic context compaction failed")
+                                    );
                                 }
                             }
                         }
@@ -2846,7 +2848,7 @@ impl Thread {
                                     Some(error_message),
                                 )
                             })?;
-                            return Err(error);
+                            return Err(error.context("Automatic context compaction failed"));
                         }
                     }
                 }
@@ -4329,6 +4331,19 @@ impl Thread {
         self.running_turn.is_none()
     }
 
+    pub(crate) fn auto_compaction_enabled(&self, cx: &App) -> bool {
+        AgentSettings::get_global(cx).auto_compact.enabled
+            && self.input_token_capacity().is_some_and(|max_input_tokens| {
+                // Models with a small context window don't leave enough headroom for a
+                // compaction pass; the UI warns the user about the token limit instead.
+                max_input_tokens >= MIN_COMPACTION_CONTEXT_WINDOW
+            })
+    }
+
+    pub(crate) fn subagent_partial_output(&self) -> String {
+        subagent_partial_output_from_messages(&self.messages, self.pending_message.as_ref())
+    }
+
     fn build_request_messages(
         &self,
         available_tools: Vec<SharedString>,
@@ -4436,17 +4451,12 @@ impl Thread {
     }
 
     fn compaction_message_target_ix(&self, cx: &App) -> Option<usize> {
-        let auto_compact = AgentSettings::get_global(cx).auto_compact;
-        if !auto_compact.enabled {
+        if !self.auto_compaction_enabled(cx) {
             return None;
         }
 
+        let auto_compact = AgentSettings::get_global(cx).auto_compact;
         let max_input_tokens = self.input_token_capacity()?;
-        // Models with a small context window don't leave enough headroom for a
-        // compaction pass; the UI warns the user about the token limit instead.
-        if max_input_tokens < MIN_COMPACTION_CONTEXT_WINDOW {
-            return None;
-        }
         let (usage_ix, usage) = {
             let this = &self;
             this.messages
@@ -4598,6 +4608,50 @@ impl Thread {
             }),
         }
     }
+}
+
+fn subagent_partial_output_from_messages(
+    messages: &[Arc<Message>],
+    pending_message: Option<&AgentMessage>,
+) -> String {
+    let Some(user_message_ix) = messages
+        .iter()
+        .rposition(|message| matches!(&**message, Message::User(_)))
+    else {
+        return String::new();
+    };
+
+    let mut text_messages = pending_message
+        .into_iter()
+        .chain(
+            messages
+                .iter()
+                .skip(user_message_ix + 1)
+                .rev()
+                .filter_map(|message| message.as_agent_message()),
+        )
+        .filter_map(|message| {
+            let characters = message
+                .content
+                .iter()
+                .rev()
+                .filter_map(|content| match content {
+                    AgentMessageContent::Text(text) => Some(text),
+                    _ => None,
+                })
+                .flat_map(|text| text.chars().rev())
+                .take(4096)
+                .collect::<Vec<_>>();
+            if characters.is_empty() {
+                None
+            } else {
+                Some(characters.into_iter().rev().collect::<String>())
+            }
+        })
+        .take(3)
+        .collect::<Vec<_>>();
+    text_messages.reverse();
+    text_messages.join("\n\n")
 }
 
 fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
@@ -7042,6 +7096,127 @@ mod tests {
             .iter()
             .map(LanguageModelRequestMessage::string_contents)
             .collect()
+    }
+
+    #[test]
+    fn test_subagent_partial_output_filters_non_text() {
+        let tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("tool"),
+            name: Arc::from("echo"),
+            raw_input: "{}".to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: tool_use.id.clone(),
+            tool_name: tool_use.name.clone(),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                "tool result",
+            ))],
+            output: Some(json!("raw tool result")),
+        };
+        let messages = [
+            user_text_message(ClientUserMessageId::new(), "old task"),
+            agent_text_message("old output"),
+            user_text_message(ClientUserMessageId::new(), "current task"),
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![
+                    AgentMessageContent::Text("first".to_string()),
+                    AgentMessageContent::Thinking {
+                        text: "hidden thinking".to_string(),
+                        signature: None,
+                    },
+                    AgentMessageContent::Text(" part".to_string()),
+                    AgentMessageContent::RedactedThinking("redacted thinking".to_string()),
+                ],
+                ..AgentMessage::default()
+            })),
+            Arc::new(Message::Resume),
+            summary_compaction("compaction summary"),
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::ToolUse(tool_use)],
+                tool_results: IndexMap::from_iter([(tool_result.tool_use_id.clone(), tool_result)]),
+                ..AgentMessage::default()
+            })),
+            agent_text_message(""),
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::Thinking {
+                    text: "more thinking".to_string(),
+                    signature: None,
+                }],
+                ..AgentMessage::default()
+            })),
+            agent_text_message("second part"),
+        ];
+        let pending_message = AgentMessage {
+            content: vec![
+                AgentMessageContent::Text("pending".to_string()),
+                AgentMessageContent::Thinking {
+                    text: "pending thinking".to_string(),
+                    signature: None,
+                },
+                AgentMessageContent::Text(" part".to_string()),
+            ],
+            ..AgentMessage::default()
+        };
+
+        assert_eq!(
+            subagent_partial_output_from_messages(&messages, Some(&pending_message)),
+            "first part\n\nsecond part\n\npending part"
+        );
+        assert_eq!(subagent_partial_output_from_messages(&[], None), "");
+        assert_eq!(
+            subagent_partial_output_from_messages(&[], Some(&pending_message)),
+            ""
+        );
+        let mut messages = messages.to_vec();
+        messages.push(user_text_message(ClientUserMessageId::new(), "next task"));
+        assert_eq!(subagent_partial_output_from_messages(&messages, None), "");
+    }
+
+    #[test]
+    fn test_subagent_partial_output_bounds_messages_and_unicode_characters() {
+        let first = "🦀".repeat(4096);
+        let second_prefix = "🚀".repeat(2048);
+        let second_suffix = "🦀".repeat(2048);
+        let third_prefix = "🌍".repeat(4095);
+        let messages = [
+            user_text_message(ClientUserMessageId::new(), "current task"),
+            agent_text_message("discarded message"),
+            agent_text_message(&format!("discarded prefix{first}")),
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![
+                    AgentMessageContent::Text(format!("discarded prefix{second_prefix}")),
+                    AgentMessageContent::Thinking {
+                        text: "hidden thinking".to_string(),
+                        signature: None,
+                    },
+                    AgentMessageContent::Text(second_suffix.clone()),
+                ],
+                ..AgentMessage::default()
+            })),
+        ];
+        let pending_message = AgentMessage {
+            content: vec![
+                AgentMessageContent::Text(format!("discarded prefix{third_prefix}")),
+                AgentMessageContent::Thinking {
+                    text: "pending thinking".to_string(),
+                    signature: None,
+                },
+                AgentMessageContent::Text("🦀".to_string()),
+            ],
+            ..AgentMessage::default()
+        };
+
+        let output = subagent_partial_output_from_messages(&messages, Some(&pending_message));
+        assert_eq!(
+            output,
+            format!("{first}\n\n{second_prefix}{second_suffix}\n\n{third_prefix}🦀")
+        );
+        assert_eq!(output.chars().count(), 12_292);
+        assert_eq!(output.len(), 49_156);
     }
 
     #[gpui::test]
