@@ -133,6 +133,7 @@ impl RemoteRunningKernel {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
+        let session = session.downgrade();
         let remote_server = RemoteServer {
             base_url: kernelspec.url,
             token: kernelspec.token,

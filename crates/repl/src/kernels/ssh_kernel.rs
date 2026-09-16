@@ -36,6 +36,7 @@ impl SshRunningKernel {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
+        let session = session.downgrade();
         let client = project.read(cx).client();
         let remote_client = project.read(cx).remote_client();
         let project_id = project

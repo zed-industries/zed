@@ -2,7 +2,7 @@ mod native_kernel;
 use std::{fmt::Debug, future::Future, path::PathBuf};
 
 use futures::{channel::mpsc, future::Shared};
-use gpui::{App, Entity, Task, Window};
+use gpui::{App, Entity, Task, WeakEntity, Window};
 use language::LanguageName;
 use log;
 pub use native_kernel::*;
@@ -87,8 +87,13 @@ pub(crate) fn build_python_discovery_shell_script() -> String {
     )
 }
 
+/// The session is held weakly. The task spawned at the end of this function is
+/// detached and runs until the kernel's sockets close, so a strong handle would
+/// keep the session alive, and with it the kernel the session owns. Closing a
+/// notebook could then never drop its kernel, and the kernel process would
+/// never be killed.
 pub fn start_kernel_tasks<S: KernelSession + 'static>(
-    session: Entity<S>,
+    session: WeakEntity<S>,
     iopub_socket: ClientIoPubConnection,
     shell_socket: ClientShellConnection,
     control_socket: ClientControlConnection,
@@ -189,10 +194,13 @@ pub fn start_kernel_tasks<S: KernelSession + 'static>(
 
             while let Some((name, result)) = tasks.next().await {
                 if let Err(err) = result {
-                    session.update(cx, |session, cx| {
-                        session.kernel_errored(format!("handling failed for {name}: {err}"), cx);
-                        cx.notify();
-                    });
+                    session
+                        .update(cx, |session, cx| {
+                            session
+                                .kernel_errored(format!("handling failed for {name}: {err}"), cx);
+                            cx.notify();
+                        })
+                        .ok();
                 }
             }
         }

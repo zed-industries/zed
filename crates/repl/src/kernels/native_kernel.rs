@@ -115,11 +115,11 @@ impl NativeRunningKernel {
         entity_id: EntityId,
         working_directory: PathBuf,
         fs: Arc<dyn Fs>,
-        // todo: convert to weak view
         session: Entity<S>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
+        let session = session.downgrade();
         window.spawn(cx, async move |cx| {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
             let ports = peek_ports(ip).await?;
@@ -234,11 +234,13 @@ impl NativeRunningKernel {
 
                 log::error!("{}", error_message);
 
-                session.update(cx, |session, cx| {
-                    session.kernel_errored(error_message, cx);
+                session
+                    .update(cx, |session, cx| {
+                        session.kernel_errored(error_message, cx);
 
-                    cx.notify();
-                });
+                        cx.notify();
+                    })
+                    .ok();
             });
 
             anyhow::Ok(Box::new(Self {

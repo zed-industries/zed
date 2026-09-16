@@ -77,6 +77,7 @@ impl WslRunningKernel {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
+        let session = session.downgrade();
         window.spawn(cx, async move |cx| {
             // For WSL2, we need to get the WSL VM's IP address to connect to it
             // because WSL2 runs in a lightweight VM with its own network namespace.
@@ -396,11 +397,13 @@ impl WslRunningKernel {
                     }
                 };
 
-                session.update(cx, |session, cx| {
-                    session.kernel_errored(error_message, cx);
+                session
+                    .update(cx, |session, cx| {
+                        session.kernel_errored(error_message, cx);
 
-                    cx.notify();
-                });
+                        cx.notify();
+                    })
+                    .ok();
             });
 
             anyhow::Ok(Box::new(Self {
