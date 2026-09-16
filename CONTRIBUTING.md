@@ -1,14 +1,16 @@
 # Contributing to Zed
 
-Thank you for helping us make Zed better! Start small, pick one thing, and see it through.
+Thank you for helping us make Zed better!
 
 ## Before you start
 
-- **Fixing a bug or improving docs?** A pull request is the best place to start. Looking for a task? See [contribution ideas](#contribution-ideas).
-- **Adding a feature? Confirm interest before investing effort.** If there isn't a GitHub issue with staff confirmation that we want it, start a [GitHub discussion](https://github.com/zed-industries/zed/discussions), not a PR or a new issue. This especially applies to changes to the Zed Extension API.
+> **At most three open PRs per author.** Start with one and see it through.
+> Landing your first PR improves the odds for the next. A stack of open PRs gets stale as `main` changes and can overwhelm review, especially when submissions are automated.
+
+- **Fixing a bug or improving docs?** A pull request is the best place to start.
+- **Adding a feature? Talk to us before you start.** If there isn't a GitHub issue with staff confirmation that we want it, start a [GitHub discussion](https://github.com/zed-industries/zed/discussions), not a PR or a new issue. This especially applies to changes to the Zed Extension API.
   - For larger features, read the [Zed Feature Process](./docs/src/development/feature-process.md) before writing a proposal. It covers the context, integration points, and design decisions a strong proposal needs.
-- **Keep each PR about one thing.** A bugfix should not arrive with two features and a refactoring in tow.
-- **No more than three open PRs per author.** Landing your first PR improves the odds for the next; a stack of open PRs goes stale against a moving `main`. This cap also keeps review manageable when contributions outpace us, including automated bursts.
+- **Keep each PR about one thing.** If you're fixing a bug, save unrelated features and refactoring for another PR.
 - **Sign the [Contributor License Agreement](https://zed.dev/cla)** before your contribution can be merged. All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/code-of-conduct).
 
 Read the [AI policy](#ai-policy) below, then see [sending changes](#sending-changes) for build guides and PR requirements. Working on UI? Keep the [UI/UX checklist](./docs/src/development/ui-checklist.md) handy.
@@ -38,16 +40,18 @@ This policy was adapted from [ripgrep's AI policy](https://github.com/BurntSushi
 
 ## Sending changes
 
-**Need a local build?** Follow the guide for [macOS](./docs/src/development/macos.md), [Linux](./docs/src/development/linux.md), [Windows](./docs/src/development/windows.md), or [FreeBSD](./docs/src/development/freebsd.md). For help finding your way around the code, see the [bird's-eye view](#birds-eye-view-of-zed).
+**Build and run Zed locally before opening a PR.** Follow the guide for [macOS](./docs/src/development/macos.md), [Linux](./docs/src/development/linux.md), [Windows](./docs/src/development/windows.md), or [FreeBSD](./docs/src/development/freebsd.md), and try your changes in your local build.
 
-You don't need a finished patch to start a useful conversation. If you need help fixing a bug or implementing a feature we've agreed we want, **open a PR early** so we can discuss it with code in hand.
+For help finding your way around the code, see the [codebase overview](https://zed.dev/docs/development#birds-eye-view-of-zed).
+
+If you need help fixing a bug or implementing a feature we've agreed we want, **open a PR early**. You don't need a finished patch for us to work through it together.
 
 When preparing your PR:
 
 - **Explain the problem and why it matters**, then describe your solution.
 - **Include tests.** For UI changes, consider updating [visual regression tests](./docs/src/development/macos.md#visual-regression-tests).
 - **Show visible changes** with screenshots or screen recordings, and work through the [UI/UX checklist](./docs/src/development/ui-checklist.md).
-- **Review your own work**, including any AI-assisted code. Follow the [pull request template](./.github/pull_request_template.md?plain=1) for testing details and the self-review checklist.
+- **Review your own diff**, including any AI-assisted code, for quality, security, reliability, and performance.
 
 ### What to expect from review
 
@@ -59,6 +63,8 @@ We'll get back to you, though sometimes more slowly than we'd like. **Pinging ma
 
 ## Contribution ideas
 
+**Looking for a place to start?** Browse issues considered suitable for [first-time contributors](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20first%20issue%22) or [returning contributors](https://github.com/zed-industries/zed/issues?q=state%3Aopen%20label%3A%22.contrib%2Fgood%20non-first%20issue%22).
+
 We spend most of our time on Zed's core priorities, but welcome community improvements we haven't thought of or had time to tackle. In particular, we love PRs that:
 
 - **Fix or extend the docs.** Browse [docs issues](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ADocs).
@@ -68,31 +74,13 @@ We spend most of our time on Zed's core priorities, but welcome community improv
 - **Join a Community Program** like [Let's Git Together](https://github.com/zed-industries/zed/issues/41541) or [The Guild](https://zed.dev/community/guild).
 - **Build features we've explicitly invited contributions for.** Find them on the [community feature board](https://github.com/orgs/zed-industries/projects/78/views/4).
 
-You can also browse tasks for [first-time contributors](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20first%20issue%22) and [returning contributors](https://github.com/zed-industries/zed/issues?q=state%3Aopen%20label%3A%22.contrib%2Fgood%20non-first%20issue%22).
-
 ## UI/UX checklist
 
 For UI changes, use the [UI/UX checklist](./docs/src/development/ui-checklist.md) in the development docs.
 
 ## Bird's-eye view of Zed
 
-We suggest you keep the [Zed glossary](docs/src/development/glossary.md) at your side when starting out. It lists and explains some of the structures and terms you will see throughout the codebase.
-
-Zed is made up of several smaller crates - let's go over those you're most likely to interact with:
-
-- [`gpui`](/crates/gpui) is a GPU-accelerated UI framework which provides all of the building blocks for Zed. **We recommend familiarizing yourself with the root level GPUI documentation.**
-- [`editor`](/crates/editor) contains the core `Editor` type that drives both the code editor and all various input fields within Zed. It also handles a display layer for LSP features such as Inlay Hints or code completions.
-- [`project`](/crates/project) manages files and navigation within the filetree. It is also Zed's side of communication with LSP.
-- [`workspace`](/crates/workspace) handles local state serialization and groups projects together.
-- [`vim`](/crates/vim) is a thin implementation of Vim workflow over `editor`.
-- [`lsp`](/crates/lsp) handles communication with external LSP server.
-- [`language`](/crates/language) drives `editor`'s understanding of language - from providing a list of symbols to the syntax map.
-- [`collab`](/crates/collab) is the collaboration server itself, driving the collaboration features such as project sharing.
-- [`rpc`](/crates/rpc) defines messages to be exchanged with collaboration server.
-- [`theme`](/crates/theme) defines the theme system and provides a default theme.
-- [`ui`](/crates/ui) is a collection of UI components and common patterns used throughout Zed.
-- [`cli`](/crates/cli) is the CLI crate which invokes the Zed binary.
-- [`zed`](/crates/zed) is where all things come together, and the `main` entry point for Zed.
+For a tour of the main crates, see the [codebase overview](https://zed.dev/docs/development#birds-eye-view-of-zed) in the development docs.
 
 ## Packaging Zed
 
