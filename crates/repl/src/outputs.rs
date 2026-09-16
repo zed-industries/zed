@@ -34,11 +34,15 @@
 //! interpreting and displaying various types of Jupyter output.
 
 use editor::{Editor, MultiBuffer};
-use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, WeakEntity};
+use gpui::{
+    AnyElement, ClipboardItem, Entity, EventEmitter, Render, Task, WeakEntity, anchored, deferred,
+};
 use language::Buffer;
 use menu;
 use runtimelib::{ExecutionState, JupyterMessage, JupyterMessageContent, MimeBundle, MimeType};
-use ui::{CommonAnimationExt, CopyButton, IconButton, Tooltip, prelude::*};
+use std::time::Duration;
+use ui::{CommonAnimationExt, CopyButton, IconButton, Tooltip, prelude::*, tooltip_container};
+use util::ResultExt;
 
 mod image;
 use image::ImageView;
@@ -196,16 +200,63 @@ impl Output {
                 .pl_1()
                 .when(v.has_clipboard_content(window, cx), |el| {
                     let v = v.clone();
+                    let copied =
+                        window.use_keyed_state(("copy-output-state", v.entity_id()), cx, |_, _| {
+                            None::<Task<()>>
+                        });
+                    let is_copied = copied.read(cx).is_some();
                     el.child(
-                        IconButton::new(ElementId::Name("copy-output".into()), IconName::Copy)
-                            .style(ButtonStyle::Transparent)
-                            .tooltip(Tooltip::text("Copy Output"))
-                            .on_click(move |_, window, cx| {
-                                let clipboard_content = v.clipboard_content(window, cx);
-
-                                if let Some(clipboard_content) = clipboard_content.as_ref() {
-                                    cx.write_to_clipboard(clipboard_content.clone());
-                                }
+                        div()
+                            .relative()
+                            .child(
+                                IconButton::new(
+                                    ("copy-output", v.entity_id()),
+                                    if is_copied {
+                                        IconName::Check
+                                    } else {
+                                        IconName::Copy
+                                    },
+                                )
+                                .style(ButtonStyle::Transparent)
+                                .when(is_copied, |button| button.icon_color(Color::Success))
+                                .when(!is_copied, |button| {
+                                    button.tooltip(Tooltip::text("Copy Output"))
+                                })
+                                .on_click(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(clipboard_content) = v.clipboard_content(window, cx)
+                                    {
+                                        cx.write_to_clipboard(clipboard_content);
+                                        copied.update(cx, |reset_task, cx| {
+                                            *reset_task = Some(cx.spawn(async |copied, cx| {
+                                                cx.background_executor()
+                                                    .timer(Duration::from_secs(2))
+                                                    .await;
+                                                copied
+                                                    .update(cx, |reset_task, cx| {
+                                                        *reset_task = None;
+                                                        cx.notify();
+                                                    })
+                                                    .log_err();
+                                            }));
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                            )
+                            .when(is_copied, |container| {
+                                container.child(
+                                    div().absolute().top_full().left_full().child(
+                                        deferred(
+                                            anchored().snap_to_window_with_margin(px(8.)).child(
+                                                tooltip_container(cx, |tooltip, _| {
+                                                    tooltip.child(Label::new("Copied!"))
+                                                }),
+                                            ),
+                                        )
+                                        .with_priority(1),
+                                    ),
+                                )
                             }),
                     )
                 })
