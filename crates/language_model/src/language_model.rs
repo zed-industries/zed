@@ -215,8 +215,15 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
-    /// Returns the input token ceiling.
+    /// Returns the model's context-window capacity.
     fn max_token_count(&self) -> u64;
+
+    /// Returns the input ceiling before reserving output from any shared window.
+    ///
+    /// Models with a separate prompt limit override the context-window default.
+    fn max_input_tokens(&self) -> u64 {
+        self.max_token_count()
+    }
 
     /// Counts request input without generating output, when supported by the provider.
     ///
@@ -233,7 +240,7 @@ pub trait LanguageModel: Send + Sync {
 
     /// Returns the combined input and output ceiling, if one applies.
     ///
-    /// The conservative default shares the input ceiling with output. `None`
+    /// The conservative default shares the context window with output. `None`
     /// means generation does not consume that window, not merely that the API
     /// validates input separately or stops generation at the window boundary.
     fn max_total_tokens(&self) -> Option<u64> {

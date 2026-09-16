@@ -1,12 +1,16 @@
 #![allow(clippy::disallowed_methods, reason = "tooling is exempt")]
+
+pub mod crate_graph;
+
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
+use guppy::graph::DependencyDirection;
 
 #[derive(Parser)]
-pub struct PublishGpuiArgs {
+pub struct GpuiArgs {
     /// Perform a dry-run and wait for user confirmation before each publish
     #[arg(long)]
     dry_run: bool,
@@ -16,7 +20,26 @@ pub struct PublishGpuiArgs {
     skip_to: Option<String>,
 }
 
-pub fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
+pub fn run_gpui() -> Result<()> {
+    let graph = crate_graph::load_workspace_graph()?;
+    let crates = crate_graph::gpui_crates(&graph)?;
+
+    println!("GPUI crate graph ({} crates):", crates.len());
+    for package in crates.packages(DependencyDirection::Reverse) {
+        println!("{} ({})", package.name(), package.source());
+        for link in package.direct_links().filter(|link| !link.dev_only()) {
+            match crates.contains(link.to().id()) {
+                Ok(true) => println!("  -> {}", link.to().name()),
+                Ok(false) => {}
+                Err(e) => eprintln!("  error checking dependency {}: {}", link.to().name(), e),
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(unused, reason = "retained while GPUI releases are reworked")]
+fn run_publish_gpui(args: GpuiArgs) -> Result<()> {
     println!(
         "Starting GPUI publish process{}...",
         if args.dry_run { " (with dry-run)" } else { "" }
