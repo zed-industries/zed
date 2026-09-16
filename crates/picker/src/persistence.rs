@@ -69,9 +69,7 @@ pub(crate) fn try_load_shape(
         return Ok(None);
     };
 
-    let shape = serde_json::from_str::<PickerConfig>(&shape)
-        .context("Could not deserialize loaded picker shape from persistence")?
-        .into_centered();
+    let shape = parse_shape(&shape)?;
     Ok(Some(Shape::HorizontallyCentered(shape)))
 }
 
@@ -88,6 +86,13 @@ pub(crate) fn load_last_preview_layout(
     };
 
     parse_layout(&last_layout)
+}
+
+#[inline(never)]
+fn parse_shape(json: &str) -> anyhow::Result<Centered> {
+    Ok(serde_json::from_str::<PickerConfig>(json)
+        .context("Could not deserialize loaded picker shape from persistence")?
+        .into_centered())
 }
 
 fn shape_key(picker_delegate: &'static str, preview_layout: Option<preview::Layout>) -> String {

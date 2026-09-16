@@ -3832,6 +3832,35 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
+    fn command_palette_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Command Palette"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Use Command History",
+                description: "Whether to use command history ranking for sorting in the command palette.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("command_palette.use_command_history"),
+                    pick: |settings_content| {
+                        settings_content
+                            .command_palette
+                            .as_ref()?
+                            .use_command_history
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .command_palette
+                            .get_or_insert_default()
+                            .use_command_history = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn file_finder_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("File Finder"),
@@ -4022,7 +4051,12 @@ fn search_and_files_page() -> SettingsPage {
 
     SettingsPage {
         title: "Search & Files",
-        items: concat_sections![search_section(), file_finder_section(), file_scan_section()],
+        items: concat_sections![
+            search_section(),
+            command_palette_section(),
+            file_finder_section(),
+            file_scan_section(),
+        ],
     }
 }
 
@@ -4810,7 +4844,7 @@ fn window_and_layout_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Enable Preview From Project Panel",
-                description: "Whether to open tabs in preview mode when opened from the project panel with a single click.",
+                description: "Whether to open tabs in preview mode when opened from the project panel with a single click or the Open action.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("preview_tabs.enable_preview_from_project_panel"),
@@ -6795,7 +6829,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 7] {
+    fn agent_panel_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6828,7 +6862,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Agent Panel Flexible Sizing",
-                description: "Whether the agent panel should use flexible (proportional) sizing when docked to the left or right.",
+                description: "Whether the agent panel should use flexible (proportional) sizing when docked to the left or right. When enabled, the default width does not control the panel width, and resetting the panel restores the default proportion.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("agent.flexible"),
@@ -6842,7 +6876,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Agent Panel Default Width",
-                description: "Default width when the agent panel is docked to the left or right.",
+                description: "Default fixed width when the agent panel is docked to the left or right and flexible sizing is disabled.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("agent.default_width"),
@@ -6851,6 +6885,29 @@ fn panels_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.agent.get_or_insert_default().default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Threads Sidebar Default Width",
+                description: "Default width of the Threads Sidebar. Resizing it takes precedence until you double-click the divider to reset.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.threads_sidebar_default_width"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .threads_sidebar_default_width
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .threads_sidebar_default_width = value;
                     },
                 }),
                 metadata: None,
@@ -8801,6 +8858,25 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .play_sound_when_agent_done = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prevent Idle Sleep",
+                description: "Whether to keep the system awake while agent threads are running.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.prevent_idle_sleep"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.prevent_idle_sleep.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .prevent_idle_sleep = value;
                     },
                 }),
                 metadata: None,

@@ -78,7 +78,8 @@ zed_extension_api = ["wit/**"]
 gpui_wgpu = ["src/*.wgsl"]
 # Cross-package reads (and, for gpui_apple, its own metal shader source).
 extension_host = ["../extension_api/wit/**"]
-gpui_apple = ["../gpui/src/**", "src/shaders.metal"]
+# cbindgen reads the renderer source directly from build.rs to generate shader bindings.
+gpui_apple = ["../gpui/src/**", "src/metal_renderer.rs", "src/shaders.metal"]
 eval_cli = ["../zed/Cargo.toml"]
 prompt_store = ["../git_ui/src/commit_message_prompt.txt"]
 release_channel = ["../zed/RELEASE_CHANNEL"]

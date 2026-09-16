@@ -23,7 +23,7 @@ use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
 };
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use language::{
     BracketPair, BracketPairConfig,
     Capability::{Read, ReadOnly, ReadWrite},
@@ -7038,22 +7038,8 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["// ".into(), "/// ".into()],
-                documentation_comment: Some(BlockCommentConfig {
-                    start: "/*".into(),
-                    end: "*/".into(),
-                    prefix: "* ".into(),
-                    tab_size: 1,
-                }),
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-
         let mut cx = EditorTestContext::new(cx).await;
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
 
         // Strips the comment prefix (with trailing space) from the joined-in line.
         cx.set_state(indoc! {"
@@ -7117,22 +7103,30 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
 
         // Strips block comment body prefix (`* `) from the joined-in line.
         cx.set_state(indoc! {"
+            /*
              * ˇfoo
              * bar
+             */
         "});
         cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
         cx.assert_editor_state(indoc! {"
+            /*
              * fooˇ bar
+             */
         "});
 
         // Strips bare block comment body prefix (`*` without trailing space).
         cx.set_state(indoc! {"
+            /*
              * ˇfoo
              *
+             */
         "});
         cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
         cx.assert_editor_state(indoc! {"
+            /*
              * fooˇ
+             */
         "});
     }
 
@@ -7205,6 +7199,92 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
         cx.assert_editor_state(indoc! {"
             - fooˇbar
         "});
+    }
+}
+
+#[gpui::test]
+async fn test_join_lines_preserves_rust_operators(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+    for insert_whitespace in [true, false] {
+        let separator = if insert_whitespace { " " } else { "" };
+        for indent in ["", "    ", "\t"] {
+            for (first_line, next_line) in [
+                ("let value =", "*pointer;"),
+                ("let value =", "* pointer;"),
+                ("let value =", "**pointer;"),
+                ("let value =", "*指针;"),
+                ("let value = 2", "* 3;"),
+                ("let value = \"text", "*text\";"),
+                ("let value = r#\"text", "*text\"#;"),
+            ] {
+                cx.set_state(&formatdoc! {"
+                    fn main() {{
+                        {first_line}ˇ
+                    {indent}{next_line}
+                    }}"});
+                cx.update_editor(|editor, window, cx| {
+                    editor.join_lines_impl(insert_whitespace, window, cx)
+                });
+                cx.assert_editor_state(&formatdoc! {"
+                    fn main() {{
+                        {first_line}ˇ{separator}{next_line}
+                    }}"});
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_join_lines_rust_block_comments(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+    for insert_whitespace in [true, false] {
+        let separator = if insert_whitespace { " " } else { "" };
+        for start in ["/*", "/**", "/*!"] {
+            for next_line in ["* bar", "*bar"] {
+                cx.set_state(&formatdoc! {"
+                    {start}
+                     * fooˇ
+                     {next_line}
+                     */"});
+                cx.update_editor(|editor, window, cx| {
+                    editor.join_lines_impl(insert_whitespace, window, cx)
+                });
+                cx.assert_editor_state(&formatdoc! {"
+                    {start}
+                     * fooˇ{separator}bar
+                     */"});
+            }
+
+            cx.set_state(&formatdoc! {"
+                {start}
+                 * fooˇ
+                 *
+                 */"});
+            cx.update_editor(|editor, window, cx| {
+                editor.join_lines_impl(insert_whitespace, window, cx)
+            });
+            cx.assert_editor_state(&formatdoc! {"
+                {start}
+                 * fooˇ
+                 */"});
+
+            cx.set_state(&formatdoc! {"
+                {start}
+                 * fooˇ
+                 */"});
+            cx.update_editor(|editor, window, cx| {
+                editor.join_lines_impl(insert_whitespace, window, cx)
+            });
+            cx.assert_editor_state(&formatdoc! {"
+                {start}
+                 * fooˇ{separator}*/"});
+        }
     }
 }
 
@@ -8540,6 +8620,40 @@ async fn test_rotate_selections(cx: &mut TestAppContext) {
         ˇliˇne123
         ˇline23
         ˇline3
+    "});
+}
+
+#[gpui::test]
+async fn test_rotate_selections_nonconsecutive_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        ˇline1
+        line2
+        liˇne3
+        line4ˇ
+    "});
+
+    cx.update_editor(|e, window, cx| {
+        e.rotate_selections_forward(&RotateSelectionsForward, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        line4ˇ
+        line2
+        ˇline1
+        liˇne3
+    "});
+
+    cx.update_editor(|e, window, cx| {
+        e.rotate_selections_backward(&RotateSelectionsBackward, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        ˇline1
+        line2
+        liˇne3
+        line4ˇ
     "});
 }
 
@@ -11246,6 +11360,7 @@ async fn test_paste_shifts_block_by_first_line_delta(cx: &mut TestAppContext) {
     ));
     cx.set_state("package test\n\nˇ");
     cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.run_until_parked();
     cx.assert_editor_state("package test\n\nfunc find() {\n\treturn 1\n}ˇ");
 
     // The block moves by however far its first line moved, so a first line that
@@ -11253,6 +11368,7 @@ async fn test_paste_shifts_block_by_first_line_delta(cx: &mut TestAppContext) {
     cx.write_to_clipboard(ClipboardItem::new_string("        foo()\n    bar()".into()));
     cx.set_state("func test() {\nˇ\n}");
     cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.run_until_parked();
     cx.assert_editor_state("func test() {\n    foo()\nbar()ˇ\n}");
 }
 
@@ -23155,7 +23271,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
         }
     "});
 
-    // If a selection span multiple lines, empty lines are not toggled.
+    // If a selection spans multiple lines, empty lines are also toggled.
     cx.set_state(indoc! {"
         fn a() {
             «a();
@@ -23168,9 +23284,9 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
 
     cx.assert_editor_state(indoc! {"
         fn a() {
-            // «a();
-
-            // c();ˇ»
+        //     «a();
+        //•
+        //     c();ˇ»
         }
     "});
 
@@ -23210,6 +23326,7 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
     let toggle_comments = &ToggleComments {
         advance_downwards: false,
         ignore_indent: true,
+        comment_empty_lines: false,
     };
 
     // If multiple selections intersect a line, the line is only toggled once.
@@ -23320,6 +23437,160 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_comment_commenting_blank_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    // A prefix without a trailing space keeps every expectation below free of
+    // trailing whitespace, which would otherwise be stripped on save and break
+    // the assertions on commented blank lines.
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments::default();
+
+    cx.set_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //«fn a() {
+        //    b();
+        //
+        //    c();
+        //}ˇ»
+    "});
+
+    // Toggling again removes the prefix from every line, blank ones included.
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    // All prefixes in a block go at one shared column so they line up: the
+    // smallest indent among the rows being commented. A blank line contributes
+    // 0 and drags that to 0 - shifting every line in the block left. VS Code
+    // does the same.
+    cx.set_state(indoc! {"
+        fn a() {
+            «b();
+
+            c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    «b();
+        //
+        //    c();ˇ»
+        }
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_uncomments_after_parameter_change(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let skip_blank_lines = &ToggleComments {
+        comment_empty_lines: false,
+        ..Default::default()
+    };
+    let comment_blank_lines = &ToggleComments::default();
+
+    cx.set_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    // Comment with one binding: the blank line gets no marker.
+    cx.update_editor(|e, window, cx| e.toggle_comments(skip_blank_lines, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //«fn a() {
+        //    b();
+
+        //    c();
+        //}ˇ»
+    "});
+
+    // Toggle with the other binding. The blank line still has no marker, but it must
+    // not make the block look uncommented: the markers are removed, not doubled.
+    cx.update_editor(|e, window, cx| e.toggle_comments(comment_blank_lines, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_selection_of_only_blank_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments::default();
+
+    // No line carries a marker, so there is nothing to remove: comment them.
+    cx.set_state(indoc! {"
+        fn a() {
+        «
+
+        ˇ»}
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //«
+        //
+        ˇ»}
+    "});
+}
+
+#[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -23341,6 +23612,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     let toggle_comments = &ToggleComments {
         advance_downwards: true,
         ignore_indent: false,
+        comment_empty_lines: false,
     };
 
     // Single cursor on one line -> advance
@@ -32872,6 +33144,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         primary: GutterButtonIntent::SetBreakpoint,
         secondary: GutterButtonIntent::SetBookmark,
         focus_handle,
+        on_render: None,
     };
 
     let primary_intent = tooltip.active_intent(Modifiers::none());
@@ -32884,11 +33157,10 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
 
     // When both features are enabled, the meta text advertises the
     // modifier-click alternative.
-    let meta = tooltip.meta_text(primary_intent);
+    let meta = tooltip.meta_text();
     assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+    assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
     assert!(meta.contains("right-click for more options"));
-    let meta = tooltip.meta_text(secondary_intent);
-    assert!(meta.contains("-click to add a breakpoint"), "got: {meta}");
 
     // When only one feature is enabled (primary == secondary), a
     // modifier-click repeats the primary action, so the tooltip must not
@@ -32897,9 +33169,46 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         primary: GutterButtonIntent::SetBreakpoint,
         secondary: GutterButtonIntent::SetBreakpoint,
         focus_handle: tooltip.focus_handle,
+        on_render: None,
     };
-    let meta = single_feature_tooltip.meta_text(GutterButtonIntent::SetBreakpoint);
+    let meta = single_feature_tooltip.meta_text();
     assert_eq!(meta, "right-click for more options");
+}
+
+#[gpui::test]
+fn test_gutter_button_tooltip_renders_modifier_transitions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let renders = Rc::new(RefCell::new(Vec::new()));
+    let (tooltip, cx) = cx.add_window_view({
+        let renders = renders.clone();
+        move |_window, cx| GutterButtonTooltip {
+            primary: GutterButtonIntent::SetBreakpoint,
+            secondary: GutterButtonIntent::SetBookmark,
+            focus_handle: cx.focus_handle(),
+            on_render: Some(renders),
+        }
+    });
+    cx.run_until_parked();
+
+    let assert_render = |expected_title: &str| {
+        let (title, meta) = renders.borrow().last().cloned().expect("tooltip rendered");
+        assert_eq!(title, expected_title);
+        assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+        assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
+    };
+
+    assert_render("Set Breakpoint");
+
+    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    tooltip.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+    assert_render("Set Bookmark");
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    tooltip.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+    assert_render("Set Breakpoint");
 }
 
 #[gpui::test]
@@ -35385,6 +35694,150 @@ async fn test_bookmarks_tab_retries_failed_path_when_file_appears(cx: &mut TestA
         excerpt_count(&bookmarks_editor, &mut cx),
         2,
         "the bookmarks tab should refresh and show the late file's bookmark"
+    );
+}
+
+#[gpui::test]
+async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    let debounce = Duration::from_millis(
+        cx.update(|_, cx| EditorSettings::get_global(cx).lsp_highlight_debounce.0),
+    );
+    let project = cx.update_workspace(|workspace, _, _| workspace.project().clone());
+    let server_id = cx.lsp.server.server_id();
+    cx.set_state(indoc! {"
+        fn main() {
+            let foo = 1;
+            fˇoo;
+        }
+    "});
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let _request_handler =
+        cx.set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>({
+            let request_count = request_count.clone();
+            move |_, _, _| {
+                request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move {
+                    Ok(Some(vec![lsp::DocumentHighlight {
+                        range: lsp::Range::new(lsp::Position::new(2, 4), lsp::Position::new(2, 7)),
+                        kind: Some(lsp::DocumentHighlightKind::READ),
+                    }]))
+                }
+            }
+        });
+
+    register_document_highlight_capability(&cx.lsp, "python-document-highlight", "python").await;
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected a registration for another language to not query the server",
+    );
+    assert_eq!(document_highlight_count(&mut cx), 0);
+
+    register_document_highlight_capability(&cx.lsp, "rust-document-highlight", "rust").await;
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected an applicable registration to refresh document highlights",
+    );
+    assert_eq!(document_highlight_count(&mut cx), 1);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.refresh_document_highlights(cx);
+    });
+    for _ in 0..3 {
+        cx.executor().advance_clock(debounce / 4);
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            project.update(cx, |_, cx| {
+                cx.emit(project::Event::RefreshDocumentHighlights {
+                    server_id: Some(LanguageServerId(server_id.0 + 1)),
+                });
+            });
+        });
+        cx.run_until_parked();
+    }
+    cx.executor().advance_clock(debounce / 4);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        2,
+        "expected refreshes of servers unrelated to the buffer to not restart the debounce",
+    );
+
+    cx.update(|_, cx| {
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::RefreshDocumentHighlights {
+                server_id: Some(server_id),
+            });
+        });
+    });
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        3,
+        "expected a refresh of the buffer's server to query document highlights",
+    );
+
+    cx.lsp
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "rust-document-highlight".to_string(),
+                    method: "textDocument/documentHighlight".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        3,
+        "expected no server query after the applicable registration is removed",
+    );
+    assert_eq!(
+        document_highlight_count(&mut cx),
+        0,
+        "expected stale document highlights to be cleared after unregistration",
+    );
+
+    register_document_highlight_capability(&cx.lsp, "rust-document-highlight", "rust").await;
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(request_count.load(atomic::Ordering::SeqCst), 4);
+    assert_eq!(document_highlight_count(&mut cx), 1);
+
+    let buffer = cx.update_editor(|editor, _, cx| editor.buffer().read(cx).as_singleton().unwrap());
+    cx.update(|_, cx| {
+        project.update(cx, |project, cx| {
+            project.stop_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
+        });
+    });
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        4,
+        "expected no document highlight request after the server is stopped",
+    );
+    assert_eq!(
+        document_highlight_count(&mut cx),
+        0,
+        "expected stale document highlights to be cleared after the server is stopped",
     );
 }
 
@@ -45936,4 +46389,196 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
             "a rewrap after release keeps the last settled pair frozen"
         );
     });
+}
+
+#[gpui::test]
+async fn test_lsp_show_document(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    let target_path = EditorLspTestContext::root_path()
+        .join("dir")
+        .join("target.rs");
+    let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+    fs.as_fake()
+        .insert_file(&target_path, b"fn target() {}".to_vec())
+        .await;
+
+    let response = cx
+        .lsp
+        .server
+        .request::<lsp::request::ShowDocument>(
+            lsp::ShowDocumentParams {
+                uri: lsp::Uri::from_file_path(&target_path).unwrap(),
+                external: None,
+                take_focus: Some(true),
+                selection: Some(lsp::Range::new(
+                    lsp::Position::new(0, 3),
+                    lsp::Position::new(0, 9),
+                )),
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("show document request should not error");
+    assert_eq!(response, lsp::ShowDocumentResult { success: true });
+    cx.run_until_parked();
+
+    cx.update_workspace(|workspace, _, cx| {
+        let editor = workspace
+            .active_item_as::<Editor>(cx)
+            .expect("an editor should be opened for the shown document");
+        editor.update(cx, |editor, cx| {
+            let path = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("a singleton buffer should be opened")
+                .read(cx)
+                .file()
+                .expect("the opened buffer should have a file")
+                .path()
+                .clone();
+            assert_eq!(path.as_ref(), rel_path("dir/target.rs"));
+            assert_eq!(
+                editor
+                    .selections
+                    .ranges::<Point>(&editor.display_snapshot(cx)),
+                vec![Point::new(0, 3)..Point::new(0, 9)]
+            );
+        });
+    });
+}
+
+#[gpui::test]
+async fn test_lsp_show_document_external(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    let initial_item_id = cx
+        .update_workspace(|workspace, _, cx| workspace.active_item(cx).map(|item| item.item_id()));
+    let response = cx
+        .lsp
+        .server
+        .request::<lsp::request::ShowDocument>(
+            lsp::ShowDocumentParams {
+                uri: "https://zed.dev/docs".parse::<lsp::Uri>().unwrap(),
+                external: Some(true),
+                take_focus: None,
+                selection: None,
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("show document request should not error");
+    assert_eq!(response, lsp::ShowDocumentResult { success: true });
+    assert_eq!(cx.opened_url(), Some("https://zed.dev/docs".to_string()));
+    cx.run_until_parked();
+    cx.update_workspace(|workspace, _, cx| {
+        assert_eq!(
+            workspace.active_item(cx).map(|item| item.item_id()),
+            initial_item_id,
+            "external documents should not open any workspace items"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_lsp_show_document_without_take_focus(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    let target_path = EditorLspTestContext::root_path()
+        .join("dir")
+        .join("target.rs");
+    let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+    fs.as_fake()
+        .insert_file(&target_path, b"fn target() {}".to_vec())
+        .await;
+
+    let initial_editor = cx.editor.clone();
+    let response = cx
+        .lsp
+        .server
+        .request::<lsp::request::ShowDocument>(
+            lsp::ShowDocumentParams {
+                uri: lsp::Uri::from_file_path(&target_path).unwrap(),
+                external: None,
+                take_focus: None,
+                selection: None,
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("show document request should not error");
+    assert_eq!(response, lsp::ShowDocumentResult { success: true });
+    cx.run_until_parked();
+
+    cx.update_workspace(|workspace, _, cx| {
+        let opened_editor = workspace
+            .active_item_as::<Editor>(cx)
+            .expect("an editor should be opened for the shown document");
+        assert_ne!(
+            opened_editor.entity_id(),
+            initial_editor.entity_id(),
+            "the shown document should become the active item"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_lsp_show_document_unsupported_uri(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    let response = cx
+        .lsp
+        .server
+        .request::<lsp::request::ShowDocument>(
+            lsp::ShowDocumentParams {
+                uri: "untitled:some-document".parse::<lsp::Uri>().unwrap(),
+                external: None,
+                take_focus: None,
+                selection: None,
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("show document request should not error");
+    assert_eq!(response, lsp::ShowDocumentResult { success: false });
+}
+
+async fn register_document_highlight_capability(
+    lsp: &lsp::FakeLanguageServer,
+    registration_id: &str,
+    language: &str,
+) {
+    lsp.request::<lsp::request::RegisterCapability>(
+        lsp::RegistrationParams {
+            registrations: vec![lsp::Registration {
+                id: registration_id.to_string(),
+                method: "textDocument/documentHighlight".to_string(),
+                register_options: Some(json!({
+                    "documentSelector": [{ "language": language, "scheme": "file" }],
+                })),
+            }],
+        },
+        DEFAULT_LSP_REQUEST_TIMEOUT,
+    )
+    .await
+    .into_response()
+    .unwrap();
+}
+
+fn document_highlight_count(cx: &mut EditorLspTestContext) -> usize {
+    cx.editor(|editor, _, _| {
+        editor
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightRead)
+            .map_or(0, |(_, ranges)| ranges.len())
+    })
 }

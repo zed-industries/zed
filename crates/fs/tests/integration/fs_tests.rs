@@ -18,6 +18,56 @@ use tempfile::TempDir;
 use util::path;
 
 #[gpui::test]
+async fn test_watcher_diagnostics_do_not_change_event_delivery(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    let root = Path::new(path!("/root"));
+    let file = root.join("file");
+    fs.create_dir(root).await.unwrap();
+    let (mut events, watcher) = fs.watch(root, Duration::ZERO).await;
+    let recording = fs.record_watcher_diagnostics().unwrap();
+    assert_eq!(
+        recording.snapshot().watchers[0].roots[0].path,
+        root.to_string_lossy()
+    );
+    assert!(recording.snapshot().events.is_empty());
+
+    fs.write(&file, b"first").await.unwrap();
+    let batch = events.next().await.unwrap();
+    assert!(batch.iter().any(|event| event.path == file));
+    assert!(recording.snapshot().events.iter().any(|event| {
+        event.operation == "event" && event.paths.contains(&file.to_string_lossy().into_owned())
+    }));
+
+    fs.simulate_watcher_overflow(root);
+    let batch = events.next().await.unwrap();
+    assert!(
+        batch
+            .iter()
+            .any(|event| event.kind == Some(PathEventKind::Rescan))
+    );
+    assert!(recording.snapshot().events.iter().any(|event| event.rescan));
+
+    drop(recording);
+    fs.write(&file, b"second").await.unwrap();
+    let batch = events.next().await.unwrap();
+    assert!(batch.iter().any(|event| event.path == file));
+    assert!(
+        fs.record_watcher_diagnostics()
+            .unwrap()
+            .snapshot()
+            .events
+            .is_empty()
+    );
+    drop(events);
+    drop(watcher);
+    assert!(
+        fs.record_watcher_diagnostics().unwrap().snapshot().watchers[0]
+            .roots
+            .is_empty()
+    );
+}
+
+#[gpui::test]
 async fn test_fake_fs(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor.clone());
     fs.insert_tree(
@@ -631,11 +681,11 @@ async fn test_fake_fs_rename_ignore_if_exists_leaves_source_and_target_unchanged
         "from target"
     );
 
-    // An ignored rename must not be recorded as a move either, or a handle held
-    // across it reports a path its file never went to.
-    assert!(
-        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).is_err(),
-        "an ignored rename should not record a move"
+    // A handle held across an ignored rename must keep reporting the path the
+    // file is actually at, not the one it never went to.
+    assert_eq!(
+        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).unwrap(),
+        PathBuf::from(path!("/root/source.txt"))
     );
 }
 
@@ -664,6 +714,49 @@ async fn test_fake_fs_rename_onto_itself_keeps_the_file(executor: BackgroundExec
 
     assert!(result.is_ok());
     assert_eq!(fs.load(path).await.unwrap(), "content");
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_executable_metadata(executor: BackgroundExecutor) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tempdir = TempDir::new().unwrap();
+    let path = tempdir.path();
+    let non_executable_path = path.join("non-executable.sh");
+    let executable_path = path.join("executable.sh");
+    let symlink_path = path.join("executable-symlink.sh");
+
+    std::fs::write(&non_executable_path, "#!/bin/sh\n").unwrap();
+    std::fs::write(&executable_path, "#!/bin/sh\n").unwrap();
+    let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable_path, permissions).unwrap();
+
+    let fs = RealFs::new(None, executor);
+    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("executable.sh"))).unwrap();
+
+    let non_executable_metadata = fs
+        .metadata(&non_executable_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(!non_executable_metadata.is_executable);
+
+    let executable_metadata = fs
+        .metadata(&executable_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(executable_metadata.is_executable);
+
+    let symlink_metadata = fs
+        .metadata(&symlink_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(symlink_metadata.is_symlink);
+    assert!(symlink_metadata.is_executable);
 }
 
 #[gpui::test]
@@ -916,6 +1009,59 @@ async fn watcher_delivered_event(
             _ = timeout => return false,
         }
     }
+}
+
+#[gpui::test]
+async fn test_realfs_watcher_diagnostics(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let fs = RealFs::new(None, executor.clone());
+    let directory = TempDir::new().unwrap();
+    let root = std::fs::canonicalize(directory.path()).unwrap();
+    // Windows canonicalization adds a verbatim prefix that watcher paths omit.
+    let root = util::paths::SanitizedPath::new(&root)
+        .as_path()
+        .to_path_buf();
+    let recording = fs.record_watcher_diagnostics().unwrap();
+    let (mut events, watcher) = fs.watch(&root, Duration::from_millis(10)).await;
+    let file = root.join("watcher-diagnostics.txt");
+    fs.write(&file, b"first").await.unwrap();
+    assert!(
+        watcher_delivered_event(&mut events, &executor, Duration::from_secs(5), &|path| {
+            path == file
+        })
+        .await,
+        "no watcher event matched {file:?}: {:#?}",
+        recording.snapshot()
+    );
+    let snapshot = recording.snapshot();
+    assert!(
+        snapshot
+            .events
+            .iter()
+            .any(|event| event.operation == "watch")
+    );
+    assert!(snapshot.events.iter().any(|event| {
+        event.operation == "event"
+            && (event.rescan || event.paths.contains(&file.to_string_lossy().into_owned()))
+    }));
+    assert!(snapshot.watchers.iter().any(|watcher| {
+        watcher
+            .roots
+            .iter()
+            .any(|entry| entry.path == root.to_string_lossy())
+    }));
+    serde_json::to_string_pretty(&snapshot).unwrap();
+
+    drop(recording);
+    fs.write(&file, b"second").await.unwrap();
+    assert!(
+        watcher_delivered_event(&mut events, &executor, Duration::from_secs(5), &|path| {
+            path == file
+        })
+        .await
+    );
+    drop(events);
+    drop(watcher);
 }
 
 /// Exercises a spread of real watchers whose registered watch path is spelled
