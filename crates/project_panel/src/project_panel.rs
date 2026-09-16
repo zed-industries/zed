@@ -6964,7 +6964,7 @@ impl ProjectPanel {
             chevron.is_none() && folder_indicator.shows_chevron() && folder_indicator.shows_icon();
 
         let filename_text_color =
-            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
+            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked, cx);
 
         let is_cut = self
             .clipboard

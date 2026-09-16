@@ -67,6 +67,8 @@ pub enum Color {
     Placeholder,
     /// A color associated with a specific player number.
     Player(u32),
+    /// A color used to indicate a renamed item, such as a file renamed in version control.
+    Renamed,
     /// A color used to indicate selected text or UI elements.
     Selected,
     /// A color used to indicate a successful operation or status.
@@ -104,6 +106,7 @@ impl Color {
             Color::Placeholder => cx.theme().colors().text_placeholder,
             Color::Accent => cx.theme().colors().text_accent,
             Color::Player(i) => cx.theme().styles.player.color_for_participant(*i).cursor,
+            Color::Renamed => cx.theme().status().renamed,
             Color::Error => cx.theme().status().error,
             Color::Selected => cx.theme().colors().text_accent,
             Color::Success => cx.theme().status().success,
