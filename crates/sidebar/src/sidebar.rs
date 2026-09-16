@@ -6619,6 +6619,7 @@ impl Sidebar {
                 let metadata = terminal.metadata.clone();
                 let workspace = terminal.workspace.clone();
                 move |this, _, window, cx| {
+                    this.selection = None;
                     this.activate_terminal_entry(
                         metadata.clone(),
                         workspace.clone(),

@@ -5002,69 +5002,130 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
 }
 
 #[gpui::test]
-async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppContext) {
-    let project = init_test_project("/my-project", cx).await;
+async fn test_click_clears_selection_and_focus_in_does_not_restore_it(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
+    let thread_session_id = acp::SessionId::new(Arc::from("thread-a"));
+    // Keep the thread above the terminal, whose creation time is set to now.
     save_thread_metadata(
-        acp::SessionId::new(Arc::from("t-1")),
+        thread_session_id.clone(),
         Some("Thread A".into()),
-        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        Utc::now() + chrono::Duration::days(1),
         None,
         None,
         &project,
         cx,
     );
-
-    save_thread_metadata(
-        acp::SessionId::new(Arc::from("t-2")),
-        Some("Thread B".into()),
-        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-        None,
-        None,
-        &project,
-        cx,
-    );
-
-    cx.run_until_parked();
-    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Terminal B", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
     cx.run_until_parked();
 
+    let click_entry = |entry_index, cx: &mut gpui::VisualTestContext| {
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(400.), px(400.)),
+            |_, _| sidebar.clone().into_any_element(),
+        );
+        let entry_bounds = sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .list_state
+                .bounds_for_item(entry_index)
+                .expect("sidebar entry should be measured")
+        });
+        cx.simulate_click(entry_bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+    };
+
+    // Verify row order before using fixed indices.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
         vec![
             //
             "v [my-project]",
             "  Thread A",
-            "  Thread B",
+            "  Terminal B",
         ]
     );
+    let thread_index = 1;
+    let terminal_index = 2;
+    let thread_id = sidebar.read_with(cx, |sidebar, _cx| {
+        let Some(ListEntry::Thread(thread)) = sidebar.contents.entries.get(thread_index) else {
+            panic!("expected agent thread at index {thread_index}");
+        };
+        thread.metadata.thread_id
+    });
 
-    // Keyboard confirm preserves selection.
+    // Keyboard confirm preserves Terminal B's selection.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.selection = Some(1);
+        sidebar.selection = Some(terminal_index);
         sidebar.confirm(&Confirm, window, cx);
+        cx.notify();
     });
     assert_eq!(
         sidebar.read_with(cx, |sidebar, _| sidebar.selection),
-        Some(1)
+        Some(terminal_index)
     );
 
-    // Click handlers clear selection to None so no highlight lingers
-    // after a click regardless of focus state. The hover style provides
-    // visual feedback during mouse interaction instead.
+    // Clicking Thread A clears keyboard selection and activates the thread.
+    click_entry(thread_index, cx);
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, None);
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Thread { thread_id: active_thread_id, .. }) if *active_thread_id == thread_id
+            ),
+            "clicked agent thread should become active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+
+    // The focus handler must not restore the cleared selection.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.selection = None;
-        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let project_group_key = ProjectGroupKey::new(None, path_list);
-        sidebar.toggle_collapse(&project_group_key, window, cx);
+        sidebar.focus_in(window, cx);
     });
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
 
-    // When the user tabs back into the sidebar, focus_in no longer
-    // restores selection — it stays None.
+    // Verify row order is unchanged before reusing the indices.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [my-project]",
+            "  Thread A",
+            "  Terminal B",
+        ]
+    );
+
+    // Start with a selection so a click that fails to clear it cannot pass.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.selection = Some(thread_index);
+        cx.notify();
+    });
+
+    // Clicking Terminal B clears keyboard selection and activates the terminal.
+    click_entry(terminal_index, cx);
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, None);
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. }) if *active_terminal_id == terminal_id
+            ),
+            "clicked terminal should become active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+
+    // The focus handler must leave selection cleared after a terminal click too.
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.focus_in(window, cx);
     });
