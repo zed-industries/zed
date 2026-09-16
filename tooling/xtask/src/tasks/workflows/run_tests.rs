@@ -94,6 +94,17 @@ pub(crate) fn run_tests() -> Workflow {
             .then(check_licenses()),
         should_check_scripts.and_always().then(check_scripts(true)),
     ];
+    for (platform, arch) in [
+        (Platform::Linux, Arch::X86_64),
+        (Platform::Mac, Arch::AARCH64),
+        (Platform::Windows, Arch::X86_64),
+    ] {
+        jobs.push(
+            should_run_tests
+                .and_always()
+                .then(check_remote_server(platform, arch)),
+        );
+    }
     let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
 
@@ -522,6 +533,71 @@ fn check_wasm() -> NamedJob {
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
+}
+
+fn check_remote_server(platform: Platform, arch: Arch) -> NamedJob {
+    let target = match platform {
+        Platform::Linux => format!("{arch}-unknown-linux-musl"),
+        Platform::Mac => format!("{arch}-apple-darwin"),
+        Platform::Windows => format!("{arch}-pc-windows-msvc"),
+    };
+    let runner = match (platform, arch) {
+        (Platform::Linux, Arch::X86_64) => runners::LINUX_LARGE,
+        (Platform::Linux, Arch::AARCH64) => runners::LINUX_ARM_BUNDLER,
+        (Platform::Mac, _) => runners::MAC_DEFAULT,
+        (Platform::Windows, _) => runners::WINDOWS_DEFAULT,
+    };
+    let command = format!(
+        "cargo --config .cargo/ci-config.toml check --locked --release --package remote_server --target {target}"
+    );
+    let check = match platform {
+        Platform::Windows => {
+            let architecture = match arch {
+                Arch::X86_64 => "amd64",
+                Arch::AARCH64 => "arm64",
+            };
+            named::pwsh(&formatdoc! {r#"
+                $hostArchitecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {{
+                    "X64" {{ "amd64" }}
+                    "Arm64" {{ "arm64" }}
+                    default {{ throw "Unsupported architecture" }}
+                }}
+                Push-Location
+                & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch {architecture} -HostArch $hostArchitecture
+                Pop-Location
+                {command}
+            "#})
+        }
+        Platform::Linux | Platform::Mac => named::bash(command),
+    };
+    NamedJob {
+        name: format!("check_remote_server_{platform}_{arch}"),
+        job: release_job(&[])
+            .runs_on(runner)
+            .when(platform == Platform::Linux, |job| {
+                use_clang(job)
+                    .add_env((format!("CC_{}", target.replace('-', "_")), "musl-gcc"))
+                    .add_env((
+                        format!(
+                            "CARGO_TARGET_{}_RUSTFLAGS",
+                            target.replace('-', "_").to_uppercase(),
+                        ),
+                        "-C target-feature=+crt-static",
+                    ))
+                    .add_step(steps::harden_runner())
+            })
+            .add_step(steps::checkout_repo())
+            .when(platform != Platform::Windows, |job| {
+                job.add_step(steps::cache_rust_dependencies_namespace())
+            })
+            .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::setup_linux())
+            })
+            .add_step(named::run(platform, &format!("rustup target add {target}")))
+            .add_step(steps::setup_sccache(platform))
+            .add_step(check)
+            .add_step(steps::show_sccache_stats(platform)),
+    }
 }
 
 fn check_workspace_binaries() -> NamedJob {
