@@ -114,6 +114,15 @@ impl Application {
         self
     }
 
+    /// Sets the text system used to shape and lay out text.
+    ///
+    /// Defaults to the text system bundled with GPUI. Supply a different
+    /// implementation to swap the shaper and line layout engine.
+    pub fn with_text_system(self, text_system: Arc<dyn TextSystem>) -> Self {
+        self.0.borrow_mut().set_text_system(text_system);
+        self
+    }
+
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)

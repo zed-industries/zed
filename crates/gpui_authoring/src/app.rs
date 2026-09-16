@@ -2782,6 +2782,12 @@ impl App {
         self.frame_pipeline_factory = factory;
     }
 
+    /// Replaces the text system used to shape and lay out text.
+    #[doc(hidden)]
+    pub fn set_text_system(&mut self, text_system: Arc<dyn TextSystem>) {
+        self.text_system = text_system;
+    }
+
     /// Sets the arguments to pass when restarting the application.
     #[doc(hidden)]
     pub fn set_restart_arguments(&mut self, arguments: Vec<OsString>) {

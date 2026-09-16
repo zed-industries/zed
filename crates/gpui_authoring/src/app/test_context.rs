@@ -1193,12 +1193,22 @@ impl AnyWindowHandle {
 #[cfg(test)]
 mod tests {
     use crate::{
-        PathPromptOptions, SystemNotification, SystemNotificationAction,
-        SystemNotificationResponse, TestAppContext,
+        DefaultTextSystem, NoopTextSystem, PathPromptOptions, SystemNotification,
+        SystemNotificationAction, SystemNotificationResponse, TestAppContext, TextSystem,
     };
     use std::cell::RefCell;
     use std::path::PathBuf;
     use std::rc::Rc;
+    use std::sync::Arc;
+
+    #[gpui::test]
+    async fn test_set_text_system_swaps_the_shaping_engine(cx: &mut TestAppContext) {
+        let injected: Arc<dyn TextSystem> =
+            Arc::new(DefaultTextSystem::new(Arc::new(NoopTextSystem)));
+        cx.update(|cx| cx.set_text_system(injected.clone()));
+        let current = cx.update(|cx| cx.text_system().clone());
+        assert!(Arc::ptr_eq(&current, &injected));
+    }
 
     #[gpui::test]
     async fn test_system_notifications_require_identity_and_replace_matching_tags(
