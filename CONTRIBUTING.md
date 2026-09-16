@@ -4,11 +4,10 @@ Thank you for helping us make Zed better!
 
 ## Before you start
 
-> [!IMPORTANT] **At most three open PRs per author.**
-> Start with one and see it through. Landing your first PR improves the odds for the next.
->
-> A stack of open PRs gets stale as `main` changes and can overwhelm review, especially when submissions are automated.
-
+- **Keep no more than three PRs open at a time.**
+  Start with one and see it through; getting it merged gives the next one a better chance.
+  This limit helps us keep up with reviews and ensures all contributors get a fair share of our reviewing capacity.
+  A stack of open PRs can go stale as `main` changes, especially when submissions are automated.
 - **For bug fixes and docs improvements, start with a PR.**
 - **Discuss features with us before you start.**
   If there isn't a GitHub issue with staff confirmation that we want it, start a [GitHub discussion](https://github.com/zed-industries/zed/discussions), not a PR or a new issue.
