@@ -536,11 +536,7 @@ fn check_wasm() -> NamedJob {
 }
 
 fn check_remote_server(platform: Platform, arch: Arch) -> NamedJob {
-    let target = match platform {
-        Platform::Linux => format!("{arch}-unknown-linux-musl"),
-        Platform::Mac => format!("{arch}-apple-darwin"),
-        Platform::Windows => format!("{arch}-pc-windows-msvc"),
-    };
+    let target = platform.target_triple(arch);
     let runner = match (platform, arch) {
         (Platform::Linux, Arch::X86_64) => runners::LINUX_LARGE,
         (Platform::Linux, Arch::AARCH64) => runners::LINUX_ARM_BUNDLER,
@@ -618,9 +614,8 @@ fn check_workspace_binaries() -> NamedJob {
 }
 
 pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> NamedJob {
-    let target = arch.map(|arch| match (platform, arch) {
-        (Platform::Mac, Arch::X86_64) => "x86_64-apple-darwin",
-        (Platform::Mac, Arch::AARCH64) => "aarch64-apple-darwin",
+    let target = arch.map(|arch| match platform {
+        Platform::Mac => platform.target_triple(arch),
         _ => unimplemented!("cross-arch clippy not supported for {platform}/{arch}"),
     });
     let runner = match platform {
