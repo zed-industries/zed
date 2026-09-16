@@ -13112,6 +13112,64 @@ async fn test_restore_folder_refuses_file_obstructing_tracked_file_parent(
     assert_eq!(checkout_call_count, 0);
 }
 
+#[gpui::test]
+async fn test_restore_folder_allows_target_symlink_to_directory(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "target": {
+                "kept.txt": "kept",
+            },
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_symlink("/root/src/link", PathBuf::from("../target"))
+        .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("src/link", "tracked file contents".into())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/src", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: false }, window, cx)
+    });
+    cx.simulate_prompt_answer("Restore");
+    cx.run_until_parked();
+
+    let checkout_paths = fs
+        .with_git_state(path!("/root/.git").as_ref(), false, |state| {
+            state
+                .checkout_file_calls
+                .iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(checkout_paths, vec![repo_path("src/link")]);
+    assert_eq!(
+        fs.load(path!("/root/target/kept.txt").as_ref())
+            .await
+            .unwrap(),
+        "kept"
+    );
+}
+
 #[test]
 fn test_restore_status_includes_type_changed() {
     assert!(ProjectPanel::is_restorable_status(FileStatus::Tracked(

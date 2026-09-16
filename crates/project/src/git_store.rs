@@ -7051,6 +7051,7 @@ impl Repository {
     ) -> Task<Result<()>> {
         let commit = commit.to_string();
         let id = self.id;
+        let work_directory_abs_path = self.snapshot.work_directory_abs_path.clone();
 
         self.spawn_job_with_tracking(
             paths.clone(),
@@ -7064,10 +7065,25 @@ impl Repository {
                         move |git_repo, _| async move {
                             match git_repo {
                                 RepositoryState::Local(LocalRepositoryState {
+                                    fs,
                                     backend,
                                     environment,
                                     ..
                                 }) => {
+                                    if let Some(obstruction) =
+                                        Repository::checkout_filesystem_obstruction(
+                                            fs,
+                                            &paths,
+                                            &work_directory_abs_path,
+                                        )
+                                        .await?
+                                    {
+                                        anyhow::bail!(
+                                            "local filesystem contents at {} would be removed",
+                                            obstruction.display()
+                                        );
+                                    }
+
                                     backend
                                         .checkout_files(commit, paths, environment.clone())
                                         .await
@@ -7097,6 +7113,58 @@ impl Repository {
                 .await?
             },
         )
+    }
+
+    async fn checkout_filesystem_obstruction(
+        fs: Arc<dyn Fs>,
+        repo_paths: &[RepoPath],
+        work_directory_abs_path: &Path,
+    ) -> Result<Option<PathBuf>> {
+        for repo_path in repo_paths {
+            if let Some(obstruction) = Self::checkout_path_filesystem_obstruction(
+                fs.as_ref(),
+                work_directory_abs_path,
+                repo_path,
+            )
+            .await?
+            {
+                return Ok(Some(obstruction));
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn checkout_path_filesystem_obstruction(
+        fs: &dyn Fs,
+        work_directory_abs_path: &Path,
+        repo_path: &RepoPath,
+    ) -> Result<Option<PathBuf>> {
+        let mut path = work_directory_abs_path.to_path_buf();
+        let components = repo_path.as_std_path().components().collect::<Vec<_>>();
+
+        for (ix, component) in components.iter().enumerate() {
+            path.push(component.as_os_str());
+            let is_target = ix + 1 == components.len();
+
+            if is_target {
+                if let Some(metadata) = fs.metadata(&path).await?
+                    && metadata.is_dir
+                    && !metadata.is_symlink
+                {
+                    let mut entries = fs.read_dir(&path).await?;
+                    if entries.next().await.transpose()?.is_some() {
+                        return Ok(Some(path));
+                    }
+                }
+            } else if let Some(metadata) = fs.metadata(&path).await?
+                && (metadata.is_symlink || !metadata.is_dir)
+            {
+                return Ok(Some(path));
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn reset(
@@ -11553,6 +11621,76 @@ mod tests {
         assert!(!is_submodule_git_dir(Path::new("/foo/.bare")));
         // A directory literally named `modules` that isn't under a git dir.
         assert!(!is_submodule_git_dir(Path::new("/Foo/modules/Bar")));
+    }
+
+    #[gpui::test]
+    async fn test_checkout_preflight_uses_repository_filesystem(cx: &mut TestAppContext) {
+        let host_fs = FakeFs::new(cx.executor());
+        host_fs
+            .insert_tree(
+                Path::new("/host"),
+                json!({
+                    "src": {
+                        "generated": {
+                            "ignored.log": "ignored file",
+                        },
+                    },
+                }),
+            )
+            .await;
+
+        let client_fs = FakeFs::new(cx.executor());
+        client_fs
+            .insert_tree(
+                Path::new("/host"),
+                json!({
+                    "src": {},
+                }),
+            )
+            .await;
+
+        let repo_paths = [repo_path("src/generated")];
+        assert_eq!(
+            Repository::checkout_filesystem_obstruction(client_fs, &repo_paths, Path::new("/host"))
+                .await
+                .unwrap(),
+            None,
+            "the client filesystem does not contain the obstruction"
+        );
+        assert_eq!(
+            Repository::checkout_filesystem_obstruction(host_fs, &repo_paths, Path::new("/host"))
+                .await
+                .unwrap(),
+            Some(PathBuf::from("/host/src/generated")),
+            "the repository-owning filesystem must block the checkout"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkout_preflight_allows_target_symlink_to_directory(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/host"),
+            json!({
+                "target": {
+                    "kept.txt": "kept",
+                },
+            }),
+        )
+        .await;
+        fs.insert_symlink("/host/tracked", PathBuf::from("target"))
+            .await;
+
+        assert_eq!(
+            Repository::checkout_filesystem_obstruction(
+                fs,
+                &[repo_path("tracked")],
+                Path::new("/host")
+            )
+            .await
+            .unwrap(),
+            None,
+        );
     }
 
     #[gpui::test]

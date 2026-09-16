@@ -1610,6 +1610,7 @@ impl GitRepository for RealGitRepository {
                     "--pathspec-file-nul",
                 ])
                 .envs(env.iter())
+                .env("GIT_LITERAL_PATHSPECS", "0")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -5480,11 +5481,15 @@ mod tests {
         fs::create_dir_all(repo_dir.path().join("src/i")).unwrap();
         fs::write(repo_dir.path().join("src/[id]/file.txt"), "original").unwrap();
         fs::write(repo_dir.path().join("src/i/file.txt"), "original").unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "original").unwrap();
+        fs::write(repo_dir.path().join(":(literal)file.txt"), "original").unwrap();
         git_command(repo_dir.path(), ["add", "."]);
         git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
 
         fs::write(repo_dir.path().join("src/[id]/file.txt"), "modified").unwrap();
         fs::write(repo_dir.path().join("src/i/file.txt"), "modified").unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "modified").unwrap();
+        fs::write(repo_dir.path().join(":(literal)file.txt"), "modified").unwrap();
 
         let repo = RealGitRepository::new(
             &repo_dir.path().join(".git"),
@@ -5496,8 +5501,14 @@ mod tests {
 
         repo.checkout_files(
             "HEAD".to_string(),
-            vec![RepoPath::new("src/[id]/file.txt").unwrap()],
-            Arc::new(HashMap::default()),
+            vec![
+                RepoPath::new("src/[id]/file.txt").unwrap(),
+                RepoPath::new("file.txt").unwrap(),
+            ],
+            Arc::new(HashMap::from_iter([(
+                "GIT_LITERAL_PATHSPECS".to_string(),
+                "1".to_string(),
+            )])),
         )
         .await
         .unwrap();
@@ -5508,6 +5519,14 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(repo_dir.path().join("src/i/file.txt")).unwrap(),
+            "modified"
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("file.txt")).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join(":(literal)file.txt")).unwrap(),
             "modified"
         );
     }

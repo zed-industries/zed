@@ -14,7 +14,6 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fs::TrashId;
-use futures::StreamExt as _;
 use git;
 use git::repository::RepoPath;
 use git::status::{FileStatus, GitSummary, StatusCode};
@@ -1433,19 +1432,6 @@ impl ProjectPanel {
         ))
     }
 
-    fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
-        for visible in &self.state.visible_entries {
-            if let Some(git_entry) = visible.entries.iter().find(|e| e.id == entry_id) {
-                let total_modified =
-                    git_entry.git_summary.index.modified + git_entry.git_summary.worktree.modified;
-                let total_deleted =
-                    git_entry.git_summary.index.deleted + git_entry.git_summary.worktree.deleted;
-                return total_modified > 0 || total_deleted > 0;
-            }
-        }
-        false
-    }
-
     fn is_unfoldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
         if !entry.is_dir() || self.state.unfolded_dir_ids.contains(&entry.id) {
             return false;
@@ -1498,57 +1484,6 @@ impl ProjectPanel {
 
         tracked.index_status == StatusCode::TypeChanged
             || tracked.worktree_status == StatusCode::TypeChanged
-    }
-
-    async fn checkout_filesystem_obstruction(
-        fs: Arc<dyn Fs>,
-        repo_paths: &[RepoPath],
-        work_directory_abs_path: &Path,
-    ) -> Result<Option<PathBuf>> {
-        for repo_path in repo_paths {
-            if let Some(obstruction) = Self::checkout_path_filesystem_obstruction(
-                fs.as_ref(),
-                work_directory_abs_path,
-                repo_path,
-            )
-            .await?
-            {
-                return Ok(Some(obstruction));
-            }
-        }
-
-        Ok(None)
-    }
-
-    async fn checkout_path_filesystem_obstruction(
-        fs: &dyn Fs,
-        work_directory_abs_path: &Path,
-        repo_path: &RepoPath,
-    ) -> Result<Option<PathBuf>> {
-        let mut path = work_directory_abs_path.to_path_buf();
-        let components = repo_path.as_std_path().components().collect::<Vec<_>>();
-
-        for (ix, component) in components.iter().enumerate() {
-            path.push(component.as_os_str());
-            let is_target = ix + 1 == components.len();
-
-            if is_target {
-                if let Some(metadata) = fs.metadata(&path).await?
-                    && metadata.is_dir
-                {
-                    let mut entries = fs.read_dir(&path).await?;
-                    if entries.next().await.transpose()?.is_some() {
-                        return Ok(Some(path));
-                    }
-                }
-            } else if let Some(metadata) = fs.metadata(&path).await?
-                && (metadata.is_symlink || !metadata.is_dir)
-            {
-                return Ok(Some(path));
-            }
-        }
-
-        Ok(None)
     }
 
     fn show_restore_error(&self, message: String, cx: &mut Context<Self>) {
@@ -2696,7 +2631,6 @@ impl ProjectPanel {
         maybe!({
             let selection = self.selection?;
             let project = self.project.read(cx);
-            let fs = project.fs().clone();
             let path_style = project.path_style(cx);
 
             let (worktree, entry) = self.selected_sub_entry(cx)?;
@@ -2710,8 +2644,6 @@ impl ProjectPanel {
                 .repository_and_path_for_project_path(&project_path, cx)?;
 
             let snapshot = repository.read(cx).snapshot();
-            let work_directory_abs_path =
-                snapshot.repo_path_to_abs_path(&RepoPath::from_rel_path(RelPath::empty()));
             let repo_paths =
                 Self::restorable_repo_paths(&snapshot, &repo_path, is_dir).collect::<Vec<_>>();
             if repo_paths.is_empty() {
@@ -2786,28 +2718,6 @@ impl ProjectPanel {
                 if let Some(answer) = answer
                     && answer.await != Ok(0)
                 {
-                    return anyhow::Ok(());
-                }
-
-                let obstruction = Self::checkout_filesystem_obstruction(
-                    fs,
-                    &repo_paths,
-                    &work_directory_abs_path,
-                )
-                .await?;
-                if let Some(obstruction) = obstruction {
-                    panel
-                        .update(cx, |panel, cx| {
-                            panel.show_restore_error(
-                                format!(
-                                    "Cannot restore {} because local filesystem contents at {} would be removed",
-                                    entry_name,
-                                    obstruction.display()
-                                ),
-                                cx,
-                            );
-                        })
-                        .ok();
                     return anyhow::Ok(());
                 }
 
