@@ -2434,6 +2434,16 @@ impl Thread {
         self.cumulative_token_usage
     }
 
+    /// Maximum input after reserving the selected model's output allowance.
+    pub fn input_token_capacity(&self) -> Option<u64> {
+        let model = self.model()?;
+        Some(compaction_input_capacity(
+            model.max_input_tokens(),
+            model.max_total_tokens(),
+            model.max_output_tokens(),
+        ))
+    }
+
     pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
         let usage = self.latest_request_token_usage()?;
         let model = self.model()?;
@@ -4392,7 +4402,7 @@ impl Thread {
         let model = self.model()?;
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
         let max_tokens = model.max_token_count();
-        let max_input_tokens = max_tokens.saturating_sub(model.max_output_tokens().unwrap_or(0));
+        let max_input_tokens = self.input_token_capacity()?;
         let tokens_before = self
             .latest_request_token_usage()
             .map(|usage| total_input_tokens(usage).saturating_add(usage.output_tokens));
@@ -4431,10 +4441,7 @@ impl Thread {
             return None;
         }
 
-        let model = self.model()?;
-        let max_token_count = model.max_token_count();
-        let max_input_tokens =
-            max_token_count.saturating_sub(model.max_output_tokens().unwrap_or(0));
+        let max_input_tokens = self.input_token_capacity()?;
         // Models with a small context window don't leave enough headroom for a
         // compaction pass; the UI warns the user about the token limit instead.
         if max_input_tokens < MIN_COMPACTION_CONTEXT_WINDOW {
@@ -4598,6 +4605,17 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+/// Reserves output without subtracting it from an independent input ceiling.
+fn compaction_input_capacity(
+    input_limit: u64,
+    combined_limit: Option<u64>,
+    output_limit: Option<u64>,
+) -> u64 {
+    combined_limit.map_or(input_limit, |combined| {
+        input_limit.min(combined.saturating_sub(output_limit.unwrap_or(0)))
+    })
 }
 
 fn auto_compact_threshold_token_count(
@@ -6883,6 +6901,30 @@ mod tests {
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
 
+    #[test]
+    fn compaction_capacity_respects_prompt_and_combined_limits() {
+        assert_eq!(
+            compaction_input_capacity(90_000, Some(200_000), Some(16_384)),
+            90_000
+        );
+        assert_eq!(
+            compaction_input_capacity(128_000, Some(128_000), Some(64_000)),
+            64_000
+        );
+        assert_eq!(
+            compaction_input_capacity(90_000, None, Some(64_000)),
+            90_000
+        );
+        assert_eq!(
+            compaction_input_capacity(2_000, Some(2_000), Some(3_000)),
+            0
+        );
+        assert_eq!(
+            compaction_input_capacity(128_000, Some(128_000), None),
+            128_000
+        );
+    }
+
     async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
@@ -7187,6 +7229,47 @@ mod tests {
                 );
 
                 assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_threshold_respects_independent_input_limit(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let mut model = FakeLanguageModel::default();
+        model.set_max_token_count(200_000);
+        model.set_max_input_tokens(90_000);
+        model.set_max_output_tokens(Some(16_384));
+        let model = Arc::new(model);
+        let user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread.messages.push(user_text_message(
+                    user_message_id.clone(),
+                    "near the independent input limit",
+                ));
+                for (input_tokens, expected_target) in [(80_999, None), (81_000, Some(1))] {
+                    thread.request_token_usage.insert(
+                        user_message_id.clone(),
+                        language_model::TokenUsage {
+                            input_tokens,
+                            ..Default::default()
+                        },
+                    );
+
+                    assert_eq!(thread.compaction_message_target_ix(cx), expected_target);
+                    assert_eq!(thread.input_token_capacity(), Some(90_000));
+                    assert_eq!(thread.latest_token_usage().unwrap().max_tokens, 200_000);
+                }
             });
         });
     }
