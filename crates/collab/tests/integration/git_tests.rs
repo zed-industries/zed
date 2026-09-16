@@ -1523,3 +1523,118 @@ async fn test_load_commit_template_over_collab(
 
     assert_eq!(commit_template.template, "feat: add awesome feature");
 }
+
+#[gpui::test]
+async fn test_remote_checkout_files_checks_host_filesystem(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "generated": {
+                    "ignored.log": "host ignored file",
+                },
+                "file.txt": "modified",
+                "other.txt": "modified",
+            }),
+        )
+        .await;
+    client_a.fs().set_head_and_index_for_repo(
+        Path::new(path!("/project/.git")),
+        &[
+            ("generated", "tracked file contents".to_string()),
+            ("file.txt", "original".to_string()),
+            ("other.txt", "original".to_string()),
+        ],
+    );
+    client_b
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "other.txt": {
+                    "guest.log": "guest file",
+                },
+            }),
+        )
+        .await;
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
+
+    let error = cx_b
+        .update(|cx| {
+            repo_b.update(cx, |repository, cx| {
+                repository.checkout_files(
+                    "HEAD",
+                    vec![
+                        RepoPath::new("generated").unwrap(),
+                        RepoPath::new("file.txt").unwrap(),
+                    ],
+                    cx,
+                )
+            })
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("would be removed"),
+        "unexpected error: {error:#}"
+    );
+    assert_eq!(
+        client_a
+            .fs()
+            .read_file_sync(path!("/project/generated/ignored.log"))
+            .unwrap(),
+        b"host ignored file"
+    );
+    assert_eq!(
+        client_a
+            .fs()
+            .read_file_sync(path!("/project/file.txt"))
+            .unwrap(),
+        b"modified"
+    );
+
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, cx| {
+            repository.checkout_files("HEAD", vec![RepoPath::new("other.txt").unwrap()], cx)
+        })
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        client_a
+            .fs()
+            .read_file_sync(path!("/project/other.txt"))
+            .unwrap(),
+        b"original"
+    );
+    assert_eq!(
+        client_b
+            .fs()
+            .read_file_sync(path!("/project/other.txt/guest.log"))
+            .unwrap(),
+        b"guest file"
+    );
+}

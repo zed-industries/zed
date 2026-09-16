@@ -4,8 +4,8 @@ use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
 use async_channel::Sender;
 use collections::{HashMap, HashSet};
-use futures::FutureExt as _;
 use futures::future::{self, BoxFuture, join_all};
+use futures::{FutureExt as _, StreamExt as _};
 use git::repository::GitCommitTemplate;
 use git::{
     Oid, RunHook,
@@ -142,6 +142,81 @@ impl FakeGitRepository {
             }
             Ok(())
         })
+    }
+
+    async fn checkout_filesystem_obstruction(
+        &self,
+        work_dir: &Path,
+        repo_paths: &[RepoPath],
+    ) -> Result<Option<PathBuf>> {
+        let head_paths: HashSet<RepoPath> = self
+            .with_state_async(false, |state| {
+                Ok(state.head_contents.keys().cloned().collect())
+            })
+            .await?;
+
+        let mut checked_directories = HashSet::default();
+        for repo_path in repo_paths {
+            anyhow::ensure!(
+                repo_path.is_empty()
+                    || head_paths.contains(repo_path)
+                    || !head_paths
+                        .iter()
+                        .any(|head_path| head_path.starts_with(repo_path)),
+                "checking out directory {} is not supported",
+                repo_path.as_unix_str()
+            );
+            if let Some(obstruction) = self
+                .checkout_path_filesystem_obstruction(
+                    work_dir,
+                    repo_path,
+                    &head_paths,
+                    &mut checked_directories,
+                )
+                .await?
+            {
+                return Ok(Some(obstruction));
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn checkout_path_filesystem_obstruction(
+        &self,
+        work_dir: &Path,
+        repo_path: &RepoPath,
+        head_paths: &HashSet<RepoPath>,
+        checked_directories: &mut HashSet<PathBuf>,
+    ) -> Result<Option<PathBuf>> {
+        let mut path = work_dir.to_path_buf();
+        let components = repo_path.as_std_path().components().collect::<Vec<_>>();
+
+        for (ix, component) in components.iter().enumerate() {
+            path.push(component.as_os_str());
+            let is_target = ix + 1 == components.len();
+            if !is_target && checked_directories.contains(&path) {
+                continue;
+            }
+            let Some(metadata) = self.fs.metadata(&path).await? else {
+                continue;
+            };
+
+            if is_target {
+                if metadata.is_dir && !metadata.is_symlink && head_paths.contains(repo_path) {
+                    let mut entries = self.fs.read_dir(&path).await?;
+                    if entries.next().await.transpose()?.is_some() {
+                        return Ok(Some(path));
+                    }
+                }
+            } else if metadata.is_symlink || !metadata.is_dir {
+                return Ok(Some(path));
+            } else {
+                checked_directories.insert(path.clone());
+            }
+        }
+
+        Ok(None)
     }
 
     /// Scans `.git/worktrees/*/gitdir` to find the admin entry directory for a
@@ -381,40 +456,40 @@ impl GitRepository for FakeGitRepository {
                 commit == "HEAD",
                 "checking out {commit} is not supported by FakeGitRepository"
             );
+            let work_dir = self
+                .dot_git_path
+                .parent()
+                .context("git directory has no parent")?
+                .to_owned();
+            if let Some(obstruction) = self
+                .checkout_filesystem_obstruction(&work_dir, &paths)
+                .await?
+            {
+                anyhow::bail!(
+                    "local filesystem contents at {} would be removed",
+                    obstruction.display()
+                );
+            }
+
             let contents = self
                 .with_state_async(false, move |state| {
                     state.checkout_file_calls.push(paths.clone());
                     let mut contents = Vec::new();
                     for path in paths {
                         anyhow::ensure!(!path.is_empty(), "empty string is not a valid pathspec");
-                        if let Some(content) = state.head_contents.get(&path).cloned() {
-                            contents.push((path, content));
-                            continue;
-                        }
-
-                        let initial_len = contents.len();
-                        contents.extend(
-                            state
-                                .head_contents
-                                .iter()
-                                .filter(|(head_path, _)| head_path.starts_with(&path))
-                                .map(|(head_path, content)| (head_path.clone(), content.clone())),
-                        );
-                        anyhow::ensure!(
-                            contents.len() > initial_len,
-                            "pathspec '{}' did not match any file(s) known to git",
-                            path.as_unix_str()
-                        );
+                        let content =
+                            state.head_contents.get(&path).cloned().with_context(|| {
+                                format!(
+                                    "pathspec '{}' did not match any file(s) known to git",
+                                    path.as_unix_str()
+                                )
+                            })?;
+                        contents.push((path, content));
                     }
                     Ok(contents)
                 })
                 .await?;
 
-            let work_dir = self
-                .dot_git_path
-                .parent()
-                .context("git directory has no parent")?
-                .to_owned();
             for (path, content) in &contents {
                 self.fs
                     .write(&work_dir.join(path.as_std_path()), content)

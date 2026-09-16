@@ -10,7 +10,7 @@ use collections::HashMap;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
-use futures::{AsyncWriteExt, FutureExt as _, select_biased};
+use futures::{AsyncWriteExt, FutureExt as _, StreamExt as _, select_biased};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
@@ -1600,6 +1600,15 @@ impl GitRepository for RealGitRepository {
             let git = git?;
             if paths.is_empty() {
                 return Ok(());
+            }
+
+            if let Some(obstruction) =
+                checkout_filesystem_obstruction(&git, &commit, &paths, &env).await?
+            {
+                anyhow::bail!(
+                    "local filesystem contents at {} would be removed",
+                    obstruction.display()
+                );
             }
 
             let mut process = git
@@ -3774,6 +3783,153 @@ fn parse_initial_graph_output<'a>(
         .collect()
 }
 
+async fn checkout_filesystem_obstruction(
+    git: &GitBinary,
+    commit: &str,
+    repo_paths: &[RepoPath],
+    env: &HashMap<String, String>,
+) -> Result<Option<PathBuf>> {
+    let target_modes = checkout_target_modes(git, commit, repo_paths, env).await?;
+    let mut checked_directories = HashSet::new();
+    for repo_path in repo_paths {
+        let target_mode = target_modes
+            .get(repo_path.as_unix_str())
+            .map(String::as_str);
+        anyhow::ensure!(
+            target_mode != Some(crate::commit::TREE_MODE),
+            "checking out directory {} is not supported",
+            repo_path.as_unix_str()
+        );
+        if let Some(obstruction) = checkout_path_filesystem_obstruction(
+            &git.working_directory,
+            repo_path,
+            target_mode,
+            &mut checked_directories,
+        )
+        .await?
+        {
+            return Ok(Some(obstruction));
+        }
+    }
+
+    Ok(None)
+}
+
+async fn checkout_path_filesystem_obstruction(
+    working_directory: &Path,
+    repo_path: &RepoPath,
+    target_mode: Option<&str>,
+    checked_directories: &mut HashSet<PathBuf>,
+) -> Result<Option<PathBuf>> {
+    let mut path = working_directory.to_path_buf();
+    let components = repo_path.as_std_path().components().collect::<Vec<_>>();
+
+    for (ix, component) in components.iter().enumerate() {
+        path.push(component.as_os_str());
+        let is_target = ix + 1 == components.len();
+        if !is_target && checked_directories.contains(&path) {
+            continue;
+        }
+
+        let metadata = match smol::fs::symlink_metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        if is_target {
+            if metadata.is_dir()
+                && !metadata.file_type().is_symlink()
+                && matches!(target_mode, Some("100644" | "100755" | "120000"))
+            {
+                let mut entries = smol::fs::read_dir(&path).await?;
+                if entries.next().await.transpose()?.is_some() {
+                    return Ok(Some(path));
+                }
+            }
+        } else if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Ok(Some(path));
+        } else {
+            checked_directories.insert(path.clone());
+        }
+    }
+
+    Ok(None)
+}
+
+async fn checkout_target_modes<'a>(
+    git: &GitBinary,
+    commit: &str,
+    repo_paths: &'a [RepoPath],
+    env: &HashMap<String, String>,
+) -> Result<HashMap<&'a str, String>> {
+    let Some((first_path, other_paths)) = repo_paths.split_first() else {
+        return Ok(HashMap::default());
+    };
+
+    let mut common_components = first_path.as_unix_str().split('/').collect::<Vec<_>>();
+    for repo_path in other_paths {
+        let shared_len = common_components
+            .iter()
+            .zip(repo_path.as_unix_str().split('/'))
+            .take_while(|(common, component)| *common == component)
+            .count();
+        common_components.truncate(shared_len);
+    }
+    let common_prefix = common_components.join("/");
+
+    let mut args = vec![
+        OsString::from("ls-tree"),
+        OsString::from("-r"),
+        OsString::from("-t"),
+        OsString::from("-z"),
+        OsString::from(commit),
+        OsString::from("--"),
+    ];
+    if !common_prefix.is_empty() {
+        args.push(OsString::from(format!(":(literal){common_prefix}")));
+    }
+
+    let output = git
+        .build_command(&args)
+        .envs(env.iter())
+        .env("GIT_LITERAL_PATHSPECS", "0")
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git ls-tree failed: {stderr}");
+    }
+
+    let targets = repo_paths
+        .iter()
+        .map(|repo_path| repo_path.as_unix_str())
+        .collect::<HashSet<_>>();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut modes = HashMap::default();
+    for record in stdout.split('\0') {
+        let Some((info, path)) = record.split_once('\t') else {
+            continue;
+        };
+        let Some(target) = targets.get(path) else {
+            continue;
+        };
+        if let Some(mode) = info.split_ascii_whitespace().next() {
+            modes.insert(*target, mode.to_owned());
+        }
+    }
+
+    Ok(modes)
+}
+
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("status"),
@@ -5481,13 +5637,53 @@ mod tests {
         fs::create_dir_all(repo_dir.path().join("src/i")).unwrap();
         fs::write(repo_dir.path().join("src/[id]/file.txt"), "original").unwrap();
         fs::write(repo_dir.path().join("src/i/file.txt"), "original").unwrap();
-        fs::write(repo_dir.path().join("file.txt"), "original").unwrap();
-        fs::write(repo_dir.path().join(":(literal)file.txt"), "original").unwrap();
         git_command(repo_dir.path(), ["add", "."]);
         git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
 
         fs::write(repo_dir.path().join("src/[id]/file.txt"), "modified").unwrap();
         fs::write(repo_dir.path().join("src/i/file.txt"), "modified").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.checkout_files(
+            "HEAD".to_string(),
+            vec![RepoPath::new("src/[id]/file.txt").unwrap()],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("src/[id]/file.txt")).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("src/i/file.txt")).unwrap(),
+            "modified"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn test_checkout_files_overrides_literal_pathspec_env(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("file.txt"), "original").unwrap();
+        fs::write(repo_dir.path().join(":(literal)file.txt"), "original").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
+
         fs::write(repo_dir.path().join("file.txt"), "modified").unwrap();
         fs::write(repo_dir.path().join(":(literal)file.txt"), "modified").unwrap();
 
@@ -5501,10 +5697,7 @@ mod tests {
 
         repo.checkout_files(
             "HEAD".to_string(),
-            vec![
-                RepoPath::new("src/[id]/file.txt").unwrap(),
-                RepoPath::new("file.txt").unwrap(),
-            ],
+            vec![RepoPath::new("file.txt").unwrap()],
             Arc::new(HashMap::from_iter([(
                 "GIT_LITERAL_PATHSPECS".to_string(),
                 "1".to_string(),
@@ -5514,20 +5707,339 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            fs::read_to_string(repo_dir.path().join("src/[id]/file.txt")).unwrap(),
-            "original"
-        );
-        assert_eq!(
-            fs::read_to_string(repo_dir.path().join("src/i/file.txt")).unwrap(),
-            "modified"
-        );
-        assert_eq!(
             fs::read_to_string(repo_dir.path().join("file.txt")).unwrap(),
             "original"
         );
         assert_eq!(
             fs::read_to_string(repo_dir.path().join(":(literal)file.txt")).unwrap(),
             "modified"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkout_files_allows_gitlink_target_directory(cx: &mut TestAppContext) {
+        const FIRST_SUBMODULE_COMMIT: &str = "1111111111111111111111111111111111111111";
+        const SECOND_SUBMODULE_COMMIT: &str = "2222222222222222222222222222222222222222";
+
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("file.txt"), "original").unwrap();
+        git_command(
+            repo_dir.path(),
+            [
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                crate::commit::GITLINK_MODE,
+                FIRST_SUBMODULE_COMMIT,
+                "modules/example",
+            ],
+        );
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
+
+        fs::write(repo_dir.path().join("file.txt"), "modified").unwrap();
+        fs::create_dir_all(repo_dir.path().join("modules/example")).unwrap();
+        fs::write(
+            repo_dir.path().join("modules/example/untracked.txt"),
+            "submodule worktree contents",
+        )
+        .unwrap();
+        git_command(
+            repo_dir.path(),
+            [
+                "update-index",
+                "--cacheinfo",
+                crate::commit::GITLINK_MODE,
+                SECOND_SUBMODULE_COMMIT,
+                "modules/example",
+            ],
+        );
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.checkout_files(
+            "HEAD".to_string(),
+            vec![
+                RepoPath::new("file.txt").unwrap(),
+                RepoPath::new("modules/example").unwrap(),
+            ],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("file.txt")).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("modules/example/untracked.txt")).unwrap(),
+            "submodule worktree contents"
+        );
+        assert!(
+            git_command_output(repo_dir.path(), ["ls-files", "--stage", "modules/example"])
+                .contains(FIRST_SUBMODULE_COMMIT)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkout_files_refuses_blob_over_nonempty_directory(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("generated"), "tracked file contents").unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "original").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
+
+        fs::remove_file(repo_dir.path().join("generated")).unwrap();
+        fs::create_dir(repo_dir.path().join("generated")).unwrap();
+        fs::write(repo_dir.path().join("generated/ignored.log"), "ignored").unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "modified").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let error = repo
+            .checkout_files(
+                "HEAD".to_string(),
+                vec![
+                    RepoPath::new("generated").unwrap(),
+                    RepoPath::new("file.txt").unwrap(),
+                ],
+                Arc::new(HashMap::default()),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("would be removed"));
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("generated/ignored.log")).unwrap(),
+            "ignored"
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("file.txt")).unwrap(),
+            "modified"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkout_files_refuses_file_over_tracked_parent_directory(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::create_dir_all(repo_dir.path().join("parent")).unwrap();
+        fs::write(repo_dir.path().join("parent/target.txt"), "tracked target").unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "original").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
+
+        fs::remove_dir_all(repo_dir.path().join("parent")).unwrap();
+        fs::write(repo_dir.path().join("parent"), "untracked file").unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "modified").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let error = repo
+            .checkout_files(
+                "HEAD".to_string(),
+                vec![
+                    RepoPath::new("parent/target.txt").unwrap(),
+                    RepoPath::new("file.txt").unwrap(),
+                ],
+                Arc::new(HashMap::default()),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("would be removed"));
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("parent")).unwrap(),
+            "untracked file"
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("file.txt")).unwrap(),
+            "modified"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkout_files_refuses_directory_path(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::create_dir_all(repo_dir.path().join("dir")).unwrap();
+        fs::write(repo_dir.path().join("dir/file.txt"), "original").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
+
+        fs::write(repo_dir.path().join("dir/file.txt"), "modified").unwrap();
+        fs::write(repo_dir.path().join("dir/untracked.txt"), "untracked").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let error = repo
+            .checkout_files(
+                "HEAD".to_string(),
+                vec![RepoPath::new("dir").unwrap()],
+                Arc::new(HashMap::default()),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("is not supported"));
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("dir/file.txt")).unwrap(),
+            "modified"
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("dir/untracked.txt")).unwrap(),
+            "untracked"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkout_files_refuses_missing_directory_path(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::create_dir_all(repo_dir.path().join("dir")).unwrap();
+        fs::write(repo_dir.path().join("dir/file.txt"), "original").unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "original").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
+
+        fs::remove_dir_all(repo_dir.path().join("dir")).unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "modified").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let error = repo
+            .checkout_files(
+                "HEAD".to_string(),
+                vec![
+                    RepoPath::new("file.txt").unwrap(),
+                    RepoPath::new("dir").unwrap(),
+                ],
+                Arc::new(HashMap::default()),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("is not supported"));
+        assert!(!repo_dir.path().join("dir").exists());
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("file.txt")).unwrap(),
+            "modified"
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_checkout_files_allows_target_symlink_to_directory(cx: &mut TestAppContext) {
+        use std::os::unix::fs::symlink;
+
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("tracked"), "tracked file contents").unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "original").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
+
+        fs::remove_file(repo_dir.path().join("tracked")).unwrap();
+        fs::create_dir(repo_dir.path().join("target")).unwrap();
+        fs::write(repo_dir.path().join("target/kept.txt"), "kept").unwrap();
+        symlink("target", repo_dir.path().join("tracked")).unwrap();
+        fs::write(repo_dir.path().join("file.txt"), "modified").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.checkout_files(
+            "HEAD".to_string(),
+            vec![
+                RepoPath::new("tracked").unwrap(),
+                RepoPath::new("file.txt").unwrap(),
+            ],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("tracked")).unwrap(),
+            "tracked file contents"
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("target/kept.txt")).unwrap(),
+            "kept"
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("file.txt")).unwrap(),
+            "original"
         );
     }
 

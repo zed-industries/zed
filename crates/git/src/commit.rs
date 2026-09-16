@@ -155,6 +155,7 @@ async fn get_messages_impl(git: &GitBinary, shas: &[Oid]) -> Result<Vec<String>>
 }
 
 pub(crate) const GITLINK_MODE: &str = "160000";
+pub(crate) const TREE_MODE: &str = "040000";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommitDiffObjectKind {

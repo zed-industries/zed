@@ -10627,6 +10627,76 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_restore_refuses_filesystem_obstruction(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "generated": {
+                    "ignored.log": "ignored file",
+                },
+                "file.txt": "modified",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("generated", "tracked file contents".into()),
+                ("file.txt", "original".into()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        await_git_panel_entries(&panel, cx).await;
+
+        let entry = |path, status| GitStatusEntry {
+            repo_path: repo_path(path),
+            status,
+            staging: StageStatus::Unstaged,
+            diff_stat: None,
+        };
+        panel.update_in(cx, |panel, window, cx| {
+            panel.perform_checkout(
+                vec![
+                    entry("generated", StatusCode::Deleted.worktree()),
+                    entry("file.txt", StatusCode::Modified.worktree()),
+                ],
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            fs.read_file_sync(path!("/project/generated/ignored.log"))
+                .unwrap(),
+            b"ignored file"
+        );
+        assert_eq!(
+            fs.read_file_sync(path!("/project/file.txt")).unwrap(),
+            b"modified"
+        );
+        let checkout_call_count = fs
+            .with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state.checkout_file_calls.len()
+            })
+            .unwrap();
+        assert_eq!(checkout_call_count, 0);
+    }
+
+    #[gpui::test]
     async fn test_group_by_staging_section_membership_and_order(cx: &mut TestAppContext) {
         use GitListEntry::*;
 

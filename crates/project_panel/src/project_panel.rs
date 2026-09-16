@@ -2629,14 +2629,16 @@ impl ProjectPanel {
         const MAX_LISTED_PATHS: usize = 5;
 
         maybe!({
-            let selection = self.selection?;
             let project = self.project.read(cx);
             let path_style = project.path_style(cx);
 
             let (worktree, entry) = self.selected_sub_entry(cx)?;
             let is_dir = entry.is_dir();
 
-            let project_path = project.path_for_entry(selection.entry_id, cx)?;
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: entry.path.clone(),
+            };
 
             let git_store = project.git_store();
             let (repository, repo_path) = git_store
@@ -2732,6 +2734,7 @@ impl ProjectPanel {
                             panel.show_restore_error(message, cx);
                         })
                         .ok();
+                    return anyhow::Ok(());
                 }
 
                 panel
