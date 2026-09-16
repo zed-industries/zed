@@ -8,8 +8,14 @@
 //! Run with:
 //!
 //! ```sh
-//! cargo run -p gpui_parley --example parley_demo
+//! cargo run -p gpui_parley --example parley_demo --features demo
 //! ```
+//!
+//! The `demo` feature pulls `gpui` into the example without also pulling in its
+//! `test-support` feature. A dev-dependency's features are unified into the
+//! example build, and `test-support` turns on `App::flush_effects`'s test draw
+//! path, which draws once per `App::update` and bypasses the platform's frame
+//! pacing — leaving the example rendering at whatever rate input arrives.
 
 use gpui::{
     App, Bounds, BoundsExt, Context, Render, ScrollHandle, Window, WindowBounds, WindowOptions,
