@@ -12,8 +12,8 @@
 //! ```
 
 use gpui::{
-    App, Bounds, BoundsExt, Context, Render, Window, WindowBounds, WindowOptions, application, div,
-    prelude::*, px, rgb, size,
+    App, Bounds, BoundsExt, Context, Render, ScrollHandle, Window, WindowBounds, WindowOptions,
+    application, div, prelude::*, px, rgb, size,
 };
 use gpui_parley::{LineBox, ParleyTextSystem};
 
@@ -289,10 +289,16 @@ fn char_count_card(line_count: usize) -> impl IntoElement {
         )
 }
 
-struct ParleyDemo;
+/// Precomputed metrics for the Parley-native layout cards.
+struct DemoMetrics {
+    indent_lines: usize,
+    indent_first_x: Option<f32>,
+    box_lines: usize,
+    char_lines: usize,
+}
 
-impl Render for ParleyDemo {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl DemoMetrics {
+    fn compute(cx: &App) -> Self {
         let parley = cx.text_system().as_any().downcast_ref::<ParleyTextSystem>();
 
         let indent = parley.map(|parley| parley.layout_indented(TEXT, 16.0, 40.0, 320.0));
@@ -310,32 +316,86 @@ impl Render for ParleyDemo {
             .map(|parley| parley.layout_with_char_count(TEXT, 16.0, 16).lines().len())
             .unwrap_or(0);
 
+        Self {
+            indent_lines,
+            indent_first_x,
+            box_lines,
+            char_lines,
+        }
+    }
+}
+
+struct ParleyDemo {
+    metrics: DemoMetrics,
+    scroll_handle: ScrollHandle,
+}
+
+impl Render for ParleyDemo {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let metrics = &self.metrics;
+
         div()
-            .id("parley-demo")
+            .relative()
             .size_full()
-            .overflow_scroll()
             .bg(rgb(0x141417))
             .text_color(rgb(0xf5f5f5))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap_6()
-                    .p_8()
-                    .child(header())
-                    .child(font_section())
+                    .id("parley-demo")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap_4()
-                            .child(heading("Parley-native layout"))
-                            .child(indent_card(indent_lines, indent_first_x))
-                            .child(boxes_card(box_lines))
-                            .child(char_count_card(char_lines)),
+                            .gap_6()
+                            .p_8()
+                            .child(header())
+                            .child(font_section())
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_4()
+                                    .child(heading("Parley-native layout"))
+                                    .child(indent_card(
+                                        metrics.indent_lines,
+                                        metrics.indent_first_x,
+                                    ))
+                                    .child(boxes_card(metrics.box_lines))
+                                    .child(char_count_card(metrics.char_lines)),
+                            ),
                     ),
             )
+            .child(scrollbar(
+                &self.scroll_handle,
+                window.viewport_size().height.0,
+            ))
     }
+}
+
+/// Draws a vertical scrollbar thumb on the right edge for `handle`.
+fn scrollbar(handle: &ScrollHandle, viewport_height: f32) -> impl IntoElement {
+    let max_offset = handle.max_offset().y.0;
+    let (thumb_top, thumb_height) = if max_offset > 0.0 && viewport_height > 0.0 {
+        let content_height = viewport_height + max_offset;
+        let thumb_height = (viewport_height / content_height) * viewport_height;
+        let scrolled = -handle.offset().y.0;
+        let thumb_top = (scrolled / max_offset) * (viewport_height - thumb_height);
+        (thumb_top, thumb_height)
+    } else {
+        (0.0, 0.0)
+    };
+
+    div()
+        .absolute()
+        .top(px(thumb_top))
+        .right(px(4.0))
+        .w(px(6.0))
+        .h(px(thumb_height))
+        .rounded_full()
+        .bg(rgb(0x4a4a52))
 }
 
 fn main() {
@@ -348,7 +408,12 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_, cx| cx.new(|_| ParleyDemo),
+                |_, cx| {
+                    cx.new(|cx| ParleyDemo {
+                        metrics: DemoMetrics::compute(cx),
+                        scroll_handle: ScrollHandle::new(),
+                    })
+                },
             )
             .unwrap();
             cx.activate(true);

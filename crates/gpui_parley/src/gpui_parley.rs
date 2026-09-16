@@ -232,12 +232,97 @@ pub struct LineBox {
     pub width: f32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct LineCacheKey {
+    text: SharedString,
+    font_size: Pixels,
+    runs: Vec<FontRun>,
+    force_width: Option<Pixels>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct WrappedCacheKey {
+    text: SharedString,
+    font_size: Pixels,
+    runs: Vec<FontRun>,
+    wrap_width: Option<Pixels>,
+    max_lines: Option<usize>,
+}
+
+/// One frame's worth of cached layouts, with the keys in insertion order.
+#[derive(Default)]
+struct FrameCache {
+    lines: HashMap<Arc<LineCacheKey>, Arc<LineLayout>>,
+    wrapped_lines: HashMap<Arc<WrappedCacheKey>, Arc<WrappedLineLayout>>,
+    used_lines: Vec<Arc<LineCacheKey>>,
+    used_wrapped_lines: Vec<Arc<WrappedCacheKey>>,
+}
+
+/// A two-frame line-layout cache.
+///
+/// Layouts created during a frame live in `current_frame`; advancing a frame
+/// rotates it into `previous_frame`, so a layout survives into the next frame.
+/// GPUI carries layouts through a frame it does not re-prepaint by calling
+/// [`reuse_layouts`](LineLayoutCache::reuse_layouts) with the range it wants to
+/// keep.
+#[derive(Default)]
+struct LineLayoutCache {
+    previous_frame: FrameCache,
+    current_frame: FrameCache,
+}
+
+impl LineLayoutCache {
+    fn layout_index(&self) -> LineLayoutIndex {
+        LineLayoutIndex {
+            lines_index: self.current_frame.used_lines.len(),
+            wrapped_lines_index: self.current_frame.used_wrapped_lines.len(),
+            lines_by_hash_index: 0,
+            wrapped_lines_by_hash_index: 0,
+        }
+    }
+
+    fn reuse_layouts(&mut self, range: Range<LineLayoutIndex>) {
+        for key in &self.previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
+            if let Some(layout) = self.previous_frame.lines.remove(key) {
+                self.current_frame.lines.insert(key.clone(), layout);
+            }
+            self.current_frame.used_lines.push(key.clone());
+        }
+        for key in &self.previous_frame.used_wrapped_lines
+            [range.start.wrapped_lines_index..range.end.wrapped_lines_index]
+        {
+            if let Some(layout) = self.previous_frame.wrapped_lines.remove(key) {
+                self.current_frame.wrapped_lines.insert(key.clone(), layout);
+            }
+            self.current_frame.used_wrapped_lines.push(key.clone());
+        }
+    }
+
+    fn truncate_layouts(&mut self, index: LineLayoutIndex) {
+        self.current_frame.used_lines.truncate(index.lines_index);
+        self.current_frame
+            .used_wrapped_lines
+            .truncate(index.wrapped_lines_index);
+    }
+
+    fn finish_frame(&mut self) {
+        std::mem::swap(&mut self.previous_frame, &mut self.current_frame);
+        let current = &mut self.current_frame;
+        current.lines.clear();
+        current.wrapped_lines.clear();
+        current.used_lines.clear();
+        current.used_wrapped_lines.clear();
+    }
+}
+
 /// A [`TextSystem`] that shapes and lays out text through Parley.
 pub struct ParleyTextSystem {
     platform: Arc<ParleyPlatformTextSystem>,
     platform_dyn: Arc<dyn PlatformTextSystem>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     wrapper_pool: Mutex<Vec<LineWrapper>>,
+    raster_bounds_cache: Mutex<HashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
+    layout_cache: Mutex<LineLayoutCache>,
 }
 
 impl ParleyTextSystem {
@@ -250,6 +335,8 @@ impl ParleyTextSystem {
             platform_dyn,
             font_runs_pool: Mutex::new(Vec::new()),
             wrapper_pool: Mutex::new(Vec::new()),
+            raster_bounds_cache: Mutex::new(HashMap::new()),
+            layout_cache: Mutex::new(LineLayoutCache::default()),
         })
     }
 
@@ -463,7 +550,13 @@ impl TextSystem for ParleyTextSystem {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        self.platform.glyph_raster_bounds(params)
+        let mut cache = self.raster_bounds_cache.lock().unwrap();
+        if let Some(bounds) = cache.get(params) {
+            return Ok(*bounds);
+        }
+        let bounds = self.platform.glyph_raster_bounds(params)?;
+        cache.insert(params.clone(), bounds);
+        Ok(bounds)
     }
 
     fn rasterize_glyph(&self, params: &RenderGlyphParams) -> Result<(Size<DevicePixels>, Vec<u8>)> {
@@ -484,19 +577,20 @@ impl TextSystem for ParleyTextSystem {
     }
 
     fn layout_index(&self) -> LineLayoutIndex {
-        LineLayoutIndex {
-            lines_index: 0,
-            wrapped_lines_index: 0,
-            lines_by_hash_index: 0,
-            wrapped_lines_by_hash_index: 0,
-        }
+        self.layout_cache.lock().unwrap().layout_index()
     }
 
-    fn reuse_layouts(&self, _range: Range<LineLayoutIndex>) {}
+    fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {
+        self.layout_cache.lock().unwrap().reuse_layouts(range);
+    }
 
-    fn truncate_layouts(&self, _index: LineLayoutIndex) {}
+    fn truncate_layouts(&self, index: LineLayoutIndex) {
+        self.layout_cache.lock().unwrap().truncate_layouts(index);
+    }
 
-    fn finish_frame(&self) {}
+    fn finish_frame(&self) {
+        self.layout_cache.lock().unwrap().finish_frame();
+    }
 
     fn layout_wrapped_line(
         &self,
@@ -504,16 +598,45 @@ impl TextSystem for ParleyTextSystem {
         font_size: Pixels,
         runs: &[FontRun],
         wrap_width: Option<Pixels>,
-        _max_lines: Option<usize>,
+        max_lines: Option<usize>,
     ) -> Arc<WrappedLineLayout> {
+        let mut cache = self.layout_cache.lock().unwrap();
+        let cache = &mut *cache;
+
+        let key = Arc::new(WrappedCacheKey {
+            text: SharedString::from(text),
+            font_size,
+            runs: runs.to_vec(),
+            wrap_width,
+            max_lines,
+        });
+
+        if let Some(layout) = cache.current_frame.wrapped_lines.get(&key).cloned() {
+            return layout;
+        }
+        if let Some(layout) = cache.previous_frame.wrapped_lines.remove(&key) {
+            cache
+                .current_frame
+                .wrapped_lines
+                .insert(key.clone(), layout.clone());
+            cache.current_frame.used_wrapped_lines.push(key);
+            return layout;
+        }
+
         let width = wrap_width.unwrap_or(Pixels::MAX);
         let (unwrapped_layout, wrap_boundaries) =
             self.platform.layout_wrapped(text, font_size, runs, width);
-        Arc::new(WrappedLineLayout {
+        let layout = Arc::new(WrappedLineLayout {
             unwrapped_layout: Arc::new(unwrapped_layout),
             wrap_boundaries,
             wrap_width,
-        })
+        });
+        cache
+            .current_frame
+            .wrapped_lines
+            .insert(key.clone(), layout.clone());
+        cache.current_frame.used_wrapped_lines.push(key);
+        layout
     }
 
     fn layout_line(
@@ -521,9 +644,37 @@ impl TextSystem for ParleyTextSystem {
         text: &str,
         font_size: Pixels,
         runs: &[FontRun],
-        _force_width: Option<Pixels>,
+        force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
-        Arc::new(self.platform.layout_line(text, font_size, runs))
+        let mut cache = self.layout_cache.lock().unwrap();
+        let cache = &mut *cache;
+
+        let key = Arc::new(LineCacheKey {
+            text: SharedString::from(text),
+            font_size,
+            runs: runs.to_vec(),
+            force_width,
+        });
+
+        if let Some(layout) = cache.current_frame.lines.get(&key).cloned() {
+            return layout;
+        }
+        if let Some(layout) = cache.previous_frame.lines.remove(&key) {
+            cache
+                .current_frame
+                .lines
+                .insert(key.clone(), layout.clone());
+            cache.current_frame.used_lines.push(key);
+            return layout;
+        }
+
+        let layout = Arc::new(self.platform.layout_line(text, font_size, runs));
+        cache
+            .current_frame
+            .lines
+            .insert(key.clone(), layout.clone());
+        cache.current_frame.used_lines.push(key);
+        layout
     }
 
     fn try_layout_line_by_hash(
@@ -822,6 +973,8 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::{ParleyTextSystem, TextSystem};
     use gpui_engine::{FontRun, RenderGlyphParams, font};
     use gpui_types::{Point, px};
@@ -950,5 +1103,117 @@ mod tests {
         assert_eq!(size.width, bounds.size.width);
         assert_eq!(size.height, bounds.size.height);
         assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn parley_native_layout_methods_terminate() {
+        let text_system = ParleyTextSystem::new();
+        let text = "The quick brown fox jumps over the lazy dog while the bright \
+                    sun shines down on the quiet meadow near the river.";
+
+        let indented = text_system.layout_indented(text, 16.0, 40.0, 320.0);
+        assert!(indented.lines().len() > 1);
+
+        let boxes = [
+            crate::LineBox {
+                x: 0.0,
+                width: 320.0,
+            },
+            crate::LineBox {
+                x: 80.0,
+                width: 160.0,
+            },
+            crate::LineBox {
+                x: 0.0,
+                width: 320.0,
+            },
+        ];
+        let boxed = text_system.layout_with_boxes(text, 16.0, &boxes);
+        assert!(boxed.lines().len() > 1);
+
+        let counted = text_system.layout_with_char_count(text, 16.0, 16);
+        assert!(counted.lines().len() > 1);
+    }
+
+    #[test]
+    fn rasterizes_a_full_line_of_glyphs() {
+        let text_system = ParleyTextSystem::new();
+        let layout = text_system.layout_line(
+            "The quick brown fox jumps over the lazy dog",
+            px(16.0),
+            &[],
+            None,
+        );
+
+        let mut count = 0;
+        for run in &layout.runs {
+            for glyph in &run.glyphs {
+                let params = RenderGlyphParams {
+                    font_id: run.font_id,
+                    glyph_id: glyph.id,
+                    font_size: px(16.0),
+                    subpixel_variant: Point { x: 0, y: 0 },
+                    scale_factor: 1.0,
+                    is_emoji: glyph.is_emoji,
+                    subpixel_rendering: false,
+                    dilation: 0,
+                };
+                let _ = text_system.rasterize_glyph(&params).unwrap();
+                count += 1;
+            }
+        }
+        assert!(count > 10);
+    }
+
+    #[test]
+    fn line_layout_cache_reuses_layouts_across_frames() {
+        let text_system = ParleyTextSystem::new();
+
+        let first = text_system.layout_line("hello", px(16.0), &[], None);
+        let same_frame = text_system.layout_line("hello", px(16.0), &[], None);
+        assert!(Arc::ptr_eq(&first, &same_frame));
+
+        text_system.finish_frame();
+        let next_frame = text_system.layout_line("hello", px(16.0), &[], None);
+        assert!(Arc::ptr_eq(&first, &next_frame));
+
+        let different = text_system.layout_line("world", px(16.0), &[], None);
+        assert!(!Arc::ptr_eq(&first, &different));
+    }
+
+    #[test]
+    fn wrapped_line_layout_cache_reuses_layouts_across_frames() {
+        let text_system = ParleyTextSystem::new();
+
+        let first =
+            text_system.layout_wrapped_line("hello world", px(16.0), &[], Some(px(100.0)), None);
+        let same_frame =
+            text_system.layout_wrapped_line("hello world", px(16.0), &[], Some(px(100.0)), None);
+        assert!(Arc::ptr_eq(&first, &same_frame));
+
+        text_system.finish_frame();
+        let next_frame =
+            text_system.layout_wrapped_line("hello world", px(16.0), &[], Some(px(100.0)), None);
+        assert!(Arc::ptr_eq(&first, &next_frame));
+    }
+
+    #[test]
+    fn reuse_layouts_carries_layouts_through_a_reused_frame() {
+        let text_system = ParleyTextSystem::new();
+
+        // Frame 1 prepaints and shapes a line.
+        let start = text_system.layout_index();
+        let first = text_system.layout_line("hello", px(16.0), &[], None);
+        let end = text_system.layout_index();
+        text_system.finish_frame();
+
+        // Frame 2 reuses the previous prepaint: no layout is requested, but the
+        // range is carried forward.
+        text_system.reuse_layouts(start..end);
+        text_system.finish_frame();
+
+        // Frame 3 prepaints again; the line should still be cached.
+        let third = text_system.layout_line("hello", px(16.0), &[], None);
+        assert!(Arc::ptr_eq(&first, &third));
     }
 }
