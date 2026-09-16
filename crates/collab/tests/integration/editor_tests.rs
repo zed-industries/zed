@@ -7633,20 +7633,11 @@ async fn test_stopped_status_propagated_to_collab_guest(
     cx_a.run_until_parked();
     cx_b.run_until_parked();
 
-    // The guest should see the server in `stopped_language_servers()`.
-    // Currently this fails because StatusUpdate(Stopped) is enqueued as a
-    // BufferOrderedMessage while LanguageServerRemoved is sent directly. The
-    // guest processes Removed first, clearing language_server_statuses, so when
-    // Stopped arrives the worktree lookup fails and
-    // update_stopped_language_servers is never called.
     project_b.read_with(cx_b, |project, cx| {
         let stopped = project.lsp_store().read(cx).stopped_language_servers();
         assert!(
             !stopped.is_empty(),
-            "guest should see stopped_language_servers after host stops server; \
-             got empty map instead. StatusUpdate(Stopped) should include worktree_id \
-             so the guest can track the stopped status independently of \
-             language_server_statuses"
+            "guest should see stopped_language_servers after host stops server;"
         );
     });
 }
