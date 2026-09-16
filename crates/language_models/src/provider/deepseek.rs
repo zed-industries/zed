@@ -317,7 +317,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        matches!(self.model, deepseek::Model::V4_1Flash)
+        self.model.supports_images()
     }
 
     fn telemetry_id(&self) -> String {
@@ -374,6 +374,8 @@ pub fn into_deepseek(
     let thinking_enabled = thinking
         .as_ref()
         .is_some_and(|thinking| thinking.kind == deepseek::ThinkingType::Enabled);
+
+    let supports_images = model.supports_images();
 
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
@@ -455,24 +457,32 @@ pub fn into_deepseek(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let mut text_parts: Vec<String> = Vec::new();
-                    for part in &tool_result.content {
-                        match part {
+                    let content: Vec<deepseek::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .filter_map(|part| match part {
                             LanguageModelToolResultContent::Text(text) => {
-                                text_parts.push(text.to_string());
+                                Some(deepseek::MessagePart::Text {
+                                    text: text.to_string(),
+                                })
                             }
-                            LanguageModelToolResultContent::Image(_) => {
-                                text_parts.push("[Tool responded with an image]".to_string());
+                            LanguageModelToolResultContent::Image(image) => {
+                                if supports_images {
+                                    Some(deepseek::MessagePart::Image {
+                                        image_url: deepseek::ImageUrl {
+                                            url: image.to_base64_url(),
+                                            detail: None,
+                                        },
+                                    })
+                                } else {
+                                    None
+                                }
                             }
-                        }
-                    }
-                    let content = if text_parts.is_empty() {
-                        "<Tool returned an empty string>".to_string()
-                    } else {
-                        text_parts.join("\n")
-                    };
+                        })
+                        .collect();
+
                     messages.push(deepseek::RequestMessage::Tool {
-                        content,
+                        content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }

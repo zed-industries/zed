@@ -96,6 +96,10 @@ impl Model {
         }
     }
 
+    pub fn supports_images(&self) -> bool {
+        matches!(self, Self::V4_1Flash)
+    }
+
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::V4_1Flash | Self::V4Pro => 1_000_000,
@@ -201,7 +205,7 @@ pub enum RequestMessage {
         content: String,
     },
     Tool {
-        content: String,
+        content: MessageContent,
         tool_call_id: String,
     },
 }
