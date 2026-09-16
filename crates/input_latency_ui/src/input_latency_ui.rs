@@ -265,6 +265,7 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
     let intervals_18to36 = count_frames_in_range(&delta_intervals, MS18_NS, MS36_NS);
     let intervals_36to100 = count_frames_in_range(&delta_intervals, MS36_NS, MS100_NS);
     // intervals > 100ms are implicitly total_intervals - (the buckets above)
+    let average_present_interval_ms = delta_intervals.mean() / 1_000_000.0;
     let average_dirty_to_present_ms = delta_dirty_to_present.mean() / 1_000_000.0;
     let dirty_to_present_sub9 = count_frames_in_range(&delta_dirty_to_present, 0, MS9_NS);
     let dirty_to_present_9to18 = count_frames_in_range(&delta_dirty_to_present, MS9_NS, MS18_NS);
@@ -285,6 +286,7 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         intervals_18to36 = intervals_18to36,
         intervals_36to100 = intervals_36to100,
         total_intervals = total_intervals,
+        average_present_interval_ms = average_present_interval_ms,
         average_dirty_to_present_ms = average_dirty_to_present_ms,
         dirty_to_present_samples = delta_dirty_to_present.len(),
         dirty_to_present_sub9 = dirty_to_present_sub9,
