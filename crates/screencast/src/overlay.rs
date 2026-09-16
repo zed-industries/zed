@@ -40,13 +40,13 @@ impl ScreencastOverlay {
 
         let keystroke_window_id = window_id;
         let keystroke_subscription = cx.intercept_keystrokes(move |event, event_window, cx| {
-            if event_window.window_handle().window_id() != keystroke_window_id || event.is_held {
+            if event_window.window_handle().window_id() != keystroke_window_id {
                 return;
             }
 
             overlay
                 .update(cx, |overlay, cx| {
-                    overlay.record_keystroke(event.keystroke.clone(), cx);
+                    overlay.handle_keystroke(&event.keystroke, event.is_held, cx);
                 })
                 .log_err();
         });
@@ -67,7 +67,7 @@ impl ScreencastOverlay {
 
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, |overlay, _window, cx| {
-                overlay.settings = ScreencastSettings::get_global(cx).clone();
+                overlay.settings = *ScreencastSettings::get_global(cx);
                 cx.notify();
             });
 
@@ -79,12 +79,12 @@ impl ScreencastOverlay {
             hide_task: None,
             _keystroke_subscription: keystroke_subscription,
             _modifier_subscription: modifier_subscription,
-            settings: ScreencastSettings::get_global(cx).clone(),
+            settings: *ScreencastSettings::get_global(cx),
             _settings_subscription: settings_subscription,
         }
     }
 
-    pub fn toggle(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle(&mut self, cx: &mut Context<Self>) -> bool {
         self.enabled = !self.enabled;
 
         if !self.enabled {
@@ -94,6 +94,18 @@ impl ScreencastOverlay {
         }
 
         cx.notify();
+        self.enabled
+    }
+
+    fn handle_keystroke(&mut self, keystroke: &Keystroke, is_held: bool, cx: &mut Context<Self>) {
+        if is_held {
+            if self.enabled && !self.recent_keys.is_empty() {
+                self.refresh_hide_task(cx);
+            }
+            return;
+        }
+
+        self.record_keystroke(keystroke.clone(), cx);
     }
 
     pub fn record_keystroke(&mut self, keystroke: Keystroke, cx: &mut Context<Self>) {
@@ -102,17 +114,6 @@ impl ScreencastOverlay {
         }
 
         self.remove_pending_modifier_keys();
-
-        if keystroke.modifiers.modified()
-            && matches!(
-                self.recent_keys.back(),
-                Some(DisplayedKey::Keystroke(previous_keystroke))
-                    if previous_keystroke == &keystroke
-            )
-        {
-            self.refresh_hide_task(cx);
-            return;
-        }
 
         self.record_displayed_key(DisplayedKey::Keystroke(keystroke), cx);
     }
@@ -158,19 +159,8 @@ impl ScreencastOverlay {
 
         for (was_pressed, is_pressed, modifier) in modifier_changes {
             if !was_pressed && is_pressed {
-                if !self.pending_modifier_keys.contains(&modifier) {
-                    self.pending_modifier_keys.push(modifier);
-                }
-
-                if matches!(
-                    self.recent_keys.back(),
-                    Some(DisplayedKey::Modifier(previous_modifier))
-                        if previous_modifier == &modifier
-                ) {
-                    self.refresh_hide_task(cx);
-                } else {
-                    self.record_displayed_key(DisplayedKey::Modifier(modifier), cx);
-                }
+                self.record_displayed_key(DisplayedKey::Modifier(modifier), cx);
+                self.pending_modifier_keys.push(modifier);
             }
         }
     }
@@ -191,13 +181,12 @@ impl ScreencastOverlay {
             return;
         }
 
-        self.recent_keys.push_back(key);
-
         if self.recent_keys.len() > MAX_VISIBLE_KEYS {
             self.recent_keys.clear();
             self.pending_modifier_keys.clear();
         }
 
+        self.recent_keys.push_back(key);
         self.refresh_hide_task(cx);
     }
 
@@ -268,12 +257,12 @@ impl Render for ScreencastOverlay {
                 .justify_center()
                 .min_w(font_size)
                 .h(rems_from_px(20.0_f32) + font_size)
-                .px_2()
-                .rounded_sm()
+                .px_0()
                 .border_1()
+                .border_b_6()
                 .rounded_md()
-                .border_color(colors.border_variant.opacity(0.8))
-                .bg(colors.element_background.opacity(0.55))
+                .border_color(colors.ghost_element_selected.opacity(0.8)) // Note entirely set on this being the key's border color.
+                .bg(colors.element_background.opacity(0.5))
                 .shadow_sm()
                 .children(contents)
         });
@@ -289,7 +278,8 @@ impl Render for ScreencastOverlay {
             .border_color(colors.border.opacity(0.5))
             .child(
                 h_flex()
-                    .w_full()
+                    .font_buffer(cx) // Match editor font family, maybe it should match system?
+                    .w_auto()
                     .min_w_0()
                     .justify_center()
                     .gap_2()
@@ -297,5 +287,243 @@ impl Render for ScreencastOverlay {
                     .children(keycaps),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use gpui::{Entity, TestAppContext};
+
+    use super::*;
+
+    fn setup_overlay(cx: &mut TestAppContext) -> Entity<ScreencastOverlay> {
+        cx.skip_drawing();
+        cx.update(|cx| {
+            settings::init(cx);
+            ScreencastSettings::register(cx);
+        });
+
+        let window = cx.add_window(ScreencastOverlay::new);
+        window
+            .root(cx)
+            .expect("screencast overlay should be the test window root")
+    }
+
+    fn parse_keystroke(value: &str) -> Keystroke {
+        Keystroke::parse(value).expect("test keystroke should parse")
+    }
+
+    #[gpui::test]
+    fn test_disabled_input_and_toggle_clearing(cx: &mut TestAppContext) {
+        let overlay = setup_overlay(cx);
+        let keystroke = parse_keystroke("a");
+
+        overlay.update(cx, |overlay, cx| {
+            overlay.record_keystroke(keystroke.clone(), cx);
+            overlay.record_modifier_change(Modifiers::control(), cx);
+
+            assert!(overlay.recent_keys.is_empty());
+            assert!(overlay.pending_modifier_keys.is_empty());
+            assert!(overlay.hide_task.is_none());
+
+            overlay.record_modifier_change(Modifiers::none(), cx);
+            assert!(overlay.toggle(cx));
+            overlay.record_keystroke(keystroke.clone(), cx);
+            overlay.record_modifier_change(Modifiers::control(), cx);
+
+            assert_eq!(overlay.recent_keys.len(), 2);
+            assert_eq!(overlay.pending_modifier_keys, vec![Modifiers::control()]);
+            assert!(overlay.hide_task.is_some());
+
+            assert!(!overlay.toggle(cx));
+
+            assert!(overlay.recent_keys.is_empty());
+            assert!(overlay.pending_modifier_keys.is_empty());
+            assert!(overlay.hide_task.is_none());
+
+            overlay.record_keystroke(keystroke, cx);
+            assert!(overlay.recent_keys.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn test_modifier_is_incorporated_into_modified_keystroke(cx: &mut TestAppContext) {
+        let overlay = setup_overlay(cx);
+        let keystroke = parse_keystroke("ctrl-k");
+
+        overlay.update(cx, |overlay, cx| {
+            overlay.toggle(cx);
+            overlay.record_modifier_change(Modifiers::control(), cx);
+
+            assert!(matches!(
+                overlay.recent_keys.front(),
+                Some(DisplayedKey::Modifier(modifier)) if modifier == &Modifiers::control()
+            ));
+            assert_eq!(overlay.pending_modifier_keys, vec![Modifiers::control()]);
+
+            overlay.record_keystroke(keystroke.clone(), cx);
+
+            assert!(overlay.pending_modifier_keys.is_empty());
+            assert_eq!(overlay.recent_keys.len(), 1);
+            assert!(matches!(
+                overlay.recent_keys.front(),
+                Some(DisplayedKey::Keystroke(displayed_keystroke))
+                    if displayed_keystroke == &keystroke
+            ));
+        });
+    }
+
+    #[gpui::test]
+    fn test_prior_modifier_tap_remains_before_modified_keystroke(cx: &mut TestAppContext) {
+        let overlay = setup_overlay(cx);
+        let keystroke = parse_keystroke("ctrl-k");
+
+        overlay.update(cx, |overlay, cx| {
+            overlay.toggle(cx);
+            overlay.record_modifier_change(Modifiers::control(), cx);
+            overlay.record_modifier_change(Modifiers::none(), cx);
+            overlay.record_modifier_change(Modifiers::control(), cx);
+            overlay.record_keystroke(keystroke.clone(), cx);
+
+            assert!(overlay.pending_modifier_keys.is_empty());
+            assert_eq!(overlay.recent_keys.len(), 2);
+            assert!(matches!(
+                overlay.recent_keys.front(),
+                Some(DisplayedKey::Modifier(modifier)) if modifier == &Modifiers::control()
+            ));
+            assert!(matches!(
+                overlay.recent_keys.back(),
+                Some(DisplayedKey::Keystroke(displayed_keystroke))
+                    if displayed_keystroke == &keystroke
+            ));
+        });
+    }
+
+    #[gpui::test]
+    fn test_separate_repeated_modified_keystrokes_are_recorded(cx: &mut TestAppContext) {
+        let overlay = setup_overlay(cx);
+        let keystroke = parse_keystroke("ctrl-k");
+
+        overlay.update(cx, |overlay, cx| {
+            overlay.toggle(cx);
+            overlay.record_keystroke(keystroke.clone(), cx);
+            overlay.record_keystroke(keystroke.clone(), cx);
+
+            assert_eq!(overlay.recent_keys.len(), 2);
+            assert!(overlay.recent_keys.iter().all(|displayed_key| {
+                matches!(
+                    displayed_key,
+                    DisplayedKey::Keystroke(displayed_keystroke)
+                        if displayed_keystroke == &keystroke
+                )
+            }));
+        });
+    }
+
+    #[gpui::test]
+    fn test_queue_resets_after_visible_key_limit(cx: &mut TestAppContext) {
+        let overlay = setup_overlay(cx);
+        let keystroke = parse_keystroke("a");
+        let newest_keystroke = parse_keystroke("b");
+
+        overlay.update(cx, |overlay, cx| {
+            overlay.toggle(cx);
+            for _ in 0..MAX_VISIBLE_KEYS {
+                overlay.record_keystroke(keystroke.clone(), cx);
+            }
+            assert_eq!(overlay.recent_keys.len(), MAX_VISIBLE_KEYS);
+
+            overlay.record_keystroke(newest_keystroke.clone(), cx);
+            assert_eq!(overlay.recent_keys.len(), 1);
+            assert!(overlay.pending_modifier_keys.is_empty());
+            assert!(matches!(
+                overlay.recent_keys.front(),
+                Some(DisplayedKey::Keystroke(displayed_keystroke))
+                    if displayed_keystroke == &newest_keystroke
+            ));
+
+            overlay.record_keystroke(keystroke, cx);
+            assert_eq!(overlay.recent_keys.len(), 2);
+        });
+    }
+
+    #[gpui::test]
+    fn test_held_input_refreshes_timeout_without_adding_key(cx: &mut TestAppContext) {
+        let overlay = setup_overlay(cx);
+        let timeout = Duration::from_secs(5);
+        let keystroke = parse_keystroke("a");
+
+        overlay.update(cx, |overlay, cx| {
+            overlay.settings.keyboard_overlay_timeout = timeout;
+            overlay.toggle(cx);
+            overlay.handle_keystroke(&keystroke, false, cx);
+        });
+        cx.run_until_parked();
+
+        cx.executor().advance_clock(Duration::from_secs(4));
+        cx.run_until_parked();
+        overlay.update(cx, |overlay, cx| {
+            overlay.handle_keystroke(&keystroke, true, cx);
+        });
+        cx.run_until_parked();
+        overlay.read_with(cx, |overlay, _| {
+            assert_eq!(overlay.recent_keys.len(), 1);
+            assert!(overlay.hide_task.is_some());
+        });
+
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(
+            overlay.read_with(cx, |overlay, _| overlay.recent_keys.len()),
+            1
+        );
+
+        cx.executor().advance_clock(Duration::from_secs(4));
+        cx.run_until_parked();
+        overlay.read_with(cx, |overlay, _| {
+            assert!(overlay.recent_keys.is_empty());
+            assert!(overlay.hide_task.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn test_timeout_refreshes_and_clears_queue(cx: &mut TestAppContext) {
+        let overlay = setup_overlay(cx);
+        let timeout = Duration::from_secs(5);
+
+        overlay.update(cx, |overlay, cx| {
+            overlay.settings.keyboard_overlay_timeout = timeout;
+            overlay.toggle(cx);
+            overlay.record_keystroke(parse_keystroke("a"), cx);
+        });
+        cx.run_until_parked();
+
+        cx.executor().advance_clock(Duration::from_secs(4));
+        cx.run_until_parked();
+        assert_eq!(
+            overlay.read_with(cx, |overlay, _| overlay.recent_keys.len()),
+            1
+        );
+
+        overlay.update(cx, |overlay, cx| {
+            overlay.record_keystroke(parse_keystroke("b"), cx);
+        });
+        cx.run_until_parked();
+
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        overlay.read_with(cx, |overlay, _| {
+            assert_eq!(overlay.recent_keys.len(), 2);
+            assert!(overlay.hide_task.is_some());
+        });
+
+        cx.executor().advance_clock(Duration::from_secs(4));
+        cx.run_until_parked();
+        overlay.read_with(cx, |overlay, _| {
+            assert!(overlay.recent_keys.is_empty());
+            assert!(overlay.hide_task.is_none());
+        });
     }
 }

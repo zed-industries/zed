@@ -2720,6 +2720,82 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_vscode_screencast_import(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store.register_setting::<DefaultLanguageSettings>();
+        store.register_setting::<ItemSettings>();
+        store.register_setting::<AutoUpdateSetting>();
+        store.register_setting::<ThemeSettings>();
+
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{}"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "screencastMode.verticalOffset": 40 }"#.to_owned(),
+            r#"{
+              "screencast": {
+                "vertical_offset": 40.0
+              },
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "screencastMode.fontSize": 64,
+              "screencastMode.verticalOffset": 30,
+              "screencastMode.keyboardOverlayTimeout": 1200
+            }"#
+            .unindent(),
+            r#"{
+              "screencast": {
+                "font_size": 64.0,
+                "vertical_offset": 30.0,
+                "keyboard_overlay_timeout": 1200
+              },
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+    }
+
     #[track_caller]
     fn check_vscode_import(
         store: &mut SettingsStore,
