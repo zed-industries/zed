@@ -1,9 +1,13 @@
-use crate::TextSystem;
-use collections::HashMap;
-use gpui_engine::{FontId, TextRun};
+use crate::{FontId, TextRun, TextSystem};
 use gpui_shared_string::SharedString;
 use gpui_types::{Pixels, px};
-use std::{borrow::Cow, iter, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    iter,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
 /// Determines whether to truncate text from the start or end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -18,7 +22,7 @@ pub enum TruncateFrom {
 
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
-    text_system: Arc<TextSystem>,
+    text_system: Arc<dyn TextSystem>,
     pub(crate) font_id: FontId,
     pub(crate) font_size: Pixels,
     cached_ascii_char_widths: [Option<Pixels>; 128],
@@ -30,7 +34,7 @@ impl LineWrapper {
     pub const MAX_INDENT: u32 = 256;
 
     /// Creates a wrapper that measures and truncates text through `text_system`.
-    pub fn new(font_id: FontId, font_size: Pixels, text_system: Arc<TextSystem>) -> Self {
+    pub fn new(font_id: FontId, font_size: Pixels, text_system: Arc<dyn TextSystem>) -> Self {
         Self {
             text_system,
             font_id,
@@ -690,5 +694,46 @@ impl Boundary {
     /// Creates a boundary ending at byte index `ix`, with `next_indent` spaces.
     pub fn new(ix: usize, next_indent: u32) -> Self {
         Self { ix, next_indent }
+    }
+}
+
+/// A line wrapper borrowed from a [`TextSystem`] pool, returned on drop.
+pub struct LineWrapperHandle {
+    wrapper: Option<LineWrapper>,
+    recycle: Option<Box<dyn FnOnce(LineWrapper) + Send + Sync>>,
+}
+
+impl LineWrapperHandle {
+    /// Wraps `wrapper`, passing it back through `recycle` when dropped.
+    pub fn new(
+        wrapper: LineWrapper,
+        recycle: impl FnOnce(LineWrapper) + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            wrapper: Some(wrapper),
+            recycle: Some(Box::new(recycle)),
+        }
+    }
+}
+
+impl Deref for LineWrapperHandle {
+    type Target = LineWrapper;
+
+    fn deref(&self) -> &Self::Target {
+        self.wrapper.as_ref().expect("wrapper present until drop")
+    }
+}
+
+impl DerefMut for LineWrapperHandle {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.wrapper.as_mut().expect("wrapper present until drop")
+    }
+}
+
+impl Drop for LineWrapperHandle {
+    fn drop(&mut self) {
+        let wrapper = self.wrapper.take().expect("wrapper present until drop");
+        let recycle = self.recycle.take().expect("recycle present until drop");
+        recycle(wrapper);
     }
 }

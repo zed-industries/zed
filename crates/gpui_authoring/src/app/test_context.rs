@@ -1,12 +1,12 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, BoundsExt, Capslock, ClipboardItem, DrawPhase,
-    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
-    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, BoundsExt, Capslock, ClipboardItem,
+    DefaultTextSystem, DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter,
+    ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render,
+    Result, SharedString, Size, SystemNotification, SystemNotificationResponse, Task,
+    TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -26,7 +26,7 @@ pub struct TestAppContext {
     #[doc(hidden)]
     pub dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
-    text_system: Arc<TextSystem>,
+    text_system: Arc<DefaultTextSystem>,
     fn_name: Option<&'static str>,
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
     #[doc(hidden)]
@@ -131,7 +131,7 @@ impl TestAppContext {
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        let text_system = Arc::new(DefaultTextSystem::new(platform.text_system()));
 
         let app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
@@ -328,8 +328,8 @@ impl TestAppContext {
         (view, cx)
     }
 
-    /// returns the TextSystem
-    pub fn text_system(&self) -> &Arc<TextSystem> {
+    /// returns the DefaultTextSystem
+    pub fn text_system(&self) -> &Arc<DefaultTextSystem> {
         &self.text_system
     }
 

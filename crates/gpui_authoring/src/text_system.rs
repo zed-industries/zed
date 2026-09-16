@@ -5,8 +5,8 @@ mod line_wrapper_tests;
 pub use line::*;
 
 use crate::{
-    FontId, FontRun, LineLayout, LineLayoutCache, LineLayoutIndex, Pixels, SharedString, TextRun,
-    TextSystem,
+    DefaultTextSystem, FontId, FontRun, LineLayout, LineLayoutCache, LineLayoutIndex, Pixels,
+    SharedString, TextRun,
 };
 use anyhow::Result;
 use derive_more::Deref;
@@ -20,12 +20,12 @@ use std::sync::Arc;
 pub struct WindowTextSystem {
     line_layout_cache: LineLayoutCache,
     #[deref]
-    text_system: Arc<TextSystem>,
+    text_system: Arc<DefaultTextSystem>,
 }
 
 impl WindowTextSystem {
-    /// Create a new WindowTextSystem with the given TextSystem.
-    pub fn new(text_system: Arc<TextSystem>) -> Self {
+    /// Create a new WindowTextSystem with the given DefaultTextSystem.
+    pub fn new(text_system: Arc<DefaultTextSystem>) -> Self {
         Self {
             line_layout_cache: LineLayoutCache::new(text_system.platform_text_system().clone()),
             text_system,

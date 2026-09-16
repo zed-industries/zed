@@ -10,10 +10,8 @@
 mod layout;
 mod layout_style;
 mod line_layout;
-mod line_wrapper;
 mod text_system;
 
 pub use layout::*;
 pub use line_layout::*;
-pub use line_wrapper::*;
 pub use text_system::*;

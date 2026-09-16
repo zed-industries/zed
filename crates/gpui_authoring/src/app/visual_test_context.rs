@@ -1,9 +1,9 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor,
-    Bounds, ClipboardItem, Context, Entity, EntityId, ForegroundExecutor, Global, InputEvent,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TextSystem, VisualTestPlatform,
-    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    Bounds, ClipboardItem, Context, DefaultTextSystem, Entity, EntityId, ForegroundExecutor,
+    Global, InputEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
+    VisualTestPlatform, Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use anyhow::anyhow;
 use image::RgbaImage;
@@ -28,7 +28,7 @@ pub struct VisualTestAppContext {
     /// The test dispatcher for deterministic task scheduling
     dispatcher: TestDispatcher,
     platform: Rc<dyn Platform>,
-    text_system: Arc<TextSystem>,
+    text_system: Arc<DefaultTextSystem>,
 }
 
 impl VisualTestAppContext {
@@ -69,7 +69,7 @@ impl VisualTestAppContext {
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
 
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        let text_system = Arc::new(DefaultTextSystem::new(platform.text_system()));
 
         let http_client = http_client::FakeHttpClient::with_404_response();
 
@@ -133,7 +133,7 @@ impl VisualTestAppContext {
     }
 
     /// Returns the text system used by this context.
-    pub fn text_system(&self) -> &Arc<TextSystem> {
+    pub fn text_system(&self) -> &Arc<DefaultTextSystem> {
         &self.text_system
     }
 

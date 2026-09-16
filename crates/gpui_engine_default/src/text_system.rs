@@ -4,23 +4,26 @@
 //! metric, raster-bounds, and line-wrapper pools. It has no knowledge of
 //! windows; the facade's window-scoped layer drives it.
 
-use crate::LineWrapper;
 use anyhow::{Context as _, Result, anyhow};
 use collections::FxHashMap;
 use gpui_engine::{
-    Font, FontId, FontMetrics, FontRun, PlatformTextSystem, RenderGlyphParams, TextRenderingMode,
-    font,
+    Font, FontId, FontMetrics, FontRun, LineLayout, LineLayoutIndex, LineWrapper,
+    LineWrapperHandle, PlatformTextSystem, RenderGlyphParams, TextRenderingMode, TextSystem,
+    WrappedLineLayout, font,
 };
+use gpui_shared_string::SharedString;
 use gpui_types::{Bounds, DevicePixels, Hsla, Pixels, Size, px};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
-use std::ops::{Deref, DerefMut};
+use std::ops::Range;
 use std::sync::Arc;
 
+use crate::LineLayoutCache;
+
 /// The GPUI text rendering sub system.
-pub struct TextSystem {
+pub struct DefaultTextSystem {
     platform_text_system: Arc<dyn PlatformTextSystem>,
     font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
@@ -28,12 +31,14 @@ pub struct TextSystem {
     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
+    line_layout_cache: LineLayoutCache,
 }
 
-impl TextSystem {
-    /// Create a new TextSystem with the given platform text system.
+impl DefaultTextSystem {
+    /// Create a new DefaultTextSystem with the given platform text system.
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
-        TextSystem {
+        let line_layout_cache = LineLayoutCache::new(platform_text_system.clone());
+        DefaultTextSystem {
             platform_text_system,
             font_metrics: RwLock::default(),
             raster_bounds: RwLock::default(),
@@ -53,6 +58,7 @@ impl TextSystem {
                 font("DejaVu Sans"),
                 font("Arial"), // macOS, Windows
             ],
+            line_layout_cache,
         }
     }
 
@@ -308,19 +314,21 @@ impl TextSystem {
 
     /// Returns a handle to a line wrapper, for the given font and font size.
     pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
-        let lock = &mut self.wrapper_pool.lock();
         let font_id = self.resolve_font(&font);
-        let wrappers = lock
-            .entry(FontIdWithSize { font_id, font_size })
-            .or_default();
-        let wrapper = wrappers
-            .pop()
-            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, self.clone()));
-
-        LineWrapperHandle {
-            wrapper: Some(wrapper),
-            text_system: self.clone(),
-        }
+        let wrapper = {
+            let mut lock = self.wrapper_pool.lock();
+            lock.entry(FontIdWithSize { font_id, font_size })
+                .or_default()
+                .pop()
+                .unwrap_or_else(|| LineWrapper::new(font_id, font_size, self.clone()))
+        };
+        let this = self.clone();
+        LineWrapperHandle::new(wrapper, move |wrapper| {
+            let mut lock = this.wrapper_pool.lock();
+            lock.get_mut(&FontIdWithSize { font_id, font_size })
+                .expect("wrapper pool entry exists")
+                .push(wrapper);
+        })
     }
 
     /// Get the rasterized size and location of a specific, rendered glyph.
@@ -369,36 +377,188 @@ struct FontIdWithSize {
     font_size: Pixels,
 }
 
-/// A handle into the text system, which can be used to compute the wrapped layout of text
-pub struct LineWrapperHandle {
-    wrapper: Option<LineWrapper>,
-    text_system: Arc<TextSystem>,
-}
-
-impl Drop for LineWrapperHandle {
-    fn drop(&mut self) {
-        let mut state = self.text_system.wrapper_pool.lock();
-        let wrapper = self.wrapper.take().unwrap();
-        state
-            .get_mut(&FontIdWithSize {
-                font_id: wrapper.font_id,
-                font_size: wrapper.font_size,
-            })
-            .unwrap()
-            .push(wrapper);
+impl TextSystem for DefaultTextSystem {
+    fn platform_text_system(&self) -> &Arc<dyn PlatformTextSystem> {
+        &self.platform_text_system
     }
-}
 
-impl Deref for LineWrapperHandle {
-    type Target = LineWrapper;
-
-    fn deref(&self) -> &Self::Target {
-        self.wrapper.as_ref().unwrap()
+    fn all_font_names(&self) -> Vec<String> {
+        self.all_font_names()
     }
-}
 
-impl DerefMut for LineWrapperHandle {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.wrapper.as_mut().unwrap()
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+        self.add_fonts(fonts)
+    }
+
+    fn get_font_for_id(&self, id: FontId) -> Option<Font> {
+        self.get_font_for_id(id)
+    }
+
+    fn resolve_font(&self, font: &Font) -> FontId {
+        self.resolve_font(font)
+    }
+
+    fn prewarm_fonts(&self, fonts: &[Font]) {
+        self.prewarm_fonts(fonts)
+    }
+
+    fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Bounds<Pixels> {
+        self.bounding_box(font_id, font_size)
+    }
+
+    fn typographic_bounds(
+        &self,
+        font_id: FontId,
+        font_size: Pixels,
+        character: char,
+    ) -> Result<Bounds<Pixels>> {
+        self.typographic_bounds(font_id, font_size, character)
+    }
+
+    fn advance(&self, font_id: FontId, font_size: Pixels, ch: char) -> Result<Size<Pixels>> {
+        self.advance(font_id, font_size, ch)
+    }
+
+    fn layout_width(&self, font_id: FontId, font_size: Pixels, ch: char) -> Pixels {
+        self.layout_width(font_id, font_size, ch)
+    }
+
+    fn em_width(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.em_width(font_id, font_size)
+    }
+
+    fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.em_advance(font_id, font_size)
+    }
+
+    fn ch_width(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.ch_width(font_id, font_size)
+    }
+
+    fn ch_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.ch_advance(font_id, font_size)
+    }
+
+    fn units_per_em(&self, font_id: FontId) -> u32 {
+        self.units_per_em(font_id)
+    }
+
+    fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        self.cap_height(font_id, font_size)
+    }
+
+    fn x_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        self.x_height(font_id, font_size)
+    }
+
+    fn ascent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        self.ascent(font_id, font_size)
+    }
+
+    fn descent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        self.descent(font_id, font_size)
+    }
+
+    fn baseline_offset(&self, font_id: FontId, font_size: Pixels, line_height: Pixels) -> Pixels {
+        self.baseline_offset(font_id, font_size, line_height)
+    }
+
+    fn take_font_runs(&self) -> Vec<FontRun> {
+        self.take_font_runs()
+    }
+
+    fn recycle_font_runs(&self, font_runs: Vec<FontRun>) {
+        self.recycle_font_runs(font_runs)
+    }
+
+    fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        self.raster_bounds(params)
+    }
+
+    fn rasterize_glyph(&self, params: &RenderGlyphParams) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+        self.rasterize_glyph(params)
+    }
+
+    fn glyph_dilation_for_color(&self, color: Hsla) -> u8 {
+        self.glyph_dilation_for_color(color)
+    }
+
+    fn recommended_rendering_mode(&self, font_id: FontId, font_size: Pixels) -> TextRenderingMode {
+        self.recommended_rendering_mode(font_id, font_size)
+    }
+
+    fn layout_index(&self) -> LineLayoutIndex {
+        self.line_layout_cache.layout_index()
+    }
+
+    fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {
+        self.line_layout_cache.reuse_layouts(range)
+    }
+
+    fn truncate_layouts(&self, index: LineLayoutIndex) {
+        self.line_layout_cache.truncate_layouts(index)
+    }
+
+    fn finish_frame(&self) {
+        self.line_layout_cache.finish_frame()
+    }
+
+    fn layout_wrapped_line(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        wrap_width: Option<Pixels>,
+        max_lines: Option<usize>,
+    ) -> Arc<WrappedLineLayout> {
+        self.line_layout_cache
+            .layout_wrapped_line(text, font_size, runs, wrap_width, max_lines)
+    }
+
+    fn layout_line(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+    ) -> Arc<LineLayout> {
+        self.line_layout_cache
+            .layout_line(text, font_size, runs, force_width)
+    }
+
+    fn try_layout_line_by_hash(
+        &self,
+        text_hash: u64,
+        text_len: usize,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+    ) -> Option<Arc<LineLayout>> {
+        self.line_layout_cache.try_layout_line_by_hash(
+            text_hash,
+            text_len,
+            font_size,
+            runs,
+            force_width,
+        )
+    }
+
+    fn layout_line_by_hash(
+        &self,
+        text_hash: u64,
+        text_len: usize,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+        materialize_text: Box<dyn FnOnce() -> SharedString>,
+    ) -> Arc<LineLayout> {
+        self.line_layout_cache.layout_line_by_hash(
+            text_hash,
+            text_len,
+            font_size,
+            runs,
+            force_width,
+            materialize_text,
+        )
     }
 }

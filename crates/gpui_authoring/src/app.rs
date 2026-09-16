@@ -43,15 +43,15 @@ use crate::asset_cache::CachedLoad;
 use crate::{
     Action, ActionBuildError, ActionRegistry, ActivityGuard, Any, AnyView, AnyWindowHandle,
     AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
-    ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload,
-    FocusHandle, FocusMap, ForegroundExecutor, FramePipeline, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutEngine, LayoutId, Menu, MenuCommandId, MenuItem, OwnedMenu,
-    OwnedMenuItem, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, StandardImmediatePipeline, SubscriberSet, Subscription, SvgRenderer,
-    SystemNotification, SystemNotificationResponse, SystemWindowTab, Task, TextRenderingMode,
-    TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle,
+    ClipboardReadError, CursorStyle, DefaultTextSystem, DispatchPhase, DisplayId, EventEmitter,
+    ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor, FramePipeline, Global,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutEngine, LayoutId, Menu, MenuCommandId,
+    MenuItem, OwnedMenu, OwnedMenuItem, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
+    PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
+    ScreenCaptureSource, SharedString, StandardImmediatePipeline, SubscriberSet, Subscription,
+    SvgRenderer, SystemNotification, SystemNotificationResponse, SystemWindowTab, Task,
+    TextRenderingMode, ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle,
     WindowHost, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, resolve_dock_menu, resolve_menus,
@@ -564,7 +564,7 @@ enum PlatformOwnedDragState {
 pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
-    text_system: Arc<TextSystem>,
+    text_system: Arc<DefaultTextSystem>,
     /// Creates a fresh layout engine for each window. Injected at application
     /// construction so windows drive layout through the [`LayoutEngine`] trait
     /// without naming an implementation.
@@ -694,7 +694,7 @@ impl App {
         let foreground_journal = crate::profiler::journal::install_foreground_journal();
         let synced_animation_epoch = background_executor.now();
 
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        let text_system = Arc::new(DefaultTextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
@@ -1939,7 +1939,7 @@ impl App {
     }
 
     /// Accessor for the text system.
-    pub fn text_system(&self) -> &Arc<TextSystem> {
+    pub fn text_system(&self) -> &Arc<DefaultTextSystem> {
         &self.text_system
     }
 
