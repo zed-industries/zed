@@ -2147,20 +2147,19 @@ impl Window {
     }
 
     pub(crate) fn refresh_visibility(&mut self, cx: &mut App) {
+        let visibility = self.platform_window.visibility();
+        if self.visibility != visibility {
+            self.visibility = visibility;
+            #[cfg(feature = "profiler")]
+            profiler::journal::record_window_visibility(self.handle.window_id(), visibility);
+            self.visibility_observers
+                .clone()
+                .retain(&(), |callback| callback(visibility, self, cx));
+        }
         #[cfg(feature = "profiler")]
         if self.invalidator.is_dirty() || self.needs_present.get() {
             profiler::journal::record_frame_pending(self.handle.window_id(), Instant::now());
         }
-        let visibility = self.platform_window.visibility();
-        if self.visibility == visibility {
-            return;
-        }
-        self.visibility = visibility;
-        #[cfg(feature = "profiler")]
-        profiler::journal::record_window_visibility(self.handle.window_id(), visibility);
-        self.visibility_observers
-            .clone()
-            .retain(&(), |callback| callback(visibility, self, cx));
     }
 
     /// Whether the platform is presenting this window's frames (see
@@ -3342,22 +3341,18 @@ impl Window {
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
         #[cfg(feature = "profiler")]
-        let power_generation = profiler::journal::power_generation();
-        #[cfg(feature = "profiler")]
         profiler::journal::record_window_visibility(
             self.handle.window_id(),
             self.platform_window.visibility(),
         );
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
-        if profiler::journal::work_is_valid(power_generation) {
-            self.window_profiler.record_present(
-                present_start,
-                Instant::now(),
-                self.active.get(),
-                !self.next_frame_callbacks.borrow().is_empty(),
-            );
-        }
+        self.window_profiler.record_present(
+            present_start,
+            Instant::now(),
+            self.active.get(),
+            !self.next_frame_callbacks.borrow().is_empty(),
+        );
         self.needs_present.set(false);
         profiling::finish_frame!();
     }

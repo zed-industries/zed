@@ -98,7 +98,7 @@ const MIN_FRAMES_TO_REPORT: u64 = 5_000;
 /// Call this periodically (e.g. every five minutes) from a spawned task. A
 /// separate baseline snapshot is kept per window so user-facing histogram dumps
 /// and telemetry never share state.
-pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
+pub fn report_input_latency_telemetry(window: &Window, startup: Instant, cx: &mut App) {
     let current = window.input_latency_snapshot();
     let window_id = window.window_handle().window_id();
 
@@ -164,6 +164,7 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
         frames_with_2_events = frames_with_2_events,
         frames_with_3_events = frames_with_3_events,
         report_window_seconds = report_window_seconds,
+        uptime_seconds = now.duration_since(startup).as_secs(),
         measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
     );
 }
@@ -197,7 +198,7 @@ const MIN_DRAWS_TO_REPORT: u64 = 1_000;
 /// window was animating), and the average dirty-to-present duration.
 ///
 /// Call this periodically from a spawned task.
-pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
+pub fn report_frame_duration_telemetry(window: &Window, startup: Instant, cx: &mut App) {
     let current = window.frame_duration_snapshot();
     let window_handle = window.window_handle();
     let window_id = window_handle.window_id();
@@ -266,6 +267,12 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
     let intervals_36to100 = count_frames_in_range(&delta_intervals, MS36_NS, MS100_NS);
     // intervals > 100ms are implicitly total_intervals - (the buckets above)
     let average_dirty_to_present_ms = delta_dirty_to_present.mean() / 1_000_000.0;
+    let dirty_to_present_sub9 = count_frames_in_range(&delta_dirty_to_present, 0, MS9_NS);
+    let dirty_to_present_9to18 = count_frames_in_range(&delta_dirty_to_present, MS9_NS, MS18_NS);
+    let dirty_to_present_18to36 = count_frames_in_range(&delta_dirty_to_present, MS18_NS, MS36_NS);
+    let dirty_to_present_36to100 =
+        count_frames_in_range(&delta_dirty_to_present, MS36_NS, MS100_NS);
+    // dirty-to-present > 100ms is implicitly dirty_to_present_samples - (the buckets above)
 
     telemetry::event!(
         "Frame Duration Report",
@@ -281,8 +288,13 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         total_intervals = total_intervals,
         average_dirty_to_present_ms = average_dirty_to_present_ms,
         dirty_to_present_samples = delta_dirty_to_present.len(),
+        dirty_to_present_sub9 = dirty_to_present_sub9,
+        dirty_to_present_9to18 = dirty_to_present_9to18,
+        dirty_to_present_18to36 = dirty_to_present_18to36,
+        dirty_to_present_36to100 = dirty_to_present_36to100,
         root_entity_type_name = window_handle.root_entity_type_name(),
         report_window_seconds = report_window_seconds,
+        uptime_seconds = now.duration_since(startup).as_secs(),
         measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
     );
 }

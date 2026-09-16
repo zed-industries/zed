@@ -12,19 +12,27 @@ const MAX_REPORTED_INCIDENTS: usize = 10;
 const SEND_INTERVAL: Duration = Duration::from_mins(30);
 
 pub struct Reporter {
+    startup: Instant,
     last_send: Instant,
     pending: Vec<SerializedHangIncident>,
     threshold_incidents: u64,
     budget_incidents: u64,
+    stalls_100to250: u64,
+    stalls_250to1000: u64,
+    stalls_over_1000: u64,
 }
 
 impl Reporter {
-    pub fn new() -> Self {
+    pub fn new(startup: Instant) -> Self {
         Self {
+            startup,
             last_send: Instant::now(),
             pending: Vec::new(),
             threshold_incidents: 0,
             budget_incidents: 0,
+            stalls_100to250: 0,
+            stalls_250to1000: 0,
+            stalls_over_1000: 0,
         }
     }
 
@@ -32,6 +40,14 @@ impl Reporter {
         match incident.trigger {
             HangTrigger::Threshold => self.threshold_incidents += 1,
             HangTrigger::Budget => self.budget_incidents += 1,
+        }
+        // Every incident counts here; `pending` keeps only the largest stalls.
+        if incident.stall_ms >= 1000.0 {
+            self.stalls_over_1000 += 1;
+        } else if incident.stall_ms >= 250.0 {
+            self.stalls_250to1000 += 1;
+        } else if incident.stall_ms >= 100.0 {
+            self.stalls_100to250 += 1;
         }
         self.pending.push(incident);
         if self.pending.len() > MAX_REPORTED_INCIDENTS {
@@ -48,7 +64,9 @@ impl Reporter {
     }
 
     pub fn send(&mut self) {
-        self.last_send = Instant::now();
+        let now = Instant::now();
+        let report_window_seconds = now.duration_since(self.last_send).as_secs();
+        self.last_send = now;
         if self.pending.is_empty() {
             return;
         }
@@ -65,6 +83,11 @@ impl Reporter {
             total_incidents,
             threshold_incidents,
             budget_incidents,
+            stalls_100to250 = std::mem::take(&mut self.stalls_100to250),
+            stalls_250to1000 = std::mem::take(&mut self.stalls_250to1000),
+            stalls_over_1000 = std::mem::take(&mut self.stalls_over_1000),
+            uptime_seconds = now.duration_since(self.startup).as_secs(),
+            report_window_seconds,
             measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION
         );
     }

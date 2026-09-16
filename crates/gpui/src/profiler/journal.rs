@@ -391,9 +391,10 @@ impl ForegroundRunnableCounter {
     }
 }
 
+// Visibility and power changes clear `pending_since`; `Window::refresh_visibility`
+// re-records the frame from the window's actual dirty state afterwards.
 struct WindowFrameState {
     visibility: WindowVisibility,
-    needs_frame: bool,
     pending_since: Option<Instant>,
     valid_after: Option<Instant>,
 }
@@ -402,7 +403,6 @@ impl WindowFrameState {
     fn new(visibility: WindowVisibility) -> Self {
         Self {
             visibility,
-            needs_frame: false,
             pending_since: None,
             valid_after: None,
         }
@@ -487,6 +487,9 @@ impl ForegroundJournalWriter {
     }
 
     fn power_transition(&mut self, power: PowerState, at: Instant) {
+        if self.power == power {
+            return;
+        }
         self.record_entry(ForegroundJournalEntry::Boundary(
             IntervalBoundary::PowerTransition { ended_at: at },
         ));
@@ -497,10 +500,7 @@ impl ForegroundJournalWriter {
         }
         for window in self.windows.values_mut() {
             window.valid_after = Some(at);
-            window.pending_since = (power == PowerState::Awake
-                && window.visibility.is_visible()
-                && window.needs_frame)
-                .then_some(at);
+            window.pending_since = None;
         }
     }
 
@@ -509,13 +509,11 @@ impl ForegroundJournalWriter {
             .windows
             .entry(id)
             .or_insert_with(|| WindowFrameState::new(visibility));
-        if window.visibility != visibility || !visibility.is_visible() {
+        if window.visibility != visibility {
+            window.visibility = visibility;
             window.valid_after = Some(at);
-            window.pending_since =
-                (self.power == PowerState::Awake && visibility.is_visible() && window.needs_frame)
-                    .then_some(at);
+            window.pending_since = None;
         }
-        window.visibility = visibility;
     }
 
     fn fold_small_poll(&mut self, timing: TaskTiming) {
@@ -560,7 +558,6 @@ impl ForegroundJournalWriter {
             .windows
             .entry(window_id)
             .or_insert_with(|| WindowFrameState::new(WindowVisibility::Visible));
-        window.needs_frame = true;
         if self.power == PowerState::Suspended
             || !window.visibility.is_visible()
             || window
@@ -584,8 +581,10 @@ impl ForegroundJournalWriter {
 
     fn record_present(&mut self, timing: PresentTiming, frame: Option<FrameTiming>) {
         if let Some(window) = self.windows.get_mut(&timing.window_id) {
-            window.needs_frame = false;
             window.pending_since = None;
+        }
+        if self.power == PowerState::Suspended {
+            return;
         }
         match frame {
             Some(frame) => {
@@ -1303,7 +1302,7 @@ mod tests {
     }
 
     #[test]
-    fn visibility_and_power_rearm_only_dirty_windows() {
+    fn visibility_and_power_changes_clear_pending_frames() {
         let (mut writer, _) = test_journal(ForegroundRunnableCounter::new());
         let start = Instant::now();
         let first = WindowId::from(1);
@@ -1316,16 +1315,21 @@ mod tests {
         writer.set_visibility(second, WindowVisibility::Hidden, start);
         assert!(!writer.has_unexpired_pending_frame(start));
         writer.set_visibility(first, WindowVisibility::Visible, start);
-        assert!(!writer.has_unexpired_pending_frame(start + FRAME_DEADLINE));
-        writer.power_transition(PowerState::Suspended, start + FRAME_DEADLINE);
-        let wake = start + FRAME_DEADLINE * 2;
-        writer.power_transition(PowerState::Awake, wake);
-        assert_eq!(writer.windows[&first].pending_since, Some(wake));
-        assert_eq!(writer.windows[&second].pending_since, None);
-        writer.record_present(presentation_timing(first, wake), None);
-        writer.power_transition(PowerState::Awake, wake);
+        writer.record_frame_pending(first, start);
+        assert!(writer.has_unexpired_pending_frame(start));
+        writer.power_transition(PowerState::Suspended, start);
         assert_eq!(writer.windows[&first].pending_since, None);
-        writer.record_window_closed(first, wake);
+        writer.record_frame_pending(first, start);
+        assert!(!writer.has_unexpired_pending_frame(start));
+        // A repeated notification is not a transition.
+        writer.power_transition(PowerState::Suspended, start);
+        assert_eq!(writer.power_generation, 1);
+        writer.power_transition(PowerState::Awake, start);
+        writer.record_frame_pending(first, start);
+        assert!(writer.has_unexpired_pending_frame(start));
+        writer.record_present(presentation_timing(first, start), None);
+        assert_eq!(writer.windows[&first].pending_since, None);
+        writer.record_window_closed(first, start);
         assert!(!writer.windows.contains_key(&first));
     }
 
