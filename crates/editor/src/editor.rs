@@ -11285,7 +11285,7 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    pub(crate) fn lsp_data_enabled(&self) -> bool {
+    pub fn lsp_data_enabled(&self) -> bool {
         self.enable_lsp_data && self.mode().is_full()
     }
 
