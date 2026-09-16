@@ -1,0 +1,21 @@
+[package]
+name = "gpui_ios_example"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "gpui_ios_example"
+path = "src/gpui_ios_example.rs"
+test = false
+bench = false
+
+[target.'cfg(target_os = "ios")'.dependencies]
+gpui.workspace = true
+gpui_ios.workspace = true
+gpui_platform.workspace = true
+log.workspace = true

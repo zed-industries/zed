@@ -49,41 +49,41 @@ struct TextInput {
 }
 
 impl TextInput {
-    fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
+    fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.move_to(self.previous_boundary(self.cursor_offset()), cx);
+            self.move_to(self.previous_boundary(self.cursor_offset()), window, cx);
         } else {
-            self.move_to(self.selected_range.start, cx)
+            self.move_to(self.selected_range.start, window, cx)
         }
     }
 
-    fn right(&mut self, _: &Right, _: &mut Window, cx: &mut Context<Self>) {
+    fn right(&mut self, _: &Right, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.move_to(self.next_boundary(self.selected_range.end), cx);
+            self.move_to(self.next_boundary(self.selected_range.end), window, cx);
         } else {
-            self.move_to(self.selected_range.end, cx)
+            self.move_to(self.selected_range.end, window, cx)
         }
     }
 
-    fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.select_to(self.previous_boundary(self.cursor_offset()), cx);
+    fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.previous_boundary(self.cursor_offset()), window, cx);
     }
 
-    fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.select_to(self.next_boundary(self.cursor_offset()), cx);
+    fn select_right(&mut self, _: &SelectRight, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.next_boundary(self.cursor_offset()), window, cx);
     }
 
-    fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(0, cx);
-        self.select_to(self.content.len(), cx)
+    fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(0, window, cx);
+        self.select_to(self.content.len(), window, cx)
     }
 
-    fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(0, cx);
+    fn home(&mut self, _: &Home, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(0, window, cx);
     }
 
-    fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(self.content.len(), cx);
+    fn end(&mut self, _: &End, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(self.content.len(), window, cx);
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -93,7 +93,7 @@ impl TextInput {
                 window.play_system_bell();
                 return;
             }
-            self.select_to(prev, cx)
+            self.select_to(prev, window, cx)
         }
         self.replace_text_in_range(None, "", window, cx)
     }
@@ -105,7 +105,7 @@ impl TextInput {
                 window.play_system_bell();
                 return;
             }
-            self.select_to(next, cx)
+            self.select_to(next, window, cx)
         }
         self.replace_text_in_range(None, "", window, cx)
     }
@@ -113,15 +113,15 @@ impl TextInput {
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.is_selecting = true;
 
         if event.modifiers.shift {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+            self.select_to(self.index_for_mouse_position(event.position), window, cx);
         } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx)
+            self.move_to(self.index_for_mouse_position(event.position), window, cx)
         }
     }
 
@@ -129,9 +129,14 @@ impl TextInput {
         self.is_selecting = false;
     }
 
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_selecting {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+            self.select_to(self.index_for_mouse_position(event.position), window, cx);
         }
     }
 
@@ -166,8 +171,10 @@ impl TextInput {
         }
     }
 
-    fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+    fn move_to(&mut self, offset: usize, window: &Window, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
+        self.selection_reversed = false;
+        window.notify_text_selection_changed(&self.focus_handle);
         cx.notify()
     }
 
@@ -197,7 +204,7 @@ impl TextInput {
         line.closest_index_for_x(position.x - bounds.left())
     }
 
-    fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+    fn select_to(&mut self, offset: usize, window: &Window, cx: &mut Context<Self>) {
         if self.selection_reversed {
             self.selected_range.start = offset
         } else {
@@ -207,6 +214,7 @@ impl TextInput {
             self.selection_reversed = !self.selection_reversed;
             self.selected_range = self.selected_range.end..self.selected_range.start;
         }
+        window.notify_text_selection_changed(&self.focus_handle);
         cx.notify()
     }
 
@@ -263,7 +271,7 @@ impl TextInput {
             .unwrap_or(self.content.len())
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self, window: &Window, cx: &mut Context<Self>) {
         self.content = "".into();
         self.selected_range = 0..0;
         self.selection_reversed = false;
@@ -271,6 +279,8 @@ impl TextInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.is_selecting = false;
+        window.notify_text_input_changed(&self.focus_handle);
+        cx.notify();
     }
 }
 
@@ -299,6 +309,26 @@ impl EntityInputHandler for TextInput {
         })
     }
 
+    fn set_selected_text_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selected_range = self.range_from_utf16(&range_utf16);
+        self.selection_reversed = false;
+        window.notify_text_selection_changed(&self.focus_handle);
+        cx.notify();
+    }
+
+    fn text_length_utf16(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        Some(self.content.encode_utf16().count())
+    }
+
     fn marked_text_range(
         &self,
         _window: &mut Window,
@@ -309,15 +339,17 @@ impl EntityInputHandler for TextInput {
             .map(|range| self.range_to_utf16(range))
     }
 
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+    fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.marked_range = None;
+        window.notify_text_input_changed(&self.focus_handle);
+        cx.notify();
     }
 
     fn replace_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let range = range_utf16
@@ -330,7 +362,9 @@ impl EntityInputHandler for TextInput {
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
+        self.selection_reversed = false;
         self.marked_range.take();
+        window.notify_text_input_changed(&self.focus_handle);
         cx.notify();
     }
 
@@ -339,7 +373,7 @@ impl EntityInputHandler for TextInput {
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range_utf16: Option<Range<usize>>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let range = range_utf16
@@ -356,12 +390,19 @@ impl EntityInputHandler for TextInput {
         } else {
             self.marked_range = None;
         }
+        let insertion_start_utf16 = self.offset_to_utf16(range.start);
+        let inserted_length_utf16 = new_text.encode_utf16().count();
         self.selected_range = new_selected_range_utf16
-            .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| new_range.start + range.start..new_range.end + range.end)
+            .map(|selected| {
+                self.range_from_utf16(
+                    &(insertion_start_utf16 + selected.start.min(inserted_length_utf16)
+                        ..insertion_start_utf16 + selected.end.min(inserted_length_utf16)),
+                )
+            })
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
+        self.selection_reversed = false;
 
+        window.notify_text_input_changed(&self.focus_handle);
         cx.notify();
     }
 
@@ -373,6 +414,9 @@ impl EntityInputHandler for TextInput {
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
+        if last_layout.text != self.content {
+            return None;
+        }
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
@@ -386,6 +430,18 @@ impl EntityInputHandler for TextInput {
         ))
     }
 
+    fn selection_bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Bounds<Pixels>> {
+        self.bounds_for_range(range_utf16, bounds, window, cx)
+            .into_iter()
+            .collect()
+    }
+
     fn character_index_for_point(
         &mut self,
         point: gpui::Point<Pixels>,
@@ -395,8 +451,10 @@ impl EntityInputHandler for TextInput {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
 
-        assert_eq!(last_layout.text, self.content);
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
+        if last_layout.text != self.content {
+            return None;
+        }
+        let utf8_index = last_layout.closest_index_for_x(line_point.x);
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -642,10 +700,10 @@ impl Focusable for InputExample {
 }
 
 impl InputExample {
-    fn on_reset_click(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_reset_click(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.recent_keystrokes.clear();
         self.text_input
-            .update(cx, |text_input, _cx| text_input.reset());
+            .update(cx, |text_input, cx| text_input.reset(window, cx));
         cx.notify();
     }
 }
@@ -781,4 +839,81 @@ fn main() {
 pub fn start() {
     gpui_platform::web_init();
     run_example();
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn input(content: &'static str, cx: &mut Context<TextInput>) -> TextInput {
+        TextInput {
+            focus_handle: cx.focus_handle(),
+            content: content.into(),
+            placeholder: "".into(),
+            selected_range: 0..0,
+            selection_reversed: false,
+            marked_range: None,
+            last_layout: None,
+            last_bounds: None,
+            is_selecting: false,
+        }
+    }
+
+    #[gpui::test]
+    fn native_selection_and_length_use_utf16(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, cx| input("e🙂漢", cx));
+        window
+            .update(cx, |input, window, cx| {
+                assert_eq!(input.text_length_utf16(window, cx), Some(4));
+                input.set_selected_text_range(1..3, window, cx);
+                assert_eq!(input.selected_range, 1..5);
+                assert_eq!(
+                    input.selected_text_range(false, window, cx).unwrap().range,
+                    1..3
+                );
+                input.set_selected_text_range(3..99, window, cx);
+                assert_eq!(input.selected_range, 5..8);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn marked_selection_is_relative_to_inserted_text(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, cx| input("A🙂Z", cx));
+        window
+            .update(cx, |input, window, cx| {
+                input.replace_and_mark_text_in_range(Some(1..3), "é🙂", Some(1..3), window, cx);
+                assert_eq!(input.content, "Aé🙂Z");
+                assert_eq!(input.marked_range, Some(1..7));
+                assert_eq!(input.selected_range, 3..7);
+
+                input.replace_and_mark_text_in_range(None, "漢", Some(1..1), window, cx);
+                assert_eq!(input.content, "A漢Z");
+                assert_eq!(input.marked_range, Some(1..4));
+                assert_eq!(input.selected_range, 4..4);
+
+                input.replace_and_mark_text_in_range(None, "", Some(0..0), window, cx);
+                assert_eq!(input.content, "AZ");
+                assert_eq!(input.marked_range, None);
+                assert_eq!(input.selected_range, 1..1);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn long_single_line_selection_uses_one_geometry_fragment(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, cx| input("", cx));
+        view.update(cx, |input, cx| {
+            input.content = "a".repeat(10_000).into();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        view.update_in(cx, |input, window, cx| {
+            let bounds = input.last_bounds.expect("input was painted");
+            let rectangles = input.selection_bounds_for_range(0..10_000, bounds, window, cx);
+            assert_eq!(rectangles.len(), 1);
+            assert!(rectangles[0].size.width > px(0.));
+        });
+    }
 }
