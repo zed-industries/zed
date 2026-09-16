@@ -83,9 +83,7 @@ pub(crate) fn run_tests() -> Workflow {
             .and_not_in_merge_queue()
             .then(build_visual_tests_binary()),
         should_run_tests.and_not_in_merge_queue().then(check_wasm()),
-        should_run_tests
-            .and_not_in_merge_queue()
-            .then(check_dependencies()), // could be more specific here?
+        should_run_tests.and_always().then(check_dependencies()), // could be more specific here?
         should_check_docs
             .and_not_in_merge_queue()
             .then(deploy_docs::check_docs()),
