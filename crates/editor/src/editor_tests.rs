@@ -5190,6 +5190,80 @@ async fn test_newline_below_with_cursor_on_deleted_hunk(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn test_expand_excerpts_with_selection_ending_at_excerpt_boundary(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    for (direction, expected) in [
+        (ExpandExcerptDirection::Up, "a0\na1\na2\na3\nb1\nb2\nb3"),
+        (ExpandExcerptDirection::Down, "a1\na2\na3\na4\nb1\nb2\nb3"),
+        (
+            ExpandExcerptDirection::UpAndDown,
+            "a0\na1\na2\na3\na4\nb1\nb2\nb3",
+        ),
+    ] {
+        let mut cx = EditorTestContext::new_multibuffer(
+            cx,
+            ["a0\n«a1\na2\na3»\na4", "b0\n«b1\nb2\nb3»\nb4"],
+        );
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([Point::zero()..Point::new(3, 0)]);
+            });
+            match direction {
+                ExpandExcerptDirection::Up => {
+                    editor.expand_excerpts_up(&ExpandExcerptsUp { lines: 1 }, window, cx)
+                }
+                ExpandExcerptDirection::Down => {
+                    editor.expand_excerpts_down(&ExpandExcerptsDown { lines: 1 }, window, cx)
+                }
+                ExpandExcerptDirection::UpAndDown => {
+                    editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx)
+                }
+            }
+        });
+        assert_eq!(cx.buffer_text(), expected, "{direction:?}");
+    }
+}
+
+#[gpui::test]
+fn test_expand_excerpts_with_trailing_empty_excerpt(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    for (direction, expected) in [
+        (ExpandExcerptDirection::Up, "aaa\none\n"),
+        (ExpandExcerptDirection::Down, "aaa\n"),
+        (ExpandExcerptDirection::UpAndDown, "aaa\none\n"),
+    ] {
+        for select_all in [false, true] {
+            let mut cx = EditorTestContext::new_multibuffer(cx, ["«aaa»", "zero\none\n«»"]);
+            cx.update_editor(|editor, window, cx| {
+                if select_all {
+                    editor.select_all(&SelectAll, window, cx);
+                } else {
+                    editor.move_to_end(&MoveToEnd, window, cx);
+                }
+                match direction {
+                    ExpandExcerptDirection::Up => {
+                        editor.expand_excerpts_up(&ExpandExcerptsUp { lines: 1 }, window, cx)
+                    }
+                    ExpandExcerptDirection::Down => {
+                        editor.expand_excerpts_down(&ExpandExcerptsDown { lines: 1 }, window, cx)
+                    }
+                    ExpandExcerptDirection::UpAndDown => {
+                        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx)
+                    }
+                }
+            });
+            assert_eq!(
+                cx.buffer_text(),
+                expected,
+                "{direction:?}, select_all={select_all}"
+            );
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_expand_excerpts_with_selection_on_deleted_hunk(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -35453,6 +35527,37 @@ async fn test_bookmarks_tab_highlights_bookmark_on_trailing_empty_line(cx: &mut 
         highlighted_display_rows_of(&bookmarks_editor, &mut cx),
         vec![last_display_row(&bookmarks_editor, &mut cx)],
         "a bookmark on the trailing empty line should still highlight its row"
+    );
+}
+
+#[gpui::test]
+async fn test_expand_excerpts_in_bookmarks_tab_with_trailing_empty_excerpt(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, _pane, project, editor, mut cx) =
+        init_bookmarks_tab_test(cx, json!({ "main.rs": "aaa", "other.rs": "zero\none\n" })).await;
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.excerpt_context_lines = Some(0);
+            });
+        });
+    });
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
+    let other_editor = open_bookmarks_test_editor(&workspace, &project, "other.rs", &mut cx).await;
+    toggle_bookmark_on_row(&other_editor, 2, &mut cx);
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        bookmarks_editor.read_with(&cx, |editor, cx| editor.text(cx)),
+        "aaa\n"
+    );
+    cx.dispatch_action(SelectAll);
+    cx.dispatch_action(ExpandExcerptsUp { lines: 1 });
+    cx.run_until_parked();
+    assert_eq!(
+        bookmarks_editor.read_with(&cx, |editor, cx| editor.text(cx)),
+        "aaa\none\n"
     );
 }
 

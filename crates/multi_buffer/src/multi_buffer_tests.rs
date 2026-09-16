@@ -6302,6 +6302,24 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
         "Should include trailing empty excerpts"
     );
     assert_eq!(ranges_half_open_max[1].1, BufferOffset(0)..BufferOffset(0));
+
+    for snapshot in [&snapshot, &snapshot_trailing] {
+        for start in 0..=snapshot.len().0 {
+            for end in start..=snapshot.len().0 {
+                let range = MultiBufferOffset(start)..MultiBufferOffset(end);
+                let expected = snapshot
+                    .range_to_buffer_ranges(range.clone())
+                    .into_iter()
+                    .map(|(buffer, range, _)| (buffer.remote_id(), range, None))
+                    .collect::<Vec<_>>();
+                let actual = snapshot
+                    .range_to_buffer_ranges_with_deleted_hunks(range.clone())
+                    .map(|(buffer, range, anchor)| (buffer.remote_id(), range, anchor))
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected, "{range:?}");
+            }
+        }
+    }
 }
 
 #[gpui::test]
