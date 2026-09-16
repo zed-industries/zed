@@ -4,7 +4,7 @@ Thank you for helping us make Zed better!
 
 ## Before you start
 
-> **At most three open PRs per author.**
+> [!IMPORTANT] **At most three open PRs per author.**
 > Start with one and see it through. Landing your first PR improves the odds for the next.
 >
 > A stack of open PRs gets stale as `main` changes and can overwhelm review, especially when submissions are automated.
