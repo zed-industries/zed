@@ -8153,7 +8153,7 @@ fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)>
         return Some(("!", Color::Conflict));
     }
     if git_status.untracked > 0 {
-        return Some(("U", Color::Created));
+        return Some(("U", Color::Untracked));
     }
     if git_status.worktree.deleted > 0 {
         return Some(("D", Color::Deleted));

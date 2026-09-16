@@ -2295,7 +2295,7 @@ pub fn entry_git_aware_label_color(
     } else if git_status.index != TrackedSummary::UNCHANGED {
         (git_status.index, true)
     } else if git_status.untracked > 0 {
-        return Color::Created;
+        return Color::Untracked;
     } else if ignored {
         return Color::Ignored;
     } else {
@@ -2847,7 +2847,7 @@ mod tests {
             };
             assert_eq!(
                 entry_git_aware_label_color(git_status, false, false, cx),
-                Color::Created
+                Color::Untracked
             );
 
             // Ignored.

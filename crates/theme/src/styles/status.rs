@@ -3,7 +3,7 @@
 use gpui::Hsla;
 use refineable::Refineable;
 
-use crate::{blue, grass, neutral, red, yellow};
+use crate::{amber, blue, grass, neutral, red, yellow};
 
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
@@ -74,6 +74,12 @@ pub struct StatusColors {
     pub unreachable_background: Hsla,
     pub unreachable_border: Hsla,
 
+    /// Indicates something new that Git does not yet track, like a file that
+    /// has not been staged/added to the index.
+    pub untracked: Hsla,
+    pub untracked_background: Hsla,
+    pub untracked_border: Hsla,
+
     /// Represents a warning status, like an operation that is about to fail.
     pub warning: Hsla,
     pub warning_background: Hsla,
@@ -128,6 +134,9 @@ impl StatusColors {
             unreachable: neutral().dark().step_10(),
             unreachable_background: neutral().dark().step_10(),
             unreachable_border: neutral().dark().step_10(),
+            untracked: amber().dark().step_9(),
+            untracked_background: amber().dark().step_9().opacity(0.25),
+            untracked_border: amber().dark().step_9(),
             warning: yellow().dark().step_9(),
             warning_background: yellow().dark().step_9(),
             warning_border: yellow().dark().step_9(),
@@ -175,6 +184,9 @@ impl StatusColors {
             unreachable: neutral().light().step_10(),
             unreachable_background: neutral().light().step_10(),
             unreachable_border: neutral().light().step_10(),
+            untracked: amber().light().step_9(),
+            untracked_background: amber().light().step_9(),
+            untracked_border: amber().light().step_9(),
             warning: yellow().light().step_9(),
             warning_background: yellow().light().step_9(),
             warning_border: yellow().light().step_9(),

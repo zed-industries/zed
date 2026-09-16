@@ -73,6 +73,9 @@ pub enum Color {
     Selected,
     /// A color used to indicate a successful operation or status.
     Success,
+    /// A color used to indicate an untracked item, such as a new file that has not
+    /// been staged/added to the Git index yet.
+    Untracked,
     /// A version control color used to indicate a newly added file or content in version control.
     VersionControlAdded,
     /// A version control color used to indicate conflicting changes that need resolution.
@@ -110,6 +113,7 @@ impl Color {
             Color::Error => cx.theme().status().error,
             Color::Selected => cx.theme().colors().text_accent,
             Color::Success => cx.theme().status().success,
+            Color::Untracked => cx.theme().status().untracked,
             Color::VersionControlAdded => cx.theme().colors().version_control_added,
             Color::VersionControlConflict => cx.theme().colors().version_control_conflict,
             Color::VersionControlDeleted => cx.theme().colors().version_control_deleted,
@@ -216,6 +220,13 @@ impl Component for Color {
                                 .into_any_element(),
                         )
                         .description(Color::Created.get_variant_docs()),
+                        single_example(
+                            "Untracked",
+                            Label::new("Untracked item")
+                                .color(Color::Untracked)
+                                .into_any_element(),
+                        )
+                        .description(Color::Untracked.get_variant_docs()),
                         single_example(
                             "Modified",
                             Label::new("Modified item")
