@@ -31,9 +31,12 @@ use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
-    DiagnosticSummary, HoverBlockKind, Project, ProjectPath, lsp_store::{
-        FormatTrigger, LspFormatTarget, SymbolLocation, log_store::{self, LanguageServerKind, LanguageServerLogKey, LogKind, LogMessage},
-    }, search::{SearchQuery, SearchResult},
+    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
+    lsp_store::{
+        FormatTrigger, LspFormatTarget, SymbolLocation,
+        log_store::{self, LanguageServerKind, LanguageServerLogKey, LogKind, LogMessage},
+    },
+    search::{SearchQuery, SearchResult},
 };
 use rand::prelude::*;
 use serde_json::json;
