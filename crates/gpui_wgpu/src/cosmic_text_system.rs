@@ -1089,7 +1089,7 @@ mod tests {
     #[test]
     fn shape_text_with_mixed_direction_paragraphs() -> Result<()> {
         let platform_text_system = Arc::new(text_system()?);
-        let text_system = Arc::new(gpui::TextSystem::new(platform_text_system));
+        let text_system = Arc::new(gpui::DefaultTextSystem::new(platform_text_system));
         let window_text_system = gpui::WindowTextSystem::new(text_system);
 
         let text: SharedString = "first line\n\u{05d0}\u{001c}A".into();

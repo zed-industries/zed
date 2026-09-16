@@ -87,14 +87,14 @@ impl TransformSummary {
 pub struct WrapPoint(pub Point);
 
 struct LineFragmentBuilder {
-    text_system: Arc<TextSystem>,
+    text_system: Arc<dyn TextSystem>,
     font_id: FontId,
     font_size: Pixels,
     cached_replacement_widths: HashMap<char, Pixels>,
 }
 
 impl LineFragmentBuilder {
-    fn new(text_system: Arc<TextSystem>, font: &Font, font_size: Pixels) -> Self {
+    fn new(text_system: Arc<dyn TextSystem>, font: &Font, font_size: Pixels) -> Self {
         let font_id = text_system.resolve_font(font);
         Self {
             text_system,
@@ -276,7 +276,7 @@ impl WrapMap {
             let (font, font_size) = self.font_with_size.clone();
             let mut fragment_builder =
                 LineFragmentBuilder::new(text_system.clone(), &font, font_size);
-            let mut line_wrapper = text_system.line_wrapper(font, font_size);
+            let mut line_wrapper = text_system.clone().line_wrapper(font, font_size);
             let tab_snapshot = new_snapshot.tab_snapshot.clone();
             let total_rows = tab_snapshot.max_point().row() as usize + 1;
             let range = TabPoint::zero()..tab_snapshot.max_point();
