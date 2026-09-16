@@ -1002,6 +1002,8 @@
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
       "ctrl-k ctrl-shift-f": "project_panel::NewSearchInDirectory",
+      "menu": "project_panel::OpenContextMenu",
+      "shift-f10": "project_panel::OpenContextMenu",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel",
@@ -1257,6 +1259,13 @@
     "bindings": {
       "ctrl-p": "file_finder::Toggle",
       "ctrl-shift-i": "search::ToggleIncludeIgnored",
+    },
+  },
+  {
+    "context": "CommandPalette || (CommandPalette > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-backspace": "command_palette::RemoveSelected",
     },
   },
   {
