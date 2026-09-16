@@ -1572,6 +1572,8 @@ impl Window {
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let visibility = platform_window.visibility();
+        #[cfg(feature = "profiler")]
+        profiler::journal::record_window_visibility(handle.window_id(), visibility);
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
@@ -1901,17 +1903,10 @@ impl Window {
         }));
         platform_window.on_visibility_change(Box::new({
             let mut cx = cx.to_async();
-            move |visibility| {
+            move |_| {
                 handle
                     .update(&mut cx, |_, window, cx| {
-                        if window.visibility == visibility {
-                            return;
-                        }
-                        window.visibility = visibility;
-                        window
-                            .visibility_observers
-                            .clone()
-                            .retain(&(), |callback| callback(visibility, window, cx));
+                        window.refresh_visibility(cx);
                     })
                     .log_err();
             }
@@ -2148,6 +2143,22 @@ impl Window {
             if !self.dirty_views.insert(view_id) {
                 break;
             }
+        }
+    }
+
+    pub(crate) fn refresh_visibility(&mut self, cx: &mut App) {
+        let visibility = self.platform_window.visibility();
+        if self.visibility != visibility {
+            self.visibility = visibility;
+            #[cfg(feature = "profiler")]
+            profiler::journal::record_window_visibility(self.handle.window_id(), visibility);
+            self.visibility_observers
+                .clone()
+                .retain(&(), |callback| callback(visibility, self, cx));
+        }
+        #[cfg(feature = "profiler")]
+        if self.invalidator.is_dirty() || self.needs_present.get() {
+            profiler::journal::record_frame_pending(self.handle.window_id(), Instant::now());
         }
     }
 
