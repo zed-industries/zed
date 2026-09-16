@@ -243,9 +243,10 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         protocol: ApiProtocol,
+        capabilities: Option<Vec<ModelCapability>>,
         reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
-        custom_model_api_url: Option<String>,
         interleaved_reasoning: bool,
+        custom_model_api_url: Option<String>,
     },
 }
 
@@ -879,30 +880,30 @@ impl Model {
         true
     }
 
-    pub fn supports_images(&self) -> bool {
+    pub fn supports_input_image(&self) -> bool {
         self.supported_capabilities()
             .is_some_and(|capabilities| capabilities.contains(&ModelCapability::InputImage))
     }
 
-    pub fn supports_audios(&self) -> bool {
+    pub fn supports_input_audio(&self) -> bool {
         self.supported_capabilities()
             .is_some_and(|capabilities| capabilities.contains(&ModelCapability::InputAudio))
     }
 
-    pub fn supports_pdfs(&self) -> bool {
+    pub fn supports_input_pdf(&self) -> bool {
         self.supported_capabilities()
             .is_some_and(|capabilities| capabilities.contains(&ModelCapability::InputPdf))
     }
 
-    pub fn supports_videos(&self) -> bool {
+    pub fn supports_input_video(&self) -> bool {
         self.supported_capabilities()
             .is_some_and(|capabilities| capabilities.contains(&ModelCapability::InputVideo))
     }
 
     pub fn supports_thinking(&self, subscription: OpenCodeSubscription) -> bool {
         match self {
-            // These models support reasoning, but does not offer
-            // any selectable reasoning efforts
+            // These models support reasoning, but OpenCode does not
+            // offer any reasoning efforts variants
             Self::Glm5
             | Self::Glm5_1
             | Self::GrokBuild0_1
@@ -1272,9 +1273,8 @@ impl Model {
                 ModelCapability::InputVideo,
             ]),
 
-            // Custom models have no configuration support for this, so let's
-            // assume that text and images are supported (like it did before)
-            Self::Custom { .. } => Some(vec![ModelCapability::InputImage]),
+            // Custom
+            Self::Custom { capabilities, .. } => capabilities.clone(),
 
             _ => None,
         }

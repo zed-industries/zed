@@ -389,9 +389,12 @@ Add custom models in your settings file:
           "max_tokens": 123456,
           "max_output_tokens": 98765,
           "protocol": "openai_chat",
+          "subscription": "go",
+          "capabilities": {
+            "images": true
+          },
           "reasoning_effort_levels": ["low", "medium", "high", "max"],
           "interleaved_reasoning": false,
-          "subscription": "go",
           "custom_model_api_url": "https://example.com/zen"
         }
       ]
@@ -402,14 +405,15 @@ Add custom models in your settings file:
 
 The available configuration options for custom OpenCode models are:
 
-- `name` (required): model ID used by OpenCode, such as `glm-9000`
-- `display_name` (optional): human-readable model name shown in the UI, such as `Custom GLM 9000`
+- `name` (required): model ID used by OpenCode, such as `zed-9000-pro`
+- `display_name` (optional): human-readable model name shown in the UI, such as `Custom Zed 9000 Pro`
 - `max_tokens` (required): maximum model context window size, such as `1000000`
 - `max_output_tokens` (optional): maximum tokens the model can generate, such as `64000`
 - `protocol` (optional, default `"openai_chat"`): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
+- `subscription` (optional): `"zen"` or `"go"`; defaults to `"zen"`
+- `capabilities` (optional): capabilities the model supports. Set `images` to `true` to allow image inputs. Defaults to `images: false`
 - `reasoning_effort_levels` (optional): list of supported reasoning effort levels, such as `["none", "low", "medium", "high", "xhigh", "max"]`. The last value in the list is used as the default
 - `interleaved_reasoning` (optional, default `false`): whether thinking tokens are sent as a dedicated `reasoning_content` field. Applies only when using the `openai_chat` protocol
-- `subscription` (optional): `"zen"` or `"go"`; defaults to `"zen"`
 - `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
 
 Custom OpenCode models are listed in the model dropdown in the Agent Panel.

@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelToolChoice, ProviderSettingsView, RateLimiter, ReasoningEffort,
     SubPageProviderSettings, env_var,
 };
-use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
+use opencode::{ApiProtocol, ModelCapability, OPENCODE_API_URL, OpenCodeSubscription};
 pub use settings::OpenCodeApiProtocol;
 pub use settings::OpenCodeAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -266,15 +266,21 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
             if !Self::subscription_enabled(subscription, cx) {
                 continue;
             }
+            let capabilities = if model.capabilities.images {
+                Some(vec![ModelCapability::InputImage])
+            } else {
+                None
+            };
             let custom_model = opencode::Model::Custom {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
                 max_output_tokens: model.max_output_tokens,
                 protocol,
+                capabilities,
                 reasoning_effort_levels: model.reasoning_effort_levels.clone(),
-                custom_model_api_url: model.custom_model_api_url.clone(),
                 interleaved_reasoning: model.interleaved_reasoning,
+                custom_model_api_url: model.custom_model_api_url.clone(),
             };
             let key = format!("{}/{}", subscription.id_prefix(), model.name);
             models.insert(key, (custom_model, subscription));
@@ -562,7 +568,7 @@ impl LanguageModel for OpenCodeLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        self.model.supports_images()
+        self.model.supports_input_image()
     }
 
     fn supports_thinking(&self) -> bool {
