@@ -29,6 +29,7 @@ refineable.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+smallvec.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-video.workspace = true
