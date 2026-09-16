@@ -2895,11 +2895,13 @@ impl App {
 
     /// Registers a renderer specific to an inspector state.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn register_inspector_element<T: 'static, R: crate::IntoElement>(
+    pub fn register_inspector_element<T: 'static, R: crate::IntoElement, F>(
         &mut self,
-        f: impl 'static + Fn(crate::InspectorElementId, &T, &mut Window, &mut App) -> R,
-    ) {
-        self.inspector_element_registry.register(f);
+        factory: impl 'static + Fn(&mut Window, &mut App) -> F,
+    ) where
+        F: 'static + FnMut(crate::InspectorElementId, &T, &mut Window, &mut App) -> R,
+    {
+        self.inspector_element_registry.register(factory);
     }
 
     /// Initializes gpui's default colors for the application.
