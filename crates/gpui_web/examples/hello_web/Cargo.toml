@@ -30,9 +30,20 @@ path = "../../../gpui/examples/text_wrapper.rs"
 name = "input"
 path = "../../../gpui/examples/input.rs"
 
+[[bin]]
+name = "font_fallback_test"
+path = "font_fallback_test.rs"
+
+[[bin]]
+name = "dynamic_fonts"
+path = "dynamic_fonts.rs"
+
 [dependencies]
+anyhow = "1"
+futures = "0.3"
 gpui = { path = "../../../gpui" }
 gpui_platform = { path = "../../../gpui_platform" }
+gpui_util = { path = "../../../gpui_util" }
 unicode-segmentation = "1"
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["console", "Location", "Window"] }

@@ -750,6 +750,11 @@ impl LanguageModel for OpenCodeLanguageModel {
                 .boxed()
             }
             ApiProtocol::Google => {
+                let mut request = request;
+                if request.max_output_tokens.is_some() {
+                    request.max_output_tokens =
+                        request.effective_max_output_tokens(self.max_output_tokens());
+                }
                 let mode = if self.supports_thinking() && request.thinking_allowed {
                     google_ai::GoogleModelMode::Thinking {
                         budget_tokens: None,
