@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use gpui_engine::{
     Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout, LineLayoutIndex, LineWrapper,
     LineWrapperHandle, RenderGlyphParams, ShapedGlyph, ShapedRun, TextRenderingMode, WrapBoundary,
@@ -29,6 +29,11 @@ use parley::{
     LayoutContext, PositionedLayoutItem, StyleProperty, YieldData,
 };
 use smallvec::SmallVec;
+use swash::{
+    FontRef,
+    scale::{Render, ScaleContext, Source, StrikeWith},
+    zeno::Format,
+};
 
 /// The embedded regular font.
 const FONT_DATA: &[u8] =
@@ -78,6 +83,21 @@ fn map_style(style: gpui_engine::FontStyle) -> FontStyle {
     match style {
         gpui_engine::FontStyle::Normal => FontStyle::Normal,
         gpui_engine::FontStyle::Italic | gpui_engine::FontStyle::Oblique => FontStyle::Italic,
+    }
+}
+
+/// Returns the embedded font bytes and index for a GPUI font.
+fn font_data_for(font: &Font) -> (&'static [u8], usize) {
+    let semi_bold = font.weight.0 >= 550.0;
+    let italic = matches!(
+        font.style,
+        gpui_engine::FontStyle::Italic | gpui_engine::FontStyle::Oblique
+    );
+    match (semi_bold, italic) {
+        (false, false) => (FONT_DATA, 0),
+        (false, true) => (FONT_DATA_ITALIC, 0),
+        (true, false) => (FONT_DATA_SEMIBOLD, 0),
+        (true, true) => (FONT_DATA_SEMIBOLD_ITALIC, 0),
     }
 }
 
@@ -493,6 +513,7 @@ struct ParleyPlatformTextSystem {
     font_context: Mutex<FontContext>,
     layout_context: Mutex<LayoutContext>,
     font_registry: Mutex<FontRegistry>,
+    scale_context: Mutex<ScaleContext>,
 }
 
 /// Maps GPUI [`Font`]s to stable [`FontId`]s and back.
@@ -526,6 +547,7 @@ impl ParleyPlatformTextSystem {
             font_context: Mutex::new(font_context()),
             layout_context: Mutex::new(LayoutContext::new()),
             font_registry: Mutex::new(FontRegistry::default()),
+            scale_context: Mutex::new(ScaleContext::new()),
         }
     }
 
@@ -535,6 +557,33 @@ impl ParleyPlatformTextSystem {
 
     fn font_for_id(&self, id: FontId) -> Option<Font> {
         self.font_registry.lock().unwrap().font_for_id(id)
+    }
+
+    fn font_data_for_id(&self, id: FontId) -> Option<(&'static [u8], usize)> {
+        self.font_for_id(id).map(|font| font_data_for(&font))
+    }
+
+    fn render_glyph_image(&self, params: &RenderGlyphParams) -> Result<swash::scale::image::Image> {
+        let (data, index) = self
+            .font_data_for_id(params.font_id)
+            .context("unknown font")?;
+        let font_ref = FontRef::from_index(data, index).context("invalid font data")?;
+
+        let mut scale_context = self.scale_context.lock().unwrap();
+        let mut scaler = scale_context
+            .builder(font_ref)
+            .size(params.font_size.0 * params.scale_factor)
+            .hint(true)
+            .build();
+
+        let sources: &[Source] = &[Source::Bitmap(StrikeWith::ExactSize), Source::Outline];
+        let mut renderer = Render::new(sources);
+        renderer.format(Format::Alpha);
+
+        let glyph_id: u16 = params.glyph_id.0.try_into()?;
+        renderer
+            .render(&mut scaler, glyph_id)
+            .with_context(|| format!("unable to render glyph via swash for {params:?}"))
     }
 
     fn build_layout(
@@ -641,27 +690,59 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
         })
     }
 
-    fn advance(&self, _font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
+        let (data, index) = self.font_data_for_id(font_id).context("unknown font")?;
+        let font_ref = FontRef::from_index(data, index).context("invalid font data")?;
+        let metrics = font_ref.glyph_metrics(&[]);
         Ok(Size {
-            width: 600.0 * glyph_id.0 as f32,
-            height: 0.0,
+            width: metrics.advance_width(glyph_id.0 as u16),
+            height: metrics.advance_height(glyph_id.0 as u16),
         })
     }
 
-    fn glyph_for_char(&self, _font_id: FontId, ch: char) -> Option<GlyphId> {
-        Some(GlyphId(ch.len_utf16() as u32))
+    fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+        let (data, index) = self.font_data_for_id(font_id)?;
+        let font_ref = FontRef::from_index(data, index)?;
+        let glyph_id = font_ref.charmap().map(ch);
+        (glyph_id != 0).then(|| GlyphId(glyph_id.into()))
     }
 
-    fn glyph_raster_bounds(&self, _params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        Ok(Default::default())
+    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        let image = self.render_glyph_image(params)?;
+        let placement = image.placement;
+        Ok(Bounds {
+            origin: Point {
+                x: DevicePixels(placement.left),
+                y: DevicePixels(-placement.top),
+            },
+            size: Size {
+                width: DevicePixels(placement.width as i32),
+                height: DevicePixels(placement.height as i32),
+            },
+        })
     }
 
     fn rasterize_glyph(
         &self,
-        _params: &RenderGlyphParams,
-        raster_bounds: Bounds<DevicePixels>,
+        params: &RenderGlyphParams,
+        _raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        Ok((raster_bounds.size, Vec::new()))
+        let image = self.render_glyph_image(params)?;
+        let size = Size {
+            width: DevicePixels(image.placement.width as i32),
+            height: DevicePixels(image.placement.height as i32),
+        };
+        let data = match image.content {
+            swash::scale::image::Content::Mask => image.data,
+            swash::scale::image::Content::Color | swash::scale::image::Content::SubpixelMask => {
+                let mut data = image.data;
+                for pixel in data.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+                data
+            }
+        };
+        Ok((size, data))
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
@@ -684,8 +765,8 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
 #[cfg(test)]
 mod tests {
     use crate::{ParleyTextSystem, TextSystem};
-    use gpui_engine::{FontRun, font};
-    use gpui_types::px;
+    use gpui_engine::{FontRun, RenderGlyphParams, font};
+    use gpui_types::{Point, px};
 
     #[test]
     fn shapes_a_line_through_parley() {
@@ -782,5 +863,34 @@ mod tests {
             "expected at least one wrap boundary"
         );
         assert!(wrapped.width() <= px(100.0));
+    }
+
+    #[test]
+    fn rasterizes_a_glyph() {
+        let text_system = ParleyTextSystem::new();
+        let font_id = text_system.resolve_font(&font("IBM Plex Sans"));
+        let glyph_id = text_system
+            .platform_text_system()
+            .glyph_for_char(font_id, 'A')
+            .expect("the embedded font should map 'A'");
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size: px(16.0),
+            subpixel_variant: Point { x: 0, y: 0 },
+            scale_factor: 1.0,
+            is_emoji: false,
+            subpixel_rendering: false,
+            dilation: 0,
+        };
+
+        let bounds = text_system.raster_bounds(&params).unwrap();
+        assert!(bounds.size.width.0 > 0);
+        assert!(bounds.size.height.0 > 0);
+
+        let (size, data) = text_system.rasterize_glyph(&params).unwrap();
+        assert_eq!(size.width, bounds.size.width);
+        assert_eq!(size.height, bounds.size.height);
+        assert!(!data.is_empty());
     }
 }

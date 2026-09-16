@@ -7789,6 +7789,7 @@ dependencies = [
  "gpui_types",
  "parley",
  "smallvec",
+ "swash",
 ]
 
 [[package]]
