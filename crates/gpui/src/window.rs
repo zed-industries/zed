@@ -3157,11 +3157,6 @@ impl Window {
         #[cfg(feature = "profiler")]
         let frame_dirty = self.invalidator.take_frame_dirty();
         #[cfg(feature = "profiler")]
-        profiler::journal::record_window_visibility(
-            self.handle.window_id(),
-            self.platform_window.visibility(),
-        );
-        #[cfg(feature = "profiler")]
         self.window_profiler.begin_draw();
 
         // Set up the per-App arena for element allocation during this draw.
@@ -3340,11 +3335,6 @@ impl Window {
         let _foreground_turn = profiler::journal::foreground_turn();
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
-        #[cfg(feature = "profiler")]
-        profiler::journal::record_window_visibility(
-            self.handle.window_id(),
-            self.platform_window.visibility(),
-        );
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(

@@ -267,12 +267,6 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
     // intervals > 100ms are implicitly total_intervals - (the buckets above)
     let average_present_interval_ms = delta_intervals.mean() / 1_000_000.0;
     let average_dirty_to_present_ms = delta_dirty_to_present.mean() / 1_000_000.0;
-    let dirty_to_present_sub9 = count_frames_in_range(&delta_dirty_to_present, 0, MS9_NS);
-    let dirty_to_present_9to18 = count_frames_in_range(&delta_dirty_to_present, MS9_NS, MS18_NS);
-    let dirty_to_present_18to36 = count_frames_in_range(&delta_dirty_to_present, MS18_NS, MS36_NS);
-    let dirty_to_present_36to100 =
-        count_frames_in_range(&delta_dirty_to_present, MS36_NS, MS100_NS);
-    // dirty-to-present > 100ms is implicitly dirty_to_present_samples - (the buckets above)
 
     telemetry::event!(
         "Frame Duration Report",
@@ -289,10 +283,11 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         average_present_interval_ms = average_present_interval_ms,
         average_dirty_to_present_ms = average_dirty_to_present_ms,
         dirty_to_present_samples = delta_dirty_to_present.len(),
-        dirty_to_present_sub9 = dirty_to_present_sub9,
-        dirty_to_present_9to18 = dirty_to_present_9to18,
-        dirty_to_present_18to36 = dirty_to_present_18to36,
-        dirty_to_present_36to100 = dirty_to_present_36to100,
+        dirty_to_present_p50_ms =
+            delta_dirty_to_present.value_at_quantile(0.5) as f64 / 1_000_000.0,
+        dirty_to_present_p95_ms =
+            delta_dirty_to_present.value_at_quantile(0.95) as f64 / 1_000_000.0,
+        dirty_to_present_max_ms = delta_dirty_to_present.max() as f64 / 1_000_000.0,
         root_entity_type_name = window_handle.root_entity_type_name(),
         report_window_seconds = report_window_seconds,
         measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,

@@ -581,7 +581,6 @@ impl ThreadTimings {
         location: &'static std::panic::Location<'_>,
     ) {
         let start = Instant::now();
-        journal::start_task_poll();
         self.running = Some(ActiveTiming {
             spawned,
             location,
@@ -881,11 +880,9 @@ enum WindowActivity {
     Input {
         started_at: Instant,
         kind: &'static str,
-        power_generation: u64,
     },
     Draw {
         started_at: Instant,
-        power_generation: u64,
     },
 }
 
@@ -898,7 +895,7 @@ enum WindowActivity {
 pub struct WindowProfiler {
     window_id: WindowId,
     active_activities: SmallVec<[WindowActivity; 4]>,
-    active_actions: SmallVec<[(&'static str, Instant, u64); 2]>,
+    active_actions: SmallVec<[(&'static str, Instant); 2]>,
     dirty_to_present_histogram: Histogram<u64>,
     draw_duration_histogram: Histogram<u64>,
     present_interval_histogram: Histogram<u64>,
@@ -953,24 +950,18 @@ impl WindowProfiler {
         self.active_activities.push(WindowActivity::Input {
             started_at: Instant::now(),
             kind,
-            power_generation: journal::power_generation(),
         });
     }
 
     /// Records the end of an input dispatch.
     pub fn end_input(&mut self, caused_invalidation: bool) {
-        let Some(WindowActivity::Input {
-            started_at,
-            kind,
-            power_generation,
-        }) = self.active_activities.pop()
-        else {
+        let Some(WindowActivity::Input { started_at, kind }) = self.active_activities.pop() else {
             debug_assert!(false, "input activity must be the current window activity");
             journal::end_foreground_turn();
             return;
         };
 
-        if journal::work_is_valid(power_generation) {
+        if !journal::power_interrupted_since(started_at) {
             journal::record_input(journal::InputTiming {
                 kind,
                 start: started_at,
@@ -1007,8 +998,7 @@ impl WindowProfiler {
     pub fn begin_action_handler(&mut self, action: &(dyn Action + 'static), cx: &mut App) {
         journal::begin_foreground_turn();
         let name = actions::update_running_action(action, cx);
-        self.active_actions
-            .push((name, Instant::now(), journal::power_generation()));
+        self.active_actions.push((name, Instant::now()));
     }
 
     /// Records the end of the current action handler.
@@ -1017,12 +1007,12 @@ impl WindowProfiler {
         // slot misbehaves when tests run actions concurrently, which is why
         // the journal entry is tracked here on the window instead.
         actions::save_action_timing();
-        let Some((name, start, power_generation)) = self.active_actions.pop() else {
+        let Some((name, start)) = self.active_actions.pop() else {
             debug_assert!(false, "action handler must be begun before it ends");
             journal::end_foreground_turn();
             return;
         };
-        if journal::work_is_valid(power_generation) {
+        if !journal::power_interrupted_since(start) {
             journal::record_action(ActionTiming {
                 name,
                 start,
@@ -1037,17 +1027,14 @@ impl WindowProfiler {
         journal::begin_foreground_turn();
         let started_at = Instant::now();
         journal::record_frame_pending(self.window_id, started_at);
-        self.active_activities.push(WindowActivity::Draw {
-            started_at,
-            power_generation: journal::power_generation(),
-        });
+        self.active_activities
+            .push(WindowActivity::Draw { started_at });
     }
 
     /// Records the end of a window draw and returns the draw duration.
     pub fn end_draw(&mut self, dirty_at: Option<Instant>, invalidations: u64) -> Duration {
         let Some(WindowActivity::Draw {
             started_at: draw_start,
-            power_generation,
         }) = self.active_activities.pop()
         else {
             debug_assert!(false, "draw activity must be the current window activity");
@@ -1064,7 +1051,7 @@ impl WindowProfiler {
             draw_end,
         };
         let draw_duration = frame_timing.draw_duration();
-        if journal::work_is_valid(power_generation) {
+        if !journal::power_interrupted_since(draw_start) {
             self.record_draw_timing(frame_timing);
         }
         journal::end_foreground_turn();
@@ -1626,7 +1613,6 @@ mod tests {
             .push(WindowActivity::Input {
                 started_at,
                 kind: "test",
-                power_generation: journal::power_generation(),
             });
     }
 
