@@ -5,8 +5,8 @@ use crate::{
     ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render,
     Result, SharedString, Size, SystemNotification, SystemNotificationResponse, Task,
-    TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, VisualContext, Window,
-    WindowBounds, WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
+    TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext,
+    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -26,7 +26,7 @@ pub struct TestAppContext {
     #[doc(hidden)]
     pub dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
-    text_system: Arc<DefaultTextSystem>,
+    text_system: Arc<dyn TextSystem>,
     fn_name: Option<&'static str>,
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
     #[doc(hidden)]
@@ -328,8 +328,8 @@ impl TestAppContext {
         (view, cx)
     }
 
-    /// returns the DefaultTextSystem
-    pub fn text_system(&self) -> &Arc<DefaultTextSystem> {
+    /// Returns the app's [`TextSystem`].
+    pub fn text_system(&self) -> &Arc<dyn TextSystem> {
         &self.text_system
     }
 

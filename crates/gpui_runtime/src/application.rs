@@ -3,8 +3,8 @@
 
 use anyhow::Result;
 use gpui_authoring::{
-    App, AppCell, AssetSource, AsyncApp, BackgroundExecutor, DefaultTextSystem, ForegroundExecutor,
-    FramePipeline, LayoutEngine, Platform, QuitMode, WindowId, http_client::HttpClient,
+    App, AppCell, AssetSource, AsyncApp, BackgroundExecutor, ForegroundExecutor, FramePipeline,
+    LayoutEngine, Platform, QuitMode, TextSystem, WindowId, http_client::HttpClient,
 };
 use std::{ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
 
@@ -187,8 +187,8 @@ impl Application {
         self.0.borrow().foreground_executor().clone()
     }
 
-    /// Returns a reference to the [`DefaultTextSystem`] associated with this app.
-    pub fn text_system(&self) -> Arc<DefaultTextSystem> {
+    /// Returns the app's [`TextSystem`].
+    pub fn text_system(&self) -> Arc<dyn TextSystem> {
         self.0.borrow().text_system().clone()
     }
 

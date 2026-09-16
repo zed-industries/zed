@@ -29,7 +29,7 @@ use crate::{
     Bounds, BoundsExt, ClipboardItem, Context, DefaultTextSystem, Entity, ForegroundExecutor,
     Global, InputEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Platform, PlatformTextSystem, Point, Render, Size, Task, TestDispatcher, TestPlatform,
-    TestWindow, Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    TestWindow, TextSystem, Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
@@ -44,7 +44,7 @@ pub struct TestApp {
     foreground_executor: ForegroundExecutor,
     #[allow(dead_code)]
     dispatcher: TestDispatcher,
-    text_system: Arc<DefaultTextSystem>,
+    text_system: Arc<dyn TextSystem>,
 }
 
 impl TestApp {
@@ -240,7 +240,7 @@ impl TestApp {
     }
 
     /// Get the text system.
-    pub fn text_system(&self) -> &Arc<DefaultTextSystem> {
+    pub fn text_system(&self) -> &Arc<dyn TextSystem> {
         &self.text_system
     }
 

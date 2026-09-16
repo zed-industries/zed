@@ -12,7 +12,7 @@ use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor, Bounds,
     Context, DefaultTextSystem, Entity, EntityId, ForegroundExecutor, Global, Pixels,
     PlatformTextSystem, Render, Reservation, SceneRenderer, Size, Task, TestDispatcher,
-    TestPlatform, Window, WindowBounds, WindowHandle, WindowOptions,
+    TestPlatform, TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
     app::{GpuiBorrow, GpuiMode},
 };
 use anyhow::Result;
@@ -43,7 +43,7 @@ pub struct HeadlessAppContext {
     /// The foreground executor for running tasks on the main thread.
     pub foreground_executor: ForegroundExecutor,
     dispatcher: TestDispatcher,
-    text_system: Arc<DefaultTextSystem>,
+    text_system: Arc<dyn TextSystem>,
 }
 
 impl HeadlessAppContext {
@@ -171,7 +171,7 @@ impl HeadlessAppContext {
     }
 
     /// Returns the text system.
-    pub fn text_system(&self) -> &Arc<DefaultTextSystem> {
+    pub fn text_system(&self) -> &Arc<dyn TextSystem> {
         &self.text_system
     }
 

@@ -51,8 +51,8 @@ use crate::{
     PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
     ScreenCaptureSource, SharedString, StandardImmediatePipeline, SubscriberSet, Subscription,
     SvgRenderer, SystemNotification, SystemNotificationResponse, SystemWindowTab, Task,
-    TextRenderingMode, ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle,
-    WindowHost, WindowId, WindowInvalidator,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowHost, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, resolve_dock_menu, resolve_menus,
 };
@@ -564,7 +564,7 @@ enum PlatformOwnedDragState {
 pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
-    text_system: Arc<DefaultTextSystem>,
+    text_system: Arc<dyn TextSystem>,
     /// Creates a fresh layout engine for each window. Injected at application
     /// construction so windows drive layout through the [`LayoutEngine`] trait
     /// without naming an implementation.
@@ -1939,7 +1939,7 @@ impl App {
     }
 
     /// Accessor for the text system.
-    pub fn text_system(&self) -> &Arc<DefaultTextSystem> {
+    pub fn text_system(&self) -> &Arc<dyn TextSystem> {
         &self.text_system
     }
 

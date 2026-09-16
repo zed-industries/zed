@@ -12,8 +12,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::{
-    Font, FontId, FontRun, LineLayout, LineLayoutIndex, PlatformTextSystem, RenderGlyphParams,
-    TextRenderingMode, WrappedLineLayout,
+    Font, FontId, FontRun, LineLayout, LineLayoutIndex, LineWrapperHandle, PlatformTextSystem,
+    RenderGlyphParams, TextRenderingMode, WrappedLineLayout,
 };
 
 /// The text shaping, metric, wrapping, and line-layout surface.
@@ -92,6 +92,9 @@ pub trait TextSystem: Send + Sync {
 
     /// Return a font-run buffer to the pool for reuse.
     fn recycle_font_runs(&self, font_runs: Vec<FontRun>);
+
+    /// A line wrapper for the given font and size, returned from a pool.
+    fn line_wrapper(self: Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle;
 
     /// The rasterized size and location of a glyph.
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;

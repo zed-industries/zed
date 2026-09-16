@@ -5,8 +5,7 @@ mod line_wrapper_tests;
 pub use line::*;
 
 use crate::{
-    DefaultTextSystem, FontId, FontRun, LineLayout, LineLayoutCache, LineLayoutIndex, Pixels,
-    SharedString, TextRun,
+    FontId, FontRun, LineLayout, LineLayoutIndex, Pixels, SharedString, TextRun, TextSystem,
 };
 use anyhow::Result;
 use derive_more::Deref;
@@ -18,30 +17,26 @@ use std::sync::Arc;
 /// The GPUI text layout subsystem.
 #[derive(Deref)]
 pub struct WindowTextSystem {
-    line_layout_cache: LineLayoutCache,
     #[deref]
-    text_system: Arc<DefaultTextSystem>,
+    text_system: Arc<dyn TextSystem>,
 }
 
 impl WindowTextSystem {
-    /// Create a new WindowTextSystem with the given DefaultTextSystem.
-    pub fn new(text_system: Arc<DefaultTextSystem>) -> Self {
-        Self {
-            line_layout_cache: LineLayoutCache::new(text_system.platform_text_system().clone()),
-            text_system,
-        }
+    /// Creates a window-scoped text system over the given engine text system.
+    pub fn new(text_system: Arc<dyn TextSystem>) -> Self {
+        Self { text_system }
     }
 
     pub(crate) fn layout_index(&self) -> LineLayoutIndex {
-        self.line_layout_cache.layout_index()
+        self.text_system.layout_index()
     }
 
     pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
-        self.line_layout_cache.reuse_layouts(index)
+        self.text_system.reuse_layouts(index)
     }
 
     pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
-        self.line_layout_cache.truncate_layouts(index)
+        self.text_system.truncate_layouts(index)
     }
 
     /// Shape the given line, at the given font_size, for painting to the screen.
@@ -108,7 +103,7 @@ impl WindowTextSystem {
         font_size: Pixels,
         runs: &[TextRun],
         force_width: Option<Pixels>,
-        materialize_text: impl FnOnce() -> SharedString,
+        materialize_text: impl FnOnce() -> SharedString + 'static,
     ) -> ShapedLine {
         let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
         for run in runs {
@@ -230,7 +225,7 @@ impl WindowTextSystem {
                 run_start += run_len_within_line;
             }
 
-            let layout = self.line_layout_cache.layout_wrapped_line(
+            let layout = self.text_system.layout_wrapped_line(
                 &line_text,
                 font_size,
                 &font_runs,
@@ -291,7 +286,7 @@ impl WindowTextSystem {
     }
 
     pub(crate) fn finish_frame(&self) {
-        self.line_layout_cache.finish_frame()
+        self.text_system.finish_frame()
     }
 
     /// Layout the given line of text, at the given font_size.
@@ -337,12 +332,9 @@ impl WindowTextSystem {
             }
         }
 
-        let layout = self.line_layout_cache.layout_line(
-            &SharedString::new(text),
-            font_size,
-            &font_runs,
-            force_width,
-        );
+        let layout = self
+            .text_system
+            .layout_line(text, font_size, &font_runs, force_width);
 
         self.recycle_font_runs(font_runs);
 
@@ -353,7 +345,7 @@ impl WindowTextSystem {
     pub fn layout_width(&self, font_id: FontId, font_size: Pixels, ch: char) -> Pixels {
         let mut buffer = [0; 4];
         let buffer: &_ = ch.encode_utf8(&mut buffer);
-        self.line_layout_cache
+        self.text_system
             .layout_line(
                 buffer,
                 font_size,
@@ -419,7 +411,7 @@ impl WindowTextSystem {
             }
         }
 
-        let layout = self.line_layout_cache.try_layout_line_by_hash(
+        let layout = self.text_system.try_layout_line_by_hash(
             text_hash,
             text_len,
             font_size,
@@ -447,7 +439,7 @@ impl WindowTextSystem {
         font_size: Pixels,
         runs: &[TextRun],
         force_width: Option<Pixels>,
-        materialize_text: impl FnOnce() -> SharedString,
+        materialize_text: impl FnOnce() -> SharedString + 'static,
     ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
         let mut font_runs = self.take_font_runs();
@@ -481,13 +473,13 @@ impl WindowTextSystem {
             }
         }
 
-        let layout = self.line_layout_cache.layout_line_by_hash(
+        let layout = self.text_system.layout_line_by_hash(
             text_hash,
             text_len,
             font_size,
             &font_runs,
             force_width,
-            materialize_text,
+            Box::new(materialize_text),
         );
 
         self.recycle_font_runs(font_runs);

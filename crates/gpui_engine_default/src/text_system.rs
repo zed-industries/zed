@@ -313,7 +313,7 @@ impl DefaultTextSystem {
     }
 
     /// Returns a handle to a line wrapper, for the given font and font size.
-    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
+    pub fn line_wrapper(self: Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
         let font_id = self.resolve_font(&font);
         let wrapper = {
             let mut lock = self.wrapper_pool.lock();
@@ -469,6 +469,10 @@ impl TextSystem for DefaultTextSystem {
 
     fn recycle_font_runs(&self, font_runs: Vec<FontRun>) {
         self.recycle_font_runs(font_runs)
+    }
+
+    fn line_wrapper(self: Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
+        DefaultTextSystem::line_wrapper(self, font, font_size)
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
