@@ -45,18 +45,12 @@ impl SnippetRegistry {
             .and_then(|stem| stem.to_str().and_then(file_stem_to_key));
         let new_snippets =
             crate::file_to_snippets(snippets_in_file, file_path).filter_map(Result::log_err);
-        let mut snippets = self.snippets.write();
-        let existing = snippets.entry(kind).or_default();
-        for snippet in new_snippets {
-            // Only the first prefix is currently used to trigger a snippet completion, so
-            // dedup on it alone for now rather than the full prefix list.
-            if !existing
-                .iter()
-                .any(|s| s.prefix.first() == snippet.prefix.first())
-            {
-                existing.push(snippet);
-            }
-        }
+
+        self.snippets
+            .write()
+            .entry(kind)
+            .or_default()
+            .extend(new_snippets);
 
         Ok(())
     }
@@ -115,53 +109,56 @@ mod tests {
     }
 
     #[test]
-    fn test_register_snippets_same_first_prefix_deduplicated() {
+    fn test_register_snippets_same_first_prefix_preserved() -> Result<()> {
         let registry = SnippetRegistry::new();
-        registry
-            .register_snippets(
-                Path::new("ruby.json"),
-                r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter} do\n$0\nend"}}"#,
-            )
-            .unwrap();
-        registry
-            .register_snippets(
-                Path::new("ruby.json"),
-                r#"{"Different Name": {"prefix": "for", "body": "${2:iter}.each do |${1:item}|\n$0\nend"}}"#,
-            )
-            .unwrap();
+        registry.register_snippets(
+            Path::new("ruby.json"),
+            r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter} do\n$0\nend"}}"#,
+        )?;
+        registry.register_snippets(
+            Path::new("ruby.json"),
+            r#"{"Different Name": {"prefix": "for", "body": "${2:iter}.each do |${1:item}|\n$0\nend"}}"#,
+        )?;
 
         let snippets = registry.get_snippets(&Some("ruby".to_owned()));
         assert_eq!(
             snippets.len(),
-            1,
-            "Snippets sharing the same first prefix should be deduplicated, keeping the first"
+            2,
+            "Snippets sharing the same first prefix should both be preserved"
         );
         assert_eq!(snippets[0].name, "For Loop");
+        assert_eq!(snippets[0].prefix, vec!["for".to_owned()]);
+        assert_eq!(snippets[1].name, "Different Name");
+        assert_eq!(snippets[1].prefix, vec!["for".to_owned()]);
+        Ok(())
     }
 
     #[test]
-    fn test_register_snippets_extra_prefixes_ignored_for_dedup() {
+    fn test_register_snippets_same_first_prefix_with_extra_prefixes_preserved() -> Result<()> {
         let registry = SnippetRegistry::new();
-        registry
-            .register_snippets(
-                Path::new("ruby.json"),
-                r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter} do\n$0\nend"}}"#,
-            )
-            .unwrap();
-        registry
-            .register_snippets(
-                Path::new("ruby.json"),
-                r#"{"For Loop Alt": {"prefix": ["for", "floop"], "body": "${2:iter}.each do |${1:item}|\n$0\nend"}}"#,
-            )
-            .unwrap();
+        registry.register_snippets(
+            Path::new("ruby.json"),
+            r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter} do\n$0\nend"}}"#,
+        )?;
+        registry.register_snippets(
+            Path::new("ruby.json"),
+            r#"{"For Loop Alt": {"prefix": ["for", "floop"], "body": "${2:iter}.each do |${1:item}|\n$0\nend"}}"#,
+        )?;
 
         let snippets = registry.get_snippets(&Some("ruby".to_owned()));
         assert_eq!(
             snippets.len(),
-            1,
-            "Only the first prefix is currently used to trigger completions, \
-            so a matching first prefix is a duplicate regardless of any extra prefixes"
+            2,
+            "Snippets sharing the same first prefix should be preserved along with their extra prefixes"
         );
+        assert_eq!(snippets[0].name, "For Loop");
+        assert_eq!(snippets[0].prefix, vec!["for".to_owned()]);
+        assert_eq!(snippets[1].name, "For Loop Alt");
+        assert_eq!(
+            snippets[1].prefix,
+            vec!["for".to_owned(), "floop".to_owned()]
+        );
+        Ok(())
     }
 
     #[test]
