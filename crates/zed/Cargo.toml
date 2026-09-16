@@ -253,6 +253,9 @@ image.workspace = true
 image.workspace = true
 
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
 [target.'cfg(target_os = "linux")'.build-dependencies]
 pkg-config = "0.3.22"
 
