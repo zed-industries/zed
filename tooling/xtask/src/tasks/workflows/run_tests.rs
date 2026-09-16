@@ -427,7 +427,7 @@ fn check_style() -> NamedJob {
             "typos",
             "2d0ce569feab1f8752f1dde43cc2f2aa53236e06",
         ) // v1.40.0
-        .with(("config", "./typos.toml"))
+        .with(("config", "./.config/typos.toml"))
     }
 
     named::job(
