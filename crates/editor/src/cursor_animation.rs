@@ -472,7 +472,9 @@ impl CursorAnimationState {
                 y: (previous_viewport.scroll_pixel_position.y - viewport.scroll_pixel_position.y)
                     as f32,
             });
-            previous_geometry = self.target_geometry.unwrap();
+            if let Some(target_geometry) = self.target_geometry {
+                previous_geometry = target_geometry;
+            }
         }
 
         let target_origin_changed = !previous_geometry.has_same_origin(target_geometry);
