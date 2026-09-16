@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/gpui_macos.rs"
+doctest = false
 
 [features]
 default = ["gpui/default"]
