@@ -5190,6 +5190,213 @@ async fn test_newline_below_with_cursor_on_deleted_hunk(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn test_expand_excerpts_with_selection_ending_at_excerpt_boundary(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    for (direction, expected) in [
+        (ExpandExcerptDirection::Up, "a0\na1\na2\na3\nb1\nb2\nb3"),
+        (ExpandExcerptDirection::Down, "a1\na2\na3\na4\nb1\nb2\nb3"),
+        (
+            ExpandExcerptDirection::UpAndDown,
+            "a0\na1\na2\na3\na4\nb1\nb2\nb3",
+        ),
+    ] {
+        let mut cx = EditorTestContext::new_multibuffer(
+            cx,
+            ["a0\n«a1\na2\na3»\na4", "b0\n«b1\nb2\nb3»\nb4"],
+        );
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([Point::zero()..Point::new(3, 0)]);
+            });
+            match direction {
+                ExpandExcerptDirection::Up => {
+                    editor.expand_excerpts_up(&ExpandExcerptsUp { lines: 1 }, window, cx)
+                }
+                ExpandExcerptDirection::Down => {
+                    editor.expand_excerpts_down(&ExpandExcerptsDown { lines: 1 }, window, cx)
+                }
+                ExpandExcerptDirection::UpAndDown => {
+                    editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx)
+                }
+            }
+        });
+        assert_eq!(cx.buffer_text(), expected, "{direction:?}");
+    }
+}
+
+#[gpui::test]
+fn test_expand_excerpts_with_trailing_empty_excerpt(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    for (direction, expected) in [
+        (ExpandExcerptDirection::Up, "aaa\none\n"),
+        (ExpandExcerptDirection::Down, "aaa\n"),
+        (ExpandExcerptDirection::UpAndDown, "aaa\none\n"),
+    ] {
+        for select_all in [false, true] {
+            let mut cx = EditorTestContext::new_multibuffer(cx, ["«aaa»", "zero\none\n«»"]);
+            cx.update_editor(|editor, window, cx| {
+                if select_all {
+                    editor.select_all(&SelectAll, window, cx);
+                } else {
+                    editor.move_to_end(&MoveToEnd, window, cx);
+                }
+                match direction {
+                    ExpandExcerptDirection::Up => {
+                        editor.expand_excerpts_up(&ExpandExcerptsUp { lines: 1 }, window, cx)
+                    }
+                    ExpandExcerptDirection::Down => {
+                        editor.expand_excerpts_down(&ExpandExcerptsDown { lines: 1 }, window, cx)
+                    }
+                    ExpandExcerptDirection::UpAndDown => {
+                        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx)
+                    }
+                }
+            });
+            assert_eq!(
+                cx.buffer_text(),
+                expected,
+                "{direction:?}, select_all={select_all}"
+            );
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_expand_excerpts_with_selection_on_deleted_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("zero\none\ntwo\nthree\nfour\nfive\nsix\nsevenˇ");
+    let buffer = cx.multibuffer(|multi_buffer, _| multi_buffer.as_singleton().unwrap());
+    cx.update_multibuffer(|multi_buffer, cx| {
+        let path_key = PathKey::for_buffer(&buffer, cx);
+        multi_buffer.set_excerpts_for_path(
+            path_key,
+            buffer,
+            [Point::new(2, 0)..Point::new(5, 4)],
+            0,
+            cx,
+        );
+    });
+    cx.set_head_text("zero\none\ntwo\nthree\ndeleted\nfour\nfive\nsix\nseven");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.buffer_text(), "two\nthree\ndeleted\nfour\nfive");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            let cursor = DisplayPoint::new(DisplayRow(2), 0);
+            selections.select_display_ranges([cursor..cursor]);
+        });
+    });
+    assert!(cx.update_editor(|editor, _, _| {
+        editor
+            .selections
+            .newest_anchor()
+            .head()
+            .diff_base_anchor()
+            .is_some()
+    }));
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx);
+    });
+    assert_eq!(
+        cx.buffer_text(),
+        "one\ntwo\nthree\ndeleted\nfour\nfive\nsix"
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 4)
+            ]);
+        });
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx);
+    });
+    assert_eq!(
+        cx.buffer_text(),
+        "zero\none\ntwo\nthree\ndeleted\nfour\nfive\nsix\nseven"
+    );
+}
+
+#[gpui::test]
+async fn test_expand_excerpts_with_selection_in_removed_path(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer_a = cx.new(|cx| Buffer::local("a0\na1\na2\na3\na4", cx));
+    let buffer_b = cx.new(|cx| Buffer::local("b0\nb1\nb2\nb3\nb4", cx));
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a,
+            [Point::new(1, 0)..Point::new(3, 2)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_b.clone(),
+            [Point::new(1, 0)..Point::new(3, 2)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project, multibuffer.clone(), window, cx)
+    });
+    // The second path's excerpt begins with a deleted hunk.
+    editor.update_in(cx, |editor, window, cx| {
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(
+                "b0\ndeleted\nb1\nb2\nb3\nb4",
+                &buffer_b.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+        editor
+            .buffer
+            .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
+        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "a1\na2\na3\ndeleted\nb1\nb2\nb3");
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
+        });
+    });
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(0), cx);
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "deleted\nb1\nb2\nb3");
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "b0\ndeleted\nb1\nb2\nb3\nb4");
+    });
+}
+
+#[gpui::test]
 fn test_newline_below_multibuffer(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -35671,6 +35878,37 @@ async fn test_bookmarks_tab_highlights_bookmark_on_trailing_empty_line(cx: &mut 
         highlighted_display_rows_of(&bookmarks_editor, &mut cx),
         vec![last_display_row(&bookmarks_editor, &mut cx)],
         "a bookmark on the trailing empty line should still highlight its row"
+    );
+}
+
+#[gpui::test]
+async fn test_expand_excerpts_in_bookmarks_tab_with_trailing_empty_excerpt(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, _pane, project, editor, mut cx) =
+        init_bookmarks_tab_test(cx, json!({ "main.rs": "aaa", "other.rs": "zero\none\n" })).await;
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.excerpt_context_lines = Some(0);
+            });
+        });
+    });
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
+    let other_editor = open_bookmarks_test_editor(&workspace, &project, "other.rs", &mut cx).await;
+    toggle_bookmark_on_row(&other_editor, 2, &mut cx);
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        bookmarks_editor.read_with(&cx, |editor, cx| editor.text(cx)),
+        "aaa\n"
+    );
+    cx.dispatch_action(SelectAll);
+    cx.dispatch_action(ExpandExcerptsUp { lines: 1 });
+    cx.run_until_parked();
+    assert_eq!(
+        bookmarks_editor.read_with(&cx, |editor, cx| editor.text(cx)),
+        "aaa\none\n"
     );
 }
 
