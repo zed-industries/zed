@@ -33,12 +33,12 @@ test-support = [
 anyhow.workspace = true
 async-channel.workspace = true
 async-lock.workspace = true
-chardetng.workspace = true
 clock.workspace = true
 collections.workspace = true
 encoding_rs.workspace = true
 fs.workspace = true
 futures.workspace = true
+futures-lite.workspace = true
 fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
@@ -50,8 +50,6 @@ paths.workspace = true
 postage.workspace = true
 pretty_assertions = { workspace = true, optional = true }
 rpc = { workspace = true, features = ["gpui"] }
-serde.workspace = true
-serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 sum_tree.workspace = true
@@ -67,10 +65,11 @@ gpui = { workspace = true, features = ["test-support"] }
 paths = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

@@ -28,15 +28,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Range, time::Duration};
 
 use collections::{HashMap, HashSet};
-use editor::{MultiBufferSnapshot, PathKey, multibuffer_context_lines};
+use editor::{Editor, MultiBufferSnapshot, PathKey, multibuffer_context_lines};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
-    AnyElement, AppContext, AsyncApp, ClickEvent, DismissEvent, EntityId, HighlightStyle,
+    AnyElement, App, AppContext, AsyncApp, ClickEvent, DismissEvent, EntityId, HighlightStyle,
     Modifiers, StyledText, Task, TextStyle, prelude::*,
 };
 use gpui::{Entity, FocusHandle, WeakEntity};
-use language::{Buffer, LanguageAwareStyling};
+use language::{Buffer, Language, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, Search};
 use project::{SearchResults, search::SearchQuery, search::SearchResult};
@@ -88,6 +88,8 @@ pub struct Delegate {
     pub(crate) max_line_number: u32,
     pub(crate) selected_matches: Vec<SelectedMatch>,
     pub(crate) collapsed_paths: HashSet<ProjectPath>,
+    pub(crate) query_editor: Option<Entity<Editor>>,
+    pub(crate) regex_language: Option<Arc<Language>>,
 }
 
 /// Wrapper with Eq is path + range equality
@@ -327,6 +329,8 @@ impl Delegate {
                 max_line_number: 0,
                 selected_matches: Vec::new(),
                 collapsed_paths: HashSet::default(),
+                query_editor: None,
+                regex_language: None,
             });
 
             this
@@ -346,7 +350,7 @@ impl Delegate {
             .get(&project.downgrade())
             .cloned();
 
-        let search = cx.new(|cx| ProjectSearch::new(project, cx));
+        let search = cx.new(|cx| ProjectSearch::new(project, weak_workspace.clone(), cx));
         let project_search =
             cx.new(|cx| ProjectSearchView::new(weak_workspace, search, window, cx, settings));
         cx.spawn(async move |_, cx| Self::new_from_project_search(project_search, cx).await)
@@ -593,6 +597,35 @@ impl Delegate {
         .detach();
         cx.emit(DismissEvent);
     }
+
+    pub(crate) fn adjust_query_regex_language(&self, cx: &mut App) {
+        let Some(query_buffer) = self
+            .query_editor
+            .as_ref()
+            .and_then(|query_editor| query_editor.read(cx).buffer().read(cx).as_singleton())
+        else {
+            return;
+        };
+        let language = if self.search_options.contains(SearchOptions::REGEX) {
+            self.regex_language.clone()
+        } else {
+            None
+        };
+        query_buffer.update(cx, |query_buffer, cx| {
+            query_buffer.set_language(language, cx);
+        });
+    }
+}
+
+pub(crate) fn toggle_search_option(
+    picker: &mut Picker<Delegate>,
+    options: SearchOptions,
+    window: &mut Window,
+    cx: &mut Context<Picker<Delegate>>,
+) {
+    picker.delegate.search_options.toggle(options);
+    picker.delegate.adjust_query_regex_language(cx);
+    picker.refresh(window, cx);
 }
 
 pub(crate) enum PopulateProjectSearch {
@@ -680,9 +713,9 @@ pub(crate) async fn matches_to_multibuffer(
     PopulateProjectSearch::Completed
 }
 
-const SEARCH_DEBOUNCE_MS: u64 = 100;
-const CLICK_THRESHOLD_MS: u128 = 50;
-const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
+const CLICK_THRESHOLD: Duration = Duration::from_millis(50);
+const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(300);
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
 const MAX_MATCH_CONTEXT_BYTES: usize = 512;
 
@@ -729,8 +762,7 @@ impl PickerDelegate for Delegate {
             .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
             .on_click(move |_, window, cx| {
                 picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(options);
-                    picker.refresh(window, cx);
+                    toggle_search_option(picker, options, window, cx);
                 });
             })
         });
@@ -862,9 +894,7 @@ impl PickerDelegate for Delegate {
         let (signal_done, match_updating_done) = futures::channel::oneshot::channel();
         self.in_progress_search =
             InProgressSearch::Connected(cx.spawn_in(window, async move |picker, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(SEARCH_DEBOUNCE_MS))
-                    .await;
+                cx.background_executor().timer(SEARCH_DEBOUNCE).await;
 
                 if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
                     return None;
@@ -902,15 +932,14 @@ impl PickerDelegate for Delegate {
         let now = std::time::Instant::now();
         let is_click = self
             .last_selection_change_time
-            .map(|t| now.duration_since(t).as_millis() < CLICK_THRESHOLD_MS)
+            .map(|t| now.duration_since(t) < CLICK_THRESHOLD)
             .unwrap_or(false);
 
         if is_click {
             let is_double_click = self
                 .last_click
                 .map(|(ix, t)| {
-                    ix == self.selected_index
-                        && now.duration_since(t).as_millis() < DOUBLE_CLICK_THRESHOLD_MS
+                    ix == self.selected_index && now.duration_since(t) < DOUBLE_CLICK_THRESHOLD
                 })
                 .unwrap_or(false);
             self.last_click = Some((self.selected_index, now));
@@ -1532,7 +1561,7 @@ mod tests {
 
         // Search is debounced; advance past the debounce and let results stream in.
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(SEARCH_DEBOUNCE_MS + 50));
+            .advance_clock(SEARCH_DEBOUNCE + Duration::from_millis(50));
         cx.run_until_parked();
 
         picker.read_with(cx, |picker, _| {

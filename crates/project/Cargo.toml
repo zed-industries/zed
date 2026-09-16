@@ -48,6 +48,7 @@ collections.workspace = true
 context_server.workspace = true
 credentials_provider.workspace = true
 dap.workspace = true
+encoding_rs.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
@@ -109,7 +110,6 @@ ztracing.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
-encoding_rs.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 context_server = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
@@ -129,5 +129,5 @@ util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

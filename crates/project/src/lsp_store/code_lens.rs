@@ -71,9 +71,9 @@ impl CodeLensData {
                 self.lens.clear();
                 self.fetched_servers.clear();
                 self.resolving.clear();
+                self.update = None;
             }
         }
-        self.update = None;
     }
 }
 
@@ -148,7 +148,7 @@ impl LspStore {
     ) -> CodeLensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
-        let current_servers = self.relevant_server_ids_for_capability_check(buffer, cx);
+        let current_servers = self.language_server_ids_for_request(buffer, &GetCodeLens, cx);
 
         let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
@@ -396,10 +396,17 @@ impl LspStore {
         let lens = lens.clone();
         let action = cached.clone();
 
+        if !self.text_document_capability_matches_for_server(
+            buffer,
+            server_id,
+            "textDocument/codeLens",
+            |capabilities| GetCodeLens::can_resolve_lens(capabilities.server_capabilities),
+            cx,
+        ) {
+            return Task::ready(None).shared();
+        }
+
         if self.upstream_client().is_some() {
-            if !self.check_if_capable_for_proto_request(buffer, GetCodeLens::can_resolve_lens, cx) {
-                return Task::ready(None).shared();
-            }
             let resolve = self.resolve_code_action(buffer, action, cx);
             let task = cx
                 .spawn(async move |lsp_store, cx| {
@@ -439,9 +446,6 @@ impl LspStore {
         let Some(server) = self.language_server_for_id(server_id) else {
             return Task::ready(None).shared();
         };
-        if !GetCodeLens::can_resolve_lens(&server.capabilities()) {
-            return Task::ready(None).shared();
-        }
         let request_timeout = ProjectSettings::get_global(cx)
             .global_lsp_settings
             .get_request_timeout();

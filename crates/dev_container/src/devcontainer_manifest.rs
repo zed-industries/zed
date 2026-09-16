@@ -73,7 +73,7 @@ impl DevContainerManifest {
         local_project_path: &Path,
     ) -> Result<Self, DevContainerError> {
         let config_path = local_project_path.join(local_config.config_path.clone());
-        log::debug!("parsing devcontainer json found in {:?}", &config_path);
+        log::debug!("parsing devcontainer json found in {config_path:?}");
         let devcontainer_contents = context.fs.load(&config_path).await.map_err(|e| {
             log::error!("Unable to read devcontainer contents: {e}");
             DevContainerError::DevContainerParseFailed
@@ -591,7 +591,7 @@ impl DevContainerManifest {
                     "No devcontainer-feature.json found in {:?}, no defaults to apply",
                     feature_json_path
                 );
-                log::error!("{}", &message);
+                log::error!("{message}");
                 return Err(DevContainerError::ResourceFetchFailed);
             }
 
@@ -877,9 +877,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             push_unique_string(&mut security_opt, &opt);
         }
 
-        let entrypoint_script = if dev_container.override_command == Some(false) {
-            None
-        } else {
+        let entrypoint_script = if dev_container.override_command() {
             let mut entrypoint_script_lines = vec![
                 "echo Container started".to_string(),
                 "trap \"exit 0\" 15".to_string(),
@@ -894,6 +892,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             ]);
 
             Some(entrypoint_script_lines.join("\n").trim().to_string())
+        } else {
+            None
         };
 
         let mut container_env = HashMap::new();
@@ -2731,6 +2731,9 @@ pub(crate) async fn spawn_dev_container(
     .await?;
 
     devcontainer_manifest.parse_nonremote_vars()?;
+    devcontainer_manifest
+        .dev_container()
+        .validate_environment_names()?;
 
     log::debug!("Checking for existing container");
     if let Some(devcontainer) = devcontainer_manifest
@@ -4008,13 +4011,16 @@ mod test {
                 < post_start_script.find("printf '%s'").unwrap(),
             "postStartCommand marker must be written only after the command succeeds"
         );
-        assert_eq!(docker_exec_commands[1]._inner_command.get_program(), "echo");
+        assert_eq!(
+            docker_exec_commands[1]._inner_command.get_program(),
+            "/bin/sh"
+        );
         assert_eq!(
             docker_exec_commands[1]
                 ._inner_command
                 .get_args()
                 .collect::<Vec<_>>(),
-            vec![OsStr::new("post-attach")]
+            vec![OsStr::new("-c"), OsStr::new("echo post-attach")]
         );
     }
 
@@ -5150,7 +5156,7 @@ ENV DOCKER_BUILDKIT=1
             Some(vec!["seccomp=unconfined".to_string()])
         );
         assert_eq!(app_service.privileged, Some(true));
-        assert!(app_service.entrypoint.is_some());
+        assert!(app_service.entrypoint.is_none());
 
         let labels = app_service.labels.as_ref().unwrap();
         assert_eq!(

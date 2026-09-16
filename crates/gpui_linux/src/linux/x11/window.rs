@@ -7,7 +7,8 @@ use gpui::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, popup::PopupNotSupportedError, px,
+    WindowDecorations, WindowKind, WindowParams, WindowVisibility, popup::PopupNotSupportedError,
+    px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -245,6 +246,7 @@ pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
@@ -277,6 +279,9 @@ pub struct X11WindowState {
     maximized_horizontal: bool,
     hidden: bool,
     active: bool,
+    /// Owned by the client's `WindowRef`, which combines the mapped state with
+    /// `VisibilityNotify`; this is the last value it reported.
+    visibility: WindowVisibility,
     hovered: bool,
     pub(crate) force_render_after_recovery: bool,
     fullscreen: bool,
@@ -387,6 +392,39 @@ where
         .map_err(handle_connection_error)
         .and_then(|response| response.reply().map_err(|reply_error| anyhow!(reply_error)))
         .with_context(failure_context)
+}
+
+/// Sets or clears the ICCCM WM_HINTS urgency flag, preserving the other hints.
+///
+/// Clearing when the flag isn't set is skipped: writing it back would create a
+/// WM_HINTS property on windows that never requested attention, and would add an
+/// X round trip to every window state change.
+fn set_wm_hints_urgency(xcb: &XCBConnection, x_window: xproto::Window, urgent: bool) {
+    let mut hints = WmHints::new();
+    match WmHints::get(xcb, x_window) {
+        Ok(cookie) => match cookie.reply() {
+            Ok(Some(existing_hints)) => hints = existing_hints,
+            Ok(None) => {}
+            Err(error) => {
+                log::debug!("failed to read X11 WM_HINTS before setting urgency: {error}")
+            }
+        },
+        Err(error) => {
+            log::debug!("failed to request X11 WM_HINTS before setting urgency: {error}")
+        }
+    }
+
+    if !urgent && !hints.urgent {
+        return;
+    }
+
+    hints.urgent = urgent;
+    check_reply(
+        || "X11 ChangeProperty for WM_HINTS urgency failed.",
+        hints.set(xcb, x_window),
+    )
+    .log_err();
+    xcb_flush(xcb);
 }
 
 /// Convert X11 connection errors to `anyhow::Error` and panic for unrecoverable errors.
@@ -794,6 +832,8 @@ impl X11WindowState {
                 atoms: *atoms,
                 input_handler: None,
                 active: false,
+                // The window is not mapped until the client sees `MapNotify`.
+                visibility: WindowVisibility::Hidden,
                 hovered: false,
                 force_render_after_recovery: false,
                 fullscreen: false,
@@ -1080,6 +1120,7 @@ impl X11WindowStatePtr {
             .chunks_exact(4)
             .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
 
+        let was_active = state.active;
         state.active = false;
         state.fullscreen = false;
         state.maximized_vertical = false;
@@ -1098,6 +1139,12 @@ impl X11WindowStatePtr {
             } else if atom == state.atoms._NET_WM_STATE_HIDDEN {
                 state.hidden = true;
             }
+        }
+
+        // The urgency hint has no withdrawal signal of its own; ICCCM leaves that to
+        // the client, and focus is the conventional means for the user to zero it.
+        if state.active && !was_active {
+            set_wm_hints_urgency(&self.xcb, self.x_window, false);
         }
 
         Ok(())
@@ -1298,6 +1345,17 @@ impl X11WindowStatePtr {
         }
     }
 
+    pub fn set_visibility(&self, visibility: WindowVisibility) {
+        if std::mem::replace(&mut self.state.borrow_mut().visibility, visibility) == visibility {
+            return;
+        }
+        let callback = self.callbacks.borrow_mut().visibility_change.take();
+        if let Some(mut fun) = callback {
+            fun(visibility);
+            self.callbacks.borrow_mut().visibility_change = Some(fun);
+        }
+    }
+
     pub fn set_appearance(&mut self, appearance: WindowAppearance) {
         let mut state = self.state.borrow_mut();
         state.appearance = appearance;
@@ -1481,14 +1539,6 @@ impl PlatformWindow for X11Window {
                 message,
             )
             .log_err();
-        self.0
-            .xcb
-            .set_input_focus(
-                xproto::InputFocus::POINTER_ROOT,
-                self.0.x_window,
-                xproto::Time::CURRENT_TIME,
-            )
-            .log_err();
         xcb_flush(&self.0.xcb);
     }
 
@@ -1497,30 +1547,15 @@ impl PlatformWindow for X11Window {
             return;
         }
 
-        let mut hints = WmHints::new();
-        match WmHints::get(&*self.0.xcb, self.0.x_window) {
-            Ok(cookie) => match cookie.reply() {
-                Ok(Some(existing_hints)) => hints = existing_hints,
-                Ok(None) => {}
-                Err(error) => {
-                    log::debug!("failed to read X11 WM_HINTS before setting urgency: {error}")
-                }
-            },
-            Err(error) => {
-                log::debug!("failed to request X11 WM_HINTS before setting urgency: {error}")
-            }
-        }
-        hints.urgent = true;
-        check_reply(
-            || "X11 ChangeProperty for WM_HINTS urgency failed.",
-            hints.set(&*self.0.xcb, self.0.x_window),
-        )
-        .log_err();
-        xcb_flush(&self.0.xcb);
+        set_wm_hints_urgency(&self.0.xcb, self.0.x_window, true);
     }
 
     fn is_active(&self) -> bool {
         self.0.state.borrow().active
+    }
+
+    fn visibility(&self) -> WindowVisibility {
+        self.0.state.borrow().visibility
     }
 
     fn is_hovered(&self) -> bool {
@@ -1555,10 +1590,11 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_app_id(&mut self, app_id: &str) {
-        let mut data = Vec::with_capacity(app_id.len() * 2 + 1);
+        let mut data = Vec::with_capacity(app_id.len() * 2 + 2);
         data.extend(app_id.bytes()); // instance https://unix.stackexchange.com/a/494170
         data.push(b'\0');
         data.extend(app_id.bytes()); // class
+        data.push(b'\0');
 
         check_reply(
             || "X11 ChangeProperty8 for WM_CLASS failed.",
@@ -1667,6 +1703,10 @@ impl PlatformWindow for X11Window {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.0.callbacks.borrow_mut().visibility_change = Some(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {

@@ -265,10 +265,20 @@ impl Editor {
             return None;
         }
 
+        let debounce_duration = if debounce {
+            let registered_provider = self.edit_prediction_provider.as_ref()?;
+            let settings = all_language_settings(None, cx);
+            settings
+                .edit_predictions
+                .debounce_for_delegate(registered_provider.provider.name())
+        } else {
+            Duration::ZERO
+        };
+
         self.edit_prediction_provider()?.refresh(
             buffer,
             cursor_buffer_position,
-            debounce,
+            debounce_duration,
             trigger,
             cx,
         );
@@ -1628,10 +1638,14 @@ impl Editor {
             return;
         };
 
-        let extension = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| Some(file.path().extension()?.to_string()));
+        let extension = buffer.read(cx).file().and_then(|file| {
+            Some(
+                std::path::Path::new(file.file_name(cx))
+                    .extension()?
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        });
 
         let event_type = match accepted {
             true => "Edit Prediction Accepted",
@@ -2516,7 +2530,7 @@ impl Render for MissingEditPredictionKeybindingTooltip {
             container
                 .flex_shrink_0()
                 .max_w_80()
-                .min_h(rems_from_px(124.))
+                .min_h(rems_from_px(124_f32))
                 .justify_between()
                 .child(
                     v_flex()

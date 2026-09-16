@@ -225,6 +225,12 @@ impl<T> PriorityQueueReceiver<T> {
         self.state.queues.lock().is_empty()
     }
 
+    /// Returns the number of queued elements across all priorities.
+    pub(crate) fn len(&self) -> usize {
+        let queues = self.state.queues.lock();
+        queues.high_priority.len() + queues.medium_priority.len() + queues.low_priority.len()
+    }
+
     /// Tries to pop one element from the priority queue without blocking.
     ///
     /// This will early return if there are no elements in the queue.

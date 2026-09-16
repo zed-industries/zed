@@ -7,6 +7,12 @@
 
 (jsx_element) @element
 
+(return_statement
+  (parenthesized_expression) @element)
+
+(arrow_function
+  body: (parenthesized_expression) @element)
+
 [
   (jsx_opening_element)
   (jsx_closing_element)

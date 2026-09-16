@@ -5,7 +5,8 @@ use cloud_api_types::websocket_protocol::{PROTOCOL_VERSION, PROTOCOL_VERSION_HEA
 use futures::channel::mpsc::unbounded;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt as _, SinkExt as _, StreamExt as _, TryStreamExt as _};
-use gpui::{App, Task};
+use futures_lite::future::yield_now;
+use gpui::{App, AppContext, Task};
 use http_client::http::request;
 use yawc::frame::Frame;
 use yawc::{TcpWebSocket, WebSocket};
@@ -31,7 +32,7 @@ impl Connection {
         let rx = self.rx.fuse();
         let (message_tx, message_rx) = unbounded();
         let executor = cx.background_executor().clone();
-        let task = cx.spawn(async move |_cx| {
+        let task = cx.background_spawn(async move {
             let keepalive_timer = executor.timer(KEEPALIVE_INTERVAL).fuse();
             futures::pin_mut!(keepalive_timer, rx);
 
@@ -52,6 +53,8 @@ impl Connection {
                         }
                     }
                 }
+
+                yield_now().await;
             }
         });
 

@@ -58,6 +58,3 @@ rpc = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 terminal = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
-
-[package.metadata.cargo-machete]
-ignored = ["log"]
