@@ -22539,7 +22539,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "credentials_provider",
- "futures 0.3.32",
+ "futures 0.3.34",
  "gpui",
  "http_client",
  "language_model",
