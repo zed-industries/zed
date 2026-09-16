@@ -4,9 +4,9 @@
 //! top of a different shaping and line-layout engine. It depends on `gpui_engine`
 //! (the SPI surface) and `parley`, not on `gpui_engine_default`.
 //!
-//! The shaping and line layout go through Parley; rasterization is intentionally
-//! left as a stub because the point of this crate is the layout boundary, not a
-//! second glyph rasterizer.
+//! The shaping and line layout go through Parley; glyph rasterization uses
+//! `skrifa` for outline extraction and hinting and `tiny-skia` for coverage
+//! rasterization.
 
 #![warn(missing_docs)]
 
@@ -28,12 +28,14 @@ use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
     LayoutContext, PositionedLayoutItem, StyleProperty, YieldData,
 };
-use smallvec::SmallVec;
-use swash::{
-    FontRef,
-    scale::{Render, ScaleContext, Source, StrikeWith},
-    zeno::Format,
+use skrifa::{
+    FontRef, GlyphId as SkrifaGlyphId, MetadataProvider,
+    instance::{LocationRef, Size as SkrifaSize},
+    outline::{DrawSettings, HintingInstance, HintingOptions, OutlinePen},
+    raw::TableProvider,
 };
+use smallvec::SmallVec;
+use tiny_skia::{FillRule, Mask, PathBuilder, Transform};
 
 /// The embedded regular font.
 const FONT_DATA: &[u8] =
@@ -178,6 +180,47 @@ fn wrap_boundary_for_byte(unwrapped: &LineLayout, byte: usize) -> Option<WrapBou
         }
     }
     None
+}
+
+/// Collects a glyph outline into a [`tiny_skia::Path`], flipping the y-axis so
+/// the font's y-up outline coordinates become the y-down coordinates
+/// `tiny_skia` rasterizes in.
+struct GlyphPathBuilder {
+    builder: PathBuilder,
+}
+
+impl GlyphPathBuilder {
+    fn new() -> Self {
+        Self {
+            builder: PathBuilder::new(),
+        }
+    }
+
+    fn build(self) -> Option<tiny_skia::Path> {
+        self.builder.finish()
+    }
+}
+
+impl OutlinePen for GlyphPathBuilder {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.builder.move_to(x, -y);
+    }
+
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.builder.line_to(x, -y);
+    }
+
+    fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+        self.builder.quad_to(cx0, -cy0, x, -y);
+    }
+
+    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+        self.builder.cubic_to(cx0, -cy0, cx1, -cy1, x, -y);
+    }
+
+    fn close(&mut self) {
+        self.builder.close();
+    }
 }
 
 /// A per-line layout box used by [`ParleyTextSystem::layout_with_boxes`].
@@ -513,7 +556,6 @@ struct ParleyPlatformTextSystem {
     font_context: Mutex<FontContext>,
     layout_context: Mutex<LayoutContext>,
     font_registry: Mutex<FontRegistry>,
-    scale_context: Mutex<ScaleContext>,
 }
 
 /// Maps GPUI [`Font`]s to stable [`FontId`]s and back.
@@ -547,7 +589,6 @@ impl ParleyPlatformTextSystem {
             font_context: Mutex::new(font_context()),
             layout_context: Mutex::new(LayoutContext::new()),
             font_registry: Mutex::new(FontRegistry::default()),
-            scale_context: Mutex::new(ScaleContext::new()),
         }
     }
 
@@ -563,27 +604,66 @@ impl ParleyPlatformTextSystem {
         self.font_for_id(id).map(|font| font_data_for(&font))
     }
 
-    fn render_glyph_image(&self, params: &RenderGlyphParams) -> Result<swash::scale::image::Image> {
-        let (data, index) = self
+    fn rasterize_outline(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> Result<(Bounds<DevicePixels>, Vec<u8>)> {
+        let (static_data, index) = self
             .font_data_for_id(params.font_id)
             .context("unknown font")?;
-        let font_ref = FontRef::from_index(data, index).context("invalid font data")?;
+        let data: &[u8] = static_data;
+        let font_ref = FontRef::from_index(data, index as u32).context("invalid font data")?;
 
-        let mut scale_context = self.scale_context.lock().unwrap();
-        let mut scaler = scale_context
-            .builder(font_ref)
-            .size(params.font_size.0 * params.scale_factor)
-            .hint(true)
-            .build();
+        let size = SkrifaSize::new(params.font_size.0 * params.scale_factor);
+        let outlines = font_ref.outline_glyphs();
+        let hinting = HintingInstance::new(
+            &outlines,
+            size,
+            LocationRef::default(),
+            HintingOptions::default(),
+        )
+        .context("unable to create hinting instance")?;
+        let glyph_id = SkrifaGlyphId::new(params.glyph_id.0);
+        let glyph = outlines.get(glyph_id).context("missing glyph outline")?;
 
-        let sources: &[Source] = &[Source::Bitmap(StrikeWith::ExactSize), Source::Outline];
-        let mut renderer = Render::new(sources);
-        renderer.format(Format::Alpha);
+        let mut path_builder = GlyphPathBuilder::new();
+        glyph
+            .draw(DrawSettings::hinted(&hinting, false), &mut path_builder)
+            .context("unable to draw glyph outline")?;
+        let Some(path) = path_builder.build() else {
+            return Ok((Bounds::default(), Vec::new()));
+        };
 
-        let glyph_id: u16 = params.glyph_id.0.try_into()?;
-        renderer
-            .render(&mut scaler, glyph_id)
-            .with_context(|| format!("unable to render glyph via swash for {params:?}"))
+        let bounds = path.bounds();
+        let left = bounds.left().floor();
+        let top = bounds.top().floor();
+        let right = bounds.right().ceil();
+        let bottom = bounds.bottom().ceil();
+        let width = (right - left).max(0.0) as u32;
+        let height = (bottom - top).max(0.0) as u32;
+        if width == 0 || height == 0 {
+            return Ok((Bounds::default(), Vec::new()));
+        }
+
+        let mut mask = Mask::new(width, height).context("unable to allocate glyph mask")?;
+        mask.fill_path(
+            &path,
+            FillRule::Winding,
+            true,
+            Transform::from_translate(-left, -top),
+        );
+
+        let bounds = Bounds {
+            origin: Point {
+                x: DevicePixels(left as i32),
+                y: DevicePixels(top as i32),
+            },
+            size: Size {
+                width: DevicePixels(width as i32),
+                height: DevicePixels(height as i32),
+            },
+        };
+        Ok((bounds, mask.data().to_vec()))
     }
 
     fn build_layout(
@@ -692,34 +772,26 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
         let (data, index) = self.font_data_for_id(font_id).context("unknown font")?;
-        let font_ref = FontRef::from_index(data, index).context("invalid font data")?;
-        let metrics = font_ref.glyph_metrics(&[]);
-        Ok(Size {
-            width: metrics.advance_width(glyph_id.0 as u16),
-            height: metrics.advance_height(glyph_id.0 as u16),
-        })
+        let font_ref = FontRef::from_index(data, index as u32).context("invalid font data")?;
+        let units_per_em = font_ref.head().map(|head| head.units_per_em())?;
+        let glyph_metrics =
+            font_ref.glyph_metrics(SkrifaSize::new(units_per_em as f32), LocationRef::default());
+        let glyph_id = SkrifaGlyphId::new(glyph_id.0);
+        let width = glyph_metrics
+            .advance_width(glyph_id)
+            .context("glyph out of range")?;
+        Ok(Size { width, height: 0.0 })
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
         let (data, index) = self.font_data_for_id(font_id)?;
-        let font_ref = FontRef::from_index(data, index)?;
-        let glyph_id = font_ref.charmap().map(ch);
-        (glyph_id != 0).then(|| GlyphId(glyph_id.into()))
+        let font_ref = FontRef::from_index(data, index as u32).ok()?;
+        let glyph_id = font_ref.charmap().map(ch)?;
+        (glyph_id.to_u32() != 0).then_some(GlyphId(glyph_id.to_u32()))
     }
 
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let image = self.render_glyph_image(params)?;
-        let placement = image.placement;
-        Ok(Bounds {
-            origin: Point {
-                x: DevicePixels(placement.left),
-                y: DevicePixels(-placement.top),
-            },
-            size: Size {
-                width: DevicePixels(placement.width as i32),
-                height: DevicePixels(placement.height as i32),
-            },
-        })
+        self.rasterize_outline(params).map(|(bounds, _)| bounds)
     }
 
     fn rasterize_glyph(
@@ -727,22 +799,8 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
         params: &RenderGlyphParams,
         _raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        let image = self.render_glyph_image(params)?;
-        let size = Size {
-            width: DevicePixels(image.placement.width as i32),
-            height: DevicePixels(image.placement.height as i32),
-        };
-        let data = match image.content {
-            swash::scale::image::Content::Mask => image.data,
-            swash::scale::image::Content::Color | swash::scale::image::Content::SubpixelMask => {
-                let mut data = image.data;
-                for pixel in data.chunks_exact_mut(4) {
-                    pixel.swap(0, 2);
-                }
-                data
-            }
-        };
-        Ok((size, data))
+        self.rasterize_outline(params)
+            .map(|(bounds, data)| (bounds.size, data))
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {

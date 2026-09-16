@@ -7788,8 +7788,9 @@ dependencies = [
  "gpui_shared_string",
  "gpui_types",
  "parley",
+ "skrifa 0.44.0",
  "smallvec",
- "swash",
+ "tiny-skia",
 ]
 
 [[package]]

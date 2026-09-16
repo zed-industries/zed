@@ -17,8 +17,9 @@ gpui_engine.workspace = true
 gpui_shared_string.workspace = true
 gpui_types.workspace = true
 parley = "0.11"
+skrifa = "0.44"
 smallvec.workspace = true
-swash.workspace = true
+tiny-skia = "0.11"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support", "platform"] }
