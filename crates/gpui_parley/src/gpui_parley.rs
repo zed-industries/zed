@@ -33,7 +33,26 @@ use smallvec::SmallVec;
 const FONT_DATA: &[u8] =
     include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
 /// The family name of the embedded font.
-const FONT_FAMILY: &str = "IBM Plex Sans";
+pub const FONT_FAMILY: &str = "IBM Plex Sans";
+
+/// Builds a [`parley::FontContext`] pre-loaded with the embedded font.
+///
+/// This is exposed so examples and consumers can use Parley's advanced layout
+/// features directly, outside the shared [`TextSystem`] shaping boundary.
+pub fn font_context() -> parley::FontContext {
+    let mut collection = parley::fontique::Collection::new(parley::fontique::CollectionOptions {
+        shared: false,
+        system_fonts: false,
+    });
+    collection.register_fonts(
+        parley::fontique::Blob::new(Arc::new(FONT_DATA.to_vec())),
+        None,
+    );
+    parley::FontContext {
+        collection,
+        source_cache: parley::fontique::SourceCache::default(),
+    }
+}
 
 /// A [`TextSystem`] that shapes and lays out text through Parley.
 pub struct ParleyTextSystem {
@@ -286,21 +305,8 @@ struct ParleyPlatformTextSystem {
 
 impl ParleyPlatformTextSystem {
     fn new(font_id: FontId) -> Self {
-        let mut collection =
-            parley::fontique::Collection::new(parley::fontique::CollectionOptions {
-                shared: false,
-                system_fonts: false,
-            });
-        collection.register_fonts(
-            parley::fontique::Blob::new(Arc::new(FONT_DATA.to_vec())),
-            None,
-        );
-        let font_context = FontContext {
-            collection,
-            source_cache: parley::fontique::SourceCache::default(),
-        };
         Self {
-            font_context: Mutex::new(font_context),
+            font_context: Mutex::new(font_context()),
             layout_context: Mutex::new(LayoutContext::new()),
             font_id,
         }
