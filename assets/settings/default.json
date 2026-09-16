@@ -1100,9 +1100,9 @@
     //
     // Default: false
     "collapse_untracked_diff": false,
-    /// Whether to show entries with tree or flat view in the panel
-    ///
-    /// Default: false
+    // Whether to show entries with tree or flat view in the panel
+    //
+    // Default: false
     "tree_view": false,
     // Whether the git panel should open on startup.
     //
@@ -1157,6 +1157,10 @@
     "sidebar_side": "left",
     // Default width of the Threads Sidebar.
     "threads_sidebar_default_width": 300,
+    // Whether opening a folder in an existing window automatically opens the
+    // Threads Sidebar. Applies when `default_open_behavior` or
+    // `cli_default_open_behavior` is set to "existing_window".
+    "threads_sidebar_auto_open": true,
     // Default fixed width when the agent panel is docked to the left or right and
     // `flexible` is false.
     "default_width": 640,
@@ -1783,9 +1787,9 @@
     // 2. Hide the gutter
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files",
-    /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
-    ///
-    /// Default: 0
+    // Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+    //
+    // Default: 0
     "gutter_debounce": 0,
     // Control whether the git blame information is shown for the currently
     // focused line, and where it is rendered.
