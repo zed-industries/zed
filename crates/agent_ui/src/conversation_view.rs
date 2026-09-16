@@ -6965,9 +6965,9 @@ pub(crate) mod tests {
         // parent's action log through the linked-log mechanism.
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
             acp::ToolCall::new("spawn1", "Subagent task")
+                .name("spawn_agent")
                 .kind(acp::ToolKind::Other)
-                .status(acp::ToolCallStatus::Completed)
-                .meta(acp_thread::meta_with_tool_name("spawn_agent")),
+                .status(acp::ToolCallStatus::Completed),
         )]);
 
         thread
@@ -7679,6 +7679,169 @@ pub(crate) mod tests {
             assistant_markdown.read_with(cx, |markdown, _| markdown.search_highlights().is_empty()),
             "releasing the search bar should clear retained markdown highlights",
         );
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_highlights_expanded_compaction_details(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread search bar should be open");
+        let resource =
+            acp::EmbeddedResource::new(acp::EmbeddedResourceResource::TextResourceContents(
+                acp::TextResourceContents::new("retained resource details", "summary://context")
+                    .mime_type("text/markdown".to_string()),
+            ));
+
+        for (update, query) in [
+            (
+                acp::CompactionUpdate::new("failed", acp::CompactionStatus::Failed)
+                    .error("model *still* unavailable <details>"),
+                "model *still* unavailable <details>",
+            ),
+            (
+                acp::CompactionUpdate::new("completed", acp::CompactionStatus::Completed).summary(
+                    vec![
+                        acp::ContentBlock::Text(acp::TextContent::new("Retained summary")),
+                        acp::ContentBlock::Resource(resource),
+                    ],
+                ),
+                "retained resource details",
+            ),
+        ] {
+            thread
+                .update(cx, |thread, cx| {
+                    thread.handle_session_update(acp::SessionUpdate::CompactionUpdate(update), cx)
+                })
+                .expect("failed to receive compaction details");
+            cx.run_until_parked();
+
+            let (entry_index, markdown) = thread.read_with(cx, |thread, cx| {
+                let (entry_index, entry) = thread
+                    .entries()
+                    .iter()
+                    .enumerate()
+                    .next_back()
+                    .expect("compaction entry should exist");
+                let AgentThreadEntry::ContextCompaction(compaction) = entry else {
+                    panic!("expected a compaction entry");
+                };
+                let markdown = compaction
+                    .summary
+                    .iter()
+                    .filter_map(|content| content.markdown())
+                    .chain(compaction.error.iter())
+                    .find(|markdown| markdown.read(cx).source().contains(query))
+                    .expect("compaction should retain searchable details")
+                    .clone();
+                (entry_index, markdown)
+            });
+            thread_view.update_in(cx, |view, window, cx| {
+                view.toggle_compaction_expansion(entry_index, window, cx);
+            });
+            search_bar.update_in(cx, |search_bar, window, cx| {
+                search_bar.query_editor.update(cx, |editor, cx| {
+                    editor.set_text(query, window, cx);
+                });
+                search_bar.update_matches(window, cx);
+            });
+            cx.run_until_parked();
+
+            search_bar.read_with(cx, |search_bar, _| {
+                assert_eq!(search_bar.match_count(), 1);
+                assert_eq!(search_bar.active_match_index(), Some(0));
+            });
+            assert!(
+                markdown.read_with(cx, |markdown, _| !markdown.search_highlights().is_empty()),
+                "the visible compaction details should be highlighted",
+            );
+
+            thread_view.update_in(cx, |view, window, cx| {
+                view.toggle_compaction_expansion(entry_index, window, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                0
+            );
+            assert!(markdown.read_with(cx, |markdown, _| markdown.search_highlights().is_empty()));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_tracks_tool_name_fallback(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread search should be open");
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mcp__search_tool", window, cx);
+            });
+            search_bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        for (update, expected_count) in [
+            (
+                acp::SessionUpdate::ToolCall(
+                    acp::ToolCall::new("tool", "")
+                        .name("mcp__search_tool")
+                        .status(acp::ToolCallStatus::Completed),
+                ),
+                1,
+            ),
+            (
+                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    "tool",
+                    acp::ToolCallUpdateFields::new().title("Reading **file**"),
+                )),
+                0,
+            ),
+            (
+                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    "tool",
+                    acp::ToolCallUpdateFields::new().title("\n\t "),
+                )),
+                1,
+            ),
+        ] {
+            thread
+                .update(cx, |thread, cx| thread.handle_session_update(update, cx))
+                .expect("tool update should apply");
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |search_bar, _| search_bar.match_count()),
+                expected_count
+            );
+            thread.read_with(cx, |thread, cx| {
+                let (_, call) = thread
+                    .tool_call(&acp::ToolCallId::new("tool"))
+                    .expect("tool call should exist");
+                assert_eq!(
+                    !call.label.read(cx).search_highlights().is_empty(),
+                    expected_count > 0
+                );
+            });
+        }
     }
 
     #[gpui::test]
