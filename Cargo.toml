@@ -97,6 +97,7 @@ members = [
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
+    "crates/gpui_parley",
     "crates/gpui_platform",
     "crates/gpui_runtime",
     "crates/gpui_shared_string",
