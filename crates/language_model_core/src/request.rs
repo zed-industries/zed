@@ -91,6 +91,14 @@ impl LanguageModelToolResult {
     pub fn is_content_empty(&self) -> bool {
         self.content.iter().all(|part| part.is_empty())
     }
+
+    /// Returns an iterator over all the images presents in the content parts.
+    pub fn images(&self) -> impl Iterator<Item = &LanguageModelImage> {
+        self.content.iter().filter_map(|part| match part {
+            LanguageModelToolResultContent::Image(image) => Some(image),
+            _ => None,
+        })
+    }
 }
 
 /// Serde helper that accepts both the legacy single-value shape and the new
