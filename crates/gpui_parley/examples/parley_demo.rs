@@ -3,7 +3,7 @@
 //! It shows the embedded IBM Plex Sans specimens alongside Parley-native layout
 //! features (text-indent, per-line boxes, and character-count breaking) that the
 //! shared [`gpui_engine::TextSystem`] SPI does not expose. The native features
-//! are reached by downcasting the injected text system to [`ParleyTextSystem`].
+//! are reached through the `as_parley` accessor the crate exposes for them.
 //!
 //! Run with:
 //!
@@ -21,7 +21,7 @@ use gpui::{
     App, Bounds, BoundsExt, Context, Render, ScrollHandle, Window, WindowBounds, WindowOptions,
     application, div, prelude::*, px, rgb, size,
 };
-use gpui_parley::{LineBox, ParleyTextSystem};
+use gpui_parley::{LineBox, ParleyTextSystem, ParleyTextSystemExt};
 
 /// Sample body copy used by the Parley-native layout cards.
 const TEXT: &str = "The quick brown fox jumps over the lazy dog while the bright \
@@ -43,16 +43,59 @@ const BOXES: [LineBox; 3] = [
     },
 ];
 
-/// Returns the x position of the first glyph on the first line of a layout.
-fn first_glyph_x(layout: &parley::Layout<[u8; 4]>) -> Option<f32> {
-    layout.lines().next().and_then(|line| {
-        line.items().find_map(|item| match item {
-            parley::PositionedLayoutItem::GlyphRun(run) => {
-                run.positioned_glyphs().next().map(|glyph| glyph.x)
-            }
-            _ => None,
-        })
+/// The size, column width, first-line indent, and character limit the native
+/// layouts below are computed at. The cards draw at the same size so their
+/// offsets and advances line up with the glyphs on screen.
+const LAYOUT_SIZE: f32 = 16.0;
+const LAYOUT_WIDTH: f32 = 320.0;
+const INDENT: f32 = 40.0;
+const CHAR_LIMIT: u32 = 16;
+
+/// One line as Parley laid it out.
+struct ParleyLine {
+    /// The line's text, carved out of the source by Parley's break points.
+    text: String,
+    /// The x Parley started the line's text at.
+    x: f32,
+    /// The line's natural advance, which is what the drawn text occupies.
+    advance: f32,
+    /// The advance limit the line was broken against, when the feature sets one.
+    /// The layout does not record it, so it comes from the call site.
+    limit: Option<f32>,
+}
+
+/// The x position of a line's first positioned glyph.
+fn first_glyph_x(line: &parley::Line<'_, [u8; 4]>) -> Option<f32> {
+    line.items().find_map(|item| match item {
+        parley::PositionedLayoutItem::GlyphRun(run) => {
+            run.positioned_glyphs().next().map(|glyph| glyph.x)
+        }
+        _ => None,
     })
+}
+
+/// Reads a layout's lines back out.
+///
+/// The cards draw from this rather than from a diagram of what Parley is
+/// expected to produce, so what is on screen is the geometry that was computed.
+fn lines_of(
+    layout: &parley::Layout<[u8; 4]>,
+    source: &str,
+    limit_of: impl Fn(usize) -> Option<f32>,
+) -> Vec<ParleyLine> {
+    layout
+        .lines()
+        .enumerate()
+        .map(|(index, line)| ParleyLine {
+            text: source
+                .get(line.text_range())
+                .unwrap_or_default()
+                .to_string(),
+            x: first_glyph_x(&line).unwrap_or(0.0),
+            advance: line.metrics().advance,
+            limit: limit_of(index),
+        })
+        .collect()
 }
 
 /// A section heading.
@@ -108,22 +151,62 @@ fn feature_title(title: &'static str, subtitle: &'static str) -> impl IntoElemen
         )
 }
 
-/// The shared sample copy, constrained so it wraps predictably.
-fn sample_text() -> impl IntoElement {
-    div()
-        .w(px(360.0))
-        .text_size(px(15.0))
-        .text_color(rgb(0xf5f5f5))
-        .child(TEXT)
-}
-
-/// A schematic line bar with an x offset and width, for layout diagrams.
-fn line_bar(x: f32, width: f32, color: impl Into<gpui::Fill>) -> impl IntoElement {
+/// Draws lines where Parley put them, at the widths it gave them.
+///
+/// The text is drawn at the layout's own size and is never re-wrapped, so the
+/// offsets and box widths on screen are the ones Parley computed.
+fn line_flow(lines: &[ParleyLine], width: f32) -> impl IntoElement {
     div()
         .flex()
-        .flex_row()
-        .child(div().w(px(x)))
-        .child(div().h(px(8.0)).w(px(width)).rounded_md().bg(color))
+        .flex_col()
+        .gap_1()
+        .w(px(width))
+        .children(lines.iter().map(|line| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .child(div().w(px(line.x)))
+                .child(
+                    div()
+                        .w(px(line.limit.unwrap_or(line.advance)))
+                        .py_1()
+                        .rounded_sm()
+                        .bg(rgb(0x1c1c22))
+                        .text_size(px(LAYOUT_SIZE))
+                        .text_color(rgb(0xf5f5f5))
+                        .whitespace_nowrap()
+                        .child(line.text.clone()),
+                )
+        }))
+}
+
+/// A feature card: what the feature is, what Parley computed for it, and the
+/// lines themselves.
+fn card(
+    title: &'static str,
+    subtitle: &'static str,
+    summary: String,
+    lines: &[ParleyLine],
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap_3()
+        .p_5()
+        .rounded_md()
+        .bg(rgb(0x1e1e22))
+        .border_1()
+        .border_color(rgb(0x2a2a30))
+        .child(feature_title(title, subtitle))
+        .child(
+            div()
+                .text_size(px(13.0))
+                .text_color(rgb(0x8a8a93))
+                .child(summary),
+        )
+        .child(line_flow(lines, LAYOUT_WIDTH))
 }
 
 /// The page header.
@@ -186,147 +269,101 @@ fn font_section() -> impl IntoElement {
 }
 
 /// The `text-indent` feature card.
-fn indent_card(line_count: usize, first_glyph_x: Option<f32>) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .items_start()
-        .gap_3()
-        .p_5()
-        .rounded_md()
-        .bg(rgb(0x1e1e22))
-        .border_1()
-        .border_color(rgb(0x2a2a30))
-        .child(feature_title(
-            "text-indent",
-            "CSS-style first-line indent, computed by Parley.",
-        ))
-        .child(sample_text())
-        .child(
-            div()
-                .text_size(px(13.0))
-                .text_color(rgb(0x8a8a93))
-                .child(format!(
-                    "Parley: {line_count} lines · first glyph lands at x = {:.1}px",
-                    first_glyph_x.unwrap_or(0.0)
-                )),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(line_bar(40.0, 280.0, rgb(0x2dd4bf)))
-                .child(line_bar(0.0, 320.0, rgb(0x3f3f46)))
-                .child(line_bar(0.0, 320.0, rgb(0x3f3f46))),
-        )
+fn indent_card(lines: &[ParleyLine]) -> impl IntoElement {
+    card(
+        "text-indent",
+        "CSS-style first-line indent, computed by Parley.",
+        format!(
+            "{} lines · the first line starts at x = {:.0}px",
+            lines.len(),
+            lines.first().map_or(0.0, |line| line.x),
+        ),
+        lines,
+    )
 }
 
 /// The per-line boxes feature card.
-fn boxes_card(line_count: usize) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .items_start()
-        .gap_3()
-        .p_5()
-        .rounded_md()
-        .bg(rgb(0x1e1e22))
-        .border_1()
-        .border_color(rgb(0x2a2a30))
-        .child(feature_title(
-            "Per-line boxes",
-            "Text flows around an excluded region (a narrow second line).",
-        ))
-        .child(sample_text())
-        .child(
-            div()
-                .text_size(px(13.0))
-                .text_color(rgb(0x8a8a93))
-                .child(format!(
-                    "Parley: {line_count} lines · line 2 flows into a 160px box",
-                )),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(line_bar(0.0, 320.0, rgb(0x2dd4bf)))
-                .child(line_bar(80.0, 160.0, rgb(0x2dd4bf)))
-                .child(line_bar(0.0, 320.0, rgb(0x3f3f46))),
-        )
+fn boxes_card(lines: &[ParleyLine]) -> impl IntoElement {
+    card(
+        "Per-line boxes",
+        "Text flows around an excluded region (a narrow second line).",
+        format!(
+            "{} lines · the second line is confined to a {}px box",
+            lines.len(),
+            BOXES.get(1).map_or(LAYOUT_WIDTH, |line_box| line_box.width),
+        ),
+        lines,
+    )
 }
 
 /// The character-count breaking feature card.
-fn char_count_card(line_count: usize) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .items_start()
-        .gap_3()
-        .p_5()
-        .rounded_md()
-        .bg(rgb(0x1e1e22))
-        .border_1()
-        .border_color(rgb(0x2a2a30))
-        .child(feature_title(
-            "Character-count breaking",
-            "Lines broken by character count (16), not by pixel width.",
-        ))
-        .child(sample_text())
-        .child(
-            div()
-                .text_size(px(13.0))
-                .text_color(rgb(0x8a8a93))
-                .child(format!(
-                    "Parley: {line_count} lines · max 16 chars per line",
-                )),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(line_bar(0.0, 180.0, rgb(0x2dd4bf)))
-                .child(line_bar(0.0, 180.0, rgb(0x2dd4bf)))
-                .child(line_bar(0.0, 180.0, rgb(0x2dd4bf)))
-                .child(line_bar(0.0, 180.0, rgb(0x3f3f46))),
-        )
+fn char_count_card(lines: &[ParleyLine]) -> impl IntoElement {
+    card(
+        "Character-count breaking",
+        "Lines broken by character count (16), not by pixel width.",
+        format!(
+            "{} lines · {} characters on the first line",
+            lines.len(),
+            lines
+                .first()
+                .map_or(0, |line| line.text.trim_end().chars().count()),
+        ),
+        lines,
+    )
 }
 
-/// Precomputed metrics for the Parley-native layout cards.
+/// The three Parley-native layouts, read back as the lines they produced.
 struct DemoMetrics {
-    indent_lines: usize,
-    indent_first_x: Option<f32>,
-    box_lines: usize,
-    char_lines: usize,
+    indented: Vec<ParleyLine>,
+    boxed: Vec<ParleyLine>,
+    char_counted: Vec<ParleyLine>,
 }
 
 impl DemoMetrics {
     fn compute(cx: &App) -> Self {
-        let parley = cx.text_system().as_any().downcast_ref::<ParleyTextSystem>();
-
-        let indent = parley.map(|parley| parley.layout_indented(TEXT, 16.0, 40.0, 320.0));
-        let indent_lines = indent
-            .as_ref()
-            .map(|layout| layout.lines().len())
-            .unwrap_or(0);
-        let indent_first_x = indent.as_ref().and_then(first_glyph_x);
-
-        let box_lines = parley
-            .map(|parley| parley.layout_with_boxes(TEXT, 16.0, &BOXES).lines().len())
-            .unwrap_or(0);
-
-        let char_lines = parley
-            .map(|parley| parley.layout_with_char_count(TEXT, 16.0, 16).lines().len())
-            .unwrap_or(0);
+        let parley = cx.text_system().as_parley();
+        let Some(parley) = parley else {
+            return Self {
+                indented: Vec::new(),
+                boxed: Vec::new(),
+                char_counted: Vec::new(),
+            };
+        };
 
         Self {
-            indent_lines,
-            indent_first_x,
-            box_lines,
-            char_lines,
+            // The indent moves the first line right and narrows its advance by
+            // the same amount; every other line gets the full column.
+            indented: lines_of(
+                &parley.layout_indented(TEXT, LAYOUT_SIZE, INDENT, LAYOUT_WIDTH),
+                TEXT,
+                |index| {
+                    Some(if index == 0 {
+                        LAYOUT_WIDTH - INDENT
+                    } else {
+                        LAYOUT_WIDTH
+                    })
+                },
+            ),
+            // Lines past the end of the boxes use the full width, as
+            // `layout_with_boxes` documents.
+            boxed: lines_of(
+                &parley.layout_with_boxes(TEXT, LAYOUT_SIZE, &BOXES),
+                TEXT,
+                |index| {
+                    Some(
+                        BOXES
+                            .get(index)
+                            .map_or(LAYOUT_WIDTH, |line_box| line_box.width),
+                    )
+                },
+            ),
+            // A character-count break sets no advance limit, so each line runs
+            // exactly as far as its glyphs do.
+            char_counted: lines_of(
+                &parley.layout_with_char_count(TEXT, LAYOUT_SIZE, CHAR_LIMIT),
+                TEXT,
+                |_| None,
+            ),
         }
     }
 }
@@ -365,12 +402,16 @@ impl Render for ParleyDemo {
                                     .flex_col()
                                     .gap_4()
                                     .child(heading("Parley-native layout"))
-                                    .child(indent_card(
-                                        metrics.indent_lines,
-                                        metrics.indent_first_x,
-                                    ))
-                                    .child(boxes_card(metrics.box_lines))
-                                    .child(char_count_card(metrics.char_lines)),
+                                    .child(
+                                        div().text_size(px(13.0)).text_color(rgb(0x8a8a93)).child(
+                                            "These cards draw the lines Parley itself laid out, \
+                                                 at the offsets and widths it computed — not the \
+                                                 shared TextSystem path the specimens above use.",
+                                        ),
+                                    )
+                                    .child(indent_card(&metrics.indented))
+                                    .child(boxes_card(&metrics.boxed))
+                                    .child(char_count_card(&metrics.char_counted)),
                             ),
                     ),
             )

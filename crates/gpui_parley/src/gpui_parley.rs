@@ -420,6 +420,29 @@ impl ParleyTextSystem {
     }
 }
 
+/// Access to Parley's own layout API from a text system handle.
+///
+/// `App::text_system` hands out a `dyn TextSystem`, so reaching the native layout
+/// methods above needs a downcast. Keeping it behind this trait means a call site
+/// asks for the capability instead of naming the concrete type and the cast.
+///
+/// ```ignore
+/// let Some(parley) = cx.text_system().as_parley() else {
+///     return;
+/// };
+/// let layout = parley.layout_indented(text, 16.0, 40.0, 320.0);
+/// ```
+pub trait ParleyTextSystemExt {
+    /// This text system as a [`ParleyTextSystem`], when it is one.
+    fn as_parley(&self) -> Option<&ParleyTextSystem>;
+}
+
+impl ParleyTextSystemExt for dyn TextSystem + '_ {
+    fn as_parley(&self) -> Option<&ParleyTextSystem> {
+        self.as_any().downcast_ref::<ParleyTextSystem>()
+    }
+}
+
 impl TextSystem for ParleyTextSystem {
     fn platform_text_system(&self) -> &Arc<dyn PlatformTextSystem> {
         &self.platform_dyn
@@ -975,7 +998,7 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
 mod tests {
     use std::sync::Arc;
 
-    use crate::{ParleyTextSystem, TextSystem};
+    use crate::{ParleyTextSystem, ParleyTextSystemExt, TextSystem};
     use gpui_engine::{FontRun, RenderGlyphParams, font};
     use gpui_types::{Point, px};
 
@@ -1000,13 +1023,12 @@ mod tests {
     }
 
     #[test]
-    fn parley_native_layout_is_reachable_through_downcast() {
+    fn parley_native_layout_is_reachable_from_a_text_system_handle() {
         let text_system = ParleyTextSystem::new();
-        let text_system: &dyn TextSystem = &*text_system;
-        let parley = text_system
-            .as_any()
-            .downcast_ref::<ParleyTextSystem>()
-            .expect("should downcast to the concrete ParleyTextSystem");
+        let handle: &dyn TextSystem = &*text_system;
+        let parley = handle
+            .as_parley()
+            .expect("the accessor should recognise a Parley text system");
 
         let layout =
             parley.layout_indented("hello world this is a longer string", 16.0, 32.0, 120.0);
