@@ -43,15 +43,202 @@ impl SnippetRegistry {
         let kind = file_path
             .file_stem()
             .and_then(|stem| stem.to_str().and_then(file_stem_to_key));
-        let snippets = crate::file_to_snippets(snippets_in_file, file_path);
+        let new_snippets =
+            crate::file_to_snippets(snippets_in_file, file_path).filter_map(Result::log_err);
+
         self.snippets
             .write()
-            .insert(kind, snippets.filter_map(Result::log_err).collect());
+            .entry(kind)
+            .or_default()
+            .extend(new_snippets);
 
         Ok(())
     }
 
     pub fn get_snippets(&self, kind: &SnippetKind) -> Vec<Arc<Snippet>> {
         self.snippets.read().get(kind).cloned().unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_register_snippets_single_language() {
+        let registry = SnippetRegistry::new();
+        registry
+            .register_snippets(
+                Path::new("rust.json"),
+                r#"{"Hello World": {"prefix": "hello", "body": "Hello, ${1:World}!"}}"#,
+            )
+            .unwrap();
+
+        let snippets = registry.get_snippets(&Some("rust".to_owned()));
+        assert_eq!(snippets.len(), 1);
+        assert_eq!(snippets[0].name, "Hello World");
+        assert_eq!(snippets[0].prefix, vec!["hello".to_owned()]);
+    }
+
+    #[test]
+    fn test_register_snippets_two_extensions_same_language() {
+        let registry = SnippetRegistry::new();
+        registry
+            .register_snippets(
+                Path::new("ruby.json"),
+                r#"{"Snippet One": {"prefix": "one", "body": "snippet_one"}}"#,
+            )
+            .unwrap();
+        registry
+            .register_snippets(
+                Path::new("ruby.json"),
+                r#"{"Snippet Two": {"prefix": "two", "body": "snippet_two"}}"#,
+            )
+            .unwrap();
+
+        let snippets = registry.get_snippets(&Some("ruby".to_owned()));
+        assert_eq!(
+            snippets.len(),
+            2,
+            "Snippets from both extensions should be present"
+        );
+        let names: Vec<&str> = snippets.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Snippet One"));
+        assert!(names.contains(&"Snippet Two"));
+    }
+
+    #[test]
+    fn test_register_snippets_same_first_prefix_preserved() -> Result<()> {
+        let registry = SnippetRegistry::new();
+        registry.register_snippets(
+            Path::new("ruby.json"),
+            r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter} do\n$0\nend"}}"#,
+        )?;
+        registry.register_snippets(
+            Path::new("ruby.json"),
+            r#"{"Different Name": {"prefix": "for", "body": "${2:iter}.each do |${1:item}|\n$0\nend"}}"#,
+        )?;
+
+        let snippets = registry.get_snippets(&Some("ruby".to_owned()));
+        assert_eq!(
+            snippets.len(),
+            2,
+            "Snippets sharing the same first prefix should both be preserved"
+        );
+        assert_eq!(snippets[0].name, "For Loop");
+        assert_eq!(snippets[0].prefix, vec!["for".to_owned()]);
+        assert_eq!(snippets[1].name, "Different Name");
+        assert_eq!(snippets[1].prefix, vec!["for".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_register_snippets_same_first_prefix_with_extra_prefixes_preserved() -> Result<()> {
+        let registry = SnippetRegistry::new();
+        registry.register_snippets(
+            Path::new("ruby.json"),
+            r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter} do\n$0\nend"}}"#,
+        )?;
+        registry.register_snippets(
+            Path::new("ruby.json"),
+            r#"{"For Loop Alt": {"prefix": ["for", "floop"], "body": "${2:iter}.each do |${1:item}|\n$0\nend"}}"#,
+        )?;
+
+        let snippets = registry.get_snippets(&Some("ruby".to_owned()));
+        assert_eq!(
+            snippets.len(),
+            2,
+            "Snippets sharing the same first prefix should be preserved along with their extra prefixes"
+        );
+        assert_eq!(snippets[0].name, "For Loop");
+        assert_eq!(snippets[0].prefix, vec!["for".to_owned()]);
+        assert_eq!(snippets[1].name, "For Loop Alt");
+        assert_eq!(
+            snippets[1].prefix,
+            vec!["for".to_owned(), "floop".to_owned()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_register_snippets_different_first_prefixes_not_deduplicated() {
+        let registry = SnippetRegistry::new();
+        registry
+            .register_snippets(
+                Path::new("ruby.json"),
+                r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter} do\n$0\nend"}}"#,
+            )
+            .unwrap();
+        registry
+            .register_snippets(
+                Path::new("ruby.json"),
+                r#"{"While Loop": {"prefix": "while", "body": "while ${1:cond}\n$0\nend"}}"#,
+            )
+            .unwrap();
+
+        let snippets = registry.get_snippets(&Some("ruby".to_owned()));
+        assert_eq!(
+            snippets.len(),
+            2,
+            "Snippets with different first prefixes should not be deduplicated"
+        );
+    }
+
+    #[test]
+    fn test_register_global_snippets() {
+        let registry = SnippetRegistry::new();
+        registry
+            .register_snippets(
+                Path::new("snippets.json"),
+                r#"{"Global Snippet": {"prefix": "global", "body": "a global snippet"}}"#,
+            )
+            .unwrap();
+
+        let global_snippets = registry.get_snippets(&None);
+        assert_eq!(global_snippets.len(), 1);
+        assert_eq!(global_snippets[0].name, "Global Snippet");
+
+        let miskeyed = registry.get_snippets(&Some("snippets".to_owned()));
+        assert!(
+            miskeyed.is_empty(),
+            "Should not be stored under the language key 'snippets'"
+        );
+    }
+
+    #[test]
+    fn test_register_snippets_different_languages_are_isolated() {
+        let registry = SnippetRegistry::new();
+        registry
+            .register_snippets(
+                Path::new("rust.json"),
+                r#"{"Rust Snippet": {"prefix": "rsnip", "body": "fn ${1:name}() {}"}}"#,
+            )
+            .unwrap();
+        registry
+            .register_snippets(
+                Path::new("python.json"),
+                r#"{"Python Snippet": {"prefix": "pysnip", "body": "def ${1:name}():"}}"#,
+            )
+            .unwrap();
+
+        let rust_snippets = registry.get_snippets(&Some("rust".to_owned()));
+        assert_eq!(rust_snippets.len(), 1);
+        assert_eq!(rust_snippets[0].name, "Rust Snippet");
+
+        let python_snippets = registry.get_snippets(&Some("python".to_owned()));
+        assert_eq!(python_snippets.len(), 1);
+        assert_eq!(python_snippets[0].name, "Python Snippet");
+    }
+
+    #[test]
+    fn test_get_snippets_unknown_language_returns_empty() {
+        let registry = SnippetRegistry::new();
+        assert!(
+            registry
+                .get_snippets(&Some("nonexistent".to_owned()))
+                .is_empty()
+        );
+        assert!(registry.get_snippets(&None).is_empty());
     }
 }
