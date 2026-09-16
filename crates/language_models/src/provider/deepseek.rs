@@ -581,52 +581,6 @@ fn into_deepseek_reasoning_effort(effort: Option<&str>) -> Option<deepseek::Reas
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use language_model::{LanguageModelImage, LanguageModelRequestMessage};
-    use serde_json::json;
-
-    #[test]
-    fn serializes_deepseek_image_parts() -> Result<()> {
-        let image = LanguageModelImage {
-            source: SharedString::from("aGVsbG8="),
-        };
-        let image_url = image.to_base64_url();
-        let request = into_deepseek(
-            LanguageModelRequest {
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: vec![
-                        MessageContent::Text("Describe this".to_string()),
-                        MessageContent::Image(image),
-                    ],
-                    cache: false,
-                    reasoning_details: None,
-                }],
-                ..Default::default()
-            },
-            &deepseek::Model::V4_1Flash,
-            Some(1024),
-        )?;
-
-        assert_eq!(
-            serde_json::to_value(&request.messages)?,
-            json!([
-                {
-                    "role": "user",
-                    "content": [
-                        { "type": "text", "text": "Describe this" },
-                        { "type": "image_url", "image_url": { "url": image_url } }
-                    ]
-                }
-            ])
-        );
-
-        Ok(())
-    }
-}
-
 pub struct DeepSeekEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
 }
@@ -763,6 +717,47 @@ impl DeepSeekEventMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use language_model::{LanguageModelImage, LanguageModelRequestMessage};
+    use serde_json::json;
+
+    #[test]
+    fn serializes_deepseek_image_parts() -> Result<()> {
+        let image = LanguageModelImage {
+            source: SharedString::from("aGVsbG8="),
+        };
+        let image_url = image.to_base64_url();
+        let request = into_deepseek(
+            LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![
+                        MessageContent::Text("Describe this".to_string()),
+                        MessageContent::Image(image),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+            &deepseek::Model::V4_1Flash,
+            Some(1024),
+        )?;
+
+        assert_eq!(
+            serde_json::to_value(&request.messages)?,
+            json!([
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "text", "text": "Describe this" },
+                        { "type": "image_url", "image_url": { "url": image_url } }
+                    ]
+                }
+            ])
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn request_output_limits_reach_deepseek_payloads() -> Result<()> {
