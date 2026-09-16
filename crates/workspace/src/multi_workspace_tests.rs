@@ -317,6 +317,93 @@ async fn test_open_new_window_does_not_open_sidebar_on_existing_window(cx: &mut 
 }
 
 #[gpui::test]
+async fn test_open_directory_in_existing_window_opens_sidebar(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/project_b"), json!({ "file.txt": "" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project_a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        open_paths(
+            &[PathBuf::from(path!("/project_b"))],
+            app_state,
+            OpenOptions::default(),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(
+                mw.sidebar_open(),
+                "adding a directory to an existing window opens the sidebar by default",
+            );
+            assert_eq!(mw.workspaces().count(), 2);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_open_directory_in_existing_window_respects_auto_open_setting(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/project_b"), json!({ "file.txt": "" }))
+        .await;
+
+    cx.update(|cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.threads_sidebar_auto_open = false;
+        AgentSettings::override_global(settings, cx);
+    });
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project_a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        open_paths(
+            &[PathBuf::from(path!("/project_b"))],
+            app_state,
+            OpenOptions::default(),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(
+                !mw.sidebar_open(),
+                "the sidebar must stay closed when `threads_sidebar_auto_open` is disabled",
+            );
+            assert_eq!(
+                mw.workspaces().count(),
+                2,
+                "the directory is still added to the existing window, and the workspace it \
+                 replaces is retained",
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 async fn test_open_directory_in_empty_workspace_does_not_open_sidebar(cx: &mut TestAppContext) {
     init_test(cx);
 
