@@ -98,7 +98,7 @@ const MIN_FRAMES_TO_REPORT: u64 = 5_000;
 /// Call this periodically (e.g. every five minutes) from a spawned task. A
 /// separate baseline snapshot is kept per window so user-facing histogram dumps
 /// and telemetry never share state.
-pub fn report_input_latency_telemetry(window: &Window, startup: Instant, cx: &mut App) {
+pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
     let current = window.input_latency_snapshot();
     let window_id = window.window_handle().window_id();
 
@@ -164,7 +164,6 @@ pub fn report_input_latency_telemetry(window: &Window, startup: Instant, cx: &mu
         frames_with_2_events = frames_with_2_events,
         frames_with_3_events = frames_with_3_events,
         report_window_seconds = report_window_seconds,
-        uptime_seconds = now.duration_since(startup).as_secs(),
         measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
     );
 }
@@ -198,7 +197,7 @@ const MIN_DRAWS_TO_REPORT: u64 = 1_000;
 /// window was animating), and the average dirty-to-present duration.
 ///
 /// Call this periodically from a spawned task.
-pub fn report_frame_duration_telemetry(window: &Window, startup: Instant, cx: &mut App) {
+pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
     let current = window.frame_duration_snapshot();
     let window_handle = window.window_handle();
     let window_id = window_handle.window_id();
@@ -294,7 +293,6 @@ pub fn report_frame_duration_telemetry(window: &Window, startup: Instant, cx: &m
         dirty_to_present_36to100 = dirty_to_present_36to100,
         root_entity_type_name = window_handle.root_entity_type_name(),
         report_window_seconds = report_window_seconds,
-        uptime_seconds = now.duration_since(startup).as_secs(),
         measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
     );
 }

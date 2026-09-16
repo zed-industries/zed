@@ -99,14 +99,14 @@ fn start_hang_detection(
 ) {
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
-    let started = Instant::now();
-    let startup = *STARTUP_TIME.get().unwrap_or(&started);
-    let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new(startup)));
+    let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new()));
     let incident_detector = Arc::new(spin::Mutex::new(HangDetector::new(
         cx.foreground_journal(),
         report_longer_then,
         frame_budget,
     )));
+    let started = Instant::now();
+    let startup = *STARTUP_TIME.get().unwrap_or(&started);
     let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
 
     cx.on_app_quit({

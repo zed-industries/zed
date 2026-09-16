@@ -473,13 +473,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
 
         cx.spawn_in(window, async move |_this, cx| {
             const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
-            let startup = *crate::STARTUP_TIME.get_or_init(std::time::Instant::now);
             loop {
                 cx.background_executor().timer(TELEMETRY_INTERVAL).await;
                 if cx
                     .update(|window, cx| {
-                        input_latency_ui::report_input_latency_telemetry(window, startup, cx);
-                        input_latency_ui::report_frame_duration_telemetry(window, startup, cx);
+                        input_latency_ui::report_input_latency_telemetry(window, cx);
+                        input_latency_ui::report_frame_duration_telemetry(window, cx);
                     })
                     .is_err()
                 {
