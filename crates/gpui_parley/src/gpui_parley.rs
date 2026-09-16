@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use gpui_engine::{
     Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout, LineLayoutIndex, LineWrapper,
-    LineWrapperHandle, RenderGlyphParams, ShapedGlyph, ShapedRun, TextRenderingMode,
+    LineWrapperHandle, RenderGlyphParams, ShapedGlyph, ShapedRun, TextRenderingMode, WrapBoundary,
     WrappedLineLayout, font,
 };
 
@@ -91,6 +91,73 @@ fn font_id_for_byte(runs: &[FontRun], byte: usize) -> Option<FontId> {
         offset += run.len;
     }
     runs.last().map(|run| run.font_id)
+}
+
+/// Converts a Parley layout into a GPUI [`LineLayout`].
+fn convert_layout(
+    layout: &parley::Layout<[u8; 4]>,
+    runs: &[FontRun],
+    default_font_id: FontId,
+    font_size: Pixels,
+    len: usize,
+) -> LineLayout {
+    let mut result = LineLayout {
+        font_size,
+        width: px(layout.width()),
+        ascent: px(0.0),
+        descent: px(0.0),
+        runs: Vec::new(),
+        len,
+    };
+
+    for line in layout.lines() {
+        let metrics = line.metrics();
+        result.ascent = px(metrics.ascent);
+        result.descent = px(metrics.descent);
+
+        for item in line.items() {
+            if let PositionedLayoutItem::GlyphRun(glyph_run) = item {
+                let run_byte = glyph_run.run().text_range().start;
+                let font_id = font_id_for_byte(runs, run_byte).unwrap_or(default_font_id);
+                let mut glyphs = Vec::new();
+                let mut offset = glyph_run.offset();
+                let baseline = glyph_run.baseline();
+                for cluster in glyph_run.run().visual_clusters() {
+                    let byte_index = cluster.text_range().start;
+                    let is_emoji = cluster.is_emoji();
+                    for mut glyph in cluster.glyphs() {
+                        glyph.x += offset;
+                        glyph.y += baseline;
+                        offset += glyph.advance;
+                        glyphs.push(ShapedGlyph {
+                            id: GlyphId(glyph.id),
+                            position: Point {
+                                x: px(glyph.x),
+                                y: px(glyph.y),
+                            },
+                            index: byte_index,
+                            is_emoji,
+                        });
+                    }
+                }
+                result.runs.push(ShapedRun { font_id, glyphs });
+            }
+        }
+    }
+
+    result
+}
+
+/// Returns the wrap boundary whose glyph carries the given byte index.
+fn wrap_boundary_for_byte(unwrapped: &LineLayout, byte: usize) -> Option<WrapBoundary> {
+    for (run_ix, run) in unwrapped.runs.iter().enumerate() {
+        for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
+            if glyph.index == byte {
+                return Some(WrapBoundary { run_ix, glyph_ix });
+            }
+        }
+    }
+    None
 }
 
 /// A per-line layout box used by [`ParleyTextSystem::layout_with_boxes`].
@@ -376,10 +443,12 @@ impl TextSystem for ParleyTextSystem {
         wrap_width: Option<Pixels>,
         _max_lines: Option<usize>,
     ) -> Arc<WrappedLineLayout> {
-        let unwrapped_layout = self.layout_line(text, font_size, runs, None);
+        let width = wrap_width.unwrap_or(Pixels::MAX);
+        let (unwrapped_layout, wrap_boundaries) =
+            self.platform.layout_wrapped(text, font_size, runs, width);
         Arc::new(WrappedLineLayout {
-            unwrapped_layout,
-            wrap_boundaries: SmallVec::new(),
+            unwrapped_layout: Arc::new(unwrapped_layout),
+            wrap_boundaries,
             wrap_width,
         })
     }
@@ -467,6 +536,63 @@ impl ParleyPlatformTextSystem {
     fn font_for_id(&self, id: FontId) -> Option<Font> {
         self.font_registry.lock().unwrap().font_for_id(id)
     }
+
+    fn build_layout(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> parley::Layout<[u8; 4]> {
+        let mut font_context = self.font_context.lock().unwrap();
+        let mut layout_context = self.layout_context.lock().unwrap();
+
+        let mut builder = layout_context.ranged_builder(&mut font_context, text, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(FONT_FAMILY)));
+        builder.push_default(StyleProperty::FontSize(font_size.0));
+
+        let mut byte = 0;
+        for run in runs {
+            let end = byte + run.len;
+            if let Some(font) = self.font_for_id(run.font_id) {
+                builder.push(
+                    StyleProperty::FontWeight(map_weight(font.weight)),
+                    byte..end,
+                );
+                builder.push(StyleProperty::FontStyle(map_style(font.style)), byte..end);
+            }
+            byte = end;
+        }
+
+        builder.build(text)
+    }
+
+    fn layout_wrapped(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        wrap_width: Pixels,
+    ) -> (LineLayout, SmallVec<[WrapBoundary; 1]>) {
+        let default_font_id = self.resolve_font(&font(FONT_FAMILY));
+        let mut layout = self.build_layout(text, font_size, runs);
+
+        layout.break_all_lines(None);
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        let unwrapped = convert_layout(&layout, runs, default_font_id, font_size, text.len());
+
+        layout.break_all_lines(Some(wrap_width.0));
+        let mut boundaries = SmallVec::new();
+        for (i, line) in layout.lines().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            if let Some(boundary) = wrap_boundary_for_byte(&unwrapped, line.text_range().start) {
+                boundaries.push(boundary);
+            }
+        }
+
+        (unwrapped, boundaries)
+    }
 }
 
 impl PlatformTextSystem for ParleyPlatformTextSystem {
@@ -540,75 +666,10 @@ impl PlatformTextSystem for ParleyPlatformTextSystem {
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         let default_font_id = self.resolve_font(&font(FONT_FAMILY));
-        let mut font_context = self.font_context.lock().unwrap();
-        let mut layout_context = self.layout_context.lock().unwrap();
-
-        let mut builder = layout_context.ranged_builder(&mut font_context, text, 1.0, true);
-        builder.push_default(StyleProperty::FontFamily(FontFamily::from(FONT_FAMILY)));
-        builder.push_default(StyleProperty::FontSize(font_size.0));
-
-        let mut byte = 0;
-        for run in runs {
-            let end = byte + run.len;
-            if let Some(font) = self.font_for_id(run.font_id) {
-                builder.push(
-                    StyleProperty::FontWeight(map_weight(font.weight)),
-                    byte..end,
-                );
-                builder.push(StyleProperty::FontStyle(map_style(font.style)), byte..end);
-            }
-            byte = end;
-        }
-
-        let mut layout = builder.build(text);
+        let mut layout = self.build_layout(text, font_size, runs);
         layout.break_all_lines(None);
         layout.align(Alignment::Start, AlignmentOptions::default());
-
-        let mut result = LineLayout {
-            font_size,
-            width: px(layout.width()),
-            ascent: px(0.0),
-            descent: px(0.0),
-            runs: Vec::new(),
-            len: text.len(),
-        };
-
-        for line in layout.lines() {
-            let metrics = line.metrics();
-            result.ascent = px(metrics.ascent);
-            result.descent = px(metrics.descent);
-
-            for item in line.items() {
-                if let PositionedLayoutItem::GlyphRun(glyph_run) = item {
-                    let run_byte = glyph_run.run().text_range().start;
-                    let font_id = font_id_for_byte(runs, run_byte).unwrap_or(default_font_id);
-                    let mut glyphs = Vec::new();
-                    let mut offset = glyph_run.offset();
-                    let baseline = glyph_run.baseline();
-                    for cluster in glyph_run.run().visual_clusters() {
-                        let byte_index = cluster.text_range().start;
-                        let is_emoji = cluster.is_emoji();
-                        for mut glyph in cluster.glyphs() {
-                            glyph.x += offset;
-                            glyph.y += baseline;
-                            offset += glyph.advance;
-                            glyphs.push(ShapedGlyph {
-                                id: GlyphId(glyph.id),
-                                position: Point {
-                                    x: px(glyph.x),
-                                    y: px(glyph.y),
-                                },
-                                index: byte_index,
-                                is_emoji,
-                            });
-                        }
-                    }
-                    result.runs.push(ShapedRun { font_id, glyphs });
-                }
-            }
-        }
-
-        result
+        convert_layout(&layout, runs, default_font_id, font_size, text.len())
     }
 
     fn recommended_rendering_mode(
@@ -702,5 +763,24 @@ mod tests {
         assert!(!layout.runs.is_empty());
         assert!(layout.runs.iter().any(|run| run.font_id == regular_id));
         assert!(layout.runs.iter().any(|run| run.font_id == bold_id));
+    }
+
+    #[test]
+    fn wraps_a_line_into_multiple_lines() {
+        let text_system = ParleyTextSystem::new();
+        let wrapped = text_system.layout_wrapped_line(
+            "hello world this is a long line that should wrap",
+            px(16.0),
+            &[],
+            Some(px(100.0)),
+            None,
+        );
+
+        assert_eq!(wrapped.wrap_width, Some(px(100.0)));
+        assert!(
+            wrapped.wrap_boundaries.len() >= 1,
+            "expected at least one wrap boundary"
+        );
+        assert!(wrapped.width() <= px(100.0));
     }
 }
