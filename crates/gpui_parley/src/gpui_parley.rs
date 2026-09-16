@@ -24,8 +24,8 @@ pub use gpui_engine::{PlatformTextSystem, TextSystem};
 use gpui_shared_string::SharedString;
 use gpui_types::{Bounds, DevicePixels, Hsla, Pixels, Point, Size, px};
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, LayoutContext, PositionedLayoutItem,
-    StyleProperty,
+    Alignment, AlignmentOptions, FontContext, FontFamily, IndentOptions, LayoutContext,
+    PositionedLayoutItem, StyleProperty, YieldData,
 };
 use smallvec::SmallVec;
 
@@ -54,9 +54,19 @@ pub fn font_context() -> parley::FontContext {
     }
 }
 
+/// A per-line layout box used by [`ParleyTextSystem::layout_with_boxes`].
+#[derive(Clone, Copy, Debug)]
+pub struct LineBox {
+    /// The x offset of the line's start edge.
+    pub x: f32,
+    /// The maximum advance (width) of the line.
+    pub width: f32,
+}
+
 /// A [`TextSystem`] that shapes and lays out text through Parley.
 pub struct ParleyTextSystem {
-    platform: Arc<dyn PlatformTextSystem>,
+    platform: Arc<ParleyPlatformTextSystem>,
+    platform_dyn: Arc<dyn PlatformTextSystem>,
     font: Font,
     font_id: FontId,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
@@ -68,21 +78,101 @@ impl ParleyTextSystem {
     pub fn new() -> Arc<Self> {
         let font = font(FONT_FAMILY);
         let font_id = FontId(0);
-        let platform: Arc<dyn PlatformTextSystem> =
-            Arc::new(ParleyPlatformTextSystem::new(font_id));
+        let platform = Arc::new(ParleyPlatformTextSystem::new(font_id));
+        let platform_dyn: Arc<dyn PlatformTextSystem> = platform.clone();
         Arc::new(Self {
             platform,
+            platform_dyn,
             font,
             font_id,
             font_runs_pool: Mutex::new(Vec::new()),
             wrapper_pool: Mutex::new(Vec::new()),
         })
     }
+
+    /// Lays out `text` with a first-line indent, using Parley's CSS
+    /// `text-indent` support.
+    pub fn layout_indented(
+        &self,
+        text: &str,
+        size: f32,
+        indent: f32,
+        max_width: f32,
+    ) -> parley::Layout<[u8; 4]> {
+        let mut font_context = self.platform.font_context.lock().unwrap();
+        let mut layout_context = self.platform.layout_context.lock().unwrap();
+        let mut builder = layout_context.ranged_builder(&mut font_context, text, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(FONT_FAMILY)));
+        builder.push_default(StyleProperty::FontSize(size));
+        let mut layout = builder.build(text);
+        layout.set_text_indent(indent, IndentOptions::default());
+        layout.break_all_lines(Some(max_width));
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        layout
+    }
+
+    /// Lays out `text` with a character-count limit per line, using Parley's
+    /// `break_next_with_length`.
+    pub fn layout_with_char_count(
+        &self,
+        text: &str,
+        size: f32,
+        max_chars: u32,
+    ) -> parley::Layout<[u8; 4]> {
+        let mut font_context = self.platform.font_context.lock().unwrap();
+        let mut layout_context = self.platform.layout_context.lock().unwrap();
+        let mut builder = layout_context.ranged_builder(&mut font_context, text, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(FONT_FAMILY)));
+        builder.push_default(StyleProperty::FontSize(size));
+        let mut layout = builder.build(text);
+        {
+            let mut breaker = layout.break_lines();
+            while breaker.break_next_with_length(max_chars).is_some() {}
+        }
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        layout
+    }
+
+    /// Lays out `text` into per-line boxes (e.g. flowing around excluded
+    /// regions). Each box constrains the x offset and maximum advance of one
+    /// line; lines past the end of `boxes` use the full width.
+    pub fn layout_with_boxes(
+        &self,
+        text: &str,
+        size: f32,
+        boxes: &[LineBox],
+    ) -> parley::Layout<[u8; 4]> {
+        let mut font_context = self.platform.font_context.lock().unwrap();
+        let mut layout_context = self.platform.layout_context.lock().unwrap();
+        let mut builder = layout_context.ranged_builder(&mut font_context, text, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(FONT_FAMILY)));
+        builder.push_default(StyleProperty::FontSize(size));
+        let mut layout = builder.build(text);
+        {
+            let mut breaker = layout.break_lines();
+            breaker.state_mut().set_layout_max_advance(f32::MAX);
+            let mut line = 0;
+            loop {
+                let box_ = boxes.get(line);
+                breaker
+                    .state_mut()
+                    .set_line_max_advance(box_.map_or(f32::MAX, |b| b.width));
+                breaker.state_mut().set_line_x(box_.map_or(0.0, |b| b.x));
+                match breaker.break_next() {
+                    Some(YieldData::LineBreak(_)) => line += 1,
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+        }
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        layout
+    }
 }
 
 impl TextSystem for ParleyTextSystem {
     fn platform_text_system(&self) -> &Arc<dyn PlatformTextSystem> {
-        &self.platform
+        &self.platform_dyn
     }
 
     fn all_font_names(&self) -> Vec<String> {
@@ -474,5 +564,19 @@ mod tests {
         let large = text_system.layout_line("hello", px(24.0), &[], None);
 
         assert!(large.width > small.width);
+    }
+
+    #[test]
+    fn parley_native_layout_is_reachable_through_downcast() {
+        let text_system = ParleyTextSystem::new();
+        let text_system: &dyn TextSystem = &*text_system;
+        let parley = text_system
+            .as_any()
+            .downcast_ref::<ParleyTextSystem>()
+            .expect("should downcast to the concrete ParleyTextSystem");
+
+        let layout =
+            parley.layout_indented("hello world this is a longer string", 16.0, 32.0, 120.0);
+        assert!(layout.lines().len() > 1);
     }
 }
