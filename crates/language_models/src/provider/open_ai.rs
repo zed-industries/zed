@@ -689,6 +689,7 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
     };
     LanguageModel {
         supports_tools: true,
+        prompt_compaction_strategy: language_model::PromptCompactionStrategy::PreserveRequestPrefix,
         supports_images,
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
         supports_streaming_tools: true,

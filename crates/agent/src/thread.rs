@@ -7134,6 +7134,124 @@ mod tests {
         thread.update(cx, |thread, _cx| thread.add_tool(ReplayImageTool));
     }
 
+    #[gpui::test]
+    async fn test_compaction_preserves_supported_request_prefix(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| {
+            model.supports_tools = true;
+            model.tool_choice_support = language_model::LanguageModelToolChoiceSupport::ALL;
+            model.supports_thinking = true;
+            model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
+        });
+
+        cx.update(|cx| {
+            enable_replay_image_tool(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_speed(Speed::Fast, cx);
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["context to compact"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let completion_request = fake.pending_completions().pop().unwrap();
+        assert_eq!(completion_request.tools.len(), 1);
+        fake.send_text(&model, &completion_request, "assistant response");
+        fake.end_stream(&model, &completion_request);
+        cx.run_until_parked();
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let compaction_request = fake.pending_completions().pop().unwrap();
+        assert_eq!(compaction_request.tools, completion_request.tools);
+        assert_eq!(
+            compaction_request.tool_choice,
+            Some(LanguageModelToolChoice::None)
+        );
+        assert_eq!(
+            compaction_request.thinking_allowed,
+            completion_request.thinking_allowed
+        );
+        assert_eq!(
+            compaction_request.thinking_effort,
+            completion_request.thinking_effort
+        );
+        assert_eq!(compaction_request.speed, completion_request.speed);
+        for (compaction_message, completion_message) in compaction_request
+            .messages
+            .iter()
+            .zip(&completion_request.messages)
+        {
+            assert_eq!(compaction_message.role, completion_message.role);
+            assert_eq!(compaction_message.content, completion_message.content);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_compaction_rebuilds_request_for_other_models(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let thread_model = fake.model("thread");
+        let compaction_model = fake.update_model("compaction", |model| {
+            model.supports_tools = true;
+            model.tool_choice_support = language_model::LanguageModelToolChoiceSupport::ALL;
+            model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
+        });
+
+        let request = cx.update(|cx| {
+            enable_replay_image_tool(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(thread_model, cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.build_compaction_request(thread.messages.len(), &compaction_model, cx)
+            })
+        });
+
+        assert!(request.tools.is_empty());
+        assert_eq!(request.tool_choice, None);
+        assert!(!request.thinking_allowed);
+    }
+
+    #[gpui::test]
+    async fn test_compaction_omits_tools_without_supported_tool_choice(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| {
+            model.supports_tools = true;
+            model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
+        });
+
+        let request = cx.update(|cx| {
+            enable_replay_image_tool(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.build_compaction_request(thread.messages.len(), &model, cx)
+            })
+        });
+
+        assert!(request.tools.is_empty());
+        assert_eq!(request.tool_choice, None);
+    }
+
     #[test]
     fn test_summary_compaction_renders_for_request_and_markdown() {
         let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));

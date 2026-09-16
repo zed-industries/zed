@@ -303,6 +303,7 @@ fn language_model(model: &deepseek::Model) -> LanguageModel {
     let supports_thinking = matches!(model, deepseek::Model::V4_1Flash | deepseek::Model::V4Pro);
     LanguageModel {
         supports_tools: true,
+        prompt_compaction_strategy: language_model::PromptCompactionStrategy::PreserveRequestPrefix,
         supports_streaming_tools: true,
         prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
         supports_thinking,
