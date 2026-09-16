@@ -4,7 +4,6 @@ use crate::{
     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     ns_string, renderer,
 };
-#[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
 use block2::RcBlock;
 use cocoa::{
@@ -80,7 +79,12 @@ use std::{
     time::Duration,
 };
 
+mod popup;
+use popup::MacPopup;
+
 const WINDOW_STATE_IVAR: &str = "windowState";
+const WINDOW_IS_POPUP_IVAR: &str = "isAnchoredPopup";
+const WINDOW_POPUP_GRAB_IVAR: &str = "popupGrab";
 
 static RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT: Once = Once::new();
 
@@ -429,15 +433,17 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     unsafe {
         let mut decl = ClassDecl::new(name, superclass).unwrap();
         decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+        decl.add_ivar::<BOOL>(WINDOW_IS_POPUP_IVAR);
+        decl.add_ivar::<BOOL>(WINDOW_POPUP_GRAB_IVAR);
         decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(&Object, Sel));
 
         decl.add_method(
             sel!(canBecomeMainWindow),
-            yes as extern "C" fn(&Object, Sel) -> BOOL,
+            can_become_main_window as extern "C" fn(&Object, Sel) -> BOOL,
         );
         decl.add_method(
             sel!(canBecomeKeyWindow),
-            yes as extern "C" fn(&Object, Sel) -> BOOL,
+            can_become_key_window as extern "C" fn(&Object, Sel) -> BOOL,
         );
         decl.add_method(
             sel!(windowDidResize:),
@@ -703,6 +709,7 @@ struct MacWindowState {
     accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
+    popup: Option<MacPopup>,
 }
 
 impl MacWindowState {
@@ -971,7 +978,15 @@ impl MacWindow {
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
         marker: MainThreadMarker,
-    ) -> Self {
+    ) -> Result<Self> {
+        let mut popup = match &kind {
+            WindowKind::AnchoredPopup(options) => {
+                Some(MacPopup::new(options.clone(), bounds.size, marker)?)
+            }
+            _ => None,
+        };
+        let popup_frame = popup.as_ref().map(MacPopup::frame).transpose()?;
+        let focus = popup.as_ref().map_or(focus, |popup| popup.options.grab);
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
@@ -1007,9 +1022,11 @@ impl MacWindow {
                 WindowKind::Normal => {
                     msg_send![WINDOW_CLASS, alloc]
                 }
-                // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only
-                // for exhaustiveness.
-                WindowKind::PopUp | WindowKind::AnchoredPopup(_) => {
+                WindowKind::AnchoredPopup(_) => {
+                    style_mask = NSWindowStyleMaskNonactivatingPanel;
+                    msg_send![PANEL_CLASS, alloc]
+                }
+                WindowKind::PopUp => {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
                     msg_send![PANEL_CLASS, alloc]
                 }
@@ -1017,6 +1034,8 @@ impl MacWindow {
                     msg_send![PANEL_CLASS, alloc]
                 }
             };
+            (*native_window).set_ivar(WINDOW_IS_POPUP_IVAR, popup.is_some() as BOOL);
+            (*native_window).set_ivar(WINDOW_POPUP_GRAB_IVAR, focus as BOOL);
 
             let display = display_id
                 .and_then(MacDisplay::find_by_id)
@@ -1045,7 +1064,7 @@ impl MacWindow {
                 NSScreen::frame(screen)
             });
 
-            let window_rect = NSRect::new(
+            let mut window_rect = NSRect::new(
                 NSPoint::new(
                     screen_frame.origin.x + bounds.origin.x.as_f32() as f64,
                     screen_frame.origin.y
@@ -1056,6 +1075,12 @@ impl MacWindow {
                     bounds.size.height.as_f32() as f64,
                 ),
             );
+            if let Some(frame) = popup_frame {
+                window_rect = NSRect::new(
+                    NSPoint::new(frame.origin.x, frame.origin.y + frame.size.height),
+                    NSSize::new(frame.size.width, frame.size.height),
+                );
+            }
 
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
                 window_rect,
@@ -1136,6 +1161,7 @@ impl MacWindow {
                 closed: Arc::new(AtomicBool::new(false)),
                 accesskit_adapter: None,
                 sheet_parent: None,
+                popup: None,
             }));
             let mut window = Self(state, marker);
 
@@ -1214,8 +1240,6 @@ impl MacWindow {
                         let _: () = msg_send![native_window, setTabbingIdentifier:nil];
                     }
                 }
-                // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only
-                // for exhaustiveness.
                 WindowKind::PopUp | WindowKind::AnchoredPopup(_) => {
                     add_mouse_tracking_area(tracking_view);
 
@@ -1224,10 +1248,13 @@ impl MacWindow {
                         native_window,
                         setAnimationBehavior: NSWindowAnimationBehaviorUtilityWindow
                     ];
-                    native_window.setCollectionBehavior_(
-                        NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces |
-                        NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
-                    );
+                    let mut behavior =
+                        NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary;
+                    if kind == WindowKind::PopUp {
+                        behavior |=
+                            NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces;
+                    }
+                    native_window.setCollectionBehavior_(behavior);
                 }
                 WindowKind::Dialog => {
                     if !main_window.is_null() {
@@ -1276,6 +1303,16 @@ impl MacWindow {
                 }
             }
 
+            if let Some(mut popup) = popup.take() {
+                // SAFETY: This is the live GPUIPanel initialized above, on the main thread.
+                let panel = &*native_window.cast::<Objc2NSWindow>();
+                if let Err(error) = popup.attach(panel, &window.0) {
+                    pool.drain();
+                    return Err(error);
+                }
+                window.0.lock().popup = Some(popup);
+            }
+
             if focus && show {
                 native_window.makeKeyAndOrderFront_(nil);
             } else if show {
@@ -1295,7 +1332,7 @@ impl MacWindow {
 
             pool.drain();
 
-            window
+            Ok(window)
         }
     }
 
@@ -1421,6 +1458,11 @@ impl PlatformWindow for MacWindow {
 
     fn resize(&mut self, size: Size<Pixels>) {
         let this = self.0.lock();
+        if this.popup.is_some() {
+            drop(this);
+            popup::reposition(&Arc::downgrade(&self.0), Some(size));
+            return;
+        }
         let window = this.native_window;
         let closed = this.closed.clone();
         this.foreground_executor
@@ -2449,8 +2491,19 @@ unsafe fn drop_window_state(object: &Object) {
     }
 }
 
-extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
-    YES
+extern "C" fn can_become_main_window(this: &Object, _: Sel) -> BOOL {
+    // SAFETY: GPUI installs this ivar before initializing the NSWindow. Reading it directly
+    // avoids relocking MacWindowState when AppKit queries focus during a window operation.
+    let is_popup: BOOL = unsafe { *this.get_ivar(WINDOW_IS_POPUP_IVAR) };
+    (is_popup == NO) as BOOL
+}
+
+extern "C" fn can_become_key_window(this: &Object, _: Sel) -> BOOL {
+    // SAFETY: Both ivars are initialized before AppKit can query this window's focus policy.
+    let is_popup: BOOL = unsafe { *this.get_ivar(WINDOW_IS_POPUP_IVAR) };
+    // SAFETY: See above.
+    let grab: BOOL = unsafe { *this.get_ivar(WINDOW_POPUP_GRAB_IVAR) };
+    (is_popup == NO || grab == YES) as BOOL
 }
 
 extern "C" fn dealloc_window(this: &Object, _: Sel) {
@@ -2628,6 +2681,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     };
 
     let run_callback = |event: PlatformInput| -> BOOL {
+        let keystroke = match &event {
+            PlatformInput::KeyDown(event) => Some(event.keystroke.clone()),
+            _ => None,
+        };
         let mut callback = window_state.as_ref().lock().event_callback.take();
         let handled: BOOL = if let Some(callback) = callback.as_mut() {
             !callback(event).propagate as BOOL
@@ -2635,7 +2692,15 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             NO
         };
         window_state.as_ref().lock().event_callback = callback;
-        handled
+        if handled == NO
+            && keystroke
+                .as_ref()
+                .is_some_and(|keystroke| popup::dismiss_on_escape(&window_state, keystroke))
+        {
+            YES
+        } else {
+            handled
+        }
     };
 
     match event {
@@ -3177,15 +3242,33 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let (close_callback, simple_fullscreen_state) = {
+        let (close_callback, simple_fullscreen_state, popup) = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
             lock.closed.store(true, Ordering::Release);
             (
                 lock.close_callback.take(),
                 lock.simple_fullscreen_state.take(),
+                lock.popup.take(),
             )
         };
+
+        // SAFETY: This callback belongs to a live GPUI NSWindow on the main thread.
+        let window = &*(this as *const Object).cast::<Objc2NSWindow>();
+        if let Some(children) = window.childWindows() {
+            for child in children.to_vec().into_iter().rev() {
+                let pointer = Retained::as_ptr(&child).cast_mut().cast();
+                if is_gpui_window(pointer) {
+                    child.close();
+                }
+            }
+        }
+        let parent = window.parentWindow();
+        let restore_focus = window.isKeyWindow();
+        if let Some(parent) = parent.as_ref() {
+            parent.removeChildWindow(window);
+        }
+        drop(popup);
 
         if simple_fullscreen_state.is_some() {
             pop_simple_fullscreen_presentation_options();
@@ -3196,6 +3279,21 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         }
 
         let _: () = msg_send![super(this, class!(NSWindow)), close];
+        if restore_focus && let Some(parent) = parent {
+            let pointer = Retained::as_ptr(&parent).cast_mut().cast();
+            if is_gpui_window(pointer)
+                && !get_window_state(&*pointer)
+                    .lock()
+                    .closed
+                    .load(Ordering::Acquire)
+                && {
+                    let active: BOOL = msg_send![NSApplication::sharedApplication(nil), isActive];
+                    active == YES
+                }
+            {
+                parent.makeKeyWindow();
+            }
+        }
     }
 }
 
@@ -3430,13 +3528,17 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     let mut event_callback = lock.event_callback.take();
     drop(lock);
 
-    if let Some((keystroke, callback)) = keystroke.zip(event_callback.as_mut()) {
-        let handled = (callback)(PlatformInput::KeyDown(KeyDownEvent {
-            keystroke,
-            is_held: false,
-            prefer_character_input: false,
-        }));
-        state.as_ref().lock().do_command_handled = Some(!handled.propagate);
+    if let Some(keystroke) = keystroke {
+        let handled = event_callback.as_mut().is_some_and(|callback| {
+            !callback(PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            }))
+            .propagate
+        });
+        let handled = handled || popup::dismiss_on_escape(&state, &keystroke);
+        state.as_ref().lock().do_command_handled = Some(handled);
     }
 
     state.as_ref().lock().event_callback = event_callback;
