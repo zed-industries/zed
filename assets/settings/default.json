@@ -1100,9 +1100,9 @@
     //
     // Default: false
     "collapse_untracked_diff": false,
-    /// Whether to show entries with tree or flat view in the panel
-    ///
-    /// Default: false
+    // Whether to show entries with tree or flat view in the panel
+    //
+    // Default: false
     "tree_view": false,
     // Whether the git panel should open on startup.
     //
@@ -1146,13 +1146,19 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "left",
-    // Whether the agent panel should use flexible (proportional) sizing.
+    // Whether the agent panel should use flexible (proportional) sizing when docked
+    // to the left or right. When enabled, `default_width` does not control the panel
+    // width, and resetting the panel restores the default proportion.
     //
     // Default: true
     "flexible": true,
-    // Where to position the threads sidebar. Can be 'left' or 'right'.
+    // Where to position the sidebar holding the agent panel and the list of
+    // agent threads. Can be 'left' or 'right'.
     "sidebar_side": "left",
-    // Default width when the agent panel is docked to the left or right.
+    // Default width of the Threads Sidebar.
+    "threads_sidebar_default_width": 300,
+    // Default fixed width when the agent panel is docked to the left or right and
+    // `flexible` is false.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
@@ -1506,6 +1512,11 @@
     // Default: medium
     "modal_max_width": "medium",
   },
+  // Settings related to the command palette.
+  "command_palette": {
+    // Whether to use command history ranking for sorting in the command palette.
+    "use_command_history": true,
+  },
   // Settings related to the file finder.
   "file_finder": {
     // Whether to show file icons in the file finder.
@@ -1772,9 +1783,9 @@
     // 2. Hide the gutter
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files",
-    /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
-    ///
-    /// Default: 0
+    // Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+    //
+    // Default: 0
     "gutter_debounce": 0,
     // Control whether the git blame information is shown for the currently
     // focused line, and where it is rendered.
