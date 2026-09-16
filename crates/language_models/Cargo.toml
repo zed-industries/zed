@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/language_models.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 ai_onboarding.workspace = true
 async-lock.workspace = true
@@ -66,6 +69,7 @@ ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
 x_ai = { workspace = true, features = ["schemars"] }
+x_ai_subscribed.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

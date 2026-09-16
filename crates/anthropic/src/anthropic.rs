@@ -42,6 +42,15 @@ pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
 pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
+pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
+
+pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
+    matches!(model_id, "claude-fable-5-1")
+}
+
+pub fn supports_forced_tool_use(model_id: &str) -> bool {
+    !matches!(model_id, "claude-fable-5-1" | "claude-mythos-5-1")
+}
 
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
@@ -183,7 +192,9 @@ impl Model {
         // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
         let supports_compaction = matches!(
             entry.id.as_str(),
-            "claude-fable-5"
+            "claude-fable-5-1"
+                | "claude-fable-5"
+                | "claude-mythos-5-1"
                 | "claude-mythos-5"
                 | "claude-mythos-preview"
                 | "claude-opus-5"
@@ -200,6 +211,9 @@ impl Model {
         }
         if supports_compaction {
             extra_beta_headers.push(COMPACTION_BETA_HEADER.to_string());
+        }
+        if binds_thinking_blocks_to_prefix(&entry.id) {
+            extra_beta_headers.push(THINKING_BINDING_CONTROLS_BETA_HEADER.to_string());
         }
 
         Self {
@@ -409,6 +423,45 @@ pub async fn non_streaming_completion(
     }
 }
 
+/// Estimates input tokens without generating a message.
+///
+/// Anthropic's estimate may differ slightly from usage reported during generation.
+pub async fn count_input_tokens(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: CountTokensRequest,
+    beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
+) -> Result<u64, AnthropicError> {
+    let (mut response, rate_limits) = send_request_to_route(
+        client,
+        api_url,
+        "/v1/messages/count_tokens",
+        api_key,
+        request,
+        beta_headers,
+        extra_headers,
+    )
+    .await?;
+    if !response.status().is_success() {
+        return Err(handle_error_response(response, rate_limits).await);
+    }
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(AnthropicError::ReadResponse)?;
+    #[derive(Deserialize)]
+    struct CountTokensResponse {
+        input_tokens: u64,
+    }
+    serde_json::from_str::<CountTokensResponse>(&body)
+        .map(|response| response.input_tokens)
+        .map_err(AnthropicError::DeserializeResponse)
+}
+
 async fn send_request(
     client: &dyn HttpClient,
     api_url: &str,
@@ -417,7 +470,28 @@ async fn send_request(
     beta_headers: Option<String>,
     extra_headers: &CustomHeaders,
 ) -> Result<(http::Response<AsyncBody>, RateLimitInfo), AnthropicError> {
-    let uri = format!("{api_url}/v1/messages");
+    send_request_to_route(
+        client,
+        api_url,
+        "/v1/messages",
+        api_key,
+        request,
+        beta_headers,
+        extra_headers,
+    )
+    .await
+}
+
+async fn send_request_to_route(
+    client: &dyn HttpClient,
+    api_url: &str,
+    route: &str,
+    api_key: &str,
+    request: impl Serialize,
+    beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
+) -> Result<(http::Response<AsyncBody>, RateLimitInfo), AnthropicError> {
+    let uri = format!("{api_url}{route}");
 
     let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -812,6 +886,8 @@ pub enum Thinking {
     Adaptive {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<AdaptiveThinkingDisplay>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        block_binding: Option<ThinkingBlockBinding>,
     },
     /// Explicitly turns thinking off. Required by models where thinking runs
     /// by default (see [`requires_explicit_thinking_opt_out`]); only accepted
@@ -824,6 +900,22 @@ pub enum Thinking {
 pub enum AdaptiveThinkingDisplay {
     Omitted,
     Summarized,
+}
+
+/// Controls for models that bind thinking blocks to the request prefix (see
+/// [`binds_thinking_blocks_to_prefix`]). Requires the
+/// [`THINKING_BINDING_CONTROLS_BETA_HEADER`] beta header.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThinkingBlockBinding {
+    pub prefix_mismatch_behavior: PrefixMismatchBehavior,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrefixMismatchBehavior {
+    /// Drop an invalidated thinking block and continue, instead of rejecting
+    /// the request with a 400.
+    DropBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString)]
@@ -917,7 +1009,36 @@ pub struct Request {
     pub top_p: Option<f32>,
 }
 
+/// Input counted by Anthropic, excluding generation and service settings.
+#[derive(Serialize, Debug)]
+pub struct CountTokensRequest {
+    pub model: String,
+    pub messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<StringOrContents>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<ContextManagement>,
+}
+
 impl Request {
+    pub fn into_count_tokens_request(self) -> CountTokensRequest {
+        CountTokensRequest {
+            model: self.model,
+            messages: self.messages,
+            tools: self.tools,
+            tool_choice: self.tool_choice,
+            system: self.system,
+            thinking: self.thinking,
+            context_management: self.context_management,
+        }
+    }
+
     /// Configures this request to stop after native compaction.
     ///
     /// Tool definitions remain in the request so the trigger observes the same
@@ -1285,6 +1406,13 @@ fn completion_error_from_anthropic_api_with_status(
                 ProviderErrorCategory::PromptTooLarge {
                     tokens: Some(tokens),
                 }
+            } else if error
+                .message
+                .starts_with("Your credit balance is too low to access the Anthropic API.")
+            {
+                // Anthropic sends credit exhaustion as invalid_request_error rather than
+                // the billing_error documented at https://platform.claude.com/docs/en/api/errors.
+                ProviderErrorCategory::PaymentRequired
             } else {
                 ProviderErrorCategory::InvalidRequest
             }
@@ -1317,6 +1445,115 @@ fn completion_error_from_anthropic_api_with_status(
 mod tests {
     use super::*;
     use http_client::FakeHttpClient;
+
+    #[test]
+    fn count_input_tokens_preserves_input_without_generation_fields() {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 1234,
+            "temperature": 0.5,
+            "system": "Be precise",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "Describe this"},
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": "image/png", "data": "aW1hZ2U="
+                }}
+            ]}],
+            "tools": [{"name": "look", "description": "Look up data", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "auto"},
+            "context_management": {"edits": [{"type": "compact_20260112"}]}
+        })).expect("generation request");
+        let generation = serde_json::to_value(&request).expect("generation payload");
+        assert_eq!(generation["max_tokens"], 1234);
+        assert_eq!(generation["temperature"], 0.5);
+        let client = FakeHttpClient::create(move |mut request| async move {
+            assert_eq!(request.method(), Method::POST);
+            assert_eq!(
+                request.uri(),
+                "https://api.anthropic.com/v1/messages/count_tokens"
+            );
+            assert!(
+                request
+                    .headers()
+                    .get("X-Api-Key")
+                    .is_some_and(|value| value == "test-key")
+            );
+            assert_eq!(request.headers()["Anthropic-Version"], "2023-06-01");
+            assert_eq!(request.headers()["Anthropic-Beta"], "test-beta");
+            let mut body = String::new();
+            request.body_mut().read_to_string(&mut body).await?;
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&body)?,
+                serde_json::json!({
+                    "model": "claude-sonnet-4-6",
+                    "system": "Be precise",
+                    "messages": [{"role": "user", "content": [
+                        {"type": "text", "text": "Describe this"},
+                        {"type": "image", "source": {
+                            "type": "base64", "media_type": "image/png", "data": "aW1hZ2U="
+                        }}
+                    ]}],
+                    "tools": [{"name": "look", "description": "Look up data", "input_schema": {"type": "object"}}],
+                    "tool_choice": {"type": "auto"},
+                    "context_management": {"edits": [{"type": "compact_20260112"}]}
+                })
+            );
+            Ok(http::Response::builder()
+                .status(200)
+                .body(AsyncBody::from(r#"{"input_tokens":321}"#))?)
+        });
+        let count = futures::executor::block_on(count_input_tokens(
+            client.as_ref(),
+            ANTHROPIC_API_URL,
+            " test-key ",
+            request.into_count_tokens_request(),
+            Some("test-beta".into()),
+            &CustomHeaders::default(),
+        ))
+        .expect("count succeeds");
+        assert_eq!(count, 321);
+    }
+
+    #[test]
+    fn count_input_tokens_preserves_typed_errors() {
+        for (status, body) in [
+            (
+                401,
+                r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+            ),
+            (200, "{}"),
+        ] {
+            let client = FakeHttpClient::create(move |_| async move {
+                Ok(http::Response::builder()
+                    .status(status)
+                    .body(AsyncBody::from(body))?)
+            });
+            let request: Request = serde_json::from_value(serde_json::json!({
+                "model": "claude-sonnet-4-6", "max_tokens": 100, "messages": []
+            }))
+            .expect("request");
+            let error = futures::executor::block_on(count_input_tokens(
+                client.as_ref(),
+                ANTHROPIC_API_URL,
+                "test-key",
+                request.into_count_tokens_request(),
+                None,
+                &CustomHeaders::default(),
+            ))
+            .expect_err("count fails");
+            if status == 401 {
+                assert!(matches!(
+                    error,
+                    AnthropicError::ApiError {
+                        status: Some(StatusCode::UNAUTHORIZED),
+                        ..
+                    }
+                ));
+            } else {
+                assert!(matches!(error, AnthropicError::DeserializeResponse(_)));
+            }
+        }
+    }
 
     #[test]
     fn list_models_preserves_anthropic_api_errors() {
@@ -1607,6 +1844,31 @@ mod tests {
             assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
             assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
         }
+    }
+
+    #[test]
+    fn from_listed_enables_compaction_and_binding_controls_for_fable_5_1() {
+        let model = Model::from_listed(listed_entry(
+            "claude-fable-5-1",
+            ModelCapabilities::default(),
+        ));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        assert!(beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
+
+        // Mythos 5.1 supports compaction but doesn't run the prefix-binding
+        // check, so it must not get the binding-controls header.
+        let model = Model::from_listed(listed_entry(
+            "claude-mythos-5-1",
+            ModelCapabilities::default(),
+        ));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        assert!(!beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
     }
 
     #[test]

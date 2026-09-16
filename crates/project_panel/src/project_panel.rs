@@ -18,15 +18,15 @@ use git;
 use git::status::GitSummary;
 use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
-    ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
-    ExternalDragPayload, ExternalPaths, FileDragPaths, FocusHandle, Focusable, FontWeight, Hsla,
-    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, ParentElement,
-    PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
-    uniform_list,
+    Action, Anchor, AnyElement, App, AsyncWindowContext, Bounds,
+    ClipboardEntry as GpuiClipboardEntry, ClipboardItem, Context, CursorStyle, DismissEvent, Div,
+    DragMoveEvent, Entity, EventEmitter, ExternalDragPayload, ExternalPaths, FileDragPaths,
+    FileDropEvent, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
+    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
+    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
@@ -52,8 +52,7 @@ use std::{
     cell::OnceCell,
     cmp,
     collections::HashSet,
-    ops::Neg,
-    ops::Range,
+    ops::{Neg, Range},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -68,15 +67,16 @@ use util::{
     ResultExt, TakeUntilExt, TryFutureExt,
     markdown::MarkdownInlineCode,
     maybe,
-    paths::{PathStyle, compare_paths},
+    paths::{PathExt, PathStyle, compare_paths},
     rel_path::{RelPath, RelPathBuf},
 };
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenMode, OpenOptions, OpenVisible, PreviewTabsSettings,
-    SelectedEntry, SplitDirection, Workspace, WorkspaceSettings,
+    SelectedEntry, SplitDirection, Workspace, WorkspaceSettings, copy_file_permalink,
     dock::{DockPosition, Panel, PanelEvent},
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
+    open_file_permalink,
 };
 use worktree::CreatedEntry;
 use zed_actions::{
@@ -147,7 +147,7 @@ pub struct ProjectPanel {
     drag_target_entry: Option<DragTarget>,
     marked_entries: Vec<SelectedEntry>,
     selection: Option<SelectedEntry>,
-    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<DeployedContextMenu>,
     filename_editor: Entity<Editor>,
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
@@ -187,6 +187,26 @@ impl Default for UpdateVisibleEntriesTask {
             autoscroll: Default::default(),
         }
     }
+}
+
+/// Where a context menu should appear when it is deployed.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum ContextMenuPlacement {
+    /// Slightly offset from the given mouse position, e.g. for a right click.
+    AtMouse(Point<Pixels>),
+    /// Next to the row of the entry the menu is deployed for, e.g. when opened from the keyboard.
+    AtEntry,
+}
+
+const CONTEXT_MENU_KEYBOARD_OFFSET: Point<Pixels> = point(px(2.), px(2.));
+
+struct DeployedContextMenu {
+    menu: Entity<ContextMenu>,
+    position: Point<Pixels>,
+    /// Which corner of the menu is placed at `position`, determining the direction the menu opens
+    /// in. When `None`, the menu is placed like any other anchored element.
+    anchor: Option<Anchor>,
+    _subscription: Subscription,
 }
 
 enum DragTarget {
@@ -268,6 +288,7 @@ impl DiagnosticCount {
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct EntryDetails {
     filename: String,
+    chevron: Option<SharedString>,
     icon: Option<SharedString>,
     path: Arc<RelPath>,
     depth: usize,
@@ -282,11 +303,25 @@ struct EntryDetails {
     sticky: Option<StickyDetails>,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
+    diagnostic_mark: Option<DiagnosticMark>,
+    reserves_chevron_slot: bool,
     diagnostic_count: Option<DiagnosticCount>,
     git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Arc<Path>>,
+}
+
+/// The glyph a row's diagnostic mark decorates, and the shape of that mark.
+///
+/// A row has one indicator slot, so the mark decorates whichever glyph already fills
+/// it rather than claiming a slot of its own. `Standalone` covers rows that draw no
+/// glyph at all.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum DiagnosticMark {
+    OnIcon(IconDecorationKind),
+    OnChevron(IconDecorationKind),
+    Standalone(IconName),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -411,6 +446,8 @@ actions!(
         Redo,
         /// Opens a markdown preview for the selected file.
         OpenMarkdownPreview,
+        /// Opens the context menu for the selected entry.
+        OpenContextMenu,
     ]
 );
 
@@ -594,6 +631,7 @@ pub enum Event {
 
 struct DraggedProjectEntryView {
     selection: SelectedEntry,
+    chevron: Option<SharedString>,
     icon: Option<SharedString>,
     filename: String,
     click_offset: Point<Pixels>,
@@ -1060,9 +1098,26 @@ impl ProjectPanel {
         }
     }
 
+    /// Whether keyboard focus is within the panel, including a deployed context menu.
+    ///
+    /// `contains_focused` answers from the last rendered frame's element tree. On the frame a
+    /// context menu is deployed, its focus node is not part of that tree yet, so the menu has
+    /// to be checked directly against the window's current focus.
+    ///
+    /// TODO: We really really should fix context menu focus to not have to deal with
+    /// this everywhere as this is not a proper fix here but a mere workaround. Yet
+    /// a fix would require some more time and thought to not break other users of this
+    fn contains_focus(&self, window: &Window, cx: &App) -> bool {
+        self.focus_handle.contains_focused(window, cx)
+            || self
+                .context_menu
+                .as_ref()
+                .is_some_and(|context_menu| context_menu.menu.focus_handle(cx).is_focused(window))
+    }
+
     fn deploy_context_menu(
         &mut self,
-        position: Point<Pixels>,
+        placement: ContextMenuPlacement,
         entry_id: ProjectEntryId,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1199,6 +1254,16 @@ impl ProjectPanel {
                                     .when(has_history, |menu| {
                                         menu.action("View History", Box::new(git::FileHistory))
                                     })
+                                    .when(!is_dir, |menu| {
+                                        menu.action(
+                                            "Open File Permalink",
+                                            git::OpenFilePermalink.boxed_clone(),
+                                        )
+                                        .action(
+                                            "Copy File Permalink",
+                                            git::CopyFilePermalink.boxed_clone(),
+                                        )
+                                    })
                             })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
@@ -1234,15 +1299,125 @@ impl ProjectPanel {
                 })
             });
 
+            let (position, anchor) = match placement {
+                ContextMenuPlacement::AtMouse(mouse_position) => (mouse_position, None),
+                ContextMenuPlacement::AtEntry => match self.scroll_selection_into_view() {
+                    Some(entry_bounds) => {
+                        let (position, anchor) =
+                            Self::context_menu_placement_for_entry(entry_bounds, window, cx);
+
+                        let shifted_position = position
+                            + if anchor.is_bottom() {
+                                -CONTEXT_MENU_KEYBOARD_OFFSET
+                            } else {
+                                CONTEXT_MENU_KEYBOARD_OFFSET
+                            };
+
+                        (shifted_position, Some(anchor))
+                    }
+                    None => (window.mouse_position(), None),
+                },
+            };
+
             window.focus(&context_menu.focus_handle(cx), cx);
             let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
                 this.context_menu.take();
                 cx.notify();
             });
-            self.context_menu = Some((context_menu, position, subscription));
+            self.context_menu = Some(DeployedContextMenu {
+                menu: context_menu,
+                position,
+                anchor,
+                _subscription: subscription,
+            });
         }
 
         cx.notify();
+    }
+
+    fn open_context_menu(
+        &mut self,
+        _: &OpenContextMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry_id = if let Some(selection) = &self.selection {
+            selection.entry_id
+        } else if let Some(entry_id) = self.state.last_worktree_root_id {
+            entry_id
+        } else {
+            return;
+        };
+
+        self.deploy_context_menu(ContextMenuPlacement::AtEntry, entry_id, window, cx);
+    }
+
+    /// Opens the menu downwards from the entry when the entry is in the upper half of the window
+    /// and upwards otherwise, and always towards the center of the window from the side the panel
+    /// is docked on, so that the menu has the most room to grow into.
+    fn context_menu_placement_for_entry(
+        entry_bounds: Bounds<Pixels>,
+        window: &Window,
+        cx: &App,
+    ) -> (Point<Pixels>, Anchor) {
+        let opens_downwards = entry_bounds.center().y <= window.viewport_size().center().y;
+        // The menu's anchored corner sits on the diagonally opposite corner of the entry.
+        match (ProjectPanelSettings::get_global(cx).dock, opens_downwards) {
+            (DockSide::Left, true) => (entry_bounds.bottom_left(), Anchor::TopLeft),
+            (DockSide::Left, false) => (entry_bounds.origin, Anchor::BottomLeft),
+            (DockSide::Right, true) => (entry_bounds.bottom_right(), Anchor::TopRight),
+            (DockSide::Right, false) => (entry_bounds.top_right(), Anchor::BottomRight),
+        }
+    }
+
+    /// The height of a single row in the entries list, as measured by the list during its last layout.
+    fn entry_row_height(&self) -> Option<Pixels> {
+        let item_count: usize = self
+            .state
+            .visible_entries
+            .iter()
+            .map(|worktree| worktree.entries.len())
+            .sum();
+        if item_count == 0 {
+            return None;
+        }
+        let last_item_size = self.scroll_handle.0.borrow().last_item_size?;
+        let row_height = last_item_size.contents.height / item_count as f32;
+        (row_height > Pixels::ZERO).then_some(row_height)
+    }
+
+    /// Scrolls the entries list the minimal amount needed for the selected entry to be fully
+    /// visible, and returns the bounds of the entry's row in window coordinates.
+    fn scroll_selection_into_view(&self) -> Option<Bounds<Pixels>> {
+        let selection = self.selection?;
+        let (_, _, index) = self.index_for_selection(selection)?;
+        let row_height = self.entry_row_height()?;
+
+        let viewport = self.scroll_handle.viewport();
+        let current_offset = self.scroll_handle.offset();
+        let row_top = row_height * index;
+        let row_bottom = row_top + row_height;
+        // Sticky entries are drawn over the top rows of the list, so a row underneath them is not
+        // actually visible.
+        let visible_top = row_height * self.sticky_items_count;
+
+        let mut offset = current_offset;
+        if row_top + offset.y < visible_top {
+            offset.y = visible_top - row_top;
+        } else if row_bottom + offset.y > viewport.size.height {
+            offset.y = viewport.size.height - row_bottom;
+        }
+        offset.y = offset
+            .y
+            .clamp(-self.scroll_handle.max_offset().y, Pixels::ZERO);
+        if offset != current_offset {
+            self.scroll_handle.set_offset(offset);
+        }
+
+        Some(Bounds::new(
+            point(viewport.left(), viewport.top() + offset.y + row_top),
+            size(viewport.size.width, row_height),
+        ))
     }
 
     fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
@@ -1371,10 +1546,14 @@ impl ProjectPanel {
             match expanded_dir_ids.binary_search(&entry_id) {
                 Ok(ix) => {
                     expanded_dir_ids.remove(ix);
+                    self.selection = Some(SelectedEntry {
+                        worktree_id,
+                        entry_id,
+                    });
                     self.update_visible_entries(
                         Some((worktree_id, entry_id)),
                         false,
-                        false,
+                        true,
                         window,
                         cx,
                     );
@@ -1743,7 +1922,13 @@ impl ProjectPanel {
     fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
         let preview_tabs_enabled =
             PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
-        self.open_internal(true, !preview_tabs_enabled, None, window, cx);
+        self.open_internal(
+            preview_tabs_enabled,
+            !preview_tabs_enabled,
+            None,
+            window,
+            cx,
+        );
     }
 
     fn open_permanent(&mut self, _: &OpenPermanent, window: &mut Window, cx: &mut Context<Self>) {
@@ -3790,6 +3975,53 @@ impl ProjectPanel {
         }
     }
 
+    fn open_file_permalink(
+        &mut self,
+        _: &git::OpenFilePermalink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self.selected_file_project_path(cx) else {
+            return;
+        };
+        open_file_permalink(
+            self.project.clone(),
+            project_path,
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+    }
+
+    fn copy_file_permalink(
+        &mut self,
+        _: &git::CopyFilePermalink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self.selected_file_project_path(cx) else {
+            return;
+        };
+        copy_file_permalink(
+            self.project.clone(),
+            project_path,
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+    }
+
+    fn selected_file_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let (worktree, entry) = self.selected_sub_entry(cx)?;
+        if entry.is_dir() {
+            return None;
+        }
+        Some(ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: entry.path.clone(),
+        })
+    }
+
     fn reveal_in_finder(
         &mut self,
         _: &RevealInFileManager,
@@ -5693,6 +5925,7 @@ impl ProjectPanel {
 
         let file_name = details.filename.clone();
 
+        let chevron = details.chevron.clone();
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
             let filename = self.filename_editor.read(cx).text(cx);
@@ -5703,6 +5936,8 @@ impl ProjectPanel {
 
         let filename_text_color = details.filename_text_color;
         let diagnostic_severity = details.diagnostic_severity;
+        let diagnostic_mark = details.diagnostic_mark;
+        let reserves_chevron_slot = details.reserves_chevron_slot;
         let diagnostic_count = details.diagnostic_count;
         let item_colors = get_item_color(is_sticky, cx);
 
@@ -5740,25 +5975,25 @@ impl ProjectPanel {
             None
         };
 
-        let border_color =
-            if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                match validation_color_and_message {
-                    Some((color, _)) => color,
-                    None => item_colors.focused,
-                }
-            } else {
-                bg_color
-            };
+        let show_focused_border = !self.mouse_down && is_active && self.contains_focus(window, cx);
 
-        let border_hover_color =
-            if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                match validation_color_and_message {
-                    Some((color, _)) => color,
-                    None => item_colors.focused,
-                }
-            } else {
-                bg_hover_color
-            };
+        let border_color = if show_focused_border {
+            match validation_color_and_message {
+                Some((color, _)) => color,
+                None => item_colors.focused,
+            }
+        } else {
+            bg_color
+        };
+
+        let border_hover_color = if show_focused_border {
+            match validation_color_and_message {
+                Some((color, _)) => color,
+                None => item_colors.focused,
+            }
+        } else {
+            bg_hover_color
+        };
 
         let folded_directory_drag_target = self.folded_directory_drag_target;
         let is_highlighted = {
@@ -5798,10 +6033,39 @@ impl ProjectPanel {
             (entry_id.to_proto() as usize).into()
         };
 
+        let tooltip_path = self
+            .project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .map(|worktree| {
+                worktree
+                    .read(cx)
+                    .absolutize(&path)
+                    .compact()
+                    .to_string_lossy()
+                    .into_owned()
+            });
+
         div()
             .id(id.clone())
             .relative()
             .group(GROUP_NAME)
+            .when_some(
+                tooltip_path.and_then(|path| {
+                    let delay = match settings.title_tooltip_delay {
+                        settings::ProjectPanelTitleTooltipDelay::Default => 1500,
+                        settings::ProjectPanelTitleTooltipDelay::Custom(delay_ms) => delay_ms.0,
+                        settings::ProjectPanelTitleTooltipDelay::Disabled => {
+                            return None;
+                        }
+                    };
+                    Some((path, delay))
+                }),
+                |this, (path, delay)| {
+                    this.tooltip_show_delay(Duration::from_millis(delay))
+                        .tooltip(Tooltip::text(path))
+                },
+            )
             .cursor_pointer()
             .rounded_none()
             .bg(bg_color)
@@ -5999,6 +6263,7 @@ impl ProjectPanel {
                                 .as_ref()
                                 .unwrap_or_else(|| &details.filename);
                             cx.new(|_| DraggedProjectEntryView {
+                                chevron: details.chevron.clone(),
                                 icon: details.icon.clone(),
                                 filename: filename.clone(),
                                 click_offset,
@@ -6222,55 +6487,88 @@ impl ProjectPanel {
                             )
                         },
                     )
-                    .child(if let Some(icon) = &icon {
-                        if let Some((_, decoration_color)) =
+                    .map(|this| {
+                        let decoration_color =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
-                        {
-                            let is_warning = diagnostic_severity
-                                .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
-                                .unwrap_or(false);
-                            div().child(
-                                DecoratedIcon::new(
-                                    Icon::from_path(icon.clone()).color(Color::Muted),
-                                    Some(
-                                        IconDecoration::new(
-                                            if kind.is_file() {
-                                                if is_warning {
-                                                    IconDecorationKind::Triangle
-                                                } else {
-                                                    IconDecorationKind::X
-                                                }
-                                            } else {
-                                                IconDecorationKind::Dot
-                                            },
-                                            bg_color,
-                                            cx,
-                                        )
+                                .map(|(_, color)| color);
+                        let decorated = |glyph: SharedString,
+                                         decoration_kind: IconDecorationKind,
+                                         color: Color| {
+                            DecoratedIcon::new(
+                                Icon::from_path(glyph).color(Color::Muted),
+                                Some(
+                                    IconDecoration::new(decoration_kind, bg_color, cx)
                                         .group_name(Some(GROUP_NAME.into()))
                                         .knockout_hover_color(bg_hover_color)
-                                        .color(decoration_color.color(cx))
+                                        .color(color.color(cx))
                                         .position(Point {
                                             x: px(-2.),
                                             y: px(-2.),
                                         }),
-                                    ),
-                                )
-                                .into_any_element(),
+                                ),
                             )
+                            .into_any_element()
+                        };
+
+                        let icon_slot = if let Some(icon) = &icon {
+                            Some(match diagnostic_mark.zip(decoration_color) {
+                                Some((DiagnosticMark::OnIcon(decoration_kind), color)) => {
+                                    div().child(decorated(icon.clone(), decoration_kind, color))
+                                }
+                                _ => h_flex()
+                                    .child(Icon::from_path(icon.to_string()).color(Color::Muted)),
+                            })
+                        } else if let Some(DiagnosticMark::Standalone(icon_name)) = diagnostic_mark
+                        {
+                            let color =
+                                entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                                    .map_or(Color::Error, |(_, color)| color);
+                            Some(
+                                h_flex()
+                                    .size(IconSize::default().rems())
+                                    .child(Icon::new(icon_name).color(color).size(IconSize::Small)),
+                            )
+                        } else if chevron.is_some() {
+                            // The chevron already fills this slot; a spacer would double its width.
+                            None
                         } else {
-                            h_flex().child(Icon::from_path(icon.to_string()).color(Color::Muted))
+                            Some(
+                                h_flex()
+                                    .size(IconSize::default().rems())
+                                    .invisible()
+                                    .flex_none(),
+                            )
+                        };
+
+                        let chevron =
+                            chevron.map(|chevron| match diagnostic_mark.zip(decoration_color) {
+                                Some((DiagnosticMark::OnChevron(decoration_kind), color)) => {
+                                    decorated(chevron, decoration_kind, color)
+                                }
+                                _ => Icon::from_path(chevron)
+                                    .color(Color::Muted)
+                                    .into_any_element(),
+                            });
+
+                        match (chevron, icon_slot) {
+                            (Some(chevron), Some(icon_slot)) => {
+                                this.child(h_flex().gap_0p5().child(chevron).child(icon_slot))
+                            }
+                            (Some(chevron), None) => this.child(h_flex().child(chevron)),
+                            (None, Some(icon_slot)) if reserves_chevron_slot => this.child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        h_flex()
+                                            .size(IconSize::default().rems())
+                                            .invisible()
+                                            .flex_none(),
+                                    )
+                                    .child(icon_slot),
+                            ),
+                            (None, Some(icon_slot)) => this.child(icon_slot),
+                            (None, None) => this,
                         }
-                    } else if let Some((icon_name, color)) =
-                        entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
-                    {
-                        h_flex()
-                            .size(IconSize::default().rems())
-                            .child(Icon::new(icon_name).color(color).size(IconSize::Small))
-                    } else {
-                        h_flex()
-                            .size(IconSize::default().rems())
-                            .invisible()
-                            .flex_none()
                     })
                     .child(if show_editor {
                         h_flex().h_6().w_full().child(self.filename_editor.clone())
@@ -6320,7 +6618,12 @@ impl ProjectPanel {
                             if !this.marked_entries.contains(&selection) {
                                 this.marked_entries.clear();
                             }
-                            this.deploy_context_menu(event.position, entry_id, window, cx);
+                            this.deploy_context_menu(
+                                ContextMenuPlacement::AtMouse(event.position),
+                                entry_id,
+                                window,
+                                cx,
+                            );
                         },
                     ))
                     .overflow_x(),
@@ -6566,9 +6869,9 @@ impl ProjectPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> EntryDetails {
-        let (show_file_icons, show_folder_icons) = {
+        let (show_file_icons, folder_indicator) = {
             let settings = ProjectPanelSettings::get_global(cx);
-            (settings.file_icons, settings.folder_icons)
+            (settings.file_icons, settings.folder_indicator)
         };
 
         let expanded_entry_ids = self
@@ -6579,20 +6882,23 @@ impl ProjectPanel {
             .unwrap_or(&[]);
         let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
-        let icon = match entry.kind {
+        let (chevron, icon) = match entry.kind {
             EntryKind::File => {
-                if show_file_icons {
+                let icon = if show_file_icons {
                     FileIcons::get_icon(entry.path.as_std_path(), cx)
                 } else {
                     None
-                }
+                };
+                (None, icon)
             }
             _ => {
-                if show_folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, entry.path.as_std_path(), cx)
-                } else {
-                    FileIcons::get_chevron_icon(is_expanded, cx)
-                }
+                let indicator = FileIcons::get_folder_indicators(
+                    folder_indicator,
+                    is_expanded,
+                    entry.path.as_std_path(),
+                    cx,
+                );
+                (indicator.chevron, indicator.icon)
             }
         };
 
@@ -6632,6 +6938,31 @@ impl ProjectPanel {
             .get(&(worktree_id, entry.path.clone()))
             .copied();
 
+        let diagnostic_mark = if icon.is_some() || chevron.is_some() {
+            entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity).map(
+                |(kind, _)| {
+                    let kind = if entry.kind.is_file() {
+                        kind
+                    } else {
+                        IconDecorationKind::Dot
+                    };
+                    if icon.is_some() {
+                        DiagnosticMark::OnIcon(kind)
+                    } else {
+                        DiagnosticMark::OnChevron(kind)
+                    }
+                },
+            )
+        } else {
+            entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                .map(|(name, _)| DiagnosticMark::Standalone(name))
+        };
+
+        // Only `both` makes a directory two glyphs wide, leaving file icons under the
+        // folder chevrons unless files hold that width open too.
+        let reserves_chevron_slot =
+            chevron.is_none() && folder_indicator.shows_chevron() && folder_indicator.shows_icon();
+
         let filename_text_color =
             entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
 
@@ -6642,6 +6973,7 @@ impl ProjectPanel {
 
         EntryDetails {
             filename,
+            chevron,
             icon,
             path: entry.path.clone(),
             depth,
@@ -6656,6 +6988,8 @@ impl ProjectPanel {
             sticky,
             filename_text_color,
             diagnostic_severity,
+            diagnostic_mark,
+            reserves_chevron_slot,
             diagnostic_count,
             git_status,
             is_private: entry.is_private,
@@ -6949,6 +7283,10 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
 
 impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !cx.has_active_drag() {
+            self.clear_drag_state(cx);
+        }
+
         let has_worktree = !self.state.visible_entries.is_empty();
         let project = self.project.read(cx);
         let panel_settings = ProjectPanelSettings::get_global(cx);
@@ -7061,6 +7399,9 @@ impl Render for ProjectPanel {
                             cx.stop_active_drag(window);
                             this.clear_drag_state(cx);
                         }))
+                        .on_file_drop_exit(cx.listener(|this, _: &FileDropEvent, _window, cx| {
+                            this.clear_drag_state(cx);
+                        }))
                 })
                 .size_full()
                 .relative()
@@ -7101,11 +7442,14 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
                 .on_action(cx.listener(Self::copy_relative_path))
+                .on_action(cx.listener(Self::open_file_permalink))
+                .on_action(cx.listener(Self::copy_file_permalink))
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
+                .on_action(cx.listener(Self::open_context_menu))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -7491,7 +7835,7 @@ impl Render for ProjectPanel {
                                         // act as if the user clicked the root of the last worktree.
                                         if let Some(entry_id) = this.state.last_worktree_root_id {
                                             this.deploy_context_menu(
-                                                event.position,
+                                                ContextMenuPlacement::AtMouse(event.position),
                                                 entry_id,
                                                 window,
                                                 cx,
@@ -7545,12 +7889,14 @@ impl Render for ProjectPanel {
                     window,
                     cx,
                 )
-                .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                .children(self.context_menu.as_ref().map(|context_menu| {
                     deferred(
                         anchored()
-                            .position(*position)
-                            .anchor(gpui::Anchor::TopLeft)
-                            .child(menu.clone()),
+                            .position(context_menu.position)
+                            .when_some(context_menu.anchor, |anchored, anchor| {
+                                anchored.anchor(anchor)
+                            })
+                            .child(context_menu.menu.clone()),
                     )
                     .with_priority(3)
                 }))
@@ -7637,11 +7983,16 @@ impl Render for DraggedProjectEntryView {
                         if self.selections.len() > 1 && self.selections.contains(&self.selection) {
                             this.child(Label::new(format!("{} entries", self.selections.len())))
                         } else {
-                            this.child(if let Some(icon) = &self.icon {
-                                div().child(Icon::from_path(icon.clone()))
-                            } else {
-                                div()
-                            })
+                            this.child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .when_some(self.chevron.clone(), |this, chevron| {
+                                        this.child(Icon::from_path(chevron))
+                                    })
+                                    .when_some(self.icon.clone(), |this, icon| {
+                                        this.child(Icon::from_path(icon))
+                                    }),
+                            )
                             .child(Label::new(self.filename.clone()))
                         }
                     }),

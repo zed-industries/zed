@@ -3,8 +3,8 @@ use std::{pin::Pin, str::FromStr as _, sync::Arc};
 use crate::responses as copilot_responses;
 use crate::{
     ChatLocation, ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, Function,
-    FunctionContent, ImageUrl, Model as CopilotChatModel, ModelVendor,
-    Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall, ToolCallContent, ToolChoice,
+    FunctionContent, ImageUrl, Model as CopilotChatModel, Request as CopilotChatRequest,
+    ResponseEvent, Tool, ToolCall, ToolCallContent, ToolChoice,
 };
 use anthropic::{
     AnthropicModelMode,
@@ -22,8 +22,8 @@ use language_model::{
     LanguageModelCostInfo, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, ProviderErrorCategory,
-    RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolUse, MessageContent, ProviderErrorCategory, RateLimiter, Role, StopReason,
+    TokenUsage,
 };
 use util::debug_panic;
 
@@ -107,17 +107,6 @@ impl LanguageModel for CopilotChatLanguageModel {
             .collect()
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        match self.model.vendor() {
-            ModelVendor::OpenAI | ModelVendor::Anthropic => {
-                LanguageModelToolSchemaFormat::JsonSchema
-            }
-            ModelVendor::Google | ModelVendor::XAI | ModelVendor::Unknown => {
-                LanguageModelToolSchemaFormat::JsonSchemaSubset
-            }
-        }
-    }
-
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -139,6 +128,16 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
+    }
+
+    fn max_input_tokens(&self) -> u64 {
+        self.model
+            .max_prompt_tokens()
+            .unwrap_or_else(|| self.model.max_token_count())
+    }
+
+    fn max_output_tokens(&self) -> Option<u64> {
+        self.model.max_output_tokens()
     }
 
     fn stream_completion(
@@ -172,6 +171,12 @@ impl LanguageModel for CopilotChatLanguageModel {
             let copilot_chat = self.copilot_chat.clone();
             let request_limiter = self.request_limiter.clone();
             let future = cx.spawn(async move |cx| {
+                let max_output_tokens = model
+                    .max_output_tokens()
+                    .or(request.max_output_tokens)
+                    .ok_or_else(|| {
+                        anyhow!("Copilot did not provide an output limit for this model")
+                    })?;
                 let effort = request
                     .thinking_effort
                     .as_ref()
@@ -181,7 +186,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     request,
                     model.id().to_string(),
                     0.0,
-                    model.max_output_tokens() as u64,
+                    max_output_tokens,
                     if model.supports_adaptive_thinking() {
                         AnthropicModelMode::Thinking {
                             budget_tokens: None,
@@ -191,7 +196,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                             budget_tokens: compute_thinking_budget(
                                 model.min_thinking_budget(),
                                 model.max_thinking_budget(),
-                                model.max_output_tokens() as u32,
+                                max_output_tokens.min(u32::MAX as u64) as u32,
                             ),
                         }
                     } else {
@@ -212,6 +217,11 @@ impl LanguageModel for CopilotChatLanguageModel {
                     if anthropic_request.thinking.is_some() {
                         anthropic_request.thinking = Some(anthropic::Thinking::Adaptive {
                             display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
+                            // Thinking block binding needs a beta header on
+                            // the upstream Anthropic request, which the
+                            // Copilot proxy controls, so opting in belongs
+                            // server-side.
+                            block_binding: None,
                         });
                         anthropic_request.output_config =
                             effort.map(|effort| anthropic::OutputConfig {
@@ -241,12 +251,16 @@ impl LanguageModel for CopilotChatLanguageModel {
                     anthropic_beta,
                     cx.clone(),
                 );
+                let executor = cx.background_executor().clone();
 
                 request_limiter
                     .stream(async move {
                         let events = stream.await?;
                         let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
-                        Ok(mapper.map_stream(events).boxed())
+                        Ok(language_model::stream_in_background(
+                            mapper.map_stream(events).boxed(),
+                            executor,
+                        ))
                     })
                     .await
             });
@@ -269,11 +283,15 @@ impl LanguageModel for CopilotChatLanguageModel {
                     is_user_initiated,
                     cx.clone(),
                 );
+                let executor = cx.background_executor().clone();
                 request_limiter
                     .stream(async move {
                         let stream = request.await?;
                         let mapper = CopilotResponsesEventMapper::new();
-                        Ok(mapper.map_stream(stream).boxed())
+                        Ok(language_model::stream_in_background(
+                            mapper.map_stream(stream).boxed(),
+                            executor,
+                        ))
                     })
                     .await
             });
@@ -812,6 +830,9 @@ fn into_copilot_chat(
     model: &CopilotChatModel,
     request: LanguageModelRequest,
 ) -> Result<CopilotChatRequest> {
+    let max_tokens = request
+        .max_output_tokens
+        .and_then(|_| request.effective_max_output_tokens(model.max_output_tokens()));
     let temperature = request.temperature;
     let tool_choice = request.tool_choice;
     let thinking_allowed = request.thinking_allowed;
@@ -1006,6 +1027,7 @@ fn into_copilot_chat(
         temperature: temperature.unwrap_or(0.1),
         model: model.id().to_string(),
         messages,
+        max_tokens,
         tools,
         tool_choice: tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => ToolChoice::Auto,
@@ -1013,11 +1035,13 @@ fn into_copilot_chat(
             LanguageModelToolChoice::None => ToolChoice::None,
         }),
         thinking_budget: if thinking_allowed && model.supports_thinking() {
-            compute_thinking_budget(
-                model.min_thinking_budget(),
-                model.max_thinking_budget(),
-                model.max_output_tokens() as u32,
-            )
+            model.max_output_tokens().or(max_tokens).and_then(|limit| {
+                compute_thinking_budget(
+                    model.min_thinking_budget(),
+                    model.max_thinking_budget(),
+                    limit.min(u32::MAX as u64) as u32,
+                )
+            })
         } else {
             None
         },
@@ -1062,6 +1086,9 @@ fn into_copilot_responses(
 ) -> Result<copilot_responses::Request> {
     use copilot_responses as responses;
 
+    let max_output_tokens = request
+        .max_output_tokens
+        .and_then(|_| request.effective_max_output_tokens(model.max_output_tokens()));
     let LanguageModelRequest {
         thread_id: _,
         prompt_id: _,
@@ -1075,6 +1102,7 @@ fn into_copilot_responses(
         thinking_effort,
         speed: _,
         compact_at_tokens: _,
+        max_output_tokens: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();
@@ -1253,6 +1281,7 @@ fn into_copilot_responses(
         input: input_items,
         stream: model.uses_streaming(),
         temperature,
+        max_output_tokens,
         tools: converted_tools,
         tool_choice: mapped_tool_choice,
         reasoning: if thinking_allowed {
@@ -1281,6 +1310,85 @@ mod tests {
     use futures::StreamExt;
     use language_model::ProviderErrorCategory;
     use serde_json::json;
+
+    #[gpui::test]
+    fn language_model_exposes_token_limits(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
+
+        let copilot_chat = cx.new(|cx| {
+            CopilotChat::new(
+                Arc::new(http_client::BlockedHttpClient::new()),
+                Arc::new(EmptyCredentialsProvider),
+                crate::CopilotChatConfiguration::default(),
+                cx,
+            )
+        });
+        for (limits, input, context, output) in [
+            (
+                json!({"max_context_window_tokens": 200_000, "max_prompt_tokens": 90_000, "max_output_tokens": 16_384}),
+                90_000,
+                200_000,
+                Some(16_384),
+            ),
+            (
+                json!({"max_context_window_tokens": 128_000, "max_output_tokens": 4096}),
+                128_000,
+                128_000,
+                Some(4096),
+            ),
+            (
+                json!({"max_context_window_tokens": 128_000, "max_prompt_tokens": 100_000}),
+                100_000,
+                128_000,
+                None,
+            ),
+            (
+                json!({"max_context_window_tokens": 128_000, "max_prompt_tokens": 0, "max_output_tokens": 0}),
+                128_000,
+                128_000,
+                None,
+            ),
+        ] {
+            let mut value = serde_json::to_value(test_responses_model()).unwrap();
+            value["capabilities"]["limits"] = limits;
+            let descriptor = serde_json::from_value(value).unwrap();
+            let model = create_language_model(descriptor, copilot_chat.clone());
+            assert_eq!(model.max_token_count(), context);
+            assert_eq!(model.max_input_tokens(), input);
+            assert_eq!(model.max_total_tokens(), Some(context));
+            assert_eq!(model.max_output_tokens(), output);
+        }
+    }
+
+    struct EmptyCredentialsProvider;
+
+    impl credentials_provider::CredentialsProvider for EmptyCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
 
     fn map_events(events: Vec<responses::StreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         futures::executor::block_on(async {
@@ -1519,6 +1627,54 @@ mod tests {
                 ]
             })]
         );
+    }
+
+    #[test]
+    fn request_output_limits_reach_copilot_payloads() -> Result<()> {
+        let model = test_responses_model();
+        for (limit, expected) in [
+            (None, None),
+            (Some(1024), Some(1024)),
+            (Some(u64::MAX), Some(4096)),
+        ] {
+            let request = LanguageModelRequest {
+                max_output_tokens: limit,
+                ..Default::default()
+            };
+            let responses = serde_json::to_value(into_copilot_responses(&model, request.clone())?)?;
+            let chat = serde_json::to_value(into_copilot_chat(&model, request)?)?;
+            assert_eq!(
+                responses.get("max_output_tokens").cloned(),
+                expected.map(|value| json!(value))
+            );
+            assert_eq!(
+                chat.get("max_tokens").cloned(),
+                expected.map(|value| json!(value))
+            );
+        }
+        let mut value = serde_json::to_value(test_responses_model())?;
+        value["capabilities"]["limits"]
+            .as_object_mut()
+            .unwrap()
+            .remove("max_output_tokens");
+        let model = serde_json::from_value(value)?;
+        for limit in [None, Some(1024)] {
+            let request = LanguageModelRequest {
+                max_output_tokens: limit,
+                ..Default::default()
+            };
+            let responses = serde_json::to_value(into_copilot_responses(&model, request.clone())?)?;
+            let chat = serde_json::to_value(into_copilot_chat(&model, request)?)?;
+            assert_eq!(
+                responses.get("max_output_tokens").cloned(),
+                limit.map(|value| json!(value))
+            );
+            assert_eq!(
+                chat.get("max_tokens").cloned(),
+                limit.map(|value| json!(value))
+            );
+        }
+        Ok(())
     }
 
     #[test]

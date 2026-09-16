@@ -2669,9 +2669,8 @@ impl BufferSnapshot {
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        anchor.is_min()
-            || anchor.is_max()
-            || (self.remote_id == anchor.buffer_id && self.version.observed(anchor.timestamp()))
+        self.remote_id == anchor.buffer_id
+            && (anchor.is_min() || anchor.is_max() || self.version.observed(anchor.timestamp()))
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {

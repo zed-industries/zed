@@ -26,7 +26,9 @@ test-support = [
     "x11",
     "proptest",
 ]
-bench = ["test-support", "profiler", "dep:criterion"]
+bench-support = ["profiler", "dep:criterion"]
+# Preserve the published feature name while consumers migrate to `bench-support`.
+bench = ["bench-support"]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 wayland = []
@@ -87,13 +89,11 @@ serde.workspace = true
 serde_json.workspace = true
 slotmap.workspace = true
 smallvec.workspace = true
-async-channel.workspace = true
 stacksafe = { workspace = true, optional = true }
 strum.workspace = true
 sum_tree.workspace = true
 taffy = "=0.13.0"
 thiserror.workspace = true
-tracing.workspace = true
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
@@ -105,7 +105,13 @@ url.workspace = true
 uuid.workspace = true
 web-time.workspace = true
 heapless.workspace = true
-ztracing.workspace = true
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+# Workspace inheritance would re-enable defaults, including blocking channel synchronization.
+async-channel = { version = "2.5.0", default-features = false }
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+async-channel.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
@@ -147,12 +153,13 @@ reqwest_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen = { workspace = true }
+web-sys = { version = "0.3", features = ["console"] }
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.71"
+bindgen = "0.72"
 
 [package.metadata.cargo-shear]
 ignored = [
@@ -161,7 +168,6 @@ ignored = [
     "getrandom",
     "objc2",
     "objc2-metal",
-    "tracing",
 ]
 ignored-paths = ["src/_ownership_and_data_flow.rs"]
 
