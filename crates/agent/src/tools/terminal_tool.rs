@@ -413,6 +413,22 @@ fn wsl_zed_release(_cx: &App) -> Option<(String, String)> {
     None
 }
 
+fn agent_terminal_shell(shell: Option<settings::Shell>) -> Option<task::Shell> {
+    shell.map(|shell| match shell {
+        settings::Shell::System => task::Shell::System,
+        settings::Shell::Program(program) => task::Shell::Program(program),
+        settings::Shell::WithArguments {
+            program,
+            args,
+            title_override,
+        } => task::Shell::WithArguments {
+            program,
+            args,
+            title_override,
+        },
+    })
+}
+
 async fn run_terminal_tool(
     project: Entity<Project>,
     environment: Rc<dyn ThreadEnvironment>,
@@ -423,12 +439,26 @@ async fn run_terminal_tool(
     let selection = input.selection;
     let sandbox_input = input.sandbox.clone().unwrap_or_default();
 
+    let terminal_shell = cx.update(|cx| {
+        agent_terminal_shell(
+            agent_settings::AgentSettings::get_global(cx)
+                .terminal_shell
+                .clone(),
+        )
+    });
+
     let (working_dir, authorize, sandboxing, is_local_project, wsl_zed_release) =
         cx.update(|cx| {
             let working_dir =
                 working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
+            let shell_kind = terminal_shell
+                .as_ref()
+                .map_or_else(util::shell::ShellKind::system, |shell| {
+                    shell.shell_kind(project.read(cx).path_style(cx).is_windows())
+                });
             let context =
-                crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
+                crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()])
+                    .with_shell_kind(shell_kind);
             let authorize =
                 event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
             let sandboxing =
@@ -863,6 +893,7 @@ async fn run_terminal_tool(
             let error = match environment
                 .create_terminal(
                     input.command.clone(),
+                    terminal_shell.clone(),
                     extra_env.clone(),
                     working_dir.clone(),
                     output_byte_limit,
@@ -929,6 +960,7 @@ async fn run_terminal_tool(
     let terminal = environment
         .create_terminal(
             input.command.clone(),
+            terminal_shell.clone(),
             extra_env,
             working_dir.clone(),
             output_byte_limit,
@@ -3806,5 +3838,30 @@ mod tests {
             acp_thread::SandboxNetworkAccess::None => {}
             other => panic!("unexpected network access for host request, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_agent_terminal_shell_maps_settings_shell() {
+        assert_eq!(agent_terminal_shell(None), None);
+        assert_eq!(
+            agent_terminal_shell(Some(settings::Shell::System)),
+            Some(task::Shell::System)
+        );
+        assert_eq!(
+            agent_terminal_shell(Some(settings::Shell::Program("/bin/zsh".into()))),
+            Some(task::Shell::Program("/bin/zsh".into()))
+        );
+        assert_eq!(
+            agent_terminal_shell(Some(settings::Shell::WithArguments {
+                program: "/bin/bash".into(),
+                args: vec!["--login".into()],
+                title_override: None,
+            })),
+            Some(task::Shell::WithArguments {
+                program: "/bin/bash".into(),
+                args: vec!["--login".into()],
+                title_override: None,
+            })
+        );
     }
 }

@@ -11,6 +11,7 @@ use std::{
 use crate::ExtendingVec;
 
 use crate::DockPosition;
+use crate::Shell;
 
 /// Where to position the threads sidebar.
 #[derive(
@@ -343,6 +344,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: ""
     pub terminal_init_command: Option<String>,
+    /// Shell to use when running commands for the agent's built-in `terminal`
+    /// tool. Takes the same values as `terminal.shell`.
+    ///
+    /// Default: unset (use the remote shell, or `/bin/sh`, preferring Git Bash
+    /// on Windows)
+    pub terminal_shell: Option<Shell>,
     /// How thinking blocks should be displayed by default in the agent panel.
     ///
     /// Default: automatic

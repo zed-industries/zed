@@ -1359,6 +1359,15 @@
     //
     // Example: "terminal_init_command": "claude"
     "terminal_init_command": "",
+    // Shell to use when running commands for the agent's built-in `terminal`
+    // tool. Takes the same values as `terminal.shell`:
+    // 1. "system" to use the system shell.
+    // 2. { "program": "/bin/zsh" } to use a specific program.
+    // 3. { "with_arguments": { "program": "/bin/bash", "args": ["--login"] } }
+    //    to use a specific program with arguments.
+    //
+    // Default: null (use the remote shell, or `/bin/sh`, preferring Git Bash on Windows)
+    "terminal_shell": null,
     // How thinking blocks should be displayed by default in the agent panel.
     //
     // Default: auto

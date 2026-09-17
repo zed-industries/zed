@@ -4749,6 +4749,7 @@ impl AcpThread {
     pub fn create_terminal(
         &self,
         command: String,
+        shell: Option<task::Shell>,
         args: Vec<String>,
         extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
@@ -4788,13 +4789,18 @@ impl AcpThread {
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let env = env.await;
-                let shell = project
-                    .update(cx, |project, cx| {
-                        project
-                            .remote_client()
-                            .and_then(|r| r.read(cx).default_system_shell())
-                    })
-                    .unwrap_or_else(|| get_default_system_shell_preferring_bash());
+                let shell = shell.unwrap_or_else(|| {
+                    project
+                        .update(cx, |project, cx| {
+                            project
+                                .remote_client()
+                                .and_then(|r| r.read(cx).default_system_shell())
+                                .map(task::Shell::Program)
+                        })
+                        .unwrap_or_else(|| {
+                            task::Shell::Program(get_default_system_shell_preferring_bash())
+                        })
+                });
 
                 // The sandbox owns the network proxy (for restricted-network
                 // policies) and injects the child's proxy env vars, returning
@@ -4833,7 +4839,7 @@ impl AcpThread {
                         // on Windows that deliberately changes the shell: the
                         // sandboxed path runs under WSL's Linux bash, but this
                         // fallback uses the host's `shell` against the native cwd.
-                        let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                        let mut builder = ShellBuilder::new(&shell, is_windows);
                         if headless {
                             builder = builder.non_interactive();
                         }
@@ -4845,7 +4851,7 @@ impl AcpThread {
 
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
-                    let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                    let mut builder = ShellBuilder::new(&shell, is_windows);
                     if headless {
                         builder = builder.non_interactive();
                     }

@@ -75,6 +75,11 @@ impl ProjectContext {
         self
     }
 
+    pub fn with_shell(mut self, shell: impl Into<String>) -> Self {
+        self.shell = shell.into();
+        self
+    }
+
     pub fn skills(&self) -> &[SkillSummary] {
         &self.skills
     }
@@ -164,6 +169,12 @@ mod tests {
         let context = ProjectContext::new(vec![]);
         assert!(!context.has_skills);
         assert!(context.skills.is_empty());
+    }
+
+    #[test]
+    fn test_project_context_with_shell_overrides_default() {
+        let context = ProjectContext::new(vec![]).with_shell("zsh");
+        assert_eq!(context.shell, "zsh");
     }
 
     // Hidden-skill filtering used to live here, but it's now the

@@ -1087,6 +1087,9 @@ impl NativeAgent {
         cx: &mut App,
     ) -> Task<(ProjectContext, Vec<Skill>, Vec<SkillLoadingIssueData>)> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let terminal_shell = agent_settings::AgentSettings::get_global(cx)
+            .terminal_shell
+            .clone();
         let worktree_tasks = worktrees
             .iter()
             .map(|worktree| {
@@ -1272,6 +1275,17 @@ impl NativeAgent {
             skill_issues.extend(budget_issues);
 
             let project_context = ProjectContext::new(worktrees).with_skills(catalog_skills);
+            let project_context = if let Some(shell) = terminal_shell {
+                let program = match shell {
+                    settings::Shell::System => util::shell::get_system_shell(),
+                    settings::Shell::Program(program) => program,
+                    settings::Shell::WithArguments { program, .. } => program,
+                };
+                project_context
+                    .with_shell(util::shell::ShellKind::new(&program, cfg!(windows)).to_string())
+            } else {
+                project_context
+            };
             (project_context, skills, skill_issues)
         })
     }
@@ -3292,6 +3306,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
+        shell: Option<task::Shell>,
         extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
@@ -3362,6 +3377,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         let task = self.acp_thread.update(cx, |thread, cx| {
             thread.create_terminal(
                 command,
+                shell,
                 vec![],
                 extra_env,
                 cwd,

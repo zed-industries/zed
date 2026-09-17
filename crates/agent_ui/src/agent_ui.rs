@@ -1003,6 +1003,7 @@ mod tests {
             expand_edit_card: true,
             expand_terminal_card: true,
             terminal_init_command: None,
+            terminal_shell: None,
             cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,

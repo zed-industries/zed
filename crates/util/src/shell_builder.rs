@@ -111,8 +111,12 @@ impl ShellBuilder {
                         combined_command.insert_str(0, "begin; ");
                         combined_command.push_str("; end </dev/null");
                     }
-                    ShellKind::Nushell
-                    | ShellKind::Csh
+                    // Nushell has no whole-script stdin-redirection operator,
+                    // and `( ... ) </dev/null` is not valid Nushell. Running
+                    // `nu -c` without `-i` exits after the command, so no
+                    // redirection is needed.
+                    ShellKind::Nushell => {}
+                    ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc
                     | ShellKind::Xonsh
@@ -130,8 +134,13 @@ impl ShellBuilder {
                 }
             }
 
+            let interactive = if self.redirect_stdin && matches!(self.kind, ShellKind::Nushell) {
+                false
+            } else {
+                self.interactive
+            };
             self.args
-                .extend(self.kind.args_for_shell(self.interactive, combined_command));
+                .extend(self.kind.args_for_shell(interactive, combined_command));
         }
 
         (self.program, self.args)
@@ -159,8 +168,12 @@ impl ShellBuilder {
                         combined_command.insert_str(0, "begin; ");
                         combined_command.push_str("; end </dev/null");
                     }
-                    ShellKind::Nushell
-                    | ShellKind::Csh
+                    // Nushell has no whole-script stdin-redirection operator,
+                    // and `( ... ) </dev/null` is not valid Nushell. Running
+                    // `nu -c` without `-i` exits after the command, so no
+                    // redirection is needed.
+                    ShellKind::Nushell => {}
+                    ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc
                     | ShellKind::Xonsh
@@ -178,8 +191,13 @@ impl ShellBuilder {
                 }
             }
 
+            let interactive = if self.redirect_stdin && matches!(self.kind, ShellKind::Nushell) {
+                false
+            } else {
+                self.interactive
+            };
             self.args
-                .extend(self.kind.args_for_shell(self.interactive, combined_command));
+                .extend(self.kind.args_for_shell(interactive, combined_command));
         }
 
         (self.program, self.args)
@@ -273,7 +291,7 @@ mod test {
     }
 
     #[test]
-    fn redirect_stdin_to_dev_null_precedence() {
+    fn redirect_stdin_to_dev_null_nushell() {
         let shell = Shell::Program("nu".to_owned());
         let shell_builder = ShellBuilder::new(&shell, false);
 
@@ -282,7 +300,7 @@ mod test {
             .build(Some("echo".into()), &["nothing".to_string()]);
 
         assert_eq!(program, "nu");
-        assert_eq!(args, vec!["-i", "-c", "(echo nothing\n) </dev/null"]);
+        assert_eq!(args, vec!["-c", "echo nothing"]);
     }
 
     #[test]

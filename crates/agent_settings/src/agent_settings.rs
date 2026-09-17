@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use settings::{
     DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
-    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    SettingsStore, Shell, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay,
+    ToolPermissionMode, update_settings_file, update_settings_file_with_completion,
 };
 use util::ResultExt as _;
 
@@ -243,6 +243,7 @@ pub struct AgentSettings {
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
     pub terminal_init_command: Option<String>,
+    pub terminal_shell: Option<Shell>,
     pub thinking_display: ThinkingBlockDisplay,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
@@ -828,6 +829,7 @@ impl Settings for AgentSettings {
             terminal_init_command: agent
                 .terminal_init_command
                 .filter(|command| !command.trim().is_empty()),
+            terminal_shell: agent.terminal_shell,
             thinking_display: agent.thinking_display.unwrap(),
             cancel_generation_on_terminal_stop: agent.cancel_generation_on_terminal_stop.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
@@ -1206,6 +1208,27 @@ mod tests {
             AgentSettings::get_global(cx)
                 .terminal_init_command
                 .is_none()
+        );
+    }
+
+    #[gpui::test]
+    fn test_terminal_shell_parses(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "terminal_shell": { "program": "/bin/zsh" } } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+        assert_eq!(
+            AgentSettings::get_global(cx).terminal_shell,
+            Some(settings::Shell::Program("/bin/zsh".into()))
         );
     }
 
