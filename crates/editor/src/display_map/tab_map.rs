@@ -74,8 +74,6 @@ impl TabMap {
             return (old_snapshot.clone(), vec![]);
         }
 
-        let old_fold_max_point = old_snapshot.fold_snapshot.max_point();
-
         // Expand each edit to include the next tab on the same line as the edit,
         // and any subsequent tabs on that line that moved across the tab expansion
         // boundary.
@@ -91,25 +89,33 @@ impl TabMap {
         // the line, extending the edit to include the first subsequent tab (whose
         // rendered width may have changed) and the last tab that crossed the
         // expansion boundary (transitioning between expanded and non-expanded).
+        let old_fold_len = old_snapshot.fold_snapshot.len();
+        let mut old_chunks: Option<FoldChunks> = None;
         for fold_edit in &mut fold_edits {
             let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
-            let old_end_row_successor_offset =
-                cmp::min(FoldPoint::new(old_end.row() + 1, 0), old_fold_max_point)
-                    .to_offset(&old_snapshot.fold_snapshot);
             let new_end = fold_edit.new.end.to_point(&fold_snapshot);
+
+            let chunks = match &mut old_chunks {
+                Some(chunks) => {
+                    chunks.seek(fold_edit.old.end..old_fold_len);
+                    chunks
+                }
+                None => old_chunks.insert(old_snapshot.fold_snapshot.chunks(
+                    fold_edit.old.end..old_fold_len,
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
+                    Highlights::default(),
+                )),
+            };
 
             let mut offset_from_edit = 0;
             let mut first_tab_offset = None;
             let mut last_tab_with_changed_expansion_offset = None;
-            'outer: for chunk in old_snapshot.fold_snapshot.chunks(
-                fold_edit.old.end..old_end_row_successor_offset,
-                LanguageAwareStyling {
-                    tree_sitter: false,
-                    diagnostics: false,
-                },
-                Highlights::default(),
-            ) {
-                let mut remaining_tabs = chunk.tabs;
+            'outer: for chunk in chunks {
+                let row_end = chunk.newlines.trailing_zeros();
+                let mut remaining_tabs = chunk.tabs & !u128::MAX.unbounded_shl(row_end);
                 while remaining_tabs != 0 {
                     let ix = remaining_tabs.trailing_zeros();
                     let offset_from_edit = offset_from_edit + ix;
@@ -130,6 +136,10 @@ impl TabMap {
                     remaining_tabs &= remaining_tabs - 1;
                 }
 
+                if chunk.newlines != 0 {
+                    break;
+                }
+
                 offset_from_edit += chunk.text.len() as u32;
                 if old_end.column() + offset_from_edit >= old_snapshot.max_expansion_column
                     && new_end.column() + offset_from_edit >= old_snapshot.max_expansion_column
@@ -143,6 +153,7 @@ impl TabMap {
                 fold_edit.new.end.0 += offset as usize + 1;
             }
         }
+        drop(old_chunks);
 
         let new_snapshot = TabSnapshot {
             fold_snapshot,
