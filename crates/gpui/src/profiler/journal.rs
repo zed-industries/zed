@@ -21,10 +21,17 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use gpui_util::ResultExt;
 use scheduler::Instant;
 
 use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming};
-use crate::WindowId;
+use crate::{App, WindowId, WindowVisibility};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PowerState {
+    Awake,
+    Suspended,
+}
 
 /// Task polls shorter than this are folded into a [`PollSummary`] instead of
 /// being recorded individually. This keeps the stream bounded by the number
@@ -182,6 +189,11 @@ pub enum IntervalBoundary {
         /// When the foreground went idle.
         ended_at: Instant,
     },
+    /// A power notification interrupted the measurement interval.
+    PowerTransition {
+        /// When the foreground received the notification.
+        ended_at: Instant,
+    },
 }
 
 impl IntervalBoundary {
@@ -189,7 +201,7 @@ impl IntervalBoundary {
     pub fn end_time(&self) -> Instant {
         match self {
             Self::Presented(presented) => presented.presentation.present_end,
-            Self::Idle { ended_at } => *ended_at,
+            Self::Idle { ended_at } | Self::PowerTransition { ended_at } => *ended_at,
         }
     }
 
@@ -197,7 +209,7 @@ impl IntervalBoundary {
     pub fn dirty_at(&self) -> Option<Instant> {
         match self {
             Self::Presented(presented) => presented.frame.dirty_at,
-            Self::Idle { .. } => None,
+            Self::Idle { .. } | Self::PowerTransition { .. } => None,
         }
     }
 }
@@ -379,11 +391,31 @@ impl ForegroundRunnableCounter {
     }
 }
 
+// Visibility and power changes clear `dirty_at`; `Window::refresh_visibility`
+// re-records the frame from the window's actual dirty state afterwards.
+struct WindowFrameState {
+    visibility: WindowVisibility,
+    dirty_at: Option<Instant>,
+    visibility_changed_at: Option<Instant>,
+}
+
+impl WindowFrameState {
+    fn new(visibility: WindowVisibility) -> Self {
+        Self {
+            visibility,
+            dirty_at: None,
+            visibility_changed_at: None,
+        }
+    }
+}
+
 struct ForegroundJournalWriter {
     foreground_runnables: ForegroundRunnableCounter,
     publisher: JournalPublisher,
     turn_depth: usize,
-    pending_frames: HashMap<WindowId, Instant>,
+    windows: HashMap<WindowId, WindowFrameState>,
+    power: PowerState,
+    power_changed_at: Option<Instant>,
     retained_since_boundary: bool,
     small_polls: Option<SmallPollFlush>,
 }
@@ -394,7 +426,9 @@ impl ForegroundJournalWriter {
             foreground_runnables,
             publisher,
             turn_depth: 0,
-            pending_frames: HashMap::new(),
+            windows: HashMap::new(),
+            power: PowerState::Awake,
+            power_changed_at: None,
             retained_since_boundary: false,
             small_polls: None,
         }
@@ -434,12 +468,51 @@ impl ForegroundJournalWriter {
     }
 
     fn has_unexpired_pending_frame(&mut self, now: Instant) -> bool {
-        if self.pending_frames.is_empty() {
-            return false;
+        for window in self.windows.values_mut() {
+            if window
+                .dirty_at
+                .is_some_and(|at| now.saturating_duration_since(at) >= FRAME_DEADLINE)
+            {
+                window.dirty_at = None;
+            }
         }
-        self.pending_frames
-            .retain(|_, dirty_at| now.saturating_duration_since(*dirty_at) < FRAME_DEADLINE);
-        !self.pending_frames.is_empty()
+        self.power == PowerState::Awake
+            && self
+                .windows
+                .values()
+                .any(|window| window.dirty_at.is_some())
+    }
+
+    fn power_transition(&mut self, power: PowerState, at: Instant) {
+        if self.power == power {
+            return;
+        }
+        self.record_entry(ForegroundJournalEntry::Boundary(
+            IntervalBoundary::PowerTransition { ended_at: at },
+        ));
+        self.power = power;
+        self.power_changed_at = Some(at);
+        for window in self.windows.values_mut() {
+            window.dirty_at = None;
+        }
+    }
+
+    /// Whether work that started at `start` spans a sleep or a wake, and so
+    /// must not be measured as uninterrupted foreground work.
+    fn power_interrupted_since(&self, start: Instant) -> bool {
+        self.power == PowerState::Suspended || self.power_changed_at.is_some_and(|at| start <= at)
+    }
+
+    fn set_visibility(&mut self, id: WindowId, visibility: WindowVisibility, at: Instant) {
+        let window = self
+            .windows
+            .entry(id)
+            .or_insert_with(|| WindowFrameState::new(visibility));
+        if window.visibility != visibility {
+            window.visibility = visibility;
+            window.visibility_changed_at = Some(at);
+            window.dirty_at = None;
+        }
     }
 
     fn fold_small_poll(&mut self, timing: TaskTiming) {
@@ -480,17 +553,20 @@ impl ForegroundJournalWriter {
     }
 
     fn record_frame_pending(&mut self, window_id: WindowId, dirty_at: Instant) {
-        let should_record = match self.pending_frames.get(&window_id) {
-            Some(previous_dirty_at) => {
-                dirty_at.saturating_duration_since(*previous_dirty_at) >= FRAME_DEADLINE
-            }
-            None => true,
-        };
-        if !should_record {
+        let window = self
+            .windows
+            .entry(window_id)
+            .or_insert_with(|| WindowFrameState::new(WindowVisibility::Visible));
+        if self.power == PowerState::Suspended
+            || !window.visibility.is_visible()
+            || window
+                .dirty_at
+                .is_some_and(|at| dirty_at.saturating_duration_since(at) < FRAME_DEADLINE)
+        {
             return;
         }
 
-        self.pending_frames.insert(window_id, dirty_at);
+        window.dirty_at = Some(dirty_at);
         self.record_frame_state(FrameStateChange::Pending {
             window_id,
             dirty_at,
@@ -498,14 +574,19 @@ impl ForegroundJournalWriter {
     }
 
     fn record_window_closed(&mut self, window_id: WindowId, at: Instant) {
-        self.pending_frames.remove(&window_id);
+        self.windows.remove(&window_id);
         self.record_frame_state(FrameStateChange::Closed { window_id, at });
     }
 
     fn record_present(&mut self, timing: PresentTiming, frame: Option<FrameTiming>) {
+        if let Some(window) = self.windows.get_mut(&timing.window_id) {
+            window.dirty_at = None;
+        }
+        if self.power_interrupted_since(timing.present_start) {
+            return;
+        }
         match frame {
             Some(frame) => {
-                self.pending_frames.remove(&frame.window_id);
                 self.record_entry(ForegroundJournalEntry::Boundary(
                     IntervalBoundary::Presented(PresentedFrame {
                         frame,
@@ -514,7 +595,6 @@ impl ForegroundJournalWriter {
                 ));
             }
             None => {
-                self.pending_frames.remove(&timing.window_id);
                 self.record_event(ForegroundEvent::Present(timing));
             }
         }
@@ -605,6 +685,58 @@ fn with_journal(f: impl FnOnce(&mut ForegroundJournalWriter)) {
     });
 }
 
+pub(crate) fn observe_power(cx: &App) {
+    cx.on_system_sleep(|_| {
+        record_power_transition(PowerState::Suspended);
+    })
+    .detach();
+    // Visibility notifications delivered during sleep may have been missed.
+    cx.on_system_wake(|cx| {
+        record_power_transition(PowerState::Awake);
+        cx.spawn(async |cx| {
+            cx.update(|cx| {
+                for handle in cx.windows() {
+                    handle
+                        .update(cx, |_, window, cx| window.refresh_visibility(cx))
+                        .log_err();
+                }
+            });
+        })
+        .detach();
+    })
+    .detach();
+}
+
+pub(crate) fn record_power_transition(state: PowerState) {
+    with_journal(|journal| journal.power_transition(state, Instant::now()));
+}
+
+/// Whether work that started at `start` spans a sleep or a wake. Such work
+/// is dropped rather than measured.
+pub(crate) fn power_interrupted_since(start: Instant) -> bool {
+    let mut interrupted = false;
+    with_journal(|journal| interrupted = journal.power_interrupted_since(start));
+    interrupted
+}
+
+pub(crate) fn record_window_visibility(id: WindowId, visibility: WindowVisibility) {
+    with_journal(|journal| journal.set_visibility(id, visibility, Instant::now()));
+}
+
+/// Whether a frame sample that started at `start` was measured while the
+/// window stayed visible and the system stayed awake.
+pub(crate) fn frame_sample_is_valid(id: WindowId, start: Instant) -> bool {
+    let mut valid = true;
+    with_journal(|journal| {
+        valid = !journal.power_interrupted_since(start)
+            && journal.windows.get(&id).is_none_or(|window| {
+                window.visibility.is_visible()
+                    && window.visibility_changed_at.is_none_or(|at| start > at)
+            });
+    });
+    valid
+}
+
 // TODO(gpui-profiler): the turn brackets in the dispatchers and
 // WindowProfiler are bare begin/end call pairs rather than uses of this
 // guard. A caught unwind between a pair leaves `turn_depth` (and potentially
@@ -636,6 +768,10 @@ pub(crate) fn end_foreground_turn() {
 pub(crate) fn record_task_poll(timing: TaskTiming) {
     FOREGROUND_RUNNABLES.with(ForegroundRunnableCounter::finished);
     with_journal(|journal| {
+        if journal.power_interrupted_since(timing.start) {
+            journal.end_turn(timing.end.0);
+            return;
+        }
         if timing.poll_duration() >= TASK_POLL_FLOOR {
             journal.record_event(ForegroundEvent::TaskPoll(timing));
         } else {
@@ -1100,6 +1236,96 @@ mod tests {
     use super::*;
     use crate::{WindowId, profiler::YieldTime};
 
+    #[gpui::test]
+    fn wake_rechecks_native_visibility(cx: &mut crate::TestAppContext) {
+        use crate::PlatformWindow as _;
+        let handle = cx.add_window(|_, _| crate::Empty);
+        let platform = cx.test_window(handle.into());
+        platform.on_visibility_change(Box::new(|_| {}));
+        platform.simulate_visibility_change(WindowVisibility::Hidden);
+        handle
+            .update(cx, |_, window, _| assert!(window.is_visible()))
+            .expect("window");
+        cx.update(|cx| {
+            cx.system_wake_observers
+                .clone()
+                .retain(&(), |callback| callback(cx))
+        });
+        cx.run_until_parked();
+        handle
+            .update(cx, |_, window, _| assert!(!window.is_visible()))
+            .expect("window");
+    }
+
+    #[test]
+    fn power_interruption_drops_the_poll_before_small_poll_folding() {
+        let (journal, _guard) = install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let start = Instant::now();
+        begin_foreground_turn();
+        record_power_transition(PowerState::Suspended);
+        record_power_transition(PowerState::Awake);
+        assert!(power_interrupted_since(start));
+        record_task_poll(task_timing(start, start + Duration::from_micros(10)));
+        assert!(
+            collector
+                .collect_unseen()
+                .entries
+                .iter()
+                .all(|entry| matches!(
+                    entry,
+                    ForegroundJournalEntry::Boundary(IntervalBoundary::PowerTransition { .. })
+                ))
+        );
+        with_journal(|writer| assert!(writer.small_polls.is_none()));
+        begin_foreground_turn();
+        let start = Instant::now();
+        assert!(!power_interrupted_since(start));
+        record_task_poll(task_timing(start, start + TASK_POLL_FLOOR));
+        assert!(
+            collector
+                .collect_unseen()
+                .entries
+                .iter()
+                .any(|entry| matches!(
+                    entry,
+                    ForegroundJournalEntry::Event(ForegroundEvent::TaskPoll(_))
+                ))
+        );
+    }
+
+    #[test]
+    fn visibility_and_power_changes_clear_pending_frames() {
+        let (mut writer, _) = test_journal(ForegroundRunnableCounter::new());
+        let start = Instant::now();
+        let first = WindowId::from(1);
+        let second = WindowId::from(2);
+        writer.set_visibility(first, WindowVisibility::Hidden, start);
+        writer.record_frame_pending(first, start);
+        assert!(!writer.has_unexpired_pending_frame(start));
+        writer.record_frame_pending(second, start);
+        assert!(writer.has_unexpired_pending_frame(start));
+        writer.set_visibility(second, WindowVisibility::Hidden, start);
+        assert!(!writer.has_unexpired_pending_frame(start));
+        writer.set_visibility(first, WindowVisibility::Visible, start);
+        writer.record_frame_pending(first, start);
+        assert!(writer.has_unexpired_pending_frame(start));
+        writer.power_transition(PowerState::Suspended, start);
+        assert_eq!(writer.windows[&first].dirty_at, None);
+        writer.record_frame_pending(first, start);
+        assert!(!writer.has_unexpired_pending_frame(start));
+        // A repeated notification is not a transition.
+        writer.power_transition(PowerState::Suspended, start + FRAME_DEADLINE);
+        assert_eq!(writer.power_changed_at, Some(start));
+        writer.power_transition(PowerState::Awake, start);
+        writer.record_frame_pending(first, start);
+        assert!(writer.has_unexpired_pending_frame(start));
+        writer.record_present(presentation_timing(first, start + FRAME_DEADLINE), None);
+        assert_eq!(writer.windows[&first].dirty_at, None);
+        writer.record_window_closed(first, start);
+        assert!(!writer.windows.contains_key(&first));
+    }
+
     #[test]
     fn draw_waits_for_its_presentation_boundary() {
         let start = Instant::now();
@@ -1152,7 +1378,7 @@ mod tests {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration()
                 }
-                IntervalBoundary::Idle { .. } => None,
+                IntervalBoundary::Idle { .. } | IntervalBoundary::PowerTransition { .. } => None,
             },
             Some(Duration::from_millis(5))
         );
@@ -1978,6 +2204,7 @@ mod tests {
             boundary_kind: match snapshot.boundary {
                 IntervalBoundary::Idle { .. } => 0,
                 IntervalBoundary::Presented(_) => 1,
+                IntervalBoundary::PowerTransition { .. } => 2,
             },
             interval_end: snapshot.interval_end().duration_since(origin).as_micros() as u64,
             events: snapshot
@@ -2076,6 +2303,7 @@ mod tests {
                             boundary_kind: match boundary {
                                 IntervalBoundary::Idle { .. } => 0,
                                 IntervalBoundary::Presented(_) => 1,
+                                IntervalBoundary::PowerTransition { .. } => 2,
                             },
                             interval_end,
                             events: std::mem::take(&mut events),
@@ -2687,7 +2915,14 @@ mod tests {
                 );
                 prop_assert_eq!(writer.turn_depth, model.turn_depth);
                 prop_assert_eq!(writer.retained_since_boundary, model.retained_since_boundary);
-                prop_assert_eq!(writer.pending_frames.len(), model.pending_frames.len());
+                prop_assert_eq!(
+                    writer
+                        .windows
+                        .values()
+                        .filter(|window| window.dirty_at.is_some())
+                        .count(),
+                    model.pending_frames.len()
+                );
             }
         }
     }

@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/edit_prediction_metrics.rs"
+doctest = false
 
 [features]
 tree-sitter = ["dep:tree-sitter"]

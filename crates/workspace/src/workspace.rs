@@ -43,6 +43,7 @@ pub use remote::{
 };
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use client::{
     ChannelId, Client, ErrorExt, ParticipantIndex, Status, TypedEnvelope, User, UserStore,
@@ -11168,7 +11169,14 @@ pub fn open_paths(
                     open_options.requesting_window = Some(window);
                     window
                         .update(cx, |multi_workspace, _, cx| {
-                            multi_workspace.open_sidebar(cx);
+                            if AgentSettings::get_global(cx).threads_sidebar_auto_open {
+                                multi_workspace.open_sidebar(cx);
+                            } else {
+                                // Opening the sidebar is also what pins the
+                                // workspace we are about to navigate away from,
+                                // so pin it here to keep it in this window.
+                                multi_workspace.retain_active_workspace(cx);
+                            }
                         })
                         .log_err();
                 }

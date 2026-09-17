@@ -947,6 +947,7 @@ impl AgentThreadEntry {
 pub struct ToolCall {
     pub id: acp::ToolCallId,
     pub label: Entity<Markdown>,
+    title: Option<SharedString>,
     pub kind: acp::ToolKind,
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
@@ -974,15 +975,8 @@ impl ToolCall {
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
-        let title = if tool_call.kind == acp::ToolKind::Execute {
-            tool_call.title
-        } else if tool_call.kind == acp::ToolKind::Edit {
-            MarkdownEscaped(tool_call.title.as_str()).to_string()
-        } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
-            first_line.to_owned() + "…"
-        } else {
-            tool_call.title
-        };
+        let title =
+            Some(SharedString::from(tool_call.title)).filter(|title| !title.trim().is_empty());
         let mut content = Vec::with_capacity(tool_call.content.len());
         for item in tool_call.content {
             if let Some(item) = ToolCallContent::from_acp(
@@ -1013,15 +1007,18 @@ impl ToolCall {
             sandbox_fallback_authorization_details_from_meta(&tool_call.meta);
         let sandbox_not_applied = sandbox_not_applied_from_meta(&tool_call.meta);
 
-        let label = if tool_call.kind == acp::ToolKind::Execute {
-            cx.new(|cx| Markdown::new_text(title.into(), cx))
-        } else {
-            cx.new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx))
-        };
+        let label = Self::new_label(
+            title.as_ref(),
+            tool_name.as_ref(),
+            tool_call.kind,
+            language_registry,
+            cx,
+        );
 
         let result = Self {
             id: tool_call.tool_call_id,
             label,
+            title,
             kind: tool_call.kind,
             content,
             locations: tool_call.locations,
@@ -1037,6 +1034,46 @@ impl ToolCall {
             sandbox_not_applied,
         };
         Ok(result)
+    }
+
+    fn label_text(
+        title: Option<&SharedString>,
+        tool_name: Option<&SharedString>,
+        kind: acp::ToolKind,
+    ) -> SharedString {
+        let Some(title) = title else {
+            return tool_name
+                .filter(|name| !name.trim().is_empty())
+                .cloned()
+                .unwrap_or_else(|| "Tool call".into());
+        };
+
+        if kind == acp::ToolKind::Execute {
+            title.clone()
+        } else if kind == acp::ToolKind::Edit {
+            MarkdownEscaped(title).to_string().into()
+        } else if let Some((first_line, _)) = title.split_once('\n') {
+            (first_line.to_owned() + "…").into()
+        } else {
+            title.clone()
+        }
+    }
+
+    fn new_label(
+        title: Option<&SharedString>,
+        tool_name: Option<&SharedString>,
+        kind: acp::ToolKind,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Entity<Markdown> {
+        let text = Self::label_text(title, tool_name, kind);
+        cx.new(|cx| {
+            if title.is_none() || kind == acp::ToolKind::Execute {
+                Markdown::new_text(text, cx)
+            } else {
+                Markdown::new(text, Some(language_registry), None, cx)
+            }
+        })
     }
 
     fn update_fields(
@@ -1060,6 +1097,8 @@ impl ToolCall {
             ..
         } = fields;
 
+        let was_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
+        let mut label_changed = title.is_some() || kind.is_some();
         if let Some(kind) = kind {
             self.kind = kind;
         }
@@ -1070,10 +1109,12 @@ impl ToolCall {
 
         if let Some(tool_name) = name.map(SharedString::from) {
             self.tool_name = Some(tool_name);
+            label_changed = true;
         } else if self.tool_name.is_none() {
             // Legacy metadata only fills a missing name so it cannot replace a
             // first-class name received earlier.
             self.tool_name = tool_name_from_meta(&meta);
+            label_changed |= self.tool_name.is_some();
         }
 
         if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
@@ -1094,24 +1135,35 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
-            if self.kind == acp::ToolKind::Execute {
+            self.title = Some(SharedString::from(title)).filter(|title| !title.trim().is_empty());
+            if self.kind == acp::ToolKind::Execute
+                && let Some(title) = &self.title
+            {
+                // A missing tool title must not overwrite an actual terminal command.
                 for terminal in self.terminals() {
                     terminal.update(cx, |terminal, cx| {
-                        terminal.update_command_label(&title, cx);
+                        terminal.update_command_label(title, cx);
                     });
                 }
             }
-            self.label.update(cx, |label, cx| {
-                if self.kind == acp::ToolKind::Execute {
-                    label.replace(title, cx);
-                } else if self.kind == acp::ToolKind::Edit {
-                    label.replace(MarkdownEscaped(&title).to_string(), cx)
-                } else if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx);
-                } else {
-                    label.replace(title, cx);
+        }
+        if label_changed {
+            let is_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
+            if was_plain_text != is_plain_text {
+                self.label = Self::new_label(
+                    self.title.as_ref(),
+                    self.tool_name.as_ref(),
+                    self.kind,
+                    language_registry.clone(),
+                    cx,
+                );
+            } else {
+                let text =
+                    Self::label_text(self.title.as_ref(), self.tool_name.as_ref(), self.kind);
+                if self.label.read(cx).source() != &text {
+                    self.label.update(cx, |label, cx| label.replace(text, cx));
                 }
-            });
+            }
         }
 
         if let Some(content) = content {
@@ -1212,11 +1264,13 @@ impl ToolCall {
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
-        let mut markdown = format!(
-            "**Tool Call: {}**\nStatus: {}\n\n",
-            self.label.read(cx).source(),
-            self.status
-        );
+        let label = self.label.read(cx).source();
+        let label = if self.title.is_none() {
+            MarkdownEscaped(label).to_string()
+        } else {
+            label.to_string()
+        };
+        let mut markdown = format!("**Tool Call: {}**\nStatus: {}\n\n", label, self.status);
         for content in &self.content {
             markdown.push_str(content.to_markdown(cx).as_str());
             markdown.push_str("\n\n");
@@ -3381,6 +3435,7 @@ impl AcpThread {
                 let failed_tool_call = ToolCall {
                     id: update.id().clone(),
                     label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
+                    title: Some("Tool call not found".into()),
                     kind: acp::ToolKind::Fetch,
                     content: vec![ToolCallContent::ContentBlock(ContentBlock::new(
                         "Tool call not found".into(),
@@ -7025,6 +7080,176 @@ mod tests {
                     .starts_with("## Context Compaction (Canceled)\n\npartial summary\n\n")
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_tool_call_label_fallback(cx: &mut TestAppContext) {
+        use markdown::parser::{MarkdownEvent, MarkdownTag};
+
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        for (call, expected, has_strong_text) in [
+            (
+                acp::ToolCall::new("tool", "Reading **file**").name("read_file"),
+                "Reading **file**",
+                true,
+            ),
+            (acp::ToolCall::new("tool", ""), "Tool call", false),
+            (
+                acp::ToolCall::new("tool", "\n\t ").name(" \t"),
+                "Tool call",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "").name("**mcp__tool**"),
+                "**mcp__tool**",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "\n\t ")
+                    .name("**mcp__tool**")
+                    .kind(acp::ToolKind::Edit),
+                "**mcp__tool**",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "")
+                    .name("**mcp__tool**")
+                    .kind(acp::ToolKind::Execute),
+                "**mcp__tool**",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "").meta(meta_with_tool_name("legacy_tool")),
+                "legacy_tool",
+                false,
+            ),
+        ] {
+            let call = cx.update(|cx| {
+                ToolCall::from_acp(
+                    call,
+                    ToolCallStatus::Pending,
+                    languages.clone(),
+                    PathStyle::local(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("tool call should convert")
+            });
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let label = call.label.read(cx);
+                assert_eq!(label.source().as_ref(), expected);
+                assert_eq!(
+                    label.parsed_markdown().events().iter().any(|(_, event)| {
+                        matches!(event, MarkdownEvent::Start(MarkdownTag::Strong))
+                    }),
+                    has_strong_text
+                );
+                if call.title.is_none() {
+                    assert_eq!(
+                        call.to_markdown(cx),
+                        format!(
+                            "**Tool Call: {}**\nStatus: Pending\n\n",
+                            MarkdownEscaped(expected)
+                        )
+                    );
+                }
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn test_tool_call_label_updates_preserve_titles(cx: &mut TestAppContext) {
+        use markdown::parser::{MarkdownEvent, MarkdownTag};
+
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let mut call = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("tool", ""),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                PathStyle::local(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("tool call should convert")
+        });
+        for (update, expected, has_strong_text) in [
+            (
+                acp::ToolCallUpdateFields::new().name("**tool_name**"),
+                "**tool_name**",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().title("**Readable title**"),
+                "**Readable title**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().name("renamed_tool"),
+                "**Readable title**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().kind(acp::ToolKind::Execute),
+                "**Readable title**",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().kind(acp::ToolKind::Read),
+                "**Readable title**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().title("\n\t "),
+                "renamed_tool",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().name(" \t"),
+                "Tool call",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new()
+                    .title("**same_name**")
+                    .name("**same_name**"),
+                "**same_name**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().name("different_name"),
+                "**same_name**",
+                true,
+            ),
+        ] {
+            cx.update(|cx| {
+                call.update_fields(
+                    update,
+                    None,
+                    languages.clone(),
+                    PathStyle::local(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("tool label update should apply");
+            });
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let label = call.label.read(cx);
+                assert_eq!(label.source().as_ref(), expected);
+                assert_eq!(
+                    label.parsed_markdown().events().iter().any(|(_, event)| {
+                        matches!(event, MarkdownEvent::Start(MarkdownTag::Strong))
+                    }),
+                    has_strong_text
+                );
+            });
+        }
     }
 
     #[gpui::test]
