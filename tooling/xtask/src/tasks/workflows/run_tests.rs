@@ -92,6 +92,17 @@ pub(crate) fn run_tests() -> Workflow {
             .then(check_licenses()),
         should_check_scripts.and_always().then(check_scripts(true)),
     ];
+    for (platform, arch) in [
+        (Platform::Linux, Arch::X86_64),
+        (Platform::Mac, Arch::AARCH64),
+        (Platform::Windows, Arch::X86_64),
+    ] {
+        jobs.push(
+            should_run_tests
+                .and_always()
+                .then(check_remote_server(platform, arch)),
+        );
+    }
     let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
 
@@ -427,7 +438,7 @@ fn check_style() -> NamedJob {
             "typos",
             "2d0ce569feab1f8752f1dde43cc2f2aa53236e06",
         ) // v1.40.0
-        .with(("config", "./typos.toml"))
+        .with(("config", "./.config/typos.toml"))
     }
 
     named::job(
@@ -522,6 +533,67 @@ fn check_wasm() -> NamedJob {
     )
 }
 
+fn check_remote_server(platform: Platform, arch: Arch) -> NamedJob {
+    let target = platform.target_triple(arch);
+    let runner = match (platform, arch) {
+        (Platform::Linux, Arch::X86_64) => runners::LINUX_LARGE,
+        (Platform::Linux, Arch::AARCH64) => runners::LINUX_ARM_BUNDLER,
+        (Platform::Mac, _) => runners::MAC_DEFAULT,
+        (Platform::Windows, _) => runners::WINDOWS_DEFAULT,
+    };
+    let command = format!(
+        "cargo --config .cargo/ci-config.toml check --locked --release --package remote_server --target {target}"
+    );
+    let check = match platform {
+        Platform::Windows => {
+            let architecture = match arch {
+                Arch::X86_64 => "amd64",
+                Arch::AARCH64 => "arm64",
+            };
+            named::pwsh(&formatdoc! {r#"
+                $hostArchitecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {{
+                    "X64" {{ "amd64" }}
+                    "Arm64" {{ "arm64" }}
+                    default {{ throw "Unsupported architecture" }}
+                }}
+                Push-Location
+                & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch {architecture} -HostArch $hostArchitecture
+                Pop-Location
+                {command}
+            "#})
+        }
+        Platform::Linux | Platform::Mac => named::bash(command),
+    };
+    NamedJob {
+        name: format!("check_remote_server_{platform}_{arch}"),
+        job: release_job(&[])
+            .runs_on(runner)
+            .when(platform == Platform::Linux, |job| {
+                use_clang(job)
+                    .add_env((format!("CC_{}", target.replace('-', "_")), "musl-gcc"))
+                    .add_env((
+                        format!(
+                            "CARGO_TARGET_{}_RUSTFLAGS",
+                            target.replace('-', "_").to_uppercase(),
+                        ),
+                        "-C target-feature=+crt-static",
+                    ))
+                    .add_step(steps::harden_runner())
+            })
+            .add_step(steps::checkout_repo())
+            .when(platform != Platform::Windows, |job| {
+                job.add_step(steps::cache_rust_dependencies_namespace())
+            })
+            .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::setup_linux())
+            })
+            .add_step(named::run(platform, &format!("rustup target add {target}")))
+            .add_step(steps::setup_sccache(platform))
+            .add_step(check)
+            .add_step(steps::show_sccache_stats(platform)),
+    }
+}
+
 fn check_workspace_binaries() -> NamedJob {
     named::job(use_clang(
         release_job(&[])
@@ -540,9 +612,8 @@ fn check_workspace_binaries() -> NamedJob {
 }
 
 pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> NamedJob {
-    let target = arch.map(|arch| match (platform, arch) {
-        (Platform::Mac, Arch::X86_64) => "x86_64-apple-darwin",
-        (Platform::Mac, Arch::AARCH64) => "aarch64-apple-darwin",
+    let target = arch.map(|arch| match platform {
+        Platform::Mac => platform.target_triple(arch),
         _ => unimplemented!("cross-arch clippy not supported for {platform}/{arch}"),
     });
     let runner = match platform {
