@@ -36,8 +36,10 @@ pub(crate) fn run_tests() -> Workflow {
         "run_action_checks",
         r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/",
     );
-    let should_check_licences =
-        PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
+    let should_check_licences = PathCondition::new(
+        "run_licenses",
+        r"^(Cargo\.lock$|script/.*licenses|(?:.*/)?LICENSE[^/]*$)",
+    );
 
     let orchestrate = orchestrate(&[
         &should_check_scripts,
