@@ -271,81 +271,14 @@ impl EventEmitter<DismissEvent> for ContextMenu {}
 impl FluentBuilder for ContextMenu {}
 
 impl ContextMenu {
+    #[inline(always)]
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
-        f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
+        build_menu: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
-        let _on_blur_subscription = cx.on_blur(
-            &focus_handle,
-            window,
-            |this: &mut ContextMenu, window, cx| {
-                if let Some(ignore_until) = this.ignore_blur_until {
-                    if Instant::now() < ignore_until {
-                        return;
-                    } else {
-                        this.ignore_blur_until = None;
-                    }
-                }
-
-                if this.main_menu.is_none() {
-                    if let SubmenuState::Open(open_submenu) = &this.submenu_state {
-                        let submenu_focus = open_submenu.entity.read(cx).focus_handle.clone();
-                        if submenu_focus.contains_focused(window, cx) {
-                            return;
-                        }
-                    }
-                }
-
-                this.cancel(&menu::Cancel, window, cx)
-            },
-        );
-        window.refresh();
-
-        // When the menu first receives focus (i.e. when it opens), move the
-        // selection onto a menu item so assistive technology announces a real
-        // item rather than the bare menu container. Per the ARIA menu button
-        // pattern, opening a menu places focus on a menu item; for select-style
-        // menus we prefer the currently-checked item. We only do this when
-        // nothing is selected yet so we don't override an existing selection.
-        cx.on_focus_in(&focus_handle, window, |this, window, cx| {
-            if this.selected_index.is_none() && !this.suppress_focus_selection {
-                this.select_toggled_or_first(window, cx);
-            }
-            this.suppress_focus_selection = false;
-        })
-        .detach();
-
-        f(
-            Self {
-                builder: None,
-                items: Default::default(),
-                focus_handle,
-                action_context: None,
-                selected_index: None,
-                delayed: false,
-                clicked: false,
-                end_slot_action: None,
-                key_context: "menu".into(),
-                _on_blur_subscription,
-                keep_open_on_confirm: false,
-                fixed_width: None,
-                main_menu: None,
-                main_menu_observed_bounds: Rc::new(Cell::new(None)),
-                documentation_aside: None,
-                aside_trigger_bounds: Rc::new(RefCell::new(HashMap::default())),
-                submenu_state: SubmenuState::Closed,
-                hover_target: HoverTarget::MainMenu,
-                submenu_safety_threshold_x: None,
-                submenu_trigger_bounds: Rc::new(Cell::new(None)),
-                submenu_trigger_mouse_down: false,
-                ignore_blur_until: None,
-                suppress_focus_selection: false,
-            },
-            window,
-            cx,
-        )
+        let menu = Self::new_inner(window, cx);
+        build_menu(menu, window, cx)
     }
 
     pub fn build(
@@ -2174,6 +2107,76 @@ impl ContextMenu {
                     }),
             )
             .into_any_element()
+    }
+
+    #[inline(never)]
+    fn new_inner(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        let _on_blur_subscription = cx.on_blur(
+            &focus_handle,
+            window,
+            |context_menu: &mut ContextMenu, window, cx| {
+                if let Some(ignore_until) = context_menu.ignore_blur_until {
+                    if Instant::now() < ignore_until {
+                        return;
+                    } else {
+                        context_menu.ignore_blur_until = None;
+                    }
+                }
+
+                if context_menu.main_menu.is_none() {
+                    if let SubmenuState::Open(open_submenu) = &context_menu.submenu_state {
+                        let submenu_focus = open_submenu.entity.read(cx).focus_handle.clone();
+                        if submenu_focus.contains_focused(window, cx) {
+                            return;
+                        }
+                    }
+                }
+
+                context_menu.cancel(&menu::Cancel, window, cx)
+            },
+        );
+        window.refresh();
+
+        // When the menu first receives focus (i.e. when it opens), move the
+        // selection onto a menu item so assistive technology announces a real
+        // item rather than the bare menu container. Per the ARIA menu button
+        // pattern, opening a menu places focus on a menu item; for select-style
+        // menus we prefer the currently-checked item. We only do this when
+        // nothing is selected yet so we don't override an existing selection.
+        cx.on_focus_in(&focus_handle, window, |context_menu, window, cx| {
+            if context_menu.selected_index.is_none() && !context_menu.suppress_focus_selection {
+                context_menu.select_toggled_or_first(window, cx);
+            }
+            context_menu.suppress_focus_selection = false;
+        })
+        .detach();
+
+        Self {
+            builder: None,
+            items: Vec::new(),
+            focus_handle,
+            action_context: None,
+            selected_index: None,
+            delayed: false,
+            clicked: false,
+            end_slot_action: None,
+            key_context: SharedString::from("menu"),
+            _on_blur_subscription,
+            keep_open_on_confirm: false,
+            fixed_width: None,
+            main_menu: None,
+            main_menu_observed_bounds: Rc::new(Cell::new(None)),
+            documentation_aside: None,
+            aside_trigger_bounds: Rc::new(RefCell::new(HashMap::default())),
+            submenu_state: SubmenuState::Closed,
+            hover_target: HoverTarget::MainMenu,
+            submenu_safety_threshold_x: None,
+            submenu_trigger_bounds: Rc::new(Cell::new(None)),
+            submenu_trigger_mouse_down: false,
+            ignore_blur_until: None,
+            suppress_focus_selection: false,
+        }
     }
 }
 
