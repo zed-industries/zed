@@ -99,6 +99,15 @@ impl VsCodeSettings {
             .map(|s| s.to_owned())
     }
 
+    fn read_window_title_format(&self) -> Option<String> {
+        self.read_string("window.title")
+            .map(|template| translate_vscode_window_title_format(&template))
+            // If every placeholder is dropped during translation, keep Zed's
+            // default title behavior instead of importing a template that
+            // renders as nothing but whitespace.
+            .filter(|template| !template.trim().is_empty())
+    }
+
     fn read_bool(&self, setting: &str) -> Option<bool> {
         self.read_value(setting).and_then(|v| v.as_bool())
     }
@@ -179,11 +188,17 @@ impl VsCodeSettings {
             base_keymap: Some(BaseKeymapContent::VSCode),
             calls: None,
             collaboration_panel: None,
+            command_palette: self
+                .read_u64("workbench.commandPalette.history")
+                .map(|history| CommandPaletteSettingsContent {
+                    use_command_history: Some(history > 0),
+                }),
             credentials_url: None,
             debugger: None,
             diagnostics: None,
             editor: self.editor_settings_content(),
             extension: ExtensionSettingsContent::default(),
+            call_hierarchy: None,
             file_finder: None,
             git: self.git_settings_content(),
             git_panel: self.git_panel_settings_content(),
@@ -244,6 +259,7 @@ impl VsCodeSettings {
     fn editor_settings_content(&self) -> EditorSettingsContent {
         EditorSettingsContent {
             auto_signature_help: self.read_bool("editor.parameterHints.enabled"),
+            language_detection: self.read_bool("workbench.editor.languageDetection"),
             autoscroll_on_clicks: None,
             cursor_blink: self.read_enum("editor.cursorBlinking", |s| match s {
                 "blink" | "phase" | "expand" | "smooth" => Some(true),
@@ -257,6 +273,7 @@ impl VsCodeSettings {
                 "underline" | "underline-thin" => Some(CursorShape::Underline),
                 _ => None,
             }),
+            cursor_animation: None,
             current_line_highlight: self.read_enum("editor.renderLineHighlight", |s| match s {
                 "gutter" => Some(CurrentLineHighlight::Gutter),
                 "line" => Some(CurrentLineHighlight::Line),
@@ -377,6 +394,7 @@ impl VsCodeSettings {
     fn search_content(&self) -> Option<SearchSettingsContent> {
         skip_default(SearchSettingsContent {
             include_ignored: self.read_bool("search.useIgnoreFiles"),
+            search_on_type: self.read_bool("search.searchOnType"),
             ..Default::default()
         })
     }
@@ -678,7 +696,13 @@ impl VsCodeSettings {
     fn outline_panel_settings_content(&self) -> Option<OutlinePanelSettingsContent> {
         skip_default(OutlinePanelSettingsContent {
             file_icons: self.read_bool("outline.icons"),
-            folder_icons: self.read_bool("outline.icons"),
+            folder_indicator: self.read_bool("outline.icons").map(|icons| {
+                if icons {
+                    FolderIndicator::Icon
+                } else {
+                    FolderIndicator::Chevron
+                }
+            }),
             git_status: self.read_bool("git.decorations.enabled"),
             ..Default::default()
         })
@@ -807,6 +831,7 @@ impl VsCodeSettings {
             cursor_position_button: None,
             line_endings_button: None,
             active_encoding_button: None,
+            pending_keystrokes_indicator: None,
         })
     }
 
@@ -816,12 +841,13 @@ impl VsCodeSettings {
             auto_reveal_entries: self.read_bool("explorer.autoReveal"),
             bold_folder_labels: None,
             button: None,
+            title_tooltip_delay: None,
             default_width: None,
             dock: None,
             drag_and_drop: None,
             entry_spacing: None,
             file_icons: None,
-            folder_icons: None,
+            folder_indicator: None,
             git_status: self.read_bool("git.decorations.enabled"),
             hide_gitignore: self.read_bool("explorer.excludeGitIgnore"),
             hide_hidden: None,
@@ -1000,10 +1026,6 @@ impl VsCodeSettings {
             agent_buffer_font_family: None,
             agent_buffer_font_size: None,
             git_commit_buffer_font_size: None,
-            markdown_preview_font_family: None,
-            markdown_preview_code_font_family: None,
-            markdown_preview_font_size: None,
-            markdown_preview_theme: None,
             theme: None,
             icon_theme: None,
             ui_density: None,
@@ -1053,11 +1075,13 @@ impl VsCodeSettings {
             } else {
                 None
             },
+            on_new_window: None,
             on_last_window_closed: None,
             pane_split_direction_horizontal: None,
             pane_split_direction_vertical: None,
             resize_all_panels_in_dock: None,
             restore_on_file_reopen: self.read_bool("workbench.editor.restoreViewState"),
+            reveal_if_open: self.read_bool("workbench.editor.revealIfOpen"),
             restore_on_startup: None,
             window_decorations: None,
             show_call_status_icon: None,
@@ -1071,6 +1095,8 @@ impl VsCodeSettings {
                     FullscreenMode::Simple
                 }
             }),
+            window_title_format: self.read_window_title_format(),
+            window_title_separator: self.read_string("window.titleSeparator"),
             when_closing_with_no_tabs: self.read_bool("window.closeWhenEmpty").map(|b| {
                 if b {
                     CloseWindowWhenNoItems::CloseWindow
@@ -1122,8 +1148,19 @@ impl VsCodeSettings {
             scan_symlinks: None,
             private_files: None,
             hidden_files: None,
+            // Zed cannot represent the writable exceptions in `files.readonlyExclude`
             read_only_files: self
-                .read_value("files.readonlyExclude")
+                .read_value("files.readonlyInclude")
+                .filter(|_| {
+                    !self
+                        .read_value("files.readonlyExclude")
+                        .and_then(Value::as_object)
+                        .is_some_and(|patterns| {
+                            patterns
+                                .values()
+                                .any(|enabled| enabled.as_bool() == Some(true))
+                        })
+                })
                 .and_then(|v| v.as_object())
                 .map(|v| {
                     v.iter()
@@ -1136,9 +1173,54 @@ impl VsCodeSettings {
                         })
                         .collect::<Vec<_>>()
                 })
-                .filter(|r| !r.is_empty()),
+                .filter(|r| !r.is_empty())
+                .map(SplicingVec::from),
         }
     }
+}
+
+fn translate_vscode_window_title_format(template: &str) -> String {
+    let mut translated = String::new();
+    let mut start = 0;
+
+    // Workspace owns the runtime template parser, so the VS Code importer keeps
+    // its own small placeholder scan here instead of depending on that crate.
+    while let Some(offset) = template[start..].find("${") {
+        let variable_start = start + offset;
+        translated.push_str(&template[start..variable_start]);
+
+        let content_start = variable_start + 2;
+        let Some(content_end_offset) = template[content_start..].find('}') else {
+            translated.push_str(&template[variable_start..]);
+            return translated;
+        };
+
+        let content_end = content_start + content_end_offset;
+        let variable = &template[content_start..content_end];
+        match variable {
+            "projectName" | "fileName" | "filePath" | "relativePath" | "fileStem"
+            | "remoteHost" | "appName" | "branch" | "separator" => {
+                translated.push_str(&template[variable_start..=content_end]);
+            }
+            // Keep VS Code alias support in the importer so native Zed settings
+            // only expose the documented placeholder names.
+            "rootName" => translated.push_str("${projectName}"),
+            "activeEditorShort" => translated.push_str("${fileName}"),
+            "activeEditorMedium" => translated.push_str("${relativePath}"),
+            "activeEditorLong" => translated.push_str("${filePath}"),
+            "activeRepositoryBranchName" => translated.push_str("${branch}"),
+            // VS Code's `${remoteName}` is a provider label such as `SSH`, while
+            // Zed's `${remoteName}` resolves to the connection's name or host,
+            // so the token is dropped rather than imported with mismatched
+            // semantics.
+            _ => {}
+        }
+
+        start = content_end + 1;
+    }
+
+    translated.push_str(&template[start..]);
+    translated
 }
 
 fn skip_default<T: Default + PartialEq>(value: T) -> Option<T> {
@@ -1152,12 +1234,79 @@ fn skip_default<T: Default + PartialEq>(value: T) -> Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings_content::merge_from::MergeFrom;
 
     fn imported_reduce_motion(content: &str) -> Option<ReduceMotionMode> {
         VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
             .unwrap()
             .settings_content()
             .reduce_motion
+    }
+
+    #[test]
+    fn test_import_read_only_files() -> Result<()> {
+        let inherited = WorktreeSettingsContent {
+            read_only_files: Some(SplicingVec::from(vec!["**/*.lock".to_string()])),
+            ..Default::default()
+        };
+        let imported = VsCodeSettings::from_str(
+            r#"{
+                "files.readonlyInclude": {"**/*.gen.rs": true, "**/*.lock": false},
+                "files.readonlyExclude": {"**/editable.gen.rs": false}
+            }"#,
+            VsCodeSettingsSource::VsCode,
+        )?
+        .worktree_settings_content();
+        assert_eq!(
+            serde_json::to_value(&imported.read_only_files)?,
+            serde_json::json!(["**/*.gen.rs"])
+        );
+        let mut replaced = inherited.clone();
+        replaced.merge_from(&imported);
+        assert_eq!(replaced.read_only_files, imported.read_only_files);
+
+        for content in [
+            r#"{"files.readonlyExclude": {"**/*.gen.rs": true}}"#,
+            r#"{"files.readonlyInclude": {"**/*.gen.rs": false}}"#,
+            r#"{"files.readonlyInclude": {}}"#,
+            "{}",
+        ] {
+            let imported = VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)?
+                .worktree_settings_content();
+            assert_eq!(imported.read_only_files, None);
+            let mut unchanged = inherited.clone();
+            unchanged.merge_from(&imported);
+            assert_eq!(unchanged.read_only_files, inherited.read_only_files);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_import_read_only_files_with_exclusions() -> Result<()> {
+        let imported = VsCodeSettings::from_str(
+            r#"{
+                "files.readonlyExclude": {"**/*.lock": true, "**/editable.gen.rs": true},
+                "files.readonlyInclude": {"**/*.gen.rs": true},
+                "editor.tabSize": 8
+            }"#,
+            VsCodeSettingsSource::VsCode,
+        )?
+        .settings_content();
+        assert_eq!(imported.project.worktree.read_only_files, None);
+        assert_eq!(
+            imported.project.all_languages.defaults.tab_size,
+            NonZeroU32::new(8)
+        );
+        let mut inherited = WorktreeSettingsContent {
+            read_only_files: Some(SplicingVec::from(vec![String::from("**/*.lock")])),
+            ..WorktreeSettingsContent::default()
+        };
+        inherited.merge_from(&imported.project.worktree);
+        assert_eq!(
+            serde_json::to_value(&inherited.read_only_files)?,
+            serde_json::json!(["**/*.lock"])
+        );
+        Ok(())
     }
 
     #[test]
@@ -1175,5 +1324,84 @@ mod tests {
             None
         );
         assert_eq!(imported_reduce_motion("{}"), None);
+    }
+
+    #[test]
+    fn test_import_command_palette_history() {
+        for (content, expected) in [
+            (r#"{ "workbench.commandPalette.history": 0 }"#, Some(false)),
+            (r#"{ "workbench.commandPalette.history": 1 }"#, Some(true)),
+            (r#"{ "workbench.commandPalette.history": 50 }"#, Some(true)),
+            ("{}", None),
+        ] {
+            let settings = VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+                .unwrap()
+                .settings_content();
+            assert_eq!(
+                settings
+                    .command_palette
+                    .and_then(|settings| settings.use_command_history),
+                expected,
+            );
+        }
+    }
+
+    #[test]
+    fn test_import_reveal_if_open() {
+        let settings = VsCodeSettings::from_str(
+            r#"{ "workbench.editor.revealIfOpen": true }"#,
+            VsCodeSettingsSource::VsCode,
+        )
+        .unwrap()
+        .settings_content();
+
+        assert_eq!(settings.workspace.reveal_if_open, Some(true));
+    }
+
+    #[test]
+    fn test_import_window_title_format() {
+        let imported_title = |content: &str| {
+            VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+                .unwrap()
+                .settings_content()
+                .workspace
+                .window_title_format
+        };
+
+        assert_eq!(imported_title("{}"), None);
+
+        // VS Code variables are translated to their Zed equivalents.
+        assert_eq!(
+            imported_title(
+                r#"{ "window.title": "${rootName} ${activeRepositoryBranchName} ${activeEditorMedium}" }"#,
+            ),
+            Some("${projectName} ${branch} ${relativePath}".to_string())
+        );
+
+        // Zed-native variables pass through unchanged.
+        assert_eq!(
+            imported_title(r#"{ "window.title": "${projectName}${separator}${filePath}" }"#),
+            Some("${projectName}${separator}${filePath}".to_string())
+        );
+
+        // VS Code's `${remoteName}` is a provider label such as `SSH`, which
+        // doesn't match Zed's connection-name semantics, so it is dropped.
+        assert_eq!(
+            imported_title(r#"{ "window.title": "${remoteName}: ${rootName}" }"#),
+            Some(": ${projectName}".to_string())
+        );
+
+        // Templates that translate to nothing but whitespace fall back to
+        // Zed's default title instead of overriding it.
+        assert_eq!(
+            imported_title(r#"{ "window.title": " ${activeFolderShort} " }"#),
+            None
+        );
+
+        // Literal text around unsupported variables is still imported.
+        assert_eq!(
+            imported_title(r#"{ "window.title": "${activeFolderShort} — literal" }"#),
+            Some(" — literal".to_string())
+        );
     }
 }

@@ -40,7 +40,7 @@ impl RootUserSettings for ProjectSettingsContent {
 }
 
 #[with_fallible_options]
-#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, JsonSchema, MergeFrom)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
     pub all_languages: AllLanguageSettingsContent,
@@ -86,6 +86,14 @@ pub struct ProjectSettingsContent {
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
 }
+
+crate::fallible_options::flattened_deserialize!(ProjectSettingsContent {
+    sections: { all_languages, worktree },
+    options: {
+        terminal, context_server_timeout, load_direnv, git_hosting_providers, disable_ai,
+    },
+    defaults: { lsp, dap, context_servers },
+});
 
 /// When to scan content of linked directories.
 #[derive(
@@ -175,8 +183,12 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as read-only. These files can be opened and viewed,
     /// but cannot be edited. This is useful for generated files, build outputs, or files from
     /// external dependencies that should not be modified directly.
+    ///
+    /// A "..." entry expands to the value being overridden. Leave "..." out
+    /// to replace the inherited globs, or use an empty list to clear them.
+    ///
     /// Default: []
-    pub read_only_files: Option<Vec<String>>,
+    pub read_only_files: Option<SplicingVec>,
 }
 
 #[with_fallible_options]
@@ -281,19 +293,24 @@ impl SemanticTokenRules {
     pub const FILE_NAME: &'static str = "semantic_token_rules.json";
 
     pub fn load(file_path: &Path) -> anyhow::Result<Self> {
-        let rules_content = std::fs::read(file_path).with_context(|| {
+        let rules_content = std::fs::read_to_string(file_path).with_context(|| {
             anyhow::anyhow!(
                 "Could not read semantic token rules from {}",
                 file_path.display()
             )
         })?;
 
-        serde_json_lenient::from_slice::<SemanticTokenRules>(&rules_content).with_context(|| {
+        Self::parse(&rules_content).with_context(|| {
             anyhow::anyhow!(
                 "Failed to parse semantic token rules from {}",
                 file_path.display()
             )
         })
+    }
+
+    pub fn parse(file_content: &str) -> anyhow::Result<Self> {
+        serde_json_lenient::from_str::<SemanticTokenRules>(file_content)
+            .context("failed to parse semantic token rules")
     }
 }
 
@@ -457,6 +474,7 @@ pub enum ContextServerSettingsContent {
         ///
         /// Consult the documentation for the context server to see what settings
         /// are supported.
+        #[serde(default)]
         settings: serde_json::Value,
     },
 }
@@ -941,7 +959,7 @@ pub enum GitHostingProviderKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{REST_OF_FILE_SCAN_EXCLUSIONS, merge_from::MergeFrom};
+    use crate::merge_from::MergeFrom;
 
     fn exclusions(globs: &[&str]) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
@@ -960,10 +978,7 @@ mod tests {
         let defaults = exclusions(&["**/.git", "**/.DS_Store"]);
 
         let mut extended = defaults.clone();
-        extended.merge_from(&exclusions(&[
-            "**/node_modules",
-            REST_OF_FILE_SCAN_EXCLUSIONS,
-        ]));
+        extended.merge_from(&exclusions(&["**/node_modules", SplicingVec::REST]));
         assert_eq!(
             extended.file_scan_exclusions.unwrap().0,
             vec!["**/node_modules", "**/.git", "**/.DS_Store"]
@@ -980,8 +995,8 @@ mod tests {
     #[test]
     fn test_file_scan_exclusions_splice_each_layer() {
         let mut settings = exclusions(&["**/.git"]);
-        settings.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS, "**/target"]));
-        settings.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS, "**/dist"]));
+        settings.merge_from(&exclusions(&[SplicingVec::REST, "**/target"]));
+        settings.merge_from(&exclusions(&[SplicingVec::REST, "**/dist"]));
 
         assert_eq!(
             settings.file_scan_exclusions.unwrap().0,
@@ -992,14 +1007,11 @@ mod tests {
     #[test]
     fn test_file_scan_exclusions_splice_edge_cases() {
         let mut repeated = exclusions(&["**/.git"]);
-        repeated.merge_from(&exclusions(&[
-            REST_OF_FILE_SCAN_EXCLUSIONS,
-            REST_OF_FILE_SCAN_EXCLUSIONS,
-        ]));
+        repeated.merge_from(&exclusions(&[SplicingVec::REST, SplicingVec::REST]));
         assert_eq!(repeated.file_scan_exclusions.unwrap().0, vec!["**/.git"]);
 
         let mut relisted = exclusions(&["**/.git", "**/.DS_Store"]);
-        relisted.merge_from(&exclusions(&["**/.git", REST_OF_FILE_SCAN_EXCLUSIONS]));
+        relisted.merge_from(&exclusions(&["**/.git", SplicingVec::REST]));
         assert_eq!(
             relisted.file_scan_exclusions.unwrap().0,
             vec!["**/.git", "**/.DS_Store"]
@@ -1010,7 +1022,7 @@ mod tests {
         assert!(cleared.file_scan_exclusions.unwrap().0.is_empty());
 
         let mut unchanged = exclusions(&["**/.git", "**/.DS_Store"]);
-        unchanged.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS]));
+        unchanged.merge_from(&exclusions(&[SplicingVec::REST]));
         assert_eq!(
             unchanged.file_scan_exclusions.unwrap().0,
             vec!["**/.git", "**/.DS_Store"]
@@ -1020,7 +1032,7 @@ mod tests {
     #[test]
     fn test_file_scan_exclusions_splice_without_a_base_layer() {
         let mut settings = WorktreeSettingsContent::default();
-        settings.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS, "**/target"]));
+        settings.merge_from(&exclusions(&[SplicingVec::REST, "**/target"]));
 
         // `Option::merge_from` replaces a `None` base outright rather than
         // splicing, so the sentinel survives here. `assets/settings/default.json`
@@ -1028,7 +1040,75 @@ mod tests {
         // unwraps it, so no glob is ever compiled from this state.
         assert_eq!(
             settings.file_scan_exclusions.unwrap().0,
-            vec![REST_OF_FILE_SCAN_EXCLUSIONS, "**/target"]
+            vec![SplicingVec::REST, "**/target"]
+        );
+    }
+
+    fn read_only_files(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            read_only_files: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_read_only_files_splice_rest_of_list() {
+        let inherited = read_only_files(&["**/*.lock"]);
+        let mut extended = inherited.clone();
+        extended.merge_from(&read_only_files(&["**/generated/**", SplicingVec::REST]));
+        assert_eq!(extended, read_only_files(&["**/generated/**", "**/*.lock"]));
+
+        let mut replaced = inherited;
+        replaced.merge_from(&read_only_files(&["**/generated/**"]));
+        assert_eq!(replaced, read_only_files(&["**/generated/**"]));
+    }
+
+    #[test]
+    fn test_read_only_files_splice_each_layer() {
+        let mut settings = read_only_files(&[]);
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/*.lock"]));
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/generated/**"]));
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/vendor/**"]));
+        assert_eq!(
+            settings,
+            read_only_files(&["**/*.lock", "**/generated/**", "**/vendor/**"])
+        );
+    }
+
+    #[test]
+    fn test_read_only_files_splice_edge_cases() {
+        let inherited = read_only_files(&["**/*.gen.rs", "**/*.lock"]);
+        let mut repeated = inherited.clone();
+        repeated.merge_from(&read_only_files(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(repeated, inherited);
+
+        let mut relisted = inherited.clone();
+        relisted.merge_from(&read_only_files(&["**/*.lock", SplicingVec::REST]));
+        assert_eq!(relisted, read_only_files(&["**/*.lock", "**/*.gen.rs"]));
+
+        let mut cleared = inherited.clone();
+        cleared.merge_from(&read_only_files(&[]));
+        assert_eq!(cleared, read_only_files(&[]));
+
+        let mut unchanged = inherited.clone();
+        unchanged.merge_from(&read_only_files(&[SplicingVec::REST]));
+        assert_eq!(unchanged, inherited);
+        unchanged.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(unchanged, inherited);
+    }
+
+    #[test]
+    fn test_read_only_files_splice_without_a_base_layer() {
+        let mut settings = WorktreeSettingsContent::default();
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/generated/**"]));
+        assert_eq!(
+            settings,
+            read_only_files(&[SplicingVec::REST, "**/generated/**"])
         );
     }
 

@@ -734,10 +734,10 @@ pub fn set_trace_enabled(enabled: bool) -> bool {
     }
 }
 
-#[cfg(any(feature = "bench", all(test, feature = "profiler")))]
+#[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
 pub(crate) struct TraceGuard;
 
-#[cfg(any(feature = "bench", all(test, feature = "profiler")))]
+#[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
 pub(crate) fn trace_scope() -> TraceGuard {
     let incremented = TRACE_STATE.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
         (state & TRACE_SCOPE_COUNT_MASK < TRACE_SCOPE_COUNT_MASK).then_some(state + 1)
@@ -746,7 +746,7 @@ pub(crate) fn trace_scope() -> TraceGuard {
     TraceGuard
 }
 
-#[cfg(any(feature = "bench", all(test, feature = "profiler")))]
+#[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
 impl Drop for TraceGuard {
     fn drop(&mut self) {
         let previous_state =
@@ -961,16 +961,25 @@ impl WindowProfiler {
             return;
         };
 
-        journal::record_input(journal::InputTiming {
-            kind,
-            start: started_at,
-            end: Instant::now(),
-            caused_invalidation,
-        });
+        if !journal::power_interrupted_since(started_at) {
+            journal::record_input(journal::InputTiming {
+                kind,
+                start: started_at,
+                end: Instant::now(),
+                caused_invalidation,
+            });
+        }
         journal::end_foreground_turn();
 
-        if !caused_invalidation {
+        if !caused_invalidation || !journal::frame_sample_is_valid(self.window_id, started_at) {
             return;
+        }
+        if self
+            .first_input_at
+            .is_some_and(|at| !journal::frame_sample_is_valid(self.window_id, at))
+        {
+            self.first_input_at = None;
+            self.pending_input_count = 0;
         }
 
         let arrived_during_draw = self
@@ -1003,11 +1012,13 @@ impl WindowProfiler {
             journal::end_foreground_turn();
             return;
         };
-        journal::record_action(ActionTiming {
-            name,
-            start,
-            end: Instant::now(),
-        });
+        if !journal::power_interrupted_since(start) {
+            journal::record_action(ActionTiming {
+                name,
+                start,
+                end: Instant::now(),
+            });
+        }
         journal::end_foreground_turn();
     }
 
@@ -1034,13 +1045,15 @@ impl WindowProfiler {
         let draw_end = Instant::now();
         let frame_timing = FrameTiming {
             window_id: self.window_id,
-            dirty_at,
+            dirty_at: dirty_at.filter(|at| journal::frame_sample_is_valid(self.window_id, *at)),
             invalidations,
             draw_start,
             draw_end,
         };
         let draw_duration = frame_timing.draw_duration();
-        self.record_draw_timing(frame_timing);
+        if !journal::power_interrupted_since(draw_start) {
+            self.record_draw_timing(frame_timing);
+        }
         journal::end_foreground_turn();
         draw_duration
     }
@@ -1089,21 +1102,33 @@ impl WindowProfiler {
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
-        if let Some(first_input_at) = self.first_input_at.take() {
+        if let Some(first_input_at) = self.first_input_at.take()
+            && journal::frame_sample_is_valid(self.window_id, first_input_at)
+        {
             let latency_nanos = present_end.duration_since(first_input_at).as_nanos() as u64;
             self.input_latency_histogram.record(latency_nanos).ok();
+            if self.pending_input_count > 0 {
+                self.events_per_frame_histogram
+                    .record(self.pending_input_count)
+                    .ok();
+            }
         }
-        if self.pending_input_count > 0 {
-            self.events_per_frame_histogram
-                .record(self.pending_input_count)
-                .ok();
-            self.pending_input_count = 0;
-        }
+        self.pending_input_count = 0;
 
-        let frame = self.pending_frame.take();
+        let frame = self
+            .pending_frame
+            .take()
+            .filter(|frame| journal::frame_sample_is_valid(self.window_id, frame.draw_start))
+            .map(|mut frame| {
+                frame.dirty_at = frame
+                    .dirty_at
+                    .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
+                frame
+            });
         let animation_interval =
             if frame.is_some() && self.animating_at_last_present && window_active {
                 self.last_present_at
+                    .filter(|at| journal::frame_sample_is_valid(self.window_id, *at))
                     .map(|last_present_at| present_end.duration_since(last_present_at))
             } else {
                 None
@@ -1240,6 +1265,43 @@ impl FrameTimingCollector {
 mod tests {
     use super::*;
     use std::sync::{Mutex, MutexGuard};
+
+    #[test]
+    fn interruptions_drop_latency_samples_but_hiding_keeps_draw_work() {
+        for sleep in [false, true] {
+            let (_journal, _guard) = journal::install_test_foreground_journal(64, 4);
+            let id = WindowId::from(1);
+            let mut profiler = WindowProfiler::new(id).expect("valid histograms");
+            let old = Instant::now() - Duration::from_secs(1);
+            record_test_draw(&mut profiler, old);
+            profiler.record_present_at(old, old, true, true);
+            profiler.first_input_at = Some(old);
+            profiler.pending_input_count = 1;
+            profiler.begin_draw();
+            if sleep {
+                journal::record_power_transition(journal::PowerState::Suspended);
+                journal::record_power_transition(journal::PowerState::Awake);
+            } else {
+                journal::record_window_visibility(id, crate::WindowVisibility::Hidden);
+                journal::record_window_visibility(id, crate::WindowVisibility::Visible);
+            }
+            profiler.end_draw(Some(old), 1);
+            let now = Instant::now();
+            profiler.record_present_at(now, now, true, true);
+            assert_eq!(
+                profiler.draw_duration_histogram.len(),
+                if sleep { 1 } else { 2 }
+            );
+            assert_eq!(profiler.input_latency_histogram.len(), 0);
+            assert_eq!(profiler.dirty_to_present_histogram.len(), 1);
+            assert_eq!(profiler.present_interval_histogram.len(), 0);
+            profiler.begin_draw();
+            profiler.end_draw(Some(Instant::now()), 1);
+            let now = Instant::now();
+            profiler.record_present_at(now, now, true, true);
+            assert_eq!(profiler.dirty_to_present_histogram.len(), 2);
+        }
+    }
 
     #[test]
     fn records_draw_events_only_while_tracing() {

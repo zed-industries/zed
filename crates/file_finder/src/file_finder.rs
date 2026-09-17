@@ -16,19 +16,16 @@ use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, TaskExt,
-    WeakEntity, Window, actions, rems,
+    WeakEntity, Window, actions,
 };
 use language::{BufferSnapshot, Point};
-use open_path_prompt::{
-    OpenPathPrompt,
-    file_finder_settings::{FileFinderSettings, FileFinderWidth},
-};
+use open_path_prompt::{OpenPathPrompt, file_finder_settings::FileFinderSettings};
 use picker::{Picker, PickerDelegate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
 
-use settings::{Settings, SettingsStore};
+use settings::{ModalWidthContent, Settings, SettingsStore};
 use std::{
     borrow::Cow,
     cmp, mem,
@@ -325,17 +322,9 @@ impl FileFinder {
         });
     }
 
-    pub fn modal_max_width(width_setting: FileFinderWidth, window: &mut Window) -> Pixels {
-        let window_width = window.viewport_size().width;
-        let small_width = rems(34.).to_pixels(window.rem_size());
-
-        match width_setting {
-            FileFinderWidth::Small => small_width,
-            FileFinderWidth::Full => window_width,
-            FileFinderWidth::XLarge => (window_width - px(512.)).max(small_width),
-            FileFinderWidth::Large => (window_width - px(768.)).max(small_width),
-            FileFinderWidth::Medium => (window_width - px(1024.)).max(small_width),
-        }
+    pub fn modal_max_width(width_setting: ModalWidthContent, window: &mut Window) -> Pixels {
+        let small_width = picker::DEFAULT_MODAL_WIDTH.to_pixels(window.rem_size());
+        width_setting.to_pixels(small_width, window.viewport_size().width)
     }
 }
 
@@ -2059,7 +2048,7 @@ impl PickerDelegate for FileFinderDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<FileFinderDelegate>>) {
         self.file_finder
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn try_get_preview_data_for_match(&self, cx: &App) -> Option<picker::PreviewUpdate> {

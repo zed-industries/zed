@@ -8,7 +8,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, AuthenticateError, EnvVar, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    LanguageModelCompletionEvent, LanguageModelToolChoice,
 };
 use language_model::{
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
@@ -328,10 +328,6 @@ impl LanguageModel for GoogleLanguageModel {
         }
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaSubset
-    }
-
     fn telemetry_id(&self) -> String {
         format!("google/{}", self.model.request_id())
     }
@@ -358,6 +354,11 @@ impl LanguageModel for GoogleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let mut request = request;
+        if request.max_output_tokens.is_some() {
+            request.max_output_tokens =
+                request.effective_max_output_tokens(self.max_output_tokens());
+        }
         let request = match into_google(
             request,
             self.model.request_id().to_string(),

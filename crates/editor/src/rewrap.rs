@@ -191,19 +191,20 @@ impl Editor {
                         Point::new(current_range_start, 0)
                             ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
                         current_range_indent,
-                        current_range_comment_delimiters.clone(),
-                        current_range_rewrap_prefix.clone(),
+                        std::mem::replace(
+                            &mut current_range_comment_delimiters,
+                            row_comment_delimiters,
+                        ),
+                        std::mem::replace(&mut current_range_rewrap_prefix, row_rewrap_prefix),
                     ));
                     current_range_start = row;
                     current_range_indent = row_indent;
-                    current_range_comment_delimiters = row_comment_delimiters;
-                    current_range_rewrap_prefix = row_rewrap_prefix;
                 }
                 prev_row = row;
             }
 
             ranges.push((
-                language_settings.clone(),
+                language_settings,
                 Point::new(current_range_start, 0)
                     ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
                 current_range_indent,

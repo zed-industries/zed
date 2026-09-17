@@ -88,10 +88,89 @@ Non-negative `float` values
 }
 ```
 
-## Agent Font Size
+## Agent Panel {#agent-panel}
+
+To configure panel sizing, open the Settings Editor and search for “Agent Panel Default Width” or “Agent Panel Flexible Sizing”.
+
+### Default Width {#agent-panel-default-width}
+
+- Description: Default fixed width in pixels when the agent panel is docked to the left or right and `agent.flexible` is `false`.
+- Setting: `agent.default_width`
+- Default: `640`
+
+### Flexible Sizing {#agent-panel-flexible-sizing}
+
+- Description: Whether the agent panel uses flexible (proportional) sizing when docked to the left or right. When enabled, `agent.default_width` does not control the panel width, and double-clicking the panel’s outer resize handle restores the default proportion.
+- Setting: `agent.flexible`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+To use a fixed reset width, disable flexible sizing in the Settings Editor. Or add this to your settings.json:
+
+```json [settings]
+{
+  "agent": {
+    "default_width": 640,
+    "flexible": false
+  }
+}
+```
+
+See [Agent Panel visual customization](../visual-customization.md#agent-panel) for other panel appearance settings.
+
+### Threads Sidebar Default Width {#agent-threads-sidebar-default-width}
+
+- Description: Default width in pixels of the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
+- Setting: `agent.threads_sidebar_default_width`
+- Default: `300`
+
+**Options**
+
+Numbers from `200` to `800` pixels (inclusive). Values outside this range are clamped to the nearest limit.
+
+Open the Settings Editor and search for “Threads Sidebar Default Width”. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads_sidebar_default_width": 360
+  }
+}
+```
+
+If you haven’t manually resized the sidebar, its width follows changes to this setting immediately. A manually resized width takes precedence until you double-click the divider to reset it. After resetting, the sidebar follows this setting again.
+
+Widths saved by older versions of Zed are preserved if they differ from the previous default of 300 pixels. A saved width of 300 pixels uses this setting instead.
+
+### Threads Sidebar Auto Open {#agent-threads-sidebar-auto-open}
+
+- Description: Whether opening a folder in an existing window automatically opens the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
+- Setting: `agent.threads_sidebar_auto_open`
+- Default: `true`
+
+**Options**
+
+`true` or `false`.
+
+This applies when a folder opens in an existing window instead of a new one, which happens when `default_open_behavior` or `cli_default_open_behavior` is set to `existing_window`. With `false`, the folder still opens in that window, but the sidebar stays closed until you open it with {#action multi_workspace::ToggleWorkspaceSidebar}.
+
+Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads_sidebar_auto_open": false
+  }
+}
+```
+
+## Agent UI Font Size
 
 - Description: The font size for text in the agent panel. Inherits the UI font size if unset.
-- Setting: `agent_font_size`
+- Setting: `agent_ui_font_size`
 - Default: `null`
 
 **Options**
@@ -134,13 +213,35 @@ Non-negative `float` values
 
 ## Auto Indent
 
-- Description: Whether indentation should be adjusted based on context while typing. This can be specified on a per-language basis.
+- Description: Controls automatic indentation behavior when typing. This can be specified on a per-language basis.
 - Setting: `auto_indent`
-- Default: `true`
+- Default: `syntax_aware`
 
 **Options**
 
-`boolean` values
+1. `syntax_aware`, adjusts indentation based on syntax context, using Tree-sitter to analyze the code structure:
+
+```json [settings]
+{
+  "auto_indent": "syntax_aware"
+}
+```
+
+2. `preserve_indent`, keeps the indentation of the current line when starting a new one, without adjusting for syntax:
+
+```json [settings]
+{
+  "auto_indent": "preserve_indent"
+}
+```
+
+3. `none`, disables automatic indentation, so new lines start at column 0:
+
+```json [settings]
+{
+  "auto_indent": "none"
+}
+```
 
 ## Auto Indent On Paste
 
@@ -502,6 +603,16 @@ When enabled, this setting will automatically close tabs for files that have bee
 
 > Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
+## Close Panel on Toggle
+
+- Description: Whether invoking a panel's `ToggleFocus` action while the panel is already focused closes the panel, instead of just moving focus back to the editor. This only applies to a panel's focus-toggle action, not to its regular visibility-toggle action.
+- Setting: `close_panel_on_toggle`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Code Lens
 
 - Description: Whether and how to display code lenses from language servers. Code lenses show contextual information such as reference counts, implementations, and other metadata provided by the language server.
@@ -520,6 +631,24 @@ When enabled, this setting will automatically close tabs for files that have bee
 }
 ```
 
+## Command Palette
+
+### Use Command History
+
+- Description: Whether to use command history ranking for sorting in the command palette.
+- Setting: `command_palette.use_command_history`
+- Default: `true`
+
+Disabling this setting does not erase history.
+
+```json [settings]
+{
+  "command_palette": {
+    "use_command_history": false
+  }
+}
+```
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.
@@ -534,7 +663,7 @@ When enabled, this setting will automatically close tabs for files that have bee
 
 - Description: Which level to use to filter out diagnostics displayed in the editor
 - Setting: `diagnostics_max_severity`
-- Default: `null`
+- Default: `all`
 
 **Options**
 
@@ -668,18 +797,59 @@ For the case of "open", regular selection behavior can be achieved by holding `a
       "**/*.cert",
       "**/*.crt",
       "**/.dev.vars",
-      "**/secrets.yml"
+      "**/secrets.yml",
+      "**/.zed/settings.json",
+      "/**/zed/settings.json",
+      "/**/zed/keymap.json"
     ]
   }
 ```
 
 **Options**
 
+### Edit Prediction Provider
+
+- Description: Which edit prediction provider to use
+- Setting: `provider`
+- Default: `"zed"`
+
+**Options**
+
+1. Use Zeta as the edit prediction provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "zed"
+  }
+}
+```
+
+2. Use Copilot as the edit prediction provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "copilot"
+  }
+}
+```
+
+3. Turn off edit predictions across all providers
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "none"
+  }
+}
+```
+
 ### Disabled Globs
 
 - Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
 - Setting: `disabled_globs`
-- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"]`
+- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml", "**/.zed/settings.json", "/**/zed/settings.json", "/**/zed/keymap.json"]`
 
 **Options**
 
@@ -1849,12 +2019,24 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ```json [settings]
 {
   "status_bar": {
+    "show_active_file": false,
     "active_language_button": true,
     "cursor_position_button": true,
-    "line_endings_button": false
+    "line_endings_button": false,
+    "active_encoding_button": "non_utf8",
+    "pending_keystrokes_indicator": true
   }
 }
 ```
+
+**Options**
+
+- `show_active_file`: Whether to show the name of the active file in the status bar
+- `active_language_button`: Whether to show the active language button (clicking it opens the language selector)
+- `cursor_position_button`: Whether to show the cursor position button (clicking it opens the go-to-line/column input)
+- `line_endings_button`: Whether to show the active line endings button (clicking it opens the line-ending selector)
+- `active_encoding_button`: When to show the active encoding button: `"enabled"`, `"disabled"`, or `"non_utf8"` (only for encodings other than UTF-8 without BOM)
+- `pending_keystrokes_indicator`: Whether to show an indicator while multi-stroke input is pending. If the input has a timeout, a countdown is shown and hovering the indicator pauses it. Its binding preview popover is disabled when the which-key popup is enabled (see [key bindings](../key-bindings.md#precedence))
 
 There is an experimental setting that completely hides the status bar. This causes major usability problems (you will be unable to use many of Zed's features), but is provided for those who value screen real-estate above all else.
 
@@ -1952,63 +2134,48 @@ While other options may be changed at a runtime and should be placed under `sett
 
 `integer` values representing milliseconds
 
-## Features
+## Focus Follows Mouse
 
-- Description: Features that can be globally enabled or disabled
-- Setting: `features`
+- Description: Whether the focused panel follows the mouse location.
+- Setting: `focus_follows_mouse`
 - Default:
 
 ```json [settings]
 {
-  "edit_predictions": {
-    "provider": "zed"
+  "focus_follows_mouse": {
+    "enabled": false,
+    "debounce_ms": 250
   }
 }
 ```
 
-### Edit Prediction Provider
+### Enabled
 
-- Description: Which edit prediction provider to use
-- Setting: `edit_prediction_provider`
-- Default: `"zed"`
+- Description: Whether hovering over a dock or pane moves focus to it.
+- Setting: `enabled`
+- Default: `false`
 
 **Options**
 
-1. Use Zeta as the edit prediction provider:
+`boolean` values
 
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "zed"
-  }
-}
-```
+### Debounce
 
-2. Use Copilot as the edit prediction provider:
+- Description: How long the mouse must hover over a panel before it is focused, in milliseconds.
+- Setting: `debounce_ms`
+- Default: `250`
 
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "copilot"
-  }
-}
-```
+**Options**
 
-3. Turn off edit predictions across all providers
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "none"
-  }
-}
-```
+Non-negative `integer` values
 
 ## Format On Save {#format-on-save}
 
 - Description: Whether or not to perform a buffer format before saving.
 - Setting: `format_on_save`
-- Default: `on`
+- Default: `off`
+
+Zed ships `"format_on_save": "on"` as a per-language default for Astro, Dart, EEx, Elixir, Elm, Go, GraphQL, HEEx, Kotlin, Rust, Starlark, and Zig. Every other language uses the top-level default above. Use [`languages`](#languages) to configure individual languages differently.
 
 **Options**
 
@@ -2469,7 +2636,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 - Description: Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
 - Setting: `gutter_debounce`
-- Default: `null`
+- Default: `0`
 
 **Options**
 
@@ -2762,6 +2929,31 @@ Example:
 **Options**
 
 `boolean` values
+
+## Hidden Files {#hidden-files}
+
+- Description: Glob patterns that mark files and folders as hidden in the Project Panel.
+- Setting: `hidden_files`
+- Default: `["**/.*"]`
+
+**Options**
+
+List of `string` glob patterns.
+
+The default matches files and folders whose names start with a dot. Files inside matching folders are also considered hidden.
+
+The [Project Panel](../project-panel.md#hiding-files) shows hidden entries by default. To hide them, enable **Hide Hidden** under **Panels > Project Panel** in the Settings Editor, or set `project_panel.hide_hidden` to `true`.
+
+Customizing `hidden_files` replaces the default patterns. To hide `*.log` files while keeping dotfiles and dotfolders hidden, add this to your `settings.json`:
+
+```json [settings]
+{
+  "hidden_files": ["**/*.log", "**/.*"],
+  "project_panel": {
+    "hide_hidden": true
+  }
+}
+```
 
 ## Indent Guides
 
@@ -3130,6 +3322,16 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 - `enabled`: Whether to enable automatic JSX tag closing
 
+## Language Detection
+
+- Description: Whether to automatically detect the language of an untitled buffer from its contents. Languages explicitly selected from the language selector are not changed.
+- Setting: `language_detection`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Languages
 
 - Description: Configuration for specific languages.
@@ -3418,6 +3620,30 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 }
 ```
 
+## On New Window
+
+- Description: What to show when opening a new window.
+- Setting: `on_new_window`
+- Default: `"launchpad"`
+
+**Options**
+
+1. Show an empty untitled buffer:
+
+```json [settings]
+{
+  "on_new_window": "empty_tab"
+}
+```
+
+2. Show the launchpad with recent projects:
+
+```json [settings]
+{
+  "on_new_window": "launchpad"
+}
+```
+
 ## Instrumentation
 
 - Description: Configuration for developer-oriented instrumentation tools (profilers, tracers, etc.) that can be toggled at runtime.
@@ -3484,7 +3710,7 @@ Examples:
 ## Preview tabs
 
 - Description:
-  Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
+  Preview tabs allow you to open files in preview mode. A pane keeps at most one preview tab at a time, so opening another file in preview mode takes over that slot. Switching to a file that is already open does not close the preview tab. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
   There are several ways to convert a preview tab into a regular tab:
 
   - Double-clicking on the file
@@ -3492,6 +3718,8 @@ Examples:
   - Using the {#action project_panel::OpenPermanent} action
   - Editing the file
   - Dragging the file to a different pane
+  - Pinning the tab with the {#action pane::TogglePinTab} action
+  - Using the {#action pane::TogglePreviewTab} action
 
 - Setting: `preview_tabs`
 - Default:
@@ -3512,7 +3740,7 @@ Examples:
 
 ### Enable preview from project panel
 
-- Description: Determines whether to open files in preview mode when opened from the project panel with a single click.
+- Description: Determines whether to open files in preview mode when opened from the project panel with a single click or the {#action project_panel::Open} action ({#kb project_panel::Open}).
 - Setting: `enable_preview_from_project_panel`
 - Default: `true`
 
@@ -3569,6 +3797,14 @@ Examples:
 **Options**
 
 `boolean` values
+
+## Call Hierarchy
+
+### Modal Max Width
+
+- Description: Max-width of the call hierarchy modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
+- Setting: `modal_max_width`
+- Default: `medium`
 
 ## File Finder
 
@@ -3658,15 +3894,23 @@ Examples:
 
 List of `string` glob patterns
 
-## Projects Online By Default
+## Read-Only Files {#read-only-files}
 
-- Description: Whether or not to show the online projects view by default.
-- Setting: `projects_online_by_default`
-- Default: `true`
+- Default: `[]`
+- Description: Glob patterns for files you can open and view but cannot edit, such as generated files or external dependencies.
+- Setting: `read_only_files`
 
-**Options**
+Add this to your project’s `.zed/settings.json`:
 
-`boolean` values
+```json [settings]
+{
+  "read_only_files": ["**/generated/**", "..."]
+}
+```
+
+Like [File Scan Exclusions](#file-scan-exclusions), `"..."` expands to the list inherited from the preceding settings layer. This example adds generated files to the read-only patterns from your user settings without repeating them. Duplicate entries collapse to their first occurrence.
+
+Omit `"..."` to replace the inherited list, or use `[]` to clear it. These patterns apply when you open a file.
 
 ## Read SSH Config
 
@@ -3894,7 +4138,8 @@ Non-negative `integer` values
     "case_sensitive": false,
     "include_ignored": false,
     "regex": false,
-    "center_on_match": false
+    "center_on_match": false,
+    "search_on_type": true
   }
 }
 ```
@@ -3936,6 +4181,12 @@ Non-negative `integer` values
 - Description: Whether to center the cursor on each search match when navigating.
 - Setting: `center_on_match`
 - Default: `false`
+
+### Search On Type
+
+- Description: Start searching as you type in project search, without pressing Enter.
+- Setting: `search_on_type`
+- Default: `true`
 
 ## Search Wrap
 
@@ -4428,7 +4679,7 @@ List of `integer` column numbers
 
 - Description: Set whether Alternate Scroll mode (DECSET code: `?1007`) is active by default. Alternate Scroll mode converts mouse scroll events into up / down key presses when in the alternate screen (e.g. when running applications like vim or less). The terminal can still set and unset this mode with ANSI escape codes.
 - Setting: `alternate_scroll`
-- Default: `off`
+- Default: `on`
 
 **Options**
 
@@ -4512,9 +4763,9 @@ List of `integer` column numbers
 
 ### Terminal: Cursor Shape
 
-- Description: Controls the visual shape of the cursor in the terminal. When not explicitly set, it defaults to a block shape.
+- Description: Controls the visual shape of the cursor in the terminal.
 - Setting: `cursor_shape`
-- Default: `null` (defaults to block)
+- Default: `block`
 
 **Options**
 
@@ -5167,6 +5418,50 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_menus`: Whether to show the menus in the titlebar
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
 
+## Window Title Format
+
+- Description: Template for the window title. Use `${separator}` to insert a
+  separator that is omitted when adjacent variables are empty. The collaboration
+  indicator, when present, is appended after the rendered template. If the
+  template renders to nothing (for example `${branch}` outside a Git
+  repository), the default template is used instead.
+- Setting: `window_title_format`
+- Default: `"${projectName}${separator}${fileName}"`
+
+Available variables:
+
+| Variable       | Description                                           |
+| -------------- | ----------------------------------------------------- |
+| `projectName`  | Name of the current project                           |
+| `fileName`     | Name of the active file (e.g. `main.rs`)              |
+| `filePath`     | Absolute path of the active file                      |
+| `relativePath` | Path of the active file relative to its worktree root |
+| `fileStem`     | File name without extension (e.g. `main`)             |
+| `remoteName`   | Display name of the remote connection, if any         |
+| `remoteHost`   | Host of the remote connection, if any                 |
+| `appName`      | Zed release channel name (e.g. `Zed`, `Zed Nightly`)  |
+| `branch`       | Git branch checked out in the active repository       |
+| `separator`    | Separator string, omitted when neighbors are empty    |
+
+```json [settings]
+{
+  "window_title_format": "${projectName}${separator}${fileName}"
+}
+```
+
+## Window Title Separator
+
+- Description: The string substituted for `${separator}` in the window title
+  format. Include any surrounding whitespace in the value.
+- Setting: `window_title_separator`
+- Default: `" — "`
+
+```json [settings]
+{
+  "window_title_separator": " — "
+}
+```
+
 ## Window Decorations
 
 - Description: Controls whether Zed or the window manager or compositor draws window decorations.
@@ -5198,6 +5493,26 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - Description: Whether or not to enable vim mode.
 - Setting: `vim_mode`
 - Default: `false`
+
+## Which-key Menu
+
+- Description: Show matching bindings while a multi-stroke binding is pending.
+- Setting: `which_key`
+- Default:
+
+```json [settings]
+{
+  "which_key": {
+    "enabled": false,
+    "delay_ms": 1000
+  }
+}
+```
+
+**Options**
+
+- `enabled`: Whether to show the which-key menu. When enabled, the pending keystrokes indicator remains visible, but its binding preview popover is disabled.
+- `delay_ms`: How long Zed waits before showing the menu, in milliseconds.
 
 ## When Closing With No Tabs
 
@@ -5245,7 +5560,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "dock": "right",
     "entry_spacing": "comfortable",
     "file_icons": true,
-    "folder_icons": true,
+    "folder_indicator": "icon",
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,
@@ -5636,6 +5951,16 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more about AI setup.
 
+### Prevent Idle Sleep
+
+- Description: Whether to keep the system from idle-sleeping while an agent thread is running. See [Keeping the System Awake](../ai/agent-panel.md#prevent-idle-sleep).
+- Setting: `agent.prevent_idle_sleep`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Collaboration Panel
 
 - Description: Customizations for the collaboration panel.
@@ -5646,7 +5971,7 @@ Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more 
 {
   "collaboration_panel": {
     "button": true,
-    "dock": "left",
+    "dock": "right",
     "default_width": 240
   }
 }
@@ -5687,17 +6012,24 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 {
   "git_panel": {
     "button": true,
-    "dock": "left",
+    "dock": "right",
     "default_width": 360,
     "status_style": "icon",
+    "file_icons": false,
+    "folder_indicator": "icon",
     "fallback_branch_name": "main",
     "sort_by": "path",
     "group_by": "status",
     "collapse_untracked_diff": false,
+    "tree_view": false,
     "scrollbar": {
       "show": null
     },
-    "starts_open": false
+    "starts_open": false,
+    "show_count_badge": false,
+    "diff_stats": true,
+    "commit_title_max_length": 0,
+    "entry_primary_click_action": "project_diff"
   }
 }
 ```
@@ -5708,12 +6040,19 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `dock`: Where to dock the git panel. Can be `left` or `right`
 - `default_width`: Default width of the git panel
 - `status_style`: How to display git status. Can be `label_color` or `icon`
+- `file_icons`: Whether to show file icons in the git panel
+- `folder_indicator`: What to show for directories in the git panel. Can be `icon`, `chevron`, or `both`
 - `fallback_branch_name`: What branch name to use if `init.defaultBranch` is not set
 - `sort_by`: How to sort entries in the git panel. Can be `path` or `name`
 - `group_by`: How to group entries in the git panel. Can be `none` or `status`
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
+- `tree_view`: Whether to show entries in tree or flat view in the panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+- `show_count_badge`: Whether to show a badge on the git panel icon with the count of uncommitted changes
+- `diff_stats`: Whether to show the addition/deletion change count next to each file in the git panel
+- `commit_title_max_length`: Maximum length of the commit message title before a warning is shown. Set to `0` to disable
+- `entry_primary_click_action`: Default action when clicking a changed file in the git panel. Can be `project_diff`, `file_diff`, or `view_file`
 
 ## Git Worktree Directory
 
@@ -5771,7 +6110,7 @@ You can define these in user or project settings; project settings are merged on
 
 ## Outline Panel
 
-- Description: Customize outline Panel
+- Description: Customize outline panel
 - Setting: `outline_panel`
 - Default:
 
@@ -5780,9 +6119,9 @@ You can define these in user or project settings; project settings are merged on
   "outline_panel": {
     "button": true,
     "default_width": 300,
-    "dock": "left",
+    "dock": "right",
     "file_icons": true,
-    "folder_icons": true,
+    "folder_indicator": "icon",
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,
@@ -5792,7 +6131,8 @@ You can define these in user or project settings; project settings are merged on
     },
     "scrollbar": {
       "show": null
-    }
+    },
+    "multi_buffer_hide_symbols": false
   }
 }
 ```

@@ -10,7 +10,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, ProviderSettingsView, RateLimiter, env_var,
+    OPEN_AI_PROVIDER_NAME, ProviderSettingsView, RateLimiter, env_var, stream_in_background,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -25,9 +25,10 @@ use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
 
+use language_model::chat_completion::ChatCompletionEventMapper;
 use open_ai::completion::token_usage_from_response_usage;
 pub use open_ai::completion::{
-    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
 };
 
@@ -608,6 +609,56 @@ impl LanguageModel for OpenAiLanguageModel {
         self.model.max_output_tokens()
     }
 
+    fn count_input_tokens(
+        &self,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        if !self.model.uses_responses_api() {
+            return async { Ok(None) }.boxed();
+        }
+        normalize_open_ai_response_thinking_effort(&mut request, &self.model);
+        let request = into_open_ai_response(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
+            self.max_output_tokens(),
+            default_thinking_reasoning_effort(&self.model),
+            self.model
+                .supported_reasoning_efforts()
+                .contains(&open_ai::ReasoningEffort::None),
+            &OPEN_AI_PROVIDER_ID,
+        );
+        let http_client = self.http_client.clone();
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+        self.request_limiter
+            .run(async move {
+                let request = request?.into_count_tokens_request();
+                let api_key = api_key.ok_or(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                })?;
+                open_ai::responses::count_input_tokens(
+                    http_client.as_ref(),
+                    PROVIDER_NAME.0.as_str(),
+                    &api_url,
+                    &api_key,
+                    request,
+                    &extra_headers,
+                )
+                .await
+                .map(Some)
+                .map_err(Into::into)
+            })
+            .boxed()
+    }
+
     fn stream_completion(
         &self,
         mut request: LanguageModelRequest,
@@ -643,9 +694,13 @@ impl LanguageModel for OpenAiLanguageModel {
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
             let completions = self.stream_response(request, cx);
+            let executor = cx.background_executor().clone();
             async move {
                 let mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
-                Ok(mapper.map_stream(completions.await?).boxed())
+                Ok(stream_in_background(
+                    mapper.map_stream(completions.await?).boxed(),
+                    executor,
+                ))
             }
             .boxed()
         } else {
@@ -663,9 +718,13 @@ impl LanguageModel for OpenAiLanguageModel {
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
             let completions = self.stream_completion(request, cx);
+            let executor = cx.background_executor().clone();
             async move {
-                let mapper = OpenAiEventMapper::new();
-                Ok(mapper.map_stream(completions.await?).boxed())
+                let mapper = ChatCompletionEventMapper::new();
+                Ok(stream_in_background(
+                    mapper.map_stream(completions.await?).boxed(),
+                    executor,
+                ))
             }
             .boxed()
         }
