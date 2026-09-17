@@ -29,18 +29,20 @@ import html
 import json
 import os
 import random
-import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
 import requests
+from github_helpers import (
+    fetch_github_project,
+    github_graphql,
+    github_rest_api,
+    github_rest_get_paginated,
+    post_github_comment,
+    set_github_project_field,
+)
 
-RETRYABLE_STATUS_CODES = {502, 503, 504}
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 5
-
-GITHUB_API_URL = "https://api.github.com"
 REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
 # Cohort members are outside collaborators on the repo holding this custom
@@ -95,71 +97,23 @@ ZEDGAR_QUIPS = [
 ]
 
 
-def github_graphql(query, variables):
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.post(
-            f"{GITHUB_API_URL}/graphql",
-            headers=GITHUB_HEADERS,
-            json={"query": query, "variables": variables},
-            timeout=30,
-        )
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        result = response.json()
-        if "errors" in result:
-            raise RuntimeError(f"GraphQL error: {result['errors']}")
-        return result["data"]
-    raise RuntimeError("github_graphql: retry loop exited without return")
-
-
-def github_rest_request(method, path, body=None):
-    url = f"{GITHUB_API_URL}/{path}"
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.request(
-            method, url, headers=GITHUB_HEADERS, json=body, timeout=30
-        )
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        if response.status_code == 204 or not response.content:
-            return None
-        return response.json()
-    raise RuntimeError("github_rest_request: retry loop exited without return")
-
-
-def github_rest_get_paginated(path):
-    results = []
-    page = 1
-    while True:
-        separator = "&" if "?" in path else "?"
-        batch = github_rest_request("GET", f"{path}{separator}per_page=100&page={page}")
-        if not batch:
-            break
-        results.extend(batch)
-        if len(batch) < 100:
-            break
-        page += 1
-    return results
-
 
 @lru_cache(maxsize=None)
 def is_guild_member(username):
-    response = requests.get(
-        f"{GITHUB_API_URL}/repos/{REPO_OWNER}/{REPO_NAME}/collaborators/{username}/permission",
-        headers=GITHUB_HEADERS,
-        timeout=30,
-    )
-    # 404 means the user isn't a collaborator on the repo at all.
-    if response.status_code == 404:
-        return False
-    response.raise_for_status()
+    try:
+        response = github_rest_api(
+            "GET",
+            f"repos/{REPO_OWNER}/{REPO_NAME}/collaborators/{username}/permission",
+        )
+    except requests.HTTPError as error:
+        # 404 means the user isn't a collaborator on the repo at all.
+        if error.response.status_code == 404:
+            return False
+        raise
     # role_name is the effective (highest) role for the user. For a cohort of
     # outside collaborators whose only grant is this custom role, that is the
     # custom role's name; built-in roles come back lowercased and won't match.
-    role_name = response.json().get("role_name") or ""
+    role_name = response.get("role_name") or ""
     return role_name.lower() == GUILD_ROLE_NAME.lower()
 
 
@@ -231,30 +185,6 @@ def pr_closing_issues(pr_node_id):
     return (node.get("closingIssuesReferences") or {}).get("nodes", [])
 
 
-def fetch_project(project_number):
-    data = github_graphql(
-        """
-        query($owner: String!, $number: Int!) {
-          organization(login: $owner) {
-            projectV2(number: $number) {
-              id
-              fields(first: 50) {
-                nodes {
-                  ... on ProjectV2Field { id name dataType }
-                  ... on ProjectV2SingleSelectField { id name options { id name } }
-                }
-              }
-            }
-          }
-        }
-        """,
-        {"owner": REPO_OWNER, "number": project_number},
-    )
-    project = data["organization"]["projectV2"]
-    if not project:
-        raise RuntimeError(f"Project #{project_number} not found in {REPO_OWNER}")
-    return project
-
 
 def find_project_item(project_id, content_node_id):
     # Includes each item's single-select values so callers can read Status
@@ -290,34 +220,6 @@ def find_project_item(project_id, content_node_id):
             return item
     return None
 
-
-def set_project_field(project, item_id, field_name, option_name):
-    field = next(
-        (f for f in project["fields"]["nodes"] if f.get("name") == field_name), None
-    )
-    if not field:
-        raise RuntimeError(f"Field '{field_name}' not found on board")
-    option_id = next(
-        (o["id"] for o in field.get("options", []) if o["name"] == option_name), None
-    )
-    if not option_id:
-        raise RuntimeError(f"Option '{option_name}' not found in field '{field_name}'")
-    github_graphql(
-        """
-        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-          updateProjectV2ItemFieldValue(input: {
-            projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
-            value: { singleSelectOptionId: $optionId }
-          }) { projectV2Item { id } }
-        }
-        """,
-        {
-            "projectId": project["id"],
-            "itemId": item_id,
-            "fieldId": field["id"],
-            "optionId": option_id,
-        },
-    )
 
 
 def list_project_issues(project_id):
@@ -365,17 +267,11 @@ def list_project_issues(project_id):
         cursor = page["pageInfo"]["endCursor"]
 
 
-def post_comment(issue_number, body):
-    github_rest_request(
-        "POST", f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}/comments", {"body": body}
-    )
-
-
 def remove_assignees(issue_number, assignees):
-    github_rest_request(
+    github_rest_api(
         "DELETE",
         f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}/assignees",
-        {"assignees": assignees},
+        body={"assignees": assignees},
     )
 
 
@@ -441,7 +337,7 @@ def handle_assignment(issue, assignee_login, project_number):
     if not is_guild_member(assignee_login):
         return
 
-    project = fetch_project(project_number)
+    project = fetch_github_project(project_number)
     item = find_project_item(project["id"], issue["node_id"])
     if not item:
         send_slack(
@@ -452,7 +348,7 @@ def handle_assignment(issue, assignee_login, project_number):
         )
         return
 
-    set_project_field(project, item["id"], STATUS_FIELD, STATUS_IN_PROGRESS)
+    set_github_project_field(project, item["id"], STATUS_FIELD, STATUS_IN_PROGRESS)
 
 
 def handle_unassignment(issue, removed_login, sender, project_number):
@@ -462,7 +358,7 @@ def handle_unassignment(issue, removed_login, sender, project_number):
     if not is_guild_member(removed_login):
         return
 
-    project = fetch_project(project_number)
+    project = fetch_github_project(project_number)
     item = find_project_item(project["id"], issue["node_id"])
     if not item or item_status(item) != STATUS_IN_PROGRESS:
         return
@@ -476,7 +372,7 @@ def handle_unassignment(issue, removed_login, sender, project_number):
     status = STATUS_FOR_TYPE.get((issue.get("type") or {}).get("name") or "")
     link = slack_link(issue["html_url"], issue["title"])
     if status:
-        set_project_field(project, item["id"], STATUS_FIELD, status)
+        set_github_project_field(project, item["id"], STATUS_FIELD, status)
         send_slack(
             f"@{removed_login} {who} In Progress issue #{issue['number']} "
             f"{link}. I moved it back to *{status}*, "
@@ -509,11 +405,11 @@ def set_linked_issues_in_progress(pull_request, project_number):
     ]
     if not open_issues:
         return
-    project = fetch_project(project_number)
+    project = fetch_github_project(project_number)
     for issue in open_issues:
         item = find_project_item(project["id"], issue["id"])
         if item:
-            set_project_field(project, item["id"], STATUS_FIELD, STATUS_IN_PROGRESS)
+            set_github_project_field(project, item["id"], STATUS_FIELD, STATUS_IN_PROGRESS)
 
 
 def warn_about_extra_open_prs(pull_request, author):
@@ -521,7 +417,7 @@ def warn_about_extra_open_prs(pull_request, author):
         f"repo:{REPO_OWNER}/{REPO_NAME} is:pr is:open "
         f"author:{author} created:>={COHORT_START_DATE}"
     )
-    result = github_rest_request(
+    result = github_rest_api(
         "GET", f"search/issues?q={urllib.parse.quote(query)}&per_page=100"
     )
     others = [
@@ -589,7 +485,7 @@ def run_event(project_number):
 
 
 def run_stale(project_number):
-    project = fetch_project(project_number)
+    project = fetch_github_project(project_number)
     checked_in = cleared = 0
 
     for item in list_project_issues(project["id"]):
@@ -638,7 +534,9 @@ def run_stale(project_number):
             # they have stayed quiet for the check-in window.
             if (NOW - last_activity).days < CHECK_IN_AFTER_DAYS:
                 continue
-            post_comment(
+            post_github_comment(
+                REPO_OWNER,
+                REPO_NAME,
                 issue_number,
                 CHECK_IN_BODY.format(
                     marker=CHECK_IN_MARKER,
@@ -658,7 +556,7 @@ def run_stale(project_number):
         status = STATUS_FOR_TYPE.get((content.get("issueType") or {}).get("name") or "")
         link = slack_link(content["url"], content["title"])
         if status:
-            set_project_field(project, item["id"], STATUS_FIELD, status)
+            set_github_project_field(project, item["id"], STATUS_FIELD, status)
             send_slack(
                 f"Issue #{issue_number} {link} went quiet with @{assignee} "
                 "(no open PR, no reply to my check-in), so I cleared the assignment and "
@@ -678,7 +576,7 @@ def run_stale(project_number):
 
 
 def run_weekly(project_number):
-    project = fetch_project(project_number)
+    project = fetch_github_project(project_number)
     cutoff = NOW - timedelta(days=SHIPPED_WINDOW_DAYS)
     shipped = []
 
@@ -705,11 +603,6 @@ def run_weekly(project_number):
 
 
 if __name__ == "__main__":
-    GITHUB_HEADERS = {
-        "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
 
     NOW = datetime.now(timezone.utc)
 

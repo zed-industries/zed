@@ -413,7 +413,7 @@ impl Render for DeleteWorktreeTooltip {
             Tooltip::with_meta_in(
                 "Delete Worktree",
                 Some(&DeleteWorktree),
-                "Hold alt to force delete",
+                concat!("Hold ", ui::alt_key_name!(), " to force delete"),
                 &self.focus_handle,
                 cx,
             )
@@ -1092,7 +1092,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 let label = format!("Create new worktree based on {branch_label}");
 
                 let item = create_new_list_item(
-                    "create-from-current".to_string().into(),
+                    SharedString::new_static("create-from-current"),
                     label.into(),
                     self.creation_blocked_reason(cx),
                     selected,
@@ -1109,7 +1109,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 let label = format!("Create new worktree based on {branch_label}");
 
                 let item = create_new_list_item(
-                    "create-from-main".to_string().into(),
+                    SharedString::new_static("create-from-main"),
                     label.into(),
                     self.creation_blocked_reason(cx),
                     selected,

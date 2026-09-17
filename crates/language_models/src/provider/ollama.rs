@@ -390,9 +390,18 @@ impl OllamaLanguageModel {
                     {
                         match tool_result {
                             MessageContent::ToolResult(tool_result) => {
+                                let images = tool_result
+                                    .images()
+                                    .map(|image| image.source.to_string())
+                                    .collect::<Vec<_>>();
                                 messages.push(ChatMessage::Tool {
                                     tool_name: tool_result.tool_name.to_string(),
                                     content: tool_result.text_contents(),
+                                    images: if images.is_empty() {
+                                        None
+                                    } else {
+                                        Some(images)
+                                    },
                                 })
                             }
                             _ => unreachable!("Only tool result should be extracted"),
@@ -465,6 +474,7 @@ impl OllamaLanguageModel {
             stream: true,
             options: Some(ChatOptions {
                 num_ctx: Some(self.model.max_tokens),
+                num_predict: request.max_output_tokens.map(isize::try_from).transpose()?,
                 // Only send stop tokens if explicitly provided. When empty/None,
                 // Ollama will use the model's default stop tokens from its Modelfile.
                 // Sending an empty array would override and disable the defaults.

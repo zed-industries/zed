@@ -45,6 +45,9 @@ impl Editor {
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
+        if self.cycle_inline_input_history(InlineInputHistoryDirection::Older, window, cx) {
+            return;
+        }
 
         if self.mode.is_single_line() {
             cx.propagate();
@@ -260,6 +263,9 @@ impl Editor {
 
     pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         if self.take_rename(true, window, cx).is_some() {
+            return;
+        }
+        if self.cycle_inline_input_history(InlineInputHistoryDirection::Newer, window, cx) {
             return;
         }
 
@@ -2353,10 +2359,11 @@ impl Editor {
             .iter()
             .flat_map(|selection| {
                 snapshot
-                    .range_to_buffer_ranges(selection.range())
-                    .into_iter()
-                    .filter_map(|(buffer_snapshot, range, _)| {
-                        snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
+                    .range_to_buffer_ranges_with_deleted_hunks(selection.range())
+                    .filter_map(|(buffer_snapshot, range, deleted_hunk_anchor)| {
+                        deleted_hunk_anchor.or_else(|| {
+                            snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
+                        })
                     })
             })
             .collect::<Vec<_>>();
@@ -2445,10 +2452,9 @@ impl Editor {
             let location = Some({
                 let target_buffer_handle = location_task.await.context("open local buffer")?;
                 let range = target_buffer_handle.read_with(cx, |target_buffer, _| {
-                    let target_start = target_buffer
-                        .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
-                    let target_end = target_buffer
-                        .clip_point_utf16(point_from_lsp(lsp_location.range.end), Bias::Left);
+                    let range = language::range_from_lsp(lsp_location.range);
+                    let target_start = target_buffer.clip_point_utf16(range.start, Bias::Left);
+                    let target_end = target_buffer.clip_point_utf16(range.end, Bias::Left);
                     target_buffer.anchor_after(target_start)
                         ..target_buffer.anchor_before(target_end)
                 });

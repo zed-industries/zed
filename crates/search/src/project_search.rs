@@ -14,7 +14,7 @@ use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SelectionEffects,
+    SearchResultsStatus, SelectionEffects,
     actions::{Backtab, FoldAll, SelectAll, Tab, UnfoldAll},
     items::active_match_index,
     multibuffer_context_lines,
@@ -1530,7 +1530,6 @@ impl ProjectSearchView {
                                             }
                                             this.entity.update(cx, |model, cx| model.clear(cx));
                                             this.results_editor.update(cx, |editor, cx| {
-                                                editor.reset_gutter_line_number_width(cx);
                                                 editor.scroll(Point::default(), window, cx);
                                             });
                                         }
@@ -1557,7 +1556,6 @@ impl ProjectSearchView {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), window, cx);
             editor.set_searchable(false);
             editor.set_in_project_search(true);
-            editor.enable_sticky_gutter_line_number(cx);
             editor
         });
         subscriptions.push(cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab)));
@@ -1978,7 +1976,21 @@ impl ProjectSearchView {
                 model.phase = SearchPhase::Confirmed;
                 model.record_search_history(cx);
             });
+            self.sync_search_results_status(cx);
         }
+    }
+
+    fn sync_search_results_status(&self, cx: &mut Context<Self>) {
+        let model = self.entity.read(cx);
+        let pending = model.pending_search.is_some();
+        let status = SearchResultsStatus {
+            pending,
+            results_stale: pending && !model.results_refreshed,
+            query_confirmed: model.phase == SearchPhase::Confirmed,
+        };
+        self.results_editor.update(cx, |editor, cx| {
+            editor.set_search_results_status(status, cx)
+        });
     }
 
     /// The signature captures search inputs, not project content; returning to a previously
@@ -2345,15 +2357,29 @@ impl ProjectSearchView {
         let results_stale = search_pending && !model.results_refreshed;
         let preserve_view = phase == SearchPhase::Typing || results_stale;
         let match_ranges = model.match_ranges.clone();
-        self.results_editor
-            .update(cx, |editor, _| editor.hold_scrollbar_range(search_pending));
+        self.sync_search_results_status(cx);
+
+        if phase == SearchPhase::Typing
+            && let Some(first_match) = match_ranges.first()
+        {
+            self.results_editor.update(cx, |editor, cx| {
+                let range_to_select = editor.range_for_match(first_match);
+                if editor.selections.newest_anchor().range() != range_to_select {
+                    editor.change_selections(
+                        SelectionEffects::no_scroll().nav_history(false),
+                        window,
+                        cx,
+                        |s| s.select_ranges([range_to_select]),
+                    );
+                }
+            });
+        }
 
         if match_ranges.is_empty() {
             self.active_match_index = None;
             if !results_stale {
                 self.results_editor.update(cx, |editor, cx| {
                     editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
-                    editor.refit_gutter_line_number_width(cx);
                     if concluded_no_results {
                         editor.scroll(Point::default(), window, cx);
                     }
@@ -2378,16 +2404,12 @@ impl ProjectSearchView {
                             s.select_ranges(range_to_select)
                         });
                         editor.scroll(Point::default(), window, cx);
-                        editor.refit_gutter_line_number_width(cx);
                     });
                     if phase == SearchPhase::Confirmed
                         && self.query_editor.focus_handle(cx).is_focused(window)
                     {
                         self.focus_results_editor(window, cx);
                     }
-                } else if !search_pending && phase == SearchPhase::Confirmed {
-                    self.results_editor
-                        .update(cx, |editor, cx| editor.refit_gutter_line_number_width(cx));
                 }
             }
         }
@@ -3491,7 +3513,7 @@ pub mod tests {
     };
 
     use super::*;
-    use editor::{DisplayPoint, display_map::DisplayRow};
+    use editor::{DisplayPoint, ToPoint, display_map::DisplayRow};
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use language::{FakeLspAdapter, Point as BufferPoint, rust_lang};
     use pretty_assertions::assert_eq;
@@ -9041,7 +9063,8 @@ pub mod tests {
                     search_view
                         .results_editor
                         .read(cx)
-                        .is_scrollbar_range_held()
+                        .search_results_hold()
+                        .map(|hold| hold.status.pending)
                 })
                 .unwrap()
         };
@@ -9407,6 +9430,102 @@ pub mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_on_type_search_keeps_selection_on_first_match(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let mut files = serde_json::Map::new();
+        for ix in 0..50 {
+            files.insert(
+                format!("file_{ix:03}.txt"),
+                json!(format!("line with needle {ix}\nmore needle text {ix}")),
+            );
+        }
+        fs.insert_tree(path!("/dir"), serde_json::Value::Object(files))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), workspace.downgrade(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        let selection_head = |cx: &mut TestAppContext| {
+            search_view
+                .update(cx, |search_view, _, cx| {
+                    search_view.results_editor.update(cx, |editor, cx| {
+                        let snapshot = editor.display_snapshot(cx);
+                        editor.selections.newest::<BufferPoint>(&snapshot).head()
+                    })
+                })
+                .unwrap()
+        };
+        let first_match_head = |cx: &mut TestAppContext| {
+            search_view
+                .update(cx, |search_view, _, cx| {
+                    let first_match = search_view
+                        .entity
+                        .read(cx)
+                        .match_ranges
+                        .first()
+                        .expect("the query matches the fixture")
+                        .clone();
+                    search_view.results_editor.update(cx, |editor, cx| {
+                        let snapshot = editor.display_snapshot(cx);
+                        editor
+                            .range_for_match(&first_match)
+                            .end
+                            .to_point(snapshot.buffer_snapshot())
+                    })
+                })
+                .unwrap()
+        };
+
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.query_editor.update(cx, |query_editor, cx| {
+                    query_editor.set_text("needle", window, cx)
+                });
+                search_view.search(SearchMode::Manual, cx);
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        assert_eq!(
+            selection_head(cx),
+            first_match_head(cx),
+            "a confirmed search selects the first match"
+        );
+
+        perform_incremental_search(search_view, "needle 4", cx);
+        cx.background_executor.run_until_parked();
+        assert_eq!(
+            selection_head(cx),
+            first_match_head(cx),
+            "an on-type search must keep the selection on the first match too: a stale \
+             anchor resolves to an arbitrary position, and relative line numbers measured \
+             against it renumber unchanged excerpts on every keystroke"
+        );
+        assert_ne!(
+            selection_head(cx),
+            BufferPoint::zero(),
+            "the fixture is arranged so the first match does not sit at the buffer start, \
+             otherwise this test cannot tell a real selection from a collapsed stale anchor"
+        );
+
+        perform_incremental_search(search_view, "needle 41", cx);
+        cx.background_executor.run_until_parked();
+        assert_eq!(
+            selection_head(cx),
+            first_match_head(cx),
+            "narrowing again keeps following the first match"
+        );
+    }
+
     fn perform_incremental_search(
         search_view: WindowHandle<ProjectSearchView>,
         text: impl Into<Arc<str>>,
@@ -9483,8 +9602,8 @@ pub mod tests {
                 search_view
                     .results_editor
                     .read(cx)
-                    .min_gutter_line_number_digits()
-                    .unwrap_or(0)
+                    .search_results_hold()
+                    .map_or(0, |hold| hold.min_line_number_digits)
             })
             .unwrap()
     }

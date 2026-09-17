@@ -1449,7 +1449,7 @@ impl MultiWorkspace {
         }));
     }
 
-    fn serialize_now(&mut self, cx: &mut Context<Self>) -> Task<()> {
+    fn serialize_now(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
         let state = MultiWorkspaceState {
             active_workspace_id: self.workspace().read(cx).database_id(),
             project_groups: self
@@ -1467,16 +1467,17 @@ impl MultiWorkspace {
         };
         let window_id = self.window_id;
         let kvp = db::kvp::KeyValueStore::global(cx);
-        cx.background_spawn(async move {
+        async move {
             crate::persistence::write_multi_workspace_state(&kvp, window_id, state).await;
-        })
+        }
     }
 
     /// Used by the quit handler to ensure pending DB writes
     /// complete before the process exits.
     pub fn flush_serialization(&mut self, cx: &mut Context<Self>) -> Task<()> {
         self._serialize_task.take();
-        self.serialize_now(cx)
+        let serialization = self.serialize_now(cx);
+        cx.spawn(async move |_, _| serialization.await)
     }
 
     pub fn flush_pending_serialization(

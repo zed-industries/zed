@@ -272,7 +272,7 @@ impl HeadlessExtensionStore {
         for language_path in &manifest.languages {
             let config_path = load_dir.join(language_path).join(LanguageConfig::FILE_NAME);
             let config = fs.load(&config_path).await?;
-            let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
+            let mut config = LanguageConfig::from_toml(&config)?;
             config.grammar = None;
             languages.push((config.name.clone(), config));
         }
