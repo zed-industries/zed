@@ -206,14 +206,10 @@ pub enum Model {
     KimiK2_5,
 
     // -- DeepSeek models --
-    #[serde(rename = "deepseek-v4.1-flash")]
+    #[serde(rename = "deepseek-flash")]
     DeepSeekV4_1Flash,
     #[serde(rename = "deepseek-v4-pro")]
     DeepSeekV4Pro,
-    #[serde(rename = "deepseek-v4-flash-vision-exp")]
-    DeepSeekV4FlashVisionExp,
-    #[serde(rename = "deepseek-v4-flash")]
-    DeepSeekV4Flash,
 
     // -- Minimax Group models --
     #[serde(rename = "minimax-m3")]
@@ -277,8 +273,6 @@ impl Model {
             | Self::KimiK2_7Code
             | Self::KimiK2_6
             | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4FlashVisionExp
-            | Self::DeepSeekV4Flash
             | Self::MiniMaxM3
             | Self::MiniMaxM2_7 => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
@@ -390,10 +384,8 @@ impl Model {
             Self::KimiK2_5 => "kimi-k2.5",
 
             // -- DeepSeek models --
-            Self::DeepSeekV4_1Flash => "deepseek-v4.1-flash",
+            Self::DeepSeekV4_1Flash => "deepseek-flash",
             Self::DeepSeekV4Pro => "deepseek-v4-pro",
-            Self::DeepSeekV4FlashVisionExp => "deepseek-v4-flash-vision-exp",
-            Self::DeepSeekV4Flash => "deepseek-v4-flash",
 
             // -- Minimax Group models --
             Self::MiniMaxM3 => "minimax-m3",
@@ -495,8 +487,6 @@ impl Model {
             // -- DeepSeek models --
             Self::DeepSeekV4_1Flash => "DeepSeek V4.1 Flash",
             Self::DeepSeekV4Pro => "DeepSeek V4 Pro",
-            Self::DeepSeekV4FlashVisionExp => "DeepSeek V4 Flash Vision (Exp)",
-            Self::DeepSeekV4Flash => "DeepSeek V4 Flash",
 
             // -- Minimax Group models --
             Self::MiniMaxM3 => "MiniMax M3",
@@ -589,8 +579,6 @@ impl Model {
             | Self::KimiK2_5
             | Self::DeepSeekV4_1Flash
             | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4FlashVisionExp
-            | Self::DeepSeekV4Flash
             | Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::Hy4Preview
@@ -632,8 +620,6 @@ impl Model {
             | Self::KimiK2_6
             | Self::KimiK2_5
             | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4FlashVisionExp
-            | Self::DeepSeekV4Flash
             | Self::DeepSeekV4_1Flash
             | Self::MiniMaxM2_5
             | Self::MimoV2_5Pro
@@ -736,10 +722,7 @@ impl Model {
             Self::KimiK2_7Code | Self::KimiK2_6 | Self::KimiK2_5 => 262_144,
 
             // DeepSeek models
-            Self::DeepSeekV4_1Flash
-            | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4FlashVisionExp
-            | Self::DeepSeekV4Flash => 1_000_000,
+            Self::DeepSeekV4_1Flash | Self::DeepSeekV4Pro => 1_000_000,
 
             // Minimax Group models
             Self::MiniMaxM3 => {
@@ -841,10 +824,7 @@ impl Model {
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
 
             // DeepSeek models
-            Self::DeepSeekV4_1Flash
-            | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4FlashVisionExp
-            | Self::DeepSeekV4Flash => Some(384_000),
+            Self::DeepSeekV4_1Flash | Self::DeepSeekV4Pro => Some(384_000),
 
             // Minimax Group models
             Self::MiniMaxM3 => {
@@ -1118,11 +1098,6 @@ impl Model {
                 ReasoningEffort::High,
             ]),
             Self::DeepSeekV4Pro => Some(vec![ReasoningEffort::Max, ReasoningEffort::High]),
-            Self::DeepSeekV4FlashVisionExp | Self::DeepSeekV4Flash => Some(vec![
-                ReasoningEffort::Low,
-                ReasoningEffort::Max,
-                ReasoningEffort::High,
-            ]),
 
             // Minimax Group models
             Self::MiniMaxM3 => {
@@ -1256,9 +1231,7 @@ impl Model {
             ]),
 
             // DeepSeek models
-            Self::DeepSeekV4_1Flash | Self::DeepSeekV4FlashVisionExp => {
-                Some(vec![ModelCapability::InputImage])
-            }
+            Self::DeepSeekV4_1Flash => Some(vec![ModelCapability::InputImage]),
 
             // Minimax Group models
             Self::MiniMaxM3 => Some(vec![
