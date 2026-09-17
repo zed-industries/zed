@@ -143,7 +143,8 @@ impl PendingKeystrokesIndicator {
         });
 
         let keystrokes = map_pending_keystrokes(keystrokes, cx.keyboard_mapper().as_ref());
-        // Pause/resume notifications must not end the pointer handoff grace period.
+        // Pausing or resuming the timer also notifies observers.
+        // Only a change in pending keys should close the popover early.
         if self.popover.visible
             && !self.popover.is_pointer_over()
             && self
@@ -603,10 +604,12 @@ mod tests {
         let (indicator, _, cx) = setup_indicator_test(cx, timed_bindings());
         cx.run_until_parked();
 
+        // Before any input, neither the indicator's state nor its rendered element should exist.
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
         assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
         assert!(cx.debug_bounds("PENDING_KEYSTROKES_INDICATOR").is_none());
 
+        // "x" starts no chord in this keymap, so ordinary input must keep the indicator hidden.
         cx.simulate_keystrokes("x");
         cx.run_until_parked();
 
@@ -900,14 +903,17 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_timed_chord_progress_dismisses_popover_during_grace_period(cx: &mut TestAppContext) {
+    fn test_timed_chord_progress_dismisses_popover_during_dismissal_delay(cx: &mut TestAppContext) {
+        // The standalone ctrl-b binding gives the initial prefix a timeout, which hovering pauses.
         assert_chord_progress_dismisses_popover(cx, nested_timed_bindings());
     }
 
     #[gpui::test]
-    fn test_newly_timed_chord_progress_dismisses_popover_during_grace_period(
+    fn test_newly_timed_chord_progress_dismisses_popover_during_dismissal_delay(
         cx: &mut TestAppContext,
     ) {
+        // Without standalone ctrl-b, the initial prefix has no timeout. Pressing h creates one
+        // because ctrl-b h is both a complete binding and a prefix of ctrl-b h j.
         assert_chord_progress_dismisses_popover(cx, nested_timed_bindings().into_iter().skip(1));
     }
 
@@ -921,11 +927,13 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
 
+        // The pointer has left, but only 100 ms of the 300 ms dismissal delay has elapsed.
         indicator.read_with(cx, |indicator, _| {
             assert!(indicator.popover.visible);
             assert!(indicator.popover.hide_task.is_some());
         });
 
+        // Continuing the chord must close the popover now, without waiting for the delay.
         cx.simulate_keystrokes("h");
         cx.run_until_parked();
 
@@ -934,6 +942,8 @@ mod tests {
             assert!(indicator.popover.hide_task.is_none());
         });
 
+        // Both a previously paused timeout and a newly created one must run for a full
+        // second from this keypress, without waiting for the popover's dismissal delay.
         cx.update(|window, cx| {
             let timeout = window
                 .pending_input()
@@ -947,23 +957,27 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(999));
         cx.run_until_parked();
 
+        // The chord must still be pending just before its one-second timeout.
         cx.update(|window, _| assert!(window.has_pending_keystrokes()));
 
         cx.executor().advance_clock(Duration::from_millis(1));
         cx.run_until_parked();
 
+        // At exactly one second, the timeout must clear pending input and the indicator.
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
         assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
     }
 
     #[gpui::test]
-    fn test_timeout_notifications_preserve_popover_grace_period(cx: &mut TestAppContext) {
+    fn test_timeout_notifications_preserve_popover_dismissal_delay(cx: &mut TestAppContext) {
         let (indicator, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
         start_popover_dismissal(cx);
 
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
 
+        // Trigger notifications without changing the pending keys. They must neither
+        // close the popover early nor restart its 300 ms dismissal delay.
         cx.update(|window, cx| {
             assert!(window.set_pending_input_timeout_paused(&indicator, false, cx));
             assert!(window.set_pending_input_timeout_paused(&indicator, true, cx));
@@ -975,11 +989,14 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(199));
         cx.run_until_parked();
 
+        // At 299 ms since the pointer left, the popover must not have closed early.
         assert!(indicator.read_with(cx, |indicator, _| indicator.popover.visible));
 
         cx.executor().advance_clock(Duration::from_millis(1));
         cx.run_until_parked();
 
+        // It must close at the original 300 ms deadline. Restarting the delay when
+        // the notifications arrived at 100 ms would leave it open until 400 ms.
         assert!(!indicator.read_with(cx, |indicator, _| indicator.popover.visible));
     }
 
@@ -992,11 +1009,11 @@ mod tests {
             .advance_clock(POPOVER_HIDE_DELAY - Duration::from_millis(1));
         cx.run_until_parked();
 
-        let grace_period_render_state = indicator
+        let dismissing_render_state = indicator
             .read_with(cx, |indicator, _| indicator_snapshot(indicator))
-            .expect("pending input during popover dismissal grace period");
-        assert!(grace_period_render_state.timeout_paused);
-        assert!(grace_period_render_state.popover_visible);
+            .expect("pending input during popover dismissal delay");
+        assert!(dismissing_render_state.timeout_paused);
+        assert!(dismissing_render_state.popover_visible);
 
         cx.executor().advance_clock(Duration::from_millis(1));
         cx.run_until_parked();
@@ -1073,6 +1090,8 @@ mod tests {
             let pending_input = window.pending_input().expect("pending input");
             assert!(pending_input.timeout().is_none());
         });
+        // Untimed input must still show the pending keys and matching binding,
+        // without countdown state.
         let snapshot = indicator
             .read_with(cx, |indicator, _| {
                 assert!(
@@ -1096,10 +1115,12 @@ mod tests {
         assert!(cx.debug_bounds("PENDING_KEYSTROKES_INDICATOR").is_some());
         assert!(notification_count.get() > 0);
 
+        // Waiting longer than the usual one-second timeout must not hide an untimed chord.
         cx.executor().advance_clock(Duration::from_secs(2));
         cx.run_until_parked();
         assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_some()));
 
+        // Completing the chord must clear pending input and hide the indicator.
         cx.simulate_keystrokes("h");
         cx.run_until_parked();
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
