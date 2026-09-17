@@ -720,6 +720,10 @@ fragment float4 polychrome_sprite_fragment(
   float distance =
       quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
+  if (sprite.premultiplied_alpha && sample.a > 0.0) {
+    sample.rgb /= sample.a;
+  }
+
   float4 color = sample;
   if (sprite.grayscale) {
     float grayscale = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
