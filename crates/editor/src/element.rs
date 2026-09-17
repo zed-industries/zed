@@ -1193,10 +1193,18 @@ impl EditorElement {
                     let cursor_position = selection.head;
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
-                    if (selection.is_local && !show_local_cursors)
-                        || !in_range
-                        || row_block_types.get(&cursor_position.row()) == Some(&true)
-                    {
+                    if !in_range || row_block_types.get(&cursor_position.row()) == Some(&true) {
+                        continue;
+                    }
+
+                    if selection.is_local && !show_local_cursors {
+                        // Blinking hides local cursors without invalidating their previous
+                        // geometry, which is needed to animate the next keyboard movement.
+                        if animation_enabled
+                            && cursor_shape_supports_cursor_animation(selection.cursor_shape)
+                        {
+                            handled_animation_cursors.insert(selection.id);
+                        }
                         continue;
                     }
 
