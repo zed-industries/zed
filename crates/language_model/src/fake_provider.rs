@@ -1,14 +1,15 @@
 use crate::{
-    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice,
 };
 use anyhow::anyhow;
 use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, stream::StreamExt};
-use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::Result;
 use parking_lot::Mutex;
+use std::collections::VecDeque;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
@@ -68,17 +69,8 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        _: &mut App,
-    ) -> AnyView {
-        unimplemented!()
-    }
-
-    fn reset_credentials(&self, _: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+    fn settings_view(&self, _: &mut App) -> Option<crate::ProviderSettingsView> {
+        None
     }
 }
 
@@ -127,8 +119,12 @@ pub struct FakeLanguageModel {
     supports_disabling_thinking: AtomicBool,
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
+    supports_server_side_compaction: AtomicBool,
     max_token_count: AtomicU64,
+    max_input_tokens: Option<u64>,
     max_output_tokens: AtomicU64,
+    input_token_counts: Mutex<VecDeque<u64>>,
+    input_token_count_requests: Mutex<Vec<LanguageModelRequest>>,
 }
 
 impl Default for FakeLanguageModel {
@@ -144,8 +140,12 @@ impl Default for FakeLanguageModel {
             supports_disabling_thinking: AtomicBool::new(true),
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
+            supports_server_side_compaction: AtomicBool::new(false),
             max_token_count: AtomicU64::new(1_000_000),
+            max_input_tokens: None,
             max_output_tokens: AtomicU64::new(0),
+            input_token_counts: Mutex::new(VecDeque::new()),
+            input_token_count_requests: Mutex::new(Vec::new()),
         }
     }
 }
@@ -190,13 +190,29 @@ impl FakeLanguageModel {
         self.supports_images.store(supports, SeqCst);
     }
 
+    pub fn set_supports_server_side_compaction(&self, supports: bool) {
+        self.supports_server_side_compaction.store(supports, SeqCst);
+    }
+
     pub fn set_max_token_count(&self, count: u64) {
         self.max_token_count.store(count, SeqCst);
+    }
+
+    pub fn set_max_input_tokens(&mut self, count: u64) {
+        self.max_input_tokens = Some(count);
     }
 
     pub fn set_max_output_tokens(&self, count: Option<u64>) {
         self.max_output_tokens
             .store(count.unwrap_or_default(), SeqCst);
+    }
+
+    pub fn queue_input_token_count(&self, count: u64) {
+        self.input_token_counts.lock().push_back(count);
+    }
+
+    pub fn input_token_count_requests(&self) -> Vec<LanguageModelRequest> {
+        self.input_token_count_requests.lock().clone()
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -256,6 +272,14 @@ impl FakeLanguageModel {
             .retain(|(req, _)| req != request);
     }
 
+    pub fn is_completion_stream_closed(&self, request: &LanguageModelRequest) -> bool {
+        self.current_completion_txs
+            .lock()
+            .iter()
+            .find(|(pending_request, _)| pending_request == request)
+            .is_none_or(|(_, sender)| sender.is_closed())
+    }
+
     pub fn send_last_completion_stream_text_chunk(&self, chunk: impl Into<String>) {
         self.send_completion_stream_text_chunk(self.pending_completions().last().unwrap(), chunk);
     }
@@ -308,6 +332,10 @@ impl LanguageModel for FakeLanguageModel {
         self.supports_images.load(SeqCst)
     }
 
+    fn supports_server_side_compaction(&self) -> bool {
+        self.supports_server_side_compaction.load(SeqCst)
+    }
+
     fn supports_thinking(&self) -> bool {
         self.supports_thinking.load(SeqCst)
     }
@@ -328,6 +356,11 @@ impl LanguageModel for FakeLanguageModel {
         self.max_token_count.load(SeqCst)
     }
 
+    fn max_input_tokens(&self) -> u64 {
+        self.max_input_tokens
+            .unwrap_or_else(|| self.max_token_count())
+    }
+
     fn max_output_tokens(&self) -> Option<u64> {
         let max_output_tokens = self.max_output_tokens.load(SeqCst);
         if max_output_tokens == 0 {
@@ -335,6 +368,24 @@ impl LanguageModel for FakeLanguageModel {
         } else {
             Some(max_output_tokens)
         }
+    }
+
+    fn count_input_tokens(
+        &self,
+        request: LanguageModelRequest,
+        _: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        if self.forbid_requests.load(SeqCst) {
+            return async {
+                Err(LanguageModelCompletionError::Other(anyhow!(
+                    "requests are forbidden"
+                )))
+            }
+            .boxed();
+        }
+        self.input_token_count_requests.lock().push(request);
+        let count = self.input_token_counts.lock().pop_front();
+        async move { Ok(count) }.boxed()
     }
 
     fn stream_completion(

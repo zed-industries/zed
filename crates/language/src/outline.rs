@@ -1,7 +1,9 @@
-use crate::{BufferSnapshot, Point, ToPoint, ToTreeSitterPoint};
+use crate::{BufferSnapshot, Language, Point, ToPoint, ToTreeSitterPoint};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
 use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
+use text::Rope;
+use theme::SyntaxTheme;
 
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
@@ -19,6 +21,7 @@ pub struct Outline<T> {
 pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
+    pub selection_range: Range<T>,
     pub source_range_for_text: Range<T>,
     pub text: SharedString,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
@@ -71,6 +74,8 @@ impl<T: ToPoint> OutlineItem<T> {
         OutlineItem {
             depth: self.depth,
             range: self.range.start.to_point(buffer)..self.range.end.to_point(buffer),
+            selection_range: self.selection_range.start.to_point(buffer)
+                ..self.selection_range.end.to_point(buffer),
             source_range_for_text: self.source_range_for_text.start.to_point(buffer)
                 ..self.source_range_for_text.end.to_point(buffer),
             text: self.text.clone(),
@@ -259,6 +264,16 @@ impl<T> Outline<T> {
     }
 }
 
+pub fn highlight_ranges_from_text(
+    text: &str,
+    language: &Arc<Language>,
+    syntax_theme: &SyntaxTheme,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let rope = Rope::from(text);
+    let runs = language.highlight_text(&rope, 0..text.len());
+    syntax_theme.resolve_runs(&runs).collect()
+}
+
 /// Interleaves synthetic [`OutlineSearchEntry::Ancestor`] rows before each match so callers
 /// can render the parent chain as tree context above the match.
 ///
@@ -315,6 +330,7 @@ mod tests {
         let item = OutlineItem {
             depth: 0,
             range: range.clone(),
+            selection_range: range.clone(),
             source_range_for_text: range,
             text: "completion".into(),
             highlight_ranges: Vec::new(),
@@ -332,6 +348,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
+                selection_range: Point::new(0, 6)..Point::new(0, 9),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 9),
                 text: "class Foo".into(),
                 highlight_ranges: vec![],
@@ -342,6 +359,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(2, 0)..Point::new(2, 7),
+                selection_range: Point::new(2, 0)..Point::new(2, 7),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 7),
                 text: "private".into(),
                 highlight_ranges: vec![],
@@ -373,6 +391,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
+                selection_range: Point::new(0, 3)..Point::new(0, 10),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 10),
                 text: "fn process".into(),
                 highlight_ranges: vec![],
@@ -383,6 +402,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(7, 0)..Point::new(12, 0),
+                selection_range: Point::new(0, 7)..Point::new(0, 20),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 20),
                 text: "struct DataProcessor".into(),
                 highlight_ranges: vec![],
@@ -405,5 +425,39 @@ mod tests {
         );
         assert_eq!(outline.find_most_similar("struct User"), None);
         assert_eq!(outline.find_most_similar("struct"), None);
+    }
+
+    #[test]
+    fn test_highlight_ranges_from_text() {
+        let language = rust_lang();
+        let keyword = HighlightStyle::color(gpui::Hsla::from(gpui::rgba(0x100000ff)));
+        let type_style = HighlightStyle::color(gpui::Hsla::from(gpui::rgba(0x200000ff)));
+        let theme = SyntaxTheme::new([
+            ("keyword".to_string(), keyword),
+            ("type".to_string(), type_style),
+        ]);
+        language.set_theme(&theme);
+
+        let text = "impl LspCommand for GetIncomingCalls";
+        assert_eq!(
+            highlight_ranges_from_text(text, &language, &theme),
+            vec![
+                (0..4, keyword),
+                (5..15, type_style),
+                (16..19, keyword),
+                (20..36, type_style),
+            ]
+        );
+
+        let text = "pub struct OutlineItem";
+        assert_eq!(
+            highlight_ranges_from_text(text, &language, &theme),
+            vec![(0..3, keyword), (4..10, keyword), (11..22, type_style)]
+        );
+
+        assert_eq!(
+            highlight_ranges_from_text("", &language, &theme),
+            Vec::new()
+        );
     }
 }

@@ -3,7 +3,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::role::Role;
-use crate::{LanguageModelToolUse, LanguageModelToolUseId, SharedString};
+use crate::{
+    LanguageModelProviderId, LanguageModelToolUse, LanguageModelToolUseId,
+    LanguageModelToolUseInput, SharedString,
+};
 
 /// Dimensions of a `LanguageModelImage`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -87,6 +90,14 @@ impl LanguageModelToolResult {
     /// Returns true when there are no content parts, or every part is empty.
     pub fn is_content_empty(&self) -> bool {
         self.content.iter().all(|part| part.is_empty())
+    }
+
+    /// Returns an iterator over all the images presents in the content parts.
+    pub fn images(&self) -> impl Iterator<Item = &LanguageModelImage> {
+        self.content.iter().filter_map(|part| match part {
+            LanguageModelToolResultContent::Image(image) => Some(image),
+            _ => None,
+        })
     }
 }
 
@@ -260,6 +271,58 @@ pub enum MessageContent {
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
+    Compaction(CompactedContext),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub enum CompactedContext {
+    Summary {
+        content: Arc<str>,
+        /// Opaque state the producing backend needs round-tripped alongside
+        /// the summary (e.g. Anthropic's `encrypted_content`). `None` when the
+        /// summary stands alone.
+        #[serde(default)]
+        provider_state: Option<ProviderCompactionState>,
+    },
+    ProviderState(ProviderCompactionState),
+}
+
+/// Opaque context produced by a provider's native compaction mechanism.
+///
+/// Only the provider identified by `provider_id` may interpret `payload`.
+/// `format` lets that provider evolve its representation without exposing it
+/// through the shared language model API.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub struct ProviderCompactionState {
+    provider_id: LanguageModelProviderId,
+    format: SharedString,
+    payload: Arc<str>,
+}
+
+impl ProviderCompactionState {
+    pub fn new(
+        provider_id: LanguageModelProviderId,
+        format: impl Into<SharedString>,
+        payload: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            provider_id,
+            format: format.into(),
+            payload: payload.into(),
+        }
+    }
+
+    pub fn provider_id(&self) -> &LanguageModelProviderId {
+        &self.provider_id
+    }
+
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+
+    pub fn payload(&self) -> &str {
+        &self.payload
+    }
 }
 
 impl MessageContent {
@@ -270,7 +333,8 @@ impl MessageContent {
             MessageContent::ToolResult(tool_result) => tool_result.is_content_empty(),
             MessageContent::RedactedThinking(_)
             | MessageContent::ToolUse(_)
-            | MessageContent::Image(_) => false,
+            | MessageContent::Image(_)
+            | MessageContent::Compaction(_) => false,
         }
     }
 }
@@ -316,7 +380,8 @@ impl LanguageModelRequestMessage {
                 }
                 MessageContent::RedactedThinking(_)
                 | MessageContent::ToolUse(_)
-                | MessageContent::Image(_) => {}
+                | MessageContent::Image(_)
+                | MessageContent::Compaction(_) => {}
             }
         }
         buffer
@@ -331,8 +396,52 @@ impl LanguageModelRequestMessage {
 pub struct LanguageModelRequestTool {
     pub name: String,
     pub description: String,
-    pub input_schema: serde_json::Value,
-    pub use_input_streaming: bool,
+    pub input: LanguageModelRequestToolInput,
+}
+
+impl LanguageModelRequestTool {
+    pub fn function(
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+        use_input_streaming: bool,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            input: LanguageModelRequestToolInput::Function {
+                input_schema,
+                use_input_streaming,
+            },
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelRequestToolInput {
+    Function {
+        input_schema: serde_json::Value,
+        use_input_streaming: bool,
+    },
+    Custom {
+        format: Option<LanguageModelCustomToolFormat>,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelCustomToolFormat {
+    Text,
+    Grammar {
+        syntax: LanguageModelCustomToolGrammarSyntax,
+        definition: String,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LanguageModelCustomToolGrammarSyntax {
+    Lark,
+    Regex,
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
@@ -370,6 +479,41 @@ pub struct LanguageModelRequest {
     pub thinking_allowed: bool,
     pub thinking_effort: Option<String>,
     pub speed: Option<Speed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_at_tokens: Option<u64>,
+    /// An output-token ceiling, including reasoning tokens where the provider counts them.
+    ///
+    /// Providers must forward this limit (clamped to a known model maximum), or reject
+    /// capped requests when unsupported. `None` preserves the provider's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+}
+
+impl LanguageModelRequest {
+    /// Combines the request's output limit with the model's output limit.
+    pub fn effective_max_output_tokens(&self, model_maximum: Option<u64>) -> Option<u64> {
+        match (self.max_output_tokens, model_maximum) {
+            (Some(request), Some(model)) => Some(request.min(model)),
+            (request, model) => request.or(model),
+        }
+    }
+
+    pub fn contains_custom_tool_input(&self) -> bool {
+        self.tools
+            .iter()
+            .any(|tool| matches!(tool.input, LanguageModelRequestToolInput::Custom { .. }))
+            || self.messages.iter().any(|message| {
+                message.content.iter().any(|content| {
+                    matches!(
+                        content,
+                        MessageContent::ToolUse(LanguageModelToolUse {
+                            input: LanguageModelToolUseInput::Text(_),
+                            ..
+                        })
+                    )
+                })
+            })
+    }
 }
 
 #[derive(
@@ -400,6 +544,29 @@ pub struct LanguageModelResponseMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_output_limit_serialization() -> serde_json::Result<()> {
+        let request = LanguageModelRequest::default();
+        let mut serialized = serde_json::to_value(&request)?;
+        assert!(serialized.get("max_output_tokens").is_none());
+        assert_eq!(
+            serde_json::from_value::<LanguageModelRequest>(serialized.clone())?,
+            request
+        );
+
+        serialized["max_output_tokens"] = serde_json::json!(1024);
+        let capped: LanguageModelRequest = serde_json::from_value(serialized.clone())?;
+        assert_eq!(capped.max_output_tokens, Some(1024));
+        assert_eq!(serde_json::to_value(capped)?, serialized);
+
+        serialized["max_output_tokens"] = serde_json::Value::Null;
+        assert_eq!(
+            serde_json::from_value::<LanguageModelRequest>(serialized)?,
+            request
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_language_model_tool_result_content_deserialization() {

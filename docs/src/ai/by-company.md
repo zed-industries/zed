@@ -1,6 +1,6 @@
 ---
 title: AI by Company - Zed
-description: Find the right Zed setup path for OpenAI, ChatGPT, Codex, Claude, Gemini, Copilot, Cursor, OpenCode, Pi, OpenRouter, Bedrock, local models, and other AI tools.
+description: Find the right Zed setup path for OpenAI, ChatGPT, Codex, Claude, Gemini, Copilot, Cursor, OpenCode, Pi, Poolside, OpenRouter, Bedrock, local models, and other AI tools.
 ---
 
 # AI by Company
@@ -77,6 +77,15 @@ Cursor subscriptions do not configure Zed's LLM provider settings. If you want t
 
 Pi is an agent harness, not a Zed LLM subscription. Pi may support provider auth such as ChatGPT, Claude, or Copilot through its own setup flow.
 
+## Poolside {#poolside}
+
+| Path                    | Support level   | What you get                         | Account / billing               | Setup                                            |
+| ----------------------- | --------------- | ------------------------------------ | ------------------------------- | ------------------------------------------------ |
+| Poolside External Agent | Hosted in Zed   | Poolside in an External Agent thread | Poolside or configured provider | [External Agents](./external-agents.md#poolside) |
+| `pool` CLI              | Run in terminal | Native Poolside Agent CLI experience | Poolside or configured provider | [Terminal Threads](./terminal-threads.md)        |
+
+Install Poolside from the ACP Registry, configure Zed with the Poolside Agent CLI, or add Poolside as a Custom Agent. See [External Agents](./external-agents.md#poolside) for setup steps and platform-specific details.
+
 ## DeepSeek {#deepseek}
 
 | Path         | Support level     | What you get                        | Account / billing                               | Setup                                          |
@@ -97,8 +106,9 @@ Paid DeepSeek usage is API access in Zed, not subscription sign-in.
 
 | Tool                              | Support level     | What you get                           | Account / billing | Setup                                                         |
 | --------------------------------- | ----------------- | -------------------------------------- | ----------------- | ------------------------------------------------------------- |
-| Ollama                            | Configured in Zed | Local models for Zed AI features       | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#ollama)            |
+| llama.cpp                         | Configured in Zed | Local models for Zed AI features       | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#llama-cpp)         |
 | LM Studio                         | Configured in Zed | Local models for Zed AI features       | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#lm-studio)         |
+| Ollama                            | Configured in Zed | Local models for Zed AI features       | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#ollama)            |
 | Local OpenAI-compatible server    | Configured in Zed | Local or self-hosted model endpoint    | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#openai-compatible) |
 | Local/self-hosted edit prediction | Configured in Zed | Edit predictions from a local provider | Local/self-hosted | [Edit Prediction](./edit-prediction.md)                       |
 

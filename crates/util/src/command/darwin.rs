@@ -3,14 +3,13 @@ use mach2::exception_types::{
 };
 use mach2::port::{MACH_PORT_NULL, mach_port_t};
 use mach2::thread_status::{THREAD_STATE_NONE, thread_state_flavor_t};
-use smol::Unblock;
+use smol::Async;
 use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
 use std::os::fd::AsRawFd;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::io::FromRawFd;
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output};
 use std::ptr;
@@ -230,79 +229,30 @@ impl Command {
 
 #[derive(Debug)]
 pub struct Child {
-    pid: libc::pid_t,
-    pub stdin: Option<Unblock<std::fs::File>>,
-    pub stdout: Option<Unblock<std::fs::File>>,
-    pub stderr: Option<Unblock<std::fs::File>>,
-    kill_on_drop: bool,
-    status: Option<ExitStatus>,
-}
-
-impl Drop for Child {
-    fn drop(&mut self) {
-        if self.kill_on_drop && self.status.is_none() {
-            let _ = self.kill();
-        }
-    }
+    inner: smol::process::Child,
+    pub stdin: Option<Async<std::fs::File>>,
+    pub stdout: Option<Async<std::fs::File>>,
+    pub stderr: Option<Async<std::fs::File>>,
 }
 
 impl Child {
     pub fn id(&self) -> u32 {
-        self.pid as u32
+        self.inner.id()
     }
 
     pub fn kill(&mut self) -> io::Result<()> {
-        let result = unsafe { libc::kill(self.pid, libc::SIGKILL) };
-        if result == -1 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        self.inner.kill()
     }
 
     pub fn try_status(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(status) = self.status {
-            return Ok(Some(status));
-        }
-
-        let mut status: libc::c_int = 0;
-        let result = unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) };
-
-        if result == -1 {
-            Err(io::Error::last_os_error())
-        } else if result == 0 {
-            Ok(None)
-        } else {
-            let exit_status = ExitStatus::from_raw(status);
-            self.status = Some(exit_status);
-            Ok(Some(exit_status))
-        }
+        self.inner.try_status()
     }
 
     pub fn status(
         &mut self,
     ) -> impl std::future::Future<Output = io::Result<ExitStatus>> + Send + 'static {
         self.stdin.take();
-
-        let pid = self.pid;
-        let cached_status = self.status;
-
-        async move {
-            if let Some(status) = cached_status {
-                return Ok(status);
-            }
-
-            smol::unblock(move || {
-                let mut status: libc::c_int = 0;
-                let result = unsafe { libc::waitpid(pid, &mut status, 0) };
-                if result == -1 {
-                    Err(io::Error::last_os_error())
-                } else {
-                    Ok(ExitStatus::from_raw(status))
-                }
-            })
-            .await
-        }
+        self.inner.status()
     }
 
     pub async fn output(mut self) -> io::Result<Output> {
@@ -350,12 +300,30 @@ fn spawn_posix_spawn(
     stderr_cfg: Stdio,
     kill_on_drop: bool,
 ) -> io::Result<Child> {
-    let program_cstr = CString::new(program.as_bytes()).map_err(|_| invalid_input_error())?;
+    // posix_spawnp resolves programs against the parent's cwd/PATH, not the child's.
+    let resolved_program = if program.as_bytes().contains(&b'/') {
+        std::path::absolute(current_dir.join(program)).map_or_else(
+            |_| program.as_bytes().to_vec(),
+            |p| p.into_os_string().into_vec(),
+        )
+    } else {
+        envs.and_then(|e| {
+            e.iter()
+                .find(|(k, _)| k.as_os_str() == OsStr::new("PATH"))
+                .and_then(|(_, v)| which::which_in(program, Some(v.as_os_str()), current_dir).ok())
+        })
+        .map_or_else(
+            || program.as_bytes().to_vec(),
+            |path| path.into_os_string().into_vec(),
+        )
+    };
+    let program_cstr = CString::new(resolved_program).map_err(|_| invalid_input_error())?;
+    let argv0_cstr = CString::new(program.as_bytes()).map_err(|_| invalid_input_error())?;
 
     let current_dir_cstr =
         CString::new(current_dir.as_os_str().as_bytes()).map_err(|_| invalid_input_error())?;
 
-    let mut argv_cstrs = vec![program_cstr.clone()];
+    let mut argv_cstrs = vec![argv0_cstr];
     for arg in args {
         let cstr = CString::new(arg.as_bytes()).map_err(|_| invalid_input_error())?;
         argv_cstrs.push(cstr);
@@ -526,13 +494,13 @@ fn spawn_posix_spawn(
 
         cvt_nz(spawn_result)?;
 
+        let inner = smol::process::Child::adopt_raw_pid(pid as u32, true, kill_on_drop)?;
+
         Ok(Child {
-            pid,
-            stdin: stdin_write.map(|fd| Unblock::new(fd)),
-            stdout: stdout_read.map(|fd| Unblock::new(fd)),
-            stderr: stderr_read.map(|fd| Unblock::new(fd)),
-            kill_on_drop,
-            status: None,
+            inner,
+            stdin: stdin_write.map(Async::new).transpose()?,
+            stdout: stdout_read.map(Async::new).transpose()?,
+            stderr: stderr_read.map(Async::new).transpose()?,
         })
     }
 }
@@ -603,6 +571,8 @@ fn invalid_input_error() -> io::Error {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt as _;
+
     use super::*;
     use futures_lite::AsyncWriteExt;
 
@@ -644,6 +614,47 @@ mod tests {
             stdout,
             format!("{read_fd} WAS NOT INHERITED\n{write_fd} WAS NOT INHERITED\nDONE\n")
         );
+    }
+
+    fn wait_until_gone(pid: u32) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+            if result == -1 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "process {pid} was not reaped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn test_drop_reaps_child() {
+        smol::block_on(async {
+            let child = Command::new("/usr/bin/true")
+                .spawn()
+                .expect("failed to spawn command");
+            let pid = child.id();
+            drop(child);
+            wait_until_gone(pid);
+        });
+    }
+
+    #[test]
+    fn test_kill_on_drop_kills_and_reaps_child() {
+        smol::block_on(async {
+            let child = Command::new("/bin/sleep")
+                .arg("60")
+                .kill_on_drop(true)
+                .spawn()
+                .expect("failed to spawn command");
+            let pid = child.id();
+            drop(child);
+            wait_until_gone(pid);
+        });
     }
 
     #[test]
@@ -913,6 +924,114 @@ mod tests {
             let output = child.output().await.expect("failed to get output");
             assert!(output.status.success());
             assert_eq!(output.stdout, b"piped input");
+        });
+    }
+
+    #[test]
+    fn test_bare_program_resolved_via_custom_path() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+
+        let link_path = temp_dir.path().join("zed-test-echo");
+        std::os::unix::fs::symlink("/bin/echo", &link_path).expect("failed to create symlink");
+
+        let custom_path = temp_dir.path().to_string_lossy().into_owned();
+
+        smol::block_on(async {
+            let output = Command::new("zed-test-echo")
+                .args(["-n", "from-custom-path"])
+                .env("PATH", &custom_path)
+                .output()
+                .await
+                .expect("failed to spawn with custom PATH");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-custom-path");
+        });
+    }
+
+    #[test]
+    fn test_bare_program_preserves_argv0_when_resolved_via_custom_path() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+
+        let link_path = temp_dir.path().join("zed-test-sh");
+        std::os::unix::fs::symlink("/bin/sh", &link_path).expect("failed to create symlink");
+
+        let custom_path = temp_dir.path().to_string_lossy().into_owned();
+
+        smol::block_on(async {
+            let output = Command::new("zed-test-sh")
+                .args(["-c", "printf %s \"$0\""])
+                .env("PATH", &custom_path)
+                .output()
+                .await
+                .expect("failed to spawn with custom PATH");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"zed-test-sh");
+        });
+    }
+
+    #[test]
+    fn test_bare_program_with_custom_path_falls_back_when_not_found() {
+        smol::block_on(async {
+            let result = Command::new("zed-nonexistent-binary-xyz")
+                .env("PATH", "/nonexistent/path")
+                .spawn();
+
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_bare_program_with_custom_env_no_path_key() {
+        smol::block_on(async {
+            let output = Command::new("echo")
+                .args(["-n", "from-inherited-path"])
+                .env("ZED_TEST_VAR", "test")
+                .output()
+                .await
+                .expect("failed to spawn with custom env but no PATH override");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-inherited-path");
+        });
+    }
+
+    #[test]
+    fn test_relative_path_resolved_against_current_dir() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+
+        let link_path = temp_dir.path().join("zed-test-echo");
+        std::os::unix::fs::symlink("/bin/echo", &link_path).expect("failed to create symlink");
+
+        let relative_path = "./zed-test-echo";
+
+        smol::block_on(async {
+            let output = Command::new(relative_path)
+                .args(["-n", "from-relative-path"])
+                .current_dir(temp_dir.path())
+                .env("PATH", "/nonexistent/path")
+                .output()
+                .await
+                .expect("failed to spawn with relative path");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-relative-path");
+        });
+    }
+
+    #[test]
+    fn test_absolute_path_passes_through_unchanged() {
+        smol::block_on(async {
+            let output = Command::new("/bin/echo")
+                .args(["-n", "from-absolute-path"])
+                .env("PATH", "/nonexistent/path")
+                .output()
+                .await
+                .expect("failed to spawn with absolute path");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-absolute-path");
         });
     }
 

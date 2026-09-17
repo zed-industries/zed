@@ -1,0 +1,30 @@
+error: entity `.update()` called during render mutates state in the render pass
+  --> $DIR/entity_update_in_render.rs:23:9
+   |
+LL | /         self.counter.update(cx, |counter, _cx| {
+LL | |             counter.value += 1;
+LL | |         });
+   | |__________^
+   |
+   = note: `-D entity-update-in-render` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(entity_update_in_render)]`
+
+error: entity `.update()` called during render mutates state in the render pass
+  --> $DIR/entity_update_in_render.rs:37:17
+   |
+LL |           let _ = self.counter.update(cx, |counter, _cx| {
+   |  _________________^
+LL | |             counter.value += 1;
+LL | |         });
+   | |__________^
+
+error: entity `.update()` called during render mutates state in the render pass
+  --> $DIR/entity_update_in_render.rs:51:9
+   |
+LL | /         self.counter.update(cx, |counter, _cx| {
+LL | |             counter.value += 1;
+LL | |         });
+   | |__________^
+
+error: aborting due to 3 previous errors
+

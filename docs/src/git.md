@@ -9,6 +9,19 @@ Zed has built-in Git support that lets you manage version control without leavin
 
 For operations that Zed doesn't support natively, you can use the integrated terminal.
 
+## Repository Activation
+
+When a project is rooted at a git repository, or at a subdirectory of one, all repositories in it are active immediately.
+
+When a project is not rooted at a repository (a home directory, a folder of projects), repositories directly inside the project root are also active immediately, and deeper ones activate when a file inside them is opened, in local and remote projects alike.
+
+Inactive repositories are fully indexed and searchable; only git features (status, diffs, branches) wait for activation.
+
+This behavior is tied to the [`file_scan_depth`](./reference/all-settings.md#file-scan-depth) setting, but not to its value: any non-zero `file_scan_depth` defers activation for repositories that are not directly inside a project root folder, and repositories rooted at or deeper than the limit are not even discovered until their directories are indexed on demand.
+In multi-folder projects, depth and activation are measured from each root folder separately.
+
+Setting `file_scan_depth` to `0` turns deferred activation off: every discovered repository activates immediately.
+
 ## Git Panel
 
 The Git Panel shows the state of your working tree and Git's staging area.
@@ -142,6 +155,10 @@ From the panel, you can simply type a commit message and hit the commit button, 
 
 Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}.
 
+Entries are grouped into sections (**Tracked** and **Untracked** by default), and each section can be staged on its own without touching the others. Click the checkbox on a section header, or use {#action git::StageSection} / {#action git::UnstageSection}, which act on the section containing the selected entry. These are also available by right-clicking an entry. Neither is bound by default; bind them in your keymap under the `GitPanel` context if you use them often.
+
+To open a changed file in the editor without a diff view, right-click on the file in the Git Panel and select **View File**. Use **Open Diff** ({#kb menu::Confirm}) or **Open Diff (File)** to review changes in a diff view instead.
+
 <!-- Add media -->
 
 ## Committing
@@ -240,7 +257,13 @@ Git stash allows you to temporarily save your uncommitted changes and revert you
 
 ### Creating Stashes
 
-To stash all your current changes, use the {#action git::StashAll} action. This will save both staged and unstaged changes to a new stash entry and clean your working directory.
+To stash all your current changes, use the {#action git::StashAll} action. This will save both staged and unstaged changes, including untracked files, to a new stash entry and clean your working directory.
+
+To stash only tracked changes and leave untracked files in place, use the {#action git::StashTracked} action. To stash only staged changes and leave unstaged changes in place, use the {#action git::StashStaged} action; this requires git 2.35 or newer.
+
+The Git Panel's overflow menu offers whichever of these matches the current **Group By** mode: **Stash Tracked** when grouping by Tracked & Untracked, and **Stash Staged** when grouping by Staged & Unstaged. **Stash All** is always available.
+
+Each of these actions first prompts for an optional stash name. Confirming with an empty prompt lets git generate its usual `WIP on ...` description.
 
 ### Managing Stashes
 
@@ -291,7 +314,7 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
 }
 ```
 
-To add custom commit instructions for the model, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+To add custom commit instructions for the model, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
 
@@ -303,7 +326,7 @@ To add custom instructions that apply only to commit message generation, use the
 }
 ```
 
-These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 > Before Zed v1.4.0, this was done through the Rules Library, which has been removed.
 > See [Migrating from Rules](./ai/instructions.md#migrating-from-rules) for more information.
@@ -316,7 +339,8 @@ Zed currently supports links to the hosted versions of
 [GitHub](https://github.com),
 [GitLab](https://gitlab.com),
 [Bitbucket](https://bitbucket.org),
-[SourceHut](https://sr.ht) and
+[SourceHut](https://sr.ht),
+[Tangled](https://tangled.org) and
 [Codeberg](https://codeberg.org).
 
 ### Self-Hosted Instances
@@ -337,18 +361,22 @@ However, if your self-hosted Git instance URL doesn't contain identifying keywor
 }
 ```
 
-The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server.
+The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, `sourcehut`, and `tangled`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server.
 
 You can configure multiple custom providers if you work with several self-hosted instances.
 
 ### Permalinks
 
-Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
+Zed can open or copy a permanent link to a file or code selection on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
-Trigger this action via the [Command Palette](./getting-started.md#command-palette) (search for `permalink`),
-by creating [custom key bindings](./key-bindings.md#custom-key-bindings) for the
-`editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
-or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
+
+For the current selection in the editor, use {#action editor::CopyPermalinkToLine} or
+{#action editor::OpenPermalinkToLine} from the [Command Palette](./getting-started.md#command-palette)
+(search for `permalink`), via [custom key bindings](./key-bindings.md#custom-key-bindings),
+or by right-clicking and selecting **Copy Permalink to Line**.
+
+From a file tab or the Project Panel, you can also **Open File Permalink** or **Copy File Permalink**
+for the whole file (without a line selection).
 
 ## Diff Hunk Keyboard Shortcuts
 
@@ -368,6 +396,8 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Add}                        | {#kb git::Add}                        |
 | {#action git::StageAll}                   | {#kb git::StageAll}                   |
 | {#action git::UnstageAll}                 | {#kb git::UnstageAll}                 |
+| {#action git::StageSection}               | {#kb git::StageSection}               |
+| {#action git::UnstageSection}             | {#kb git::UnstageSection}             |
 | {#action git::ToggleStaged}               | {#kb git::ToggleStaged}               |
 | {#action git::StageAndNext}               | {#kb git::StageAndNext}               |
 | {#action git::UnstageAndNext}             | {#kb git::UnstageAndNext}             |
@@ -387,6 +417,8 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Worktree}                   | {#kb git::Worktree}                   |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
 | {#action git::StashAll}                   | {#kb git::StashAll}                   |
+| {#action git::StashTracked}               | {#kb git::StashTracked}               |
+| {#action git::StashStaged}                | {#kb git::StashStaged}                |
 | {#action git::StashPop}                   | {#kb git::StashPop}                   |
 | {#action git::StashApply}                 | {#kb git::StashApply}                 |
 | {#action git::ViewStash}                  | {#kb git::ViewStash}                  |

@@ -1,4 +1,3 @@
-use super::Axis;
 use crate::{
     Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
@@ -26,11 +25,9 @@ impl Editor {
     pub fn scroll(
         &mut self,
         scroll_position: Point<ScrollOffset>,
-        axis: Option<Axis>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.scroll_manager.update_ongoing_scroll(axis);
         self.set_scroll_position(scroll_position, window, cx);
     }
 

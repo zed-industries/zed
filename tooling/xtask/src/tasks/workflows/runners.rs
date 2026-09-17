@@ -53,6 +53,19 @@ pub enum Platform {
     Mac,
 }
 
+impl Platform {
+    pub fn target_triple(self, arch: Arch) -> &'static str {
+        match (self, arch) {
+            (Self::Linux, Arch::X86_64) => "x86_64-unknown-linux-musl",
+            (Self::Linux, Arch::AARCH64) => "aarch64-unknown-linux-musl",
+            (Self::Mac, Arch::X86_64) => "x86_64-apple-darwin",
+            (Self::Mac, Arch::AARCH64) => "aarch64-apple-darwin",
+            (Self::Windows, Arch::X86_64) => "x86_64-pc-windows-msvc",
+            (Self::Windows, Arch::AARCH64) => "aarch64-pc-windows-msvc",
+        }
+    }
+}
+
 impl std::fmt::Display for Platform {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

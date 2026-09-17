@@ -67,10 +67,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
     cx.set_global(app_db);
 
     let git_binary_path = None;
-    let fs = Arc::new(RealFs::new(
-        git_binary_path,
-        cx.background_executor().clone(),
-    ));
+    let fs = RealFs::new(git_binary_path, cx.background_executor().clone());
     <dyn fs::Fs>::set_global(fs.clone(), cx);
 
     let mut languages = LanguageRegistry::new(cx.background_executor().clone());
@@ -116,6 +113,11 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
     languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);
+
+    // The eval CLI runs headless with no controlling TTY, so PTY allocation and
+    // acquiring a controlling terminal fail with `ENOTTY`. Tell the agent to run
+    // its terminal commands without a PTY (and non-interactively) instead.
+    cx.set_global(acp_thread::HeadlessTerminal(true));
 
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);

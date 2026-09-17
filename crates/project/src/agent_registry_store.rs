@@ -32,6 +32,7 @@ pub struct RegistryAgentMetadata {
     pub version: SharedString,
     pub repository: Option<SharedString>,
     pub website: Option<SharedString>,
+    pub license_url: Option<SharedString>,
     pub icon_path: Option<SharedString>,
 }
 
@@ -86,6 +87,10 @@ impl RegistryAgent {
 
     pub fn website(&self) -> Option<&SharedString> {
         self.metadata().website.as_ref()
+    }
+
+    pub fn license_url(&self) -> Option<&SharedString> {
+        self.metadata().license_url.as_ref()
     }
 
     pub fn icon_path(&self) -> Option<&SharedString> {
@@ -396,6 +401,7 @@ async fn build_registry_agents(
             version: entry.version.into(),
             repository: entry.repository.map(Into::into),
             website: entry.website.map(Into::into),
+            license_url: entry.license_url.map(Into::into),
             icon_path,
         };
 
@@ -412,7 +418,7 @@ async fn build_registry_agents(
                         archive: target.archive.clone(),
                         cmd: target.cmd.clone(),
                         args: target.args.clone(),
-                        sha256: None,
+                        sha256: target.sha256.clone(),
                         env: target.env.clone(),
                     },
                 );
@@ -643,6 +649,8 @@ struct RegistryEntry {
     #[serde(default)]
     website: Option<String>,
     #[serde(default)]
+    license_url: Option<String>,
+    #[serde(default)]
     icon: Option<String>,
     distribution: RegistryDistribution,
 }
@@ -661,6 +669,8 @@ struct RegistryBinaryTarget {
     cmd: String,
     #[serde(default)]
     args: Vec<String>,
+    #[serde(default)]
+    sha256: Option<String>,
     #[serde(default)]
     env: HashMap<String, String>,
 }

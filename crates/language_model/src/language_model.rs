@@ -8,20 +8,67 @@ pub mod fake_provider;
 pub use language_model_core::*;
 
 use anyhow::Result;
-use futures::FutureExt;
-use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Task, Window};
+use futures::{FutureExt, SinkExt};
+use futures::{StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
+use gpui::{AnyView, App, AsyncApp, BackgroundExecutor, Task, Window};
 use icons::IconName;
 use parking_lot::Mutex;
 use std::sync::Arc;
+
+pub type CreateProviderSettingsView = Arc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>;
 
 pub use crate::api_key::{ApiKey, ApiKeyState};
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
 pub use env_var::{EnvVar, env_var};
 
+const BACKGROUND_STREAM_BUFFER_SIZE: usize = 32;
+
 pub fn init(cx: &mut App) {
     registry::init(cx);
+}
+
+pub fn stream_in_background<Output>(
+    mut events: BoxStream<'static, Output>,
+    executor: BackgroundExecutor,
+) -> BoxStream<'static, Output>
+where
+    Output: Send + 'static,
+{
+    let (mut sender, receiver) = mpsc::channel(BACKGROUND_STREAM_BUFFER_SIZE);
+    let task = executor.spawn(async move {
+        while let Some(event) = events.next().await {
+            if sender.send(event).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    receiver
+        .map(move |event| {
+            let _task = &task;
+            event
+        })
+        .boxed()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisabledReason(pub SharedString);
+
+impl DisabledReason {
+    pub fn new(reason: impl Into<SharedString>) -> Self {
+        Self(reason.into())
+    }
+}
+
+/// The outcome of an explicit [`LanguageModel::compact`] request.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompactionResult {
+    /// The replacement context to persist and use in subsequent requests.
+    pub context: CompactedContext,
+    /// Token usage of the compaction request itself, as reported by the
+    /// provider.
+    pub usage: TokenUsage,
 }
 
 pub struct LanguageModelTextStream {
@@ -56,6 +103,11 @@ pub trait LanguageModel: Send + Sync {
     /// Returns whether this model is the "latest", so we can highlight it in the UI.
     fn is_latest(&self) -> bool {
         false
+    }
+
+    /// Whether the model is currently disabled and, if so, why this is the case.
+    fn is_disabled(&self) -> Option<DisabledReason> {
+        None
     }
 
     /// Whether requests to this model require the user to consent to the
@@ -109,6 +161,40 @@ pub trait LanguageModel: Send + Sync {
             .find(|effort_level| effort_level.is_default)
     }
 
+    /// Whether this model supports provider-side automatic context
+    /// compaction (requested via `LanguageModelRequest::compact_at_tokens`).
+    fn supports_server_side_compaction(&self) -> bool {
+        false
+    }
+
+    fn supports_explicit_compaction(&self) -> bool {
+        false
+    }
+
+    /// Whether native compaction honors `LanguageModelRequest::max_output_tokens`.
+    fn supports_explicit_compaction_output_limit(&self) -> bool {
+        false
+    }
+
+    /// The provider-enforced input size required for explicit compaction.
+    fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
+        None
+    }
+
+    fn compact(
+        &self,
+        _request: LanguageModelRequest,
+        _cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        let provider = self.provider_name();
+        async move {
+            Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "{provider} does not support explicit compaction"
+            )))
+        }
+        .boxed()
+    }
+
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 
@@ -129,11 +215,38 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchema
+    /// Returns the model's context-window capacity.
+    fn max_token_count(&self) -> u64;
+
+    /// Returns the input ceiling before reserving output from any shared window.
+    ///
+    /// Models with a separate prompt limit override the context-window default.
+    fn max_input_tokens(&self) -> u64 {
+        self.max_token_count()
     }
 
-    fn max_token_count(&self) -> u64;
+    /// Counts request input without generating output, when supported by the provider.
+    ///
+    /// Counts may be estimates and differ from subsequent measured usage. Callers
+    /// choose the content to count; this does not infer which input is already
+    /// covered by a previous usage report. Unsupported providers return `None`.
+    fn count_input_tokens(
+        &self,
+        _request: LanguageModelRequest,
+        _cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        async { Ok(None) }.boxed()
+    }
+
+    /// Returns the combined input and output ceiling, if one applies.
+    ///
+    /// The conservative default shares the context window with output. `None`
+    /// means generation does not consume that window, not merely that the API
+    /// validates input separately or stops generation at the window boundary.
+    fn max_total_tokens(&self) -> Option<u64> {
+        Some(self.max_token_count())
+    }
+
     fn max_output_tokens(&self) -> Option<u64> {
         None
     }
@@ -195,6 +308,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                     ..
                                 }) => None,
+                                Ok(LanguageModelCompletionEvent::Compaction(_)) => None,
                                 Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                                     *last_token_usage.lock() = token_usage;
                                     None
@@ -299,13 +413,37 @@ pub trait LanguageModelProvider: 'static {
     }
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
-    fn configuration_view(
-        &self,
-        target_agent: ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView;
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView>;
+
+    fn set_api_key(&self, _key: Option<String>, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    /// Copy shown when this provider rejects a request as unauthenticated
+    /// (HTTP 401). The default assumes API-key authentication; providers using
+    /// other mechanisms (account or subscription based auth) should override
+    /// this so users aren't told to check an API key they don't have.
+    fn authentication_error_message(&self) -> SharedString {
+        format!(
+            "The API key for {} is invalid or has expired. \
+            Update your key in Settings > AI > LLM Providers to continue.",
+            self.name().0
+        )
+        .into()
+    }
+
+    /// Copy shown when a request fails because no credentials are configured
+    /// for this provider. The default assumes API-key authentication;
+    /// providers using other mechanisms (account or subscription based auth)
+    /// should override this.
+    fn missing_credentials_error_message(&self) -> SharedString {
+        format!(
+            "No API key is configured for {}. \
+            Add your key in Settings > AI > LLM Providers to continue.",
+            self.name().0
+        )
+        .into()
+    }
 
     /// Copy shown the first time a user enables fast mode for a model from
     /// this provider. Returning `None` skips the confirmation prompt and lets
@@ -315,18 +453,83 @@ pub trait LanguageModelProvider: 'static {
     }
 }
 
+/// A provider's settings UI, modeled as mutually exclusive presentation modes.
+#[derive(Clone)]
+pub enum ProviderSettingsView {
+    ApiKey(ApiKeyConfiguration),
+    Inline(InlineProviderSettings),
+    SubPage(SubPageProviderSettings),
+}
+
+#[derive(Clone)]
+pub struct InlineProviderSettings {
+    pub title: Option<SharedString>,
+    pub description: Option<InlineDescription>,
+    pub create_view: CreateProviderSettingsView,
+}
+
+#[derive(Clone)]
+pub struct SubPageProviderSettings {
+    pub description: Option<InlineDescription>,
+    pub create_view: CreateProviderSettingsView,
+}
+
+impl SubPageProviderSettings {
+    pub fn new(create_view: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        Self {
+            description: None,
+            create_view: Arc::new(create_view),
+        }
+    }
+
+    pub fn description(mut self, description: InlineDescription) -> Self {
+        self.description = Some(description);
+        self
+    }
+}
+
+impl ApiKeyConfiguration {
+    pub fn new(
+        has_key: bool,
+        is_from_env_var: bool,
+        env_var_name: SharedString,
+        api_key_url: SharedString,
+    ) -> Self {
+        Self {
+            has_key,
+            is_from_env_var,
+            env_var_name,
+            api_key_url,
+        }
+    }
+}
+
+/// A live snapshot of a single-API-key provider's credential state, used by the
+/// settings UI to render the provider's "API Key" section.
+#[derive(Clone)]
+pub struct ApiKeyConfiguration {
+    pub has_key: bool,
+    pub is_from_env_var: bool,
+    pub env_var_name: SharedString,
+    pub api_key_url: SharedString,
+}
+
+/// The subtitle rendered beneath a provider's name when its configuration is
+/// shown inline.
+#[derive(Clone)]
+pub enum InlineDescription {
+    /// A clickable "Where to find key" link pointing at the given URL, for
+    /// API-key based providers.
+    ApiKeyUrl(SharedString),
+    /// Plain descriptive text, e.g. explaining a sign-in based provider.
+    Text(SharedString),
+}
+
 /// Provider-specific copy shown the first time a user enables fast mode.
 #[derive(Debug, Clone)]
 pub struct FastModeConfirmation {
     pub title: SharedString,
     pub message: SharedString,
-}
-
-#[derive(Default, Clone, PartialEq, Eq)]
-pub enum ConfigurationViewTargetAgent {
-    #[default]
-    ZedAgent,
-    Other(SharedString),
 }
 
 pub trait LanguageModelProviderState: 'static {

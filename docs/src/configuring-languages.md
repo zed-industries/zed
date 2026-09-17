@@ -115,7 +115,7 @@ You can specify your preference using the `language_servers` setting:
 ```json [settings]
   "languages": {
     "PHP": {
-      "language_servers": ["intelephense", "!phpactor", "!phptools", "..."]
+      "language_servers": ["intelephense", "!phpactor", "!phptools", "!phpantom", "..."]
     }
   }
 ```
@@ -123,7 +123,7 @@ You can specify your preference using the `language_servers` setting:
 In this example:
 
 - `intelephense` is set as the primary language server.
-- `phpactor` and `phptools` are disabled (note the `!` prefix).
+- `phpactor`, `phptools` and `phpantom` are disabled (note the `!` prefix).
 - `"..."` expands to the rest of the language servers registered for PHP that are not already listed.
 
 The `"..."` entry acts as a wildcard that includes any registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new language server extension is installed or a new server is registered for a language, `"..."` will automatically include it. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
@@ -134,28 +134,38 @@ Suppose you're working with Ruby. The default configuration is:
 
 ```json [settings]
 {
-  "language_servers": [
-    "solargraph",
-    "!ruby-lsp",
-    "!rubocop",
-    "!sorbet",
-    "!steep",
-    "!kanayago",
-    "..."
-  ]
+  "languages": {
+    "Ruby": {
+      "language_servers": [
+        "solargraph",
+        "!ruby-lsp",
+        "!rubocop",
+        "!sorbet",
+        "!steep",
+        "!kanayago",
+        "!fuzzy-ruby-server",
+        "..."
+      ]
+    }
+  }
 }
 ```
 
 When you override `language_servers` in your settings, your list **replaces** the default entirely. This means default-disabled servers like `kanayago` will be re-enabled by `"..."` unless you explicitly disable them again.
 
-| Configuration                                     | Result                                                             |
-| ------------------------------------------------- | ------------------------------------------------------------------ |
-| `["..."]`                                         | `solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `kanayago` |
-| `["ruby-lsp", "..."]`                             | `ruby-lsp`, `solargraph`, `rubocop`, `sorbet`, `steep`, `kanayago` |
-| `["ruby-lsp", "!solargraph", "!kanayago", "..."]` | `ruby-lsp`, `rubocop`, `sorbet`, `steep`                           |
-| `["ruby-lsp", "solargraph"]`                      | `ruby-lsp`, `solargraph`                                           |
+| Configuration                                     | Result                                                                                  |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `["..."]`                                         | `solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `kanayago`, `fuzzy-ruby-server` |
+| `["ruby-lsp", "..."]`                             | `ruby-lsp`, `solargraph`, `rubocop`, `sorbet`, `steep`, `kanayago`, `fuzzy-ruby-server` |
+| `["ruby-lsp", "!solargraph", "!kanayago", "..."]` | `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `fuzzy-ruby-server`                           |
+| `["ruby-lsp", "solargraph"]`                      | `ruby-lsp`, `solargraph`                                                                |
 
 > Note: In the first example, `"..."` includes `kanayago` even though it is disabled by default. The override replaced the default list, so the `"!kanayago"` entry is no longer present. To keep it disabled, you must include `"!kanayago"` in your configuration.
+
+#### Top-level language settings
+
+Every language setting can also be set at the top level of `settings.json`, outside the `languages` map.
+Top-level entries are the default for all languages: a language-specific value always **replaces** the top-level one entirely, the two are never merged.
 
 ### Toolchains
 
@@ -214,7 +224,7 @@ Here's how you would structure these settings in Zed's `settings.json`:
 
 #### Possible configuration options
 
-Depending on how a particular language server is implemented, they may depend on different configuration options, both specified in the LSP.
+Language servers may use different configuration options depending on the implementation.
 
 - [initializationOptions](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#version_3_17_0)
 

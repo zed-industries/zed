@@ -1,5 +1,6 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
-use gpui::{PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
+use gpui::{ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
+use gpui_util::ResultExt;
 use mach2::{
     kern_return::KERN_SUCCESS,
     mach_time::mach_timebase_info_data_t,
@@ -10,7 +11,6 @@ use mach2::{
         thread_precedence_policy_data_t, thread_time_constraint_policy_data_t,
     },
 };
-use util::ResultExt;
 
 use async_task::Runnable;
 use objc::{
@@ -18,6 +18,8 @@ use objc::{
     runtime::{BOOL, YES},
     sel, sel_impl,
 };
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString};
 use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
 pub(crate) struct MacDispatcher;
@@ -75,6 +77,36 @@ impl PlatformDispatcher for MacDispatcher {
             set_audio_thread_priority().log_err();
             f();
         });
+    }
+
+    fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {
+        MacActivity::begin(
+            reason,
+            NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+        )
+    }
+}
+
+pub(crate) struct MacActivity {
+    activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
+}
+
+// The activity token returned by NSProcessInfo is thread-safe
+unsafe impl Send for MacActivity {}
+
+impl MacActivity {
+    pub(crate) fn begin(reason: &str, options: NSActivityOptions) -> ActivityGuard {
+        let activity = Self {
+            activity: NSProcessInfo::processInfo()
+                .beginActivityWithOptions_reason(options, &NSString::from_str(reason)),
+        };
+        ActivityGuard::new(move || drop(activity))
+    }
+}
+
+impl Drop for MacActivity {
+    fn drop(&mut self) {
+        unsafe { NSProcessInfo::processInfo().endActivity(&self.activity) };
     }
 }
 

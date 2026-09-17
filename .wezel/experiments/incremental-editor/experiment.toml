@@ -1,0 +1,23 @@
+#:schema ../../schema.json
+
+description = "Measures rebuild time after a trivial edit to the editor crate"
+
+# `zed` rather than `workspace`: it pulls in the whole editor -> ... -> binary
+# chain that a developer actually waits on, without also building collab, the
+# benchmarks and the other workspace members that no editor edit can affect.
+
+# Prime the build cache off a clean build, so the measured step below pays only
+# for editor and its dependents.
+[step.cargo.prime-cache]
+command = "build"
+build_target = ["zed"]
+
+# The patch only appends an empty `//!` line to the crate-root doc comment, so
+# nothing about editor's public surface changes. What's left is the floor cost
+# of touching the crate at all: rustc's incremental reuse for editor itself,
+# plus the relink of every crate downstream of it.
+[step.cargo.editor-doc-comment]
+apply-diff = true
+command = "build"
+build_target = ["zed"]
+summary.incremental-editor-build = { outcome = "time_ms", aggregation = "min", samples = 5 }

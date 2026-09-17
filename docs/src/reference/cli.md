@@ -85,7 +85,15 @@ Reuse an existing window, replacing its current workspace with the new paths:
 zed -r ~/projects/different-project
 ```
 
-By default (without `-n`, `-a`, or `-r`), directories open in the current window's sidebar. You can change this default with the `cli_default_open_behavior` setting. See [Windows & Projects](../windows-and-projects.md) for more details.
+### `-e`, `--existing`
+
+Open paths in an existing Zed window instead of creating a new one:
+
+```sh
+zed -e myfile.txt
+```
+
+By default (without `-n`, `-a`, `-r`, or `-e`), directories open in the current window's sidebar. You can change this default with the `cli_default_open_behavior` setting. See [Windows & Projects](../windows-and-projects.md) for more details.
 
 ### `--diff <OLD_PATH> <NEW_PATH>`
 
@@ -124,6 +132,62 @@ Print Zed's version and exit:
 
 ```sh
 zed --version
+```
+
+### `--completions <SHELL>`
+
+Generate shell completions for the `zed` CLI:
+
+#### Bash
+
+Add to `~/.bashrc`:
+
+```bash
+eval "$(zed --completions bash)"
+```
+
+#### Elvish
+
+Add to `~/.config/elvish/rc.elv`:
+
+```elvish
+set edit:completion:arg-completer[zed] = { |@args|
+    eval (zed --completions elvish | slurp)
+    $edit:completion:arg-completer[zed] $@args
+}
+```
+
+#### Fish
+
+Add to `~/.config/fish/config.fish`:
+
+```fish
+zed --completions fish | source
+```
+
+#### Nushell
+
+Add to `~/.config/nushell/config.nu`:
+
+```nu
+mkdir ($nu.data-dir | path join "vendor/autoload")
+^zed --completions nushell | save --force ($nu.data-dir | path join "vendor/autoload/zed.nu")
+```
+
+#### Powershell
+
+Add to `$PROFILE`:
+
+```powershell
+(&zed --completions powershell) | Out-String | Invoke-Expression
+```
+
+#### Zsh
+
+Add to `~/.zshrc`:
+
+```zsh
+eval "$(zed --completions zsh)"
 ```
 
 ### `--uninstall`
