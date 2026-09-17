@@ -1545,6 +1545,206 @@ mod tests {
         }
     }
 
+    #[gpui::test(iterations = 100)]
+    fn test_random_tab_point_cursor(cx: &mut gpui::App, mut rng: StdRng) {
+        let tab_size = NonZeroU32::new(rng.random_range(1..=16)).unwrap();
+        let len = rng.random_range(0..=2000);
+        let text = util::RandomCharIter::new(&mut rng)
+            .take(len)
+            .collect::<String>();
+
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+
+        let mut next_inlay_id = 0;
+        let (inlay_snapshot, inlay_edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+        let (mut fold_snapshot, mut fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        tab_map.sync(fold_snapshot.clone(), fold_edits, tab_size);
+        for _ in 0..rng.random_range(0..=2) {
+            for (snapshot, edits) in fold_map.randomly_mutate(&mut rng) {
+                fold_snapshot = snapshot;
+                fold_edits = edits;
+                tab_map.sync(fold_snapshot.clone(), fold_edits, tab_size);
+            }
+        }
+        let tab_snapshot = tab_map.set_max_expansion_column(rng.random_range(0..=256));
+        log::info!("FoldMap text: {:?}", fold_snapshot.text());
+
+        let max_fold_point = fold_snapshot.max_point();
+        let mut fold_points = Vec::new();
+        for _ in 0..50 {
+            let row = rng.random_range(0..=max_fold_point.row());
+            let max_column = if row < max_fold_point.row() {
+                fold_snapshot.line_len(row)
+            } else {
+                max_fold_point.column()
+            };
+            let fold_point = FoldPoint::new(row, rng.random_range(0..=max_column + 10));
+            fold_points.push(fold_point);
+            if rng.random_bool(0.2) {
+                fold_points.push(fold_point);
+            }
+        }
+        fold_points.sort();
+
+        let assert_maps = |cursor: &mut TabPointCursor, fold_point: FoldPoint, context: &str| {
+            let actual = cursor.map(fold_point);
+            assert_eq!(
+                actual,
+                tab_snapshot.expected_to_tab_point(fold_point),
+                "{context}: cursor mismatch for {fold_point:?}"
+            );
+            assert_eq!(
+                actual,
+                tab_snapshot.fold_point_to_tab_point(fold_point),
+                "{context}: cursor disagrees with fold_point_to_tab_point for {fold_point:?}"
+            );
+        };
+
+        let mut cursor = tab_snapshot.tab_point_cursor();
+        for fold_point in &fold_points {
+            assert_maps(&mut cursor, *fold_point, "forward");
+        }
+
+        cursor.reset();
+        for fold_point in &fold_points {
+            assert_maps(&mut cursor, *fold_point, "after reset");
+        }
+
+        for _ in 0..20 {
+            let ix = rng.random_range(0..fold_points.len());
+            assert_maps(&mut cursor, fold_points[ix], "unordered");
+        }
+    }
+
+    #[gpui::test]
+    fn test_tab_map_sync_edits(cx: &mut gpui::App) {
+        let buffer = MultiBuffer::build_simple("a\tb\nc\td\ne\tf\n", cx);
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let tab_size = NonZeroU32::new(4).unwrap();
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
+        assert_eq!(tab_snapshot.text(), "a   b\nc   d\ne   f\n");
+
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (Point::new(0, 0)..Point::new(0, 0), "x"),
+                    (Point::new(1, 0)..Point::new(1, 0), "yz"),
+                    (Point::new(2, 3)..Point::new(2, 3), "w"),
+                ],
+                None,
+                cx,
+            );
+            buffer.snapshot(cx)
+        });
+        let (inlay_snapshot, inlay_edits) =
+            inlay_map.sync(buffer_snapshot, subscription.consume().into_inner());
+        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+        assert_eq!(tab_snapshot.text(), "xa  b\nyzc d\ne   fw\n");
+        assert_eq!(
+            tab_edits,
+            vec![
+                TabEdit {
+                    old: TabPoint::new(0, 0)..TabPoint::new(0, 4),
+                    new: TabPoint::new(0, 0)..TabPoint::new(0, 4),
+                },
+                TabEdit {
+                    old: TabPoint::new(1, 0)..TabPoint::new(1, 4),
+                    new: TabPoint::new(1, 0)..TabPoint::new(1, 4),
+                },
+                TabEdit {
+                    old: TabPoint::new(2, 5)..TabPoint::new(2, 5),
+                    new: TabPoint::new(2, 5)..TabPoint::new(2, 6),
+                },
+            ]
+        );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_random_tab_map_sync(cx: &mut gpui::App, mut rng: StdRng) {
+        let operations = std::env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let mut tab_size = NonZeroU32::new(rng.random_range(1..=4)).unwrap();
+        let len = rng.random_range(0..200);
+        let text = util::RandomCharIter::new(&mut rng)
+            .take(len)
+            .collect::<String>();
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+        let initial_snapshot = tab_map.set_max_expansion_column(32);
+        log::info!("TabMap text: {:?}", initial_snapshot.text());
+
+        let mut next_inlay_id = 0;
+        let mut snapshot_edits = Vec::new();
+        for _ in 0..operations {
+            let mut buffer_edits = Vec::new();
+            match rng.random_range(0..100) {
+                0..=9 => {
+                    tab_size = NonZeroU32::new(rng.random_range(1..=4)).unwrap();
+                    log::info!("Setting tab size to {tab_size}");
+                }
+                10..=39 => {
+                    for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
+                        snapshot_edits.push(tab_map.sync(fold_snapshot, fold_edits, tab_size));
+                    }
+                }
+                40..=59 => {
+                    let (inlay_snapshot, inlay_edits) =
+                        inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+                    let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+                    snapshot_edits.push(tab_map.sync(fold_snapshot, fold_edits, tab_size));
+                }
+                _ => buffer.update(cx, |buffer, cx| {
+                    let subscription = buffer.subscribe();
+                    let edit_count = rng.random_range(1..=5);
+                    buffer.randomly_mutate(&mut rng, edit_count, cx);
+                    buffer_snapshot = buffer.snapshot(cx);
+                    buffer_edits.extend(subscription.consume());
+                }),
+            }
+
+            let (inlay_snapshot, inlay_edits) =
+                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+            let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+            let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+            log::info!("TabMap text: {:?}", tab_snapshot.text());
+            snapshot_edits.push((tab_snapshot, tab_edits));
+        }
+
+        let mut expected_text = text::Rope::from(initial_snapshot.text().as_str());
+        for (tab_snapshot, tab_edits) in snapshot_edits {
+            let snapshot_text = text::Rope::from(tab_snapshot.text().as_str());
+            for edit in &tab_edits {
+                let old_start = expected_text.point_to_offset(edit.new.start.0);
+                let old_end = expected_text
+                    .point_to_offset(edit.new.start.0 + (edit.old.end.0 - edit.old.start.0));
+                let new_start = snapshot_text.point_to_offset(edit.new.start.0);
+                let new_end = snapshot_text.point_to_offset(edit.new.end.0);
+                let new_text = snapshot_text
+                    .chunks_in_range(new_start..new_end)
+                    .collect::<String>();
+                expected_text.replace(old_start..old_end, &new_text);
+            }
+            assert_eq!(
+                expected_text.to_string(),
+                snapshot_text.to_string(),
+                "tab edits {tab_edits:?} do not transform the previous text into the new text"
+            );
+        }
+    }
+
     #[gpui::test]
     fn test_tab_stop_cursor_utf8(cx: &mut gpui::App) {
         let text = "\tfoo\tbarbarbar\t\tbaz\n";
