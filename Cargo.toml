@@ -136,7 +136,6 @@ members = [
     "crates/lsp_locations",
     "crates/markdown",
     "crates/markdown_preview",
-    "crates/media",
     "crates/menu",
     "crates/mermaid_render",
     "crates/migrator",
@@ -405,7 +404,6 @@ lsp_command_selector = { path = "crates/lsp_command_selector" }
 lsp_locations = { path = "crates/lsp_locations" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
-media = { path = "crates/media" }
 menu = { path = "crates/menu" }
 mermaid_render = { path = "crates/mermaid_render" }
 migrator = { path = "crates/migrator" }
@@ -446,7 +444,7 @@ remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
-rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", default-features = false, features = ["wav", "playback", "wav_output", "recording", "dither"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 sandbox = { path = "crates/sandbox" }
@@ -717,6 +715,10 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "block2",
     "objc2-core-foundation",
 ] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["CGDirectDisplay"] }
+objc2-core-media = { version = "=0.3.2", default-features = false, features = ["CMSampleBuffer", "objc2-core-video"] }
+objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBuffer", "CVImageBuffer"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
@@ -745,8 +747,11 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
 ] }
 objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
     "block2",
+    "dispatch2",
     "objc2-core-graphics",
+    "objc2-core-media",
     "SCShareableContent",
+    "SCStream",
     "std"
 ] }
 objc2-user-notifications = "0.3"
@@ -808,7 +813,7 @@ rsa = "0.9.6"
 runtimelib = { version = "1.4.0", default-features = false, features = [
     "async-dispatcher-runtime", "aws-lc-rs"
 ] }
-rust-embed = { version = "8.11", features = ["include-exclude"] }
+rust-embed = { version = "8.11", features = ["include-exclude", "compression"] }
 rustc-hash = "2.1.0"
 rustix = { version = "1.1", features = ["fs"] }
 rustls = { version = "0.23.26" }
@@ -1018,7 +1023,7 @@ webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev 
 # needs symlink support that Windows CI lacks). webrtc-sys is self-contained, so
 # per-crate scratch dirs are sufficient. Upstream issue:
 # https://github.com/dtolnay/cxx/issues/1752
-scratch = { path = "corgi-patches/scratch" }
+scratch = { path = "tooling/corgi/patches/scratch" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

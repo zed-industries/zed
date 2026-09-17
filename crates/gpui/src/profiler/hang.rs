@@ -15,6 +15,9 @@ use std::time::Duration;
 use scheduler::Instant;
 use serde::Serialize;
 
+/// Version of the power/visibility-aware measurement rules.
+pub const MEASUREMENT_VERSION: u32 = 2;
+
 use super::SerializedLocation;
 use super::journal::{
     ForegroundEvent, ForegroundJournal, ForegroundJournalCollector, ForegroundJournalEntry,
@@ -111,6 +114,8 @@ impl HangDetector {
 /// locations as plain data, contributor count capped by the converter.
 #[derive(Debug, Clone, Serialize)]
 pub struct SerializedHangIncident {
+    /// Identifies the rules used to exclude interrupted measurements.
+    pub measurement_version: u32,
     /// `"startup"` when the active window began before the first observed
     /// newly drawn frame finished platform submission (see
     /// [`HangDetector::first_present_at`]), otherwise `"steady"`.
@@ -133,7 +138,7 @@ pub struct SerializedHangIncident {
     /// For presentation-sealed incidents, how long the submitted frame had
     /// been dirty, in milliseconds.
     pub dirty_to_present_ms: Option<f64>,
-    /// What closed the incident: `"present"` or `"idle"`. This labels the
+    /// What closed the incident: `"present"`, `"idle"`, or `"power_transition"`. This labels the
     /// boundary, not the hang's cause — the cause is the first contributor.
     pub sealed_by: &'static str,
     /// Fraction of the active window the foreground spent working,
@@ -269,6 +274,7 @@ impl SerializedHangIncident {
                 Some(first_present_at) if active_start >= first_present_at => "steady",
                 _ => "startup",
             },
+            measurement_version: MEASUREMENT_VERSION,
             trigger: incident.trigger,
             start_ms: since_startup(active_start),
             active_ms: as_millis(active),
@@ -281,11 +287,12 @@ impl SerializedHangIncident {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration().map(as_millis)
                 }
-                IntervalBoundary::Idle { .. } => None,
+                IntervalBoundary::Idle { .. } | IntervalBoundary::PowerTransition { .. } => None,
             },
             sealed_by: match snapshot.boundary {
                 IntervalBoundary::Presented(_) => "present",
                 IntervalBoundary::Idle { .. } => "idle",
+                IntervalBoundary::PowerTransition { .. } => "power_transition",
             },
             busy_fraction: (busy_fraction * 1000.0).round() / 1000.0,
             event_count: snapshot.events.len(),

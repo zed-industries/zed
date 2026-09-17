@@ -1572,6 +1572,8 @@ impl Window {
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let visibility = platform_window.visibility();
+        #[cfg(feature = "profiler")]
+        profiler::journal::record_window_visibility(handle.window_id(), visibility);
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
@@ -1901,17 +1903,10 @@ impl Window {
         }));
         platform_window.on_visibility_change(Box::new({
             let mut cx = cx.to_async();
-            move |visibility| {
+            move |_| {
                 handle
                     .update(&mut cx, |_, window, cx| {
-                        if window.visibility == visibility {
-                            return;
-                        }
-                        window.visibility = visibility;
-                        window
-                            .visibility_observers
-                            .clone()
-                            .retain(&(), |callback| callback(visibility, window, cx));
+                        window.refresh_visibility(cx);
                     })
                     .log_err();
             }
@@ -2148,6 +2143,22 @@ impl Window {
             if !self.dirty_views.insert(view_id) {
                 break;
             }
+        }
+    }
+
+    pub(crate) fn refresh_visibility(&mut self, cx: &mut App) {
+        let visibility = self.platform_window.visibility();
+        if self.visibility != visibility {
+            self.visibility = visibility;
+            #[cfg(feature = "profiler")]
+            profiler::journal::record_window_visibility(self.handle.window_id(), visibility);
+            self.visibility_observers
+                .clone()
+                .retain(&(), |callback| callback(visibility, self, cx));
+        }
+        #[cfg(feature = "profiler")]
+        if self.invalidator.is_dirty() || self.needs_present.get() {
+            profiler::journal::record_frame_pending(self.handle.window_id(), Instant::now());
         }
     }
 
@@ -2700,6 +2711,12 @@ impl Window {
         self.rendered_frame.scene.quads.clone()
     }
 
+    /// Returns the underlines in the most recently rendered frame's scene.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn painted_underlines(&self) -> Vec<Underline> {
+        self.rendered_frame.scene.underlines.clone()
+    }
+
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);
@@ -3003,6 +3020,98 @@ impl Window {
     #[inline]
     pub fn pixel_snap_point(&self, position: Point<Pixels>) -> Point<Pixels> {
         position.map(|c| self.pixel_snap(c))
+    }
+
+    /// Returns the snapped device-space bounds used to paint an underline.
+    pub fn underline_bounds(
+        &self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+    ) -> Bounds<ScaledPixels> {
+        let scale_factor = self.scale_factor();
+        let thickness = self.snap_stroke(style.thickness);
+        let height = if style.wavy {
+            ScaledPixels(thickness.0 * 3.)
+        } else {
+            thickness
+        };
+        Bounds {
+            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
+            size: size(self.snap_stroke(width), height),
+        }
+    }
+
+    /// Paints an underline excluding absolute device-space horizontal spans.
+    pub fn paint_underline_with_exclusions(
+        &mut self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+        exclusions: &[Range<ScaledPixels>],
+    ) {
+        self.invalidator.debug_assert_paint();
+        let underline = self.underline(origin, width, style);
+        if exclusions.is_empty() {
+            self.next_frame.scene.insert_primitive(underline);
+            return;
+        }
+
+        let bounds = underline.bounds.intersect(&underline.content_mask.bounds);
+        if bounds.is_empty() {
+            return;
+        }
+
+        let mut exclusions = exclusions
+            .iter()
+            .filter_map(|span| {
+                let start = span.start.max(bounds.left());
+                let end = span.end.min(bounds.right());
+                (start < end).then_some(start..end)
+            })
+            .collect::<SmallVec<[_; 4]>>();
+        if exclusions.is_empty() {
+            self.next_frame.scene.insert_primitive(underline);
+            return;
+        }
+        exclusions.sort_unstable_by_key(|span| span.start);
+
+        let mut paint_span = |start, end| {
+            self.next_frame.scene.insert_primitive(Underline {
+                content_mask: ContentMask {
+                    bounds: Bounds::from_corners(
+                        point(start, bounds.top()),
+                        point(end, bounds.bottom()),
+                    ),
+                },
+                ..underline
+            });
+        };
+        let mut start = bounds.left();
+        for exclusion in exclusions {
+            if start < exclusion.start {
+                paint_span(start, exclusion.start);
+            }
+            start = start.max(exclusion.end);
+        }
+        if start < bounds.right() {
+            paint_span(start, bounds.right());
+        }
+    }
+
+    fn underline(&self, origin: Point<Pixels>, width: Pixels, style: &UnderlineStyle) -> Underline {
+        Underline {
+            order: 0,
+            pad: 0,
+            bounds: self.underline_bounds(origin, width, style),
+            content_mask: self.snapped_content_mask(),
+            color: style
+                .color
+                .unwrap_or_default()
+                .opacity(self.element_opacity()),
+            thickness: self.snap_stroke(style.thickness),
+            wavy: style.wavy.into(),
+        }
     }
 
     #[inline]
@@ -4478,29 +4587,8 @@ impl Window {
         style: &UnderlineStyle,
     ) {
         self.invalidator.debug_assert_paint();
-
-        let scale_factor = self.scale_factor();
-        let thickness = self.snap_stroke(style.thickness);
-        let height = if style.wavy {
-            ScaledPixels(thickness.0 * 3.)
-        } else {
-            thickness
-        };
-        let bounds = Bounds {
-            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
-            size: size(self.snap_stroke(width), height),
-        };
-        let element_opacity = self.element_opacity();
-
-        self.next_frame.scene.insert_primitive(Underline {
-            order: 0,
-            pad: 0,
-            bounds,
-            content_mask: self.snapped_content_mask(),
-            color: style.color.unwrap_or_default().opacity(element_opacity),
-            thickness,
-            wavy: style.wavy.into(),
-        });
+        let underline = self.underline(origin, width, style);
+        self.next_frame.scene.insert_primitive(underline);
     }
 
     /// Paint a strikethrough into the scene for the next frame at the current z-index.
@@ -6766,7 +6854,13 @@ impl Window {
     pub fn toggle_inspector(&mut self, cx: &mut App) {
         self.inspector = match self.inspector {
             None => Some(cx.new(|_| Inspector::new())),
-            Some(_) => None,
+            Some(_) => {
+                self.rendered_frame.next_inspector_instance_ids = FxHashMap::default();
+                self.rendered_frame.inspector_hitboxes = FxHashMap::default();
+                self.next_frame.next_inspector_instance_ids = FxHashMap::default();
+                self.next_frame.inspector_hitboxes = FxHashMap::default();
+                None
+            }
         };
         self.refresh();
     }
@@ -6786,22 +6880,24 @@ impl Window {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn with_inspector_state<T: 'static, R>(
         &mut self,
-        _inspector_id: Option<&crate::InspectorElementId>,
+        inspector_id: Option<&crate::InspectorElementId>,
         cx: &mut App,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
-    ) -> R {
-        if let Some(inspector_id) = _inspector_id
-            && let Some(inspector) = &self.inspector
-        {
-            let inspector = inspector.clone();
-            let active_element_id = inspector.read(cx).active_element_id();
-            if Some(inspector_id) == active_element_id {
-                return inspector.update(cx, |inspector, _cx| {
-                    inspector.with_active_element_state(self, f)
-                });
-            }
+    ) -> Option<R> {
+        let inspector_id = inspector_id?;
+        let inspector = self.inspector.as_ref()?;
+        if inspector.read(cx).active_element_id() != Some(inspector_id) {
+            return None;
         }
-        f(&mut None, self)
+        let inspector = inspector.clone();
+        Some(inspector.update(cx, |inspector, _cx| {
+            inspector.with_active_element_state(self, f)
+        }))
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn inspector_enabled(&self) -> bool {
+        self.inspector.is_some()
     }
 
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -7487,13 +7583,14 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Context, DispatchPhase, DragMoveEvent, Empty,
-        ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
-        InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke,
-        LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
-        PlatformInput, Point, Render, RequestFrameOptions, StatefulInteractiveElement as _, Styled,
-        TestAppContext, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Window, WindowAppearance,
-        WindowOptions, canvas, div, point, px, size,
+        AnyWindowHandle, AppContext as _, Bounds, ContentMask, Context, DispatchPhase,
+        DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent,
+        FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent,
+        Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
+        Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
+        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
+        TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
+        canvas, div, hsla, point, px, size,
     };
 
     /// Visibility transitions reach observers exactly once each, with the new
@@ -8579,6 +8676,258 @@ mod tests {
         assert_eq!(phases.borrow().as_slice(), [TouchPhase::Started]);
     }
 
+    #[gpui::test]
+    fn test_underline_exclusions_preserve_device_geometry(cx: &mut TestAppContext) {
+        test_underline_paint_at_scales(cx, |window| {
+            let (numerator, denominator) = match window.scale_factor() {
+                1.0 => (1, 1),
+                1.25 => (5, 4),
+                1.5 => (3, 2),
+                2.0 => (2, 1),
+                3.0 => (3, 1),
+                scale => panic!("unexpected scale {scale}"),
+            };
+            let snap = |quarters: i32| {
+                let scaled = quarters * numerator;
+                let divisor = 4 * denominator;
+                let rounded =
+                    scaled.abs() / divisor + i32::from(2 * (scaled.abs() % divisor) > divisor);
+                ScaledPixels((scaled.signum() * rounded) as f32)
+            };
+            let stroke = |quarters| {
+                if quarters == 0 {
+                    ScaledPixels(0.)
+                } else {
+                    snap(quarters).max(ScaledPixels(1.))
+                }
+            };
+
+            for origin in [-101, -3, -2, -1, 0, 1, 2, 3, 101] {
+                for width in [0, 1, 3, 84] {
+                    for thickness in [0, 1, 4, 7] {
+                        for wavy in [false, true] {
+                            let style = UnderlineStyle {
+                                thickness: px(thickness as f32 / 4.),
+                                color: Some(hsla(0.25, 0.5, 0.75, 0.5)),
+                                wavy,
+                            };
+                            let bounds = Bounds::new(
+                                point(snap(origin), snap(-origin)),
+                                size(
+                                    stroke(width),
+                                    stroke(thickness) * if wavy { 3. } else { 1. },
+                                ),
+                            );
+                            let origin = point(px(origin as f32 / 4.), px(-origin as f32 / 4.));
+                            let width = px(width as f32 / 4.);
+                            assert_eq!(window.underline_bounds(origin, width, &style), bounds);
+                            let original = paint_test_underlines(window, |window| {
+                                window.paint_underline(origin, width, &style);
+                            })
+                            .to_vec();
+                            assert_eq!(original.len(), usize::from(!bounds.is_empty()));
+                            if let Some(underline) = original.first() {
+                                assert_eq!(underline.bounds, bounds);
+                                assert_eq!(underline.thickness, stroke(thickness));
+                                assert_eq!(underline.wavy, wavy.into());
+                                assert_eq!(underline.color, hsla(0.25, 0.5, 0.75, 0.5));
+                            }
+
+                            let underlines = paint_test_underlines(window, |window| {
+                                window.paint_underline_with_exclusions(origin, width, &style, &[]);
+                            });
+                            assert_eq!(underlines.len(), original.len());
+                            for (actual, original) in underlines.iter().zip(&original) {
+                                assert_same_underline_geometry(actual, original);
+                                assert_eq!(actual.content_mask, original.content_mask);
+                            }
+
+                            let left = bounds.left().0 as i32;
+                            let right = bounds.right().0 as i32;
+                            let exclusions = [
+                                (15, 25),
+                                (3, 7),
+                                (5, 10),
+                                (10, 12),
+                                (0, 0),
+                                (4, 2),
+                                (-50, -1),
+                                (70, 100),
+                            ]
+                            .map(|(start, end)| {
+                                ScaledPixels((left + start) as f32)
+                                    ..ScaledPixels((left + end) as f32)
+                            });
+                            let underlines = paint_test_underlines(window, |window| {
+                                window.paint_underline_with_exclusions(
+                                    origin,
+                                    width,
+                                    &style,
+                                    &exclusions,
+                                );
+                            });
+                            let expected = (left..right)
+                                .filter(|column| {
+                                    !bounds.is_empty()
+                                        && !exclusions.iter().any(|span| {
+                                            span.contains(&ScaledPixels(*column as f32))
+                                        })
+                                })
+                                .collect::<Vec<_>>();
+                            assert_eq!(underline_device_columns(underlines), expected);
+                            for underline in underlines {
+                                assert_same_underline_geometry(underline, &original[0]);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_underline_exclusions_preserve_helvetica_warning_edge(cx: &mut TestAppContext) {
+        test_underline_paint_at_scales(cx, |window| {
+            if window.scale_factor() != 2.0 {
+                return;
+            }
+            let style = UnderlineStyle {
+                thickness: px(1.),
+                color: None,
+                wavy: true,
+            };
+            let origin = point(px(2.888_183_8), px(15.357_917));
+            let width = px(23.848_145) - origin.x;
+            let original = paint_test_underlines(window, |window| {
+                window.paint_underline(origin, width, &style);
+            })[0];
+            assert_eq!(original.bounds.left(), ScaledPixels(6.));
+            assert_eq!(original.bounds.right(), ScaledPixels(48.));
+            let point_bounds = window.underline_bounds(origin, px(10.829_102), &style);
+            assert_eq!(point_bounds.left(), ScaledPixels(6.));
+            assert_eq!(point_bounds.right(), ScaledPixels(28.));
+
+            let underlines = paint_test_underlines(window, |window| {
+                window.paint_underline_with_exclusions(
+                    origin,
+                    width,
+                    &style,
+                    &[point_bounds.left()..point_bounds.right()],
+                );
+            });
+            assert_eq!(underlines.len(), 1);
+            assert_same_underline_geometry(&underlines[0], &original);
+            assert_eq!(
+                underline_device_columns(underlines),
+                (28..48).collect::<Vec<_>>()
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_underline_exclusions_preserve_content_mask_and_opacity(cx: &mut TestAppContext) {
+        test_underline_paint_at_scales(cx, |window| {
+            let scale = window.scale_factor();
+            let original_mask = window.content_mask();
+            let original_opacity = window.element_opacity();
+            let mask = ContentMask {
+                bounds: Bounds::from_corners(point(px(4.), px(10.)), point(px(16.), px(12.))),
+            };
+            let style = UnderlineStyle {
+                thickness: px(2.),
+                color: Some(hsla(0.25, 0.5, 0.75, 0.5)),
+                wavy: true,
+            };
+            let origin = point(px(-1.25), px(9.25));
+            let width = px(24.);
+            window.with_content_mask(Some(mask), |window| {
+                window.with_element_opacity(Some(0.5), |window| {
+                    window.with_element_opacity(Some(0.5), |window| {
+                        let original = paint_test_underlines(window, |window| {
+                            window.paint_underline(origin, width, &style);
+                        })[0];
+                        assert_eq!(original.color, hsla(0.25, 0.5, 0.75, 0.125));
+                        let underlines = paint_test_underlines(window, |window| {
+                            window.paint_underline_with_exclusions(
+                                origin,
+                                width,
+                                &style,
+                                &[ScaledPixels(6. * scale)..ScaledPixels(8. * scale)],
+                            );
+                        });
+                        assert_eq!(underlines.len(), 2);
+                        let expected = [(4. * scale, 6. * scale), (8. * scale, 16. * scale)].map(
+                            |(left, right)| {
+                                Bounds::from_corners(
+                                    point(ScaledPixels(left), ScaledPixels((10. * scale).floor())),
+                                    point(ScaledPixels(right), ScaledPixels((12. * scale).ceil())),
+                                )
+                            },
+                        );
+                        assert_eq!(
+                            underlines
+                                .iter()
+                                .map(|underline| underline.content_mask.bounds)
+                                .collect::<Vec<_>>(),
+                            expected
+                        );
+                        for underline in underlines {
+                            assert_same_underline_geometry(underline, &original);
+                        }
+                    });
+                });
+            });
+            assert_eq!(window.content_mask(), original_mask);
+            assert_eq!(window.element_opacity(), original_opacity);
+        });
+    }
+
+    #[gpui::test]
+    fn test_underline_exclusions_adversarial_permutations(cx: &mut TestAppContext) {
+        test_underline_paint_at_scales(cx, |window| {
+            let style = UnderlineStyle {
+                thickness: px(1.),
+                color: None,
+                wavy: true,
+            };
+            let origin = point(px(-4.), px(-1.));
+            let width = px(8.);
+            let left = (-4. * window.scale_factor()) as i32;
+            let right = (4. * window.scale_factor()) as i32;
+            let endpoints = [-16, -8, -1, 0, 1, 8, 16];
+            for first_start in endpoints {
+                for first_end in endpoints {
+                    for second_start in endpoints {
+                        for second_end in endpoints {
+                            let exclusions = [first_start..first_end, second_start..second_end];
+                            let expected = (left..right)
+                                .filter(|column| {
+                                    !exclusions.iter().any(|span| span.contains(column))
+                                })
+                                .collect::<Vec<_>>();
+                            let exclusions = exclusions.map(|span| {
+                                ScaledPixels(span.start as f32)..ScaledPixels(span.end as f32)
+                            });
+                            let underlines = paint_test_underlines(window, |window| {
+                                window.paint_underline_with_exclusions(
+                                    origin,
+                                    width,
+                                    &style,
+                                    &exclusions,
+                                );
+                            });
+                            assert_eq!(
+                                underline_device_columns(underlines),
+                                expected,
+                                "{exclusions:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     #[derive(Clone, Copy, PartialEq)]
     enum LongPressResponse {
         PreventDefault,
@@ -8618,6 +8967,64 @@ mod tests {
         }
     }
 
+    struct UnderlineTestView(Rc<dyn Fn(&mut Window)>);
+
+    impl Render for UnderlineTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let paint = self.0.clone();
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    window.content_mask_stack.push(ContentMask {
+                        bounds: Bounds::from_corners(
+                            point(px(-1000.), px(-1000.)),
+                            point(px(1000.), px(1000.)),
+                        ),
+                    });
+                    paint(window);
+                    window.content_mask_stack.pop();
+                },
+            )
+            .size_full()
+        }
+    }
+
+    fn test_underline_paint_at_scales(
+        cx: &mut TestAppContext,
+        paint: impl Fn(&mut Window) + 'static,
+    ) {
+        let window = cx.add_window(move |_, _| UnderlineTestView(Rc::new(paint)));
+        for scale in [1., 1.25, 1.5, 2., 3.] {
+            cx.simulate_window_scale_factor_change(window.into(), scale);
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        }
+    }
+
+    fn paint_test_underlines(window: &mut Window, paint: impl FnOnce(&mut Window)) -> &[Underline] {
+        window.next_frame.scene.clear();
+        paint(window);
+        &window.next_frame.scene.underlines
+    }
+
+    fn assert_same_underline_geometry(actual: &Underline, expected: &Underline) {
+        assert_eq!(actual.bounds, expected.bounds);
+        assert_eq!(actual.thickness, expected.thickness);
+        assert_eq!(actual.wavy, expected.wavy);
+        assert_eq!(actual.color, expected.color);
+        assert_eq!(actual.pad, expected.pad);
+    }
+
+    fn underline_device_columns(underlines: &[Underline]) -> Vec<i32> {
+        underlines
+            .iter()
+            .flat_map(|underline| {
+                let bounds = underline.bounds.intersect(&underline.content_mask.bounds);
+                bounds.left().0 as i32..bounds.right().0 as i32
+            })
+            .collect()
+    }
+
     fn dispatch_touch<T: 'static>(
         window: crate::WindowHandle<T>,
         cx: &mut TestAppContext,
@@ -8640,5 +9047,167 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+}
+
+#[cfg(all(test, any(feature = "inspector", debug_assertions)))]
+mod inspector_tests {
+    use super::*;
+    use crate::{
+        DivInspectorState, InspectorElementId, MouseDownEvent, StyleRefinement, TestAppContext, div,
+    };
+
+    #[gpui::test]
+    fn inspector_only_tracks_its_open_window(cx: &mut TestAppContext) {
+        let windows = [
+            cx.add_window(|_, cx| InspectorTestRoot {
+                child: cx.new(|_| InspectorTestView::default()),
+            }),
+            cx.add_window(|_, cx| InspectorTestRoot {
+                child: cx.new(|_| InspectorTestView::default()),
+            }),
+        ];
+        for window in windows {
+            assert_closed_inspector(window.into(), cx);
+        }
+        for _ in 0..2 {
+            cx.update_window(windows[0].into(), |root, window, cx| {
+                let root = root.downcast::<InspectorTestRoot>().expect("test root");
+                let child_widths = root.read(cx).child.read(cx).child_widths.clone();
+                window.toggle_inspector(cx);
+                window.draw(cx).clear(cx);
+                assert_eq!(child_widths.borrow().as_slice(), &[px(10.); 3]);
+                let path = window
+                    .rendered_frame
+                    .next_inspector_instance_ids
+                    .iter()
+                    .find_map(|(path, count)| (*count == 3).then(|| path.clone()))
+                    .expect("anonymous siblings share an inspector path");
+                let selected_id = InspectorElementId {
+                    path,
+                    instance_id: 1,
+                };
+                let position = window
+                    .rendered_frame
+                    .hitboxes
+                    .iter()
+                    .find(|hitbox| {
+                        window.rendered_frame.inspector_hitboxes.get(&hitbox.id)
+                            == Some(&selected_id)
+                    })
+                    .expect("middle sibling is pickable")
+                    .bounds
+                    .center();
+                window.simulate_mouse_move(position, cx);
+                window.dispatch_event(
+                    PlatformInput::MouseDown(MouseDownEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    cx,
+                );
+                window.dispatch_event(
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    }),
+                    cx,
+                );
+                assert!(!window.is_inspector_picking(cx));
+                assert_eq!(
+                    window
+                        .inspector
+                        .as_ref()
+                        .expect("open inspector")
+                        .read(cx)
+                        .active_element_id(),
+                    Some(&selected_id)
+                );
+                window.draw(cx).clear(cx);
+                window.with_inspector_state::<DivInspectorState, _>(
+                    Some(&selected_id),
+                    cx,
+                    |state, _| {
+                        let state = state.as_mut().expect("selected div has style state");
+                        assert_eq!(
+                            state.base_style.size.width,
+                            Some(crate::Length::from(px(10.)))
+                        );
+                        state.base_style.size.width = Some(crate::Length::from(px(25.)));
+                    },
+                );
+                window.refresh();
+                window.draw(cx).clear(cx);
+                assert_eq!(
+                    child_widths.borrow().as_slice(),
+                    &[px(10.), px(25.), px(10.)]
+                );
+            })
+            .expect("pick and edit a cached child");
+            assert_closed_inspector(windows[1].into(), cx);
+            windows[0]
+                .update(cx, |_, window, cx| window.toggle_inspector(cx))
+                .expect("close inspector");
+            assert_closed_inspector(windows[0].into(), cx);
+        }
+    }
+
+    struct InspectorTestRoot {
+        child: Entity<InspectorTestView>,
+    }
+
+    impl Render for InspectorTestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.child
+                .clone()
+                .cached(StyleRefinement::default().size(px(100.)))
+        }
+    }
+
+    #[derive(Default)]
+    struct InspectorTestView {
+        child_widths: Rc<RefCell<Vec<Pixels>>>,
+    }
+
+    impl Render for InspectorTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let child_widths = self.child_widths.clone();
+            div()
+                .on_children_prepainted(move |bounds, _, _| {
+                    *child_widths.borrow_mut() =
+                        bounds.iter().map(|bounds| bounds.size.width).collect();
+                })
+                .with_dynamic_prepaint_order(|_, _| SmallVec::from_iter([2, 0, 1]))
+                .id("inspector-root")
+                .flex()
+                .children((0..3).map(|_| div().size(px(10.)).flex_shrink_0()))
+        }
+    }
+
+    fn assert_closed_inspector(window: AnyWindowHandle, cx: &mut TestAppContext) {
+        cx.update_window(window, |root, window, cx| {
+            window.draw(cx).clear(cx);
+            window.draw(cx).clear(cx);
+            let root = root.downcast::<InspectorTestRoot>().expect("test root");
+            assert_eq!(
+                root.read(cx)
+                    .child
+                    .read(cx)
+                    .child_widths
+                    .borrow()
+                    .as_slice(),
+                &[px(10.); 3]
+            );
+            for frame in [&window.rendered_frame, &window.next_frame] {
+                assert_eq!(frame.next_inspector_instance_ids.capacity(), 0);
+                assert_eq!(frame.inspector_hitboxes.capacity(), 0);
+            }
+        })
+        .expect("closed inspector has no bookkeeping and no style overrides");
     }
 }

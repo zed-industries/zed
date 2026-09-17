@@ -226,6 +226,17 @@ pub struct AgentSettingsContent {
     /// Default: 300
     #[schemars(range(min = 200, max = 800))]
     pub threads_sidebar_default_width: Option<crate::PixelSetting>,
+    /// Whether opening a folder in an existing window automatically opens the
+    /// Threads Sidebar.
+    ///
+    /// This applies when a folder opens in an existing window instead of a new
+    /// one, which happens when `default_open_behavior` or
+    /// `cli_default_open_behavior` is set to `existing_window`. When disabled,
+    /// the folder still opens in that window, but the sidebar stays closed
+    /// until you open it.
+    ///
+    /// Default: true
+    pub threads_sidebar_auto_open: Option<bool>,
     /// Default fixed width in pixels when the agent panel is docked to the left or right and
     /// `flexible` is false.
     ///
