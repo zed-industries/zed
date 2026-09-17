@@ -30,7 +30,7 @@ There are four types of features in vim mode that use Zed's core functionality, 
 
 When you first open Zed, you'll see a checkbox on the welcome screen that allows you to enable vim mode.
 
-If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command `toggle vim mode`.
+If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command {#action workspace::ToggleVimMode}.
 
 > **Note**: This command toggles the following property in your user settings:
 >
@@ -297,11 +297,11 @@ These ex commands open Zed's various panels and windows.
 
 These commands navigate diagnostics.
 
-| Command                  | Description                    |
-| ------------------------ | ------------------------------ |
-| `:cn[ext]` or `:ln[ext]` | Go to the next diagnostic      |
-| `:cp[rev]` or `:lp[rev]` | Go to the previous diagnostics |
-| `:cc` or `:ll`           | Open the errors page           |
+| Command                  | Description                   |
+| ------------------------ | ----------------------------- |
+| `:cn[ext]` or `:ln[ext]` | Go to the next diagnostic     |
+| `:cp[rev]` or `:lp[rev]` | Go to the previous diagnostic |
+| `:cc` or `:ll`           | Open the errors page          |
 
 ### Git
 
@@ -425,6 +425,7 @@ Vim mode adds several contexts to the `"Editor"` context:
 | vim_mode == waiting  | Waiting for an arbitrary key (e.g., after typing `f` or `t`)                                                                                                                       |
 | vim_mode == operator | Waiting for another binding to trigger (e.g., after typing `c` or `d`)                                                                                                             |
 | vim_operator         | Set to `none` unless `vim_mode == operator`, in which case it is set to the current operator's default keybinding (e.g., after typing `d`, `vim_operator == d`)                    |
+| helix_mode           | Set when the current mode is a Helix mode (`helix_normal` or `helix_select`), including while an operator is pending and `vim_mode` reports `operator` or `waiting`                |
 
 > **Note**: Contexts are matched only on one level at a time. So it is possible to use the expression `"Editor && vim_mode == normal"`, but `"Workspace && vim_mode == normal"` will never match because we set the vim context at the `"Editor"` level.
 
@@ -536,6 +537,17 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
   "bindings": {
     "s": "vim::PushSneak",
     "shift-s": "vim::PushSneakBackward"
+  }
+}
+```
+
+The Helix-style jump-to-word action shows jump labels at visible word starts. It has no default binding in Vim mode, but you can enable it by adding a keybinding to your keymap. This example uses `g w`, which matches the default Helix binding, but overrides Vim mode's default rewrap binding.
+
+```json [keymap]
+{
+  "context": "vim_mode == normal || vim_mode == visual",
+  "bindings": {
+    "g w": "vim::HelixJumpToWord"
   }
 }
 ```

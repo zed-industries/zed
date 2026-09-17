@@ -11,9 +11,10 @@ workspace = true
 [lib]
 path = "src/gpui_tokio.rs"
 doctest = false
+test = false
 
 [dependencies]
 anyhow.workspace = true
-util.workspace = true
 gpui.workspace = true
+gpui_util.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }

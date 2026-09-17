@@ -10,7 +10,10 @@ use strum::IntoEnumIterator;
 use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
-use crate::linux::{WaylandClientStatePtr, platform::read_fd};
+use crate::linux::{
+    WaylandClientStatePtr,
+    platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout},
+};
 use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
 
 /// Text mime types that we'll offer to other programs.
@@ -86,7 +89,7 @@ impl<T: ReceiveData> DataOffer<T> {
 
         connection.flush().unwrap();
 
-        match unsafe { read_fd(fd) } {
+        match read_fd_with_timeout(fd, PIPE_READ_TIMEOUT) {
             Ok(bytes) => Some(bytes),
             Err(err) => {
                 log::error!("error reading clipboard pipe: {err:?}");
@@ -179,7 +182,7 @@ impl Clipboard {
 
     pub fn send(&self, _mime_type: String, fd: OwnedFd) {
         if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
-            self.send_internal(fd, text.as_bytes().to_owned());
+            self.send_bytes(fd, text.as_bytes().to_owned());
         }
     }
 
@@ -189,7 +192,7 @@ impl Clipboard {
             .as_ref()
             .and_then(|contents| contents.text())
         {
-            self.send_internal(fd, text.as_bytes().to_owned());
+            self.send_bytes(fd, text.as_bytes().to_owned());
         }
     }
 
@@ -229,7 +232,7 @@ impl Clipboard {
         Some(item)
     }
 
-    fn send_internal(&self, fd: OwnedFd, bytes: Vec<u8>) {
+    pub fn send_bytes(&self, fd: OwnedFd, bytes: Vec<u8>) {
         let mut written = 0;
         self.loop_handle
             .insert_source(

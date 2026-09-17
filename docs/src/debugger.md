@@ -74,13 +74,13 @@ Populate this file with the same array of objects you would place in `.zed/debug
 
 ### Launching & Attaching
 
-Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
+The Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
 Which one you choose depends on what you are trying to achieve.
 
 When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program.
 Running unit tests or a debug build of your application is a good use case for launching.
 
-Compared to launching, attaching to an existing process might seem inferior, but that's far from truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
+Compared to launching, attaching to an existing process might seem inferior, but that's far from the truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
 
 ## Configuration
 

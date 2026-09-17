@@ -1,25 +1,34 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
-use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
-use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
+use editor::{
+    Addon, Editor, EditorEvent, EditorSettings, HiddenDiffHunkRenderer, MultiBuffer,
+    SplittableEditor, hover_markdown_style, multibuffer_context_lines,
+};
+use futures_lite::future::yield_now;
+use git::repository::{CommitDetails, RepoPath};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
     parse_git_remote_url,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, ClipboardItem, Context, Entity,
+    AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
+    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
+    Window, actions,
 };
 use language::{
-    Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
-    Point, ReplicaId, Rope, TextBuffer,
+    Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
+    ReplicaId, Rope, TextBuffer,
 };
+use markdown::{Markdown, MarkdownElement};
 use multi_buffer::PathKey;
-use project::{Project, WorktreeId, git_store::Repository};
+use project::{
+    Project, ProjectPath, WorktreeId,
+    git_store::{CommitDiff, Repository, UnshallowState},
+};
+use settings::{DiffViewStyle, Settings};
 use std::{
     any::{Any, TypeId},
     collections::HashSet,
@@ -27,15 +36,12 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{ContextMenu, DiffStat, Divider, Tooltip, prelude::*};
+use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
-    item::{ItemEvent, TabContentParams},
-    notifications::NotifyTaskExt,
-    pane::SaveIntent,
+    Workspace, item::ItemEvent, notifications::NotifyTaskExt, pane::SaveIntent,
     searchable::SearchableItemHandle,
 };
 
@@ -69,20 +75,48 @@ pub fn init(cx: &mut App) {
 
 pub struct CommitView {
     commit: CommitDetails,
-    editor: Entity<Editor>,
+    editor: Entity<SplittableEditor>,
+    message: Entity<Markdown>,
+    message_expanded: bool,
+    message_scroll_handle: ScrollHandle,
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
+    project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
+    is_shallow_boundary: bool,
+    file_filter: Option<RepoPath>,
+    _load_diff_task: Task<Result<()>>,
 }
 
-struct GitBlob {
-    path: RepoPath,
-    worktree_id: WorktreeId,
-    is_deleted: bool,
-    is_binary: bool,
-    display_name: String,
+pub(crate) struct GitBlob {
+    pub(crate) path: RepoPath,
+    pub(crate) worktree_id: WorktreeId,
+    pub(crate) is_deleted: bool,
+    pub(crate) is_binary: bool,
+    pub(crate) display_name: String,
+}
+
+pub(crate) fn worktree_id_for_repo_path(
+    repository: &Repository,
+    project: &Project,
+    path: &RepoPath,
+    cx: &App,
+) -> Option<WorktreeId> {
+    repository
+        .repo_path_to_project_path(path, cx)
+        .map(|project_path| project_path.worktree_id)
+        .or_else(|| {
+            let (worktree, _) = project.find_worktree(&repository.work_directory_abs_path, cx)?;
+            Some(worktree.read(cx).id())
+        })
+        .or_else(|| {
+            project
+                .worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).id())
+        })
 }
 
 struct CommitDiffAddon {
@@ -143,7 +177,6 @@ impl Addon for CommitDiffAddon {
     }
 }
 
-const COMMIT_MESSAGE_SORT_PREFIX: u64 = 0;
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
@@ -156,8 +189,32 @@ impl CommitView {
         window: &mut Window,
         cx: &mut App,
     ) {
+        Self::open_with_options(
+            commit_sha,
+            repo,
+            workspace,
+            stash,
+            file_filter,
+            false,
+            window,
+            cx,
+        )
+    }
+
+    fn open_with_options(
+        commit_sha: String,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        stash: Option<usize>,
+        file_filter: Option<RepoPath>,
+        ignore_shallow_boundary: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let commit_diff = repo
-            .update(cx, |repo, _| repo.load_commit_diff(commit_sha.clone()))
+            .update(cx, |repo, _| {
+                repo.load_commit_diff(commit_sha.clone(), ignore_shallow_boundary)
+            })
             .ok();
         let commit_details = repo
             .update(cx, |repo, _| repo.show(commit_sha.clone()))
@@ -165,7 +222,9 @@ impl CommitView {
 
         window
             .spawn(cx, async move |cx| {
-                let (commit_diff, commit_details) = futures::join!(commit_diff?, commit_details?);
+                let commit_diff = commit_diff?;
+                let commit_details = commit_details?;
+                let (commit_diff, commit_details) = futures::join!(commit_diff, commit_details);
                 let mut commit_diff = commit_diff.log_err()?.log_err()?;
                 let commit_details = commit_details.log_err()?.log_err()?;
 
@@ -179,6 +238,7 @@ impl CommitView {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         let project = workspace.project();
+                        let workspace_entity = cx.entity();
                         let workspace_handle = cx.weak_entity();
                         let commit_view = cx.new(|cx| {
                             CommitView::new(
@@ -186,8 +246,10 @@ impl CommitView {
                                 commit_diff,
                                 repo,
                                 project.clone(),
+                                workspace_entity,
                                 workspace_handle,
                                 stash,
+                                file_filter,
                                 window,
                                 cx,
                             )
@@ -201,7 +263,21 @@ impl CommitView {
                                     .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
                             });
                             if let Some(ix) = ix {
-                                pane.activate_item(ix, true, true, window, cx);
+                                let existing = pane
+                                    .items()
+                                    .filter_map(|item| item.downcast::<CommitView>())
+                                    .find(|view| view.read(cx).commit.sha == commit_sha)
+                                    .unwrap();
+
+                                pane.remove_item(existing.item_id(), false, false, window, cx);
+                                pane.add_item(
+                                    Box::new(commit_view),
+                                    true,
+                                    true,
+                                    Some(ix),
+                                    window,
+                                    cx,
+                                );
                             } else {
                                 pane.add_item(Box::new(commit_view), true, true, None, window, cx);
                             }
@@ -217,94 +293,55 @@ impl CommitView {
         commit_diff: CommitDiff,
         repository: Entity<Repository>,
         project: Entity<Project>,
+        workspace_entity: Entity<Workspace>,
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
+        file_filter: Option<RepoPath>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadOnly));
-
-        let message_buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(commit.message.clone(), cx);
-            buffer.set_capability(Capability::ReadOnly, cx);
-            buffer
+        let is_shallow_boundary = commit_diff.is_shallow_boundary;
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
         });
 
-        multibuffer.update(cx, |multibuffer, cx| {
-            let snapshot = message_buffer.read(cx).snapshot();
-            let full_range = Point::zero()..snapshot.max_point();
-            let range = ExcerptRange {
-                context: full_range.clone(),
-                primary: full_range,
-            };
-            multibuffer.set_excerpt_ranges_for_path(
-                PathKey::with_sort_prefix(
-                    COMMIT_MESSAGE_SORT_PREFIX,
-                    RelPath::unix("commit message").unwrap().into(),
-                ),
-                message_buffer.clone(),
-                &snapshot,
-                vec![range],
+        let message = cx.new(|cx| {
+            Markdown::new(
+                commit.message.clone(),
+                Some(language_registry.clone()),
+                None,
                 cx,
             )
         });
 
         let editor = cx.new(|cx| {
-            let mut editor =
-                Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
-
-            editor.disable_inline_diagnostics();
-            editor.set_show_bookmarks(false, cx);
-            editor.set_show_breakpoints(false, cx);
-            editor.set_show_diff_review_button(true, cx);
-            editor.set_expand_all_diff_hunks(cx);
-            editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
-            editor.disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
-
-            editor.insert_blocks(
-                [BlockProperties {
-                    placement: BlockPlacement::Above(editor::Anchor::Min),
-                    height: Some(1),
-                    style: BlockStyle::Sticky,
-                    render: Arc::new(|_| gpui::Empty.into_any_element()),
-                    priority: 0,
-                }]
-                .into_iter()
-                .chain(
-                    editor
-                        .buffer()
-                        .read(cx)
-                        .snapshot(cx)
-                        .anchor_in_buffer(Anchor::max_for_buffer(
-                            message_buffer.read(cx).remote_id(),
-                        ))
-                        .map(|anchor| BlockProperties {
-                            placement: BlockPlacement::Below(anchor),
-                            height: Some(1),
-                            style: BlockStyle::Sticky,
-                            render: Arc::new(|_| gpui::Empty.into_any_element()),
-                            priority: 0,
-                        }),
-                ),
-                None,
+            let editor = SplittableEditor::new(
+                EditorSettings::get_global(cx).diff_view_style,
+                multibuffer.clone(),
+                project.clone(),
+                workspace_entity.clone(),
+                window,
                 cx,
             );
+            editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
+
+            editor.rhs_editor().update(cx, |editor, cx| {
+                editor.set_show_bookmarks(false, cx);
+                editor.set_show_breakpoints(false, cx);
+                editor.set_show_diff_review_button(true, cx);
+            });
 
             editor
         });
-
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
-        let first_worktree_id = project
-            .read(cx)
-            .worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).id());
-
         let repository_clone = repository.clone();
+        let project_clone = project.clone();
 
-        cx.spawn(async move |this, cx| {
+        let load_diff_task = cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
@@ -314,11 +351,7 @@ impl CommitView {
                 let raw_new_text = file.new_text.unwrap_or_default();
                 let raw_old_text = file.old_text;
 
-                let is_binary = file.is_binary
-                    || is_binary_content(raw_new_text.as_bytes())
-                    || raw_old_text
-                        .as_ref()
-                        .is_some_and(|text| is_binary_content(text.as_bytes()));
+                let is_binary = file.is_binary;
 
                 let new_text = if is_binary {
                     "(binary file not shown)".to_string()
@@ -327,14 +360,18 @@ impl CommitView {
                 };
                 let old_text = if is_binary { None } else { raw_old_text };
                 let worktree_id = repository_clone
-                    .update(cx, |repository, cx| {
-                        repository
-                            .repo_path_to_project_path(&file.path, cx)
-                            .map(|path| path.worktree_id)
-                            .or(first_worktree_id)
+                    .read_with(cx, |repository, cx| {
+                        worktree_id_for_repo_path(
+                            repository,
+                            project_clone.read(cx),
+                            &file.path,
+                            cx,
+                        )
                     })
                     .context("project has no worktrees")?;
-                let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
+                let short_sha = commit_sha
+                    .get(0..git::SHORT_SHA_LENGTH)
+                    .unwrap_or(&commit_sha);
                 let file_name = file
                     .path
                     .file_name()
@@ -351,7 +388,7 @@ impl CommitView {
                 }) as Arc<dyn language::File>;
 
                 let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
-                let buffer_id = cx.update(|cx| buffer.read(cx).remote_id());
+                let buffer_id = cx.update(|_, cx| buffer.read(cx).remote_id())?;
 
                 let status_code = if is_created {
                     StatusCode::Added
@@ -373,63 +410,93 @@ impl CommitView {
                 }
 
                 let buffer_diff = if is_binary {
-                    None
+                    cx.update(|_, cx| {
+                        let snapshot = buffer.read(cx).snapshot();
+                        cx.new(|cx| {
+                            BufferDiff::new_unchanged(
+                                &snapshot,
+                                snapshot.language().cloned(),
+                                Some(language_registry.clone()),
+                                cx,
+                            )
+                        })
+                    })?
                 } else {
-                    Some(build_buffer_diff(old_text, &buffer, &language_registry, cx).await?)
+                    build_buffer_diff(old_text, &buffer, &language_registry, cx).await?
                 };
 
-                this.update(cx, |this, cx| {
-                    this.multibuffer.update(cx, |multibuffer, cx| {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let path = snapshot.file().unwrap().path().clone();
-                        let excerpt_ranges = if is_binary {
+                let (excerpt_ranges, path) = cx.update(|_, cx| {
+                    let snapshot = buffer.read(cx).snapshot();
+                    let path = PathKey::with_sort_prefix(
+                        FILE_NAMESPACE_SORT_PREFIX,
+                        snapshot.file().unwrap().path().clone(),
+                    );
+                    let ranges = if is_binary {
+                        vec![language::Point::zero()..snapshot.max_point()]
+                    } else {
+                        let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
+                        let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
+                        if hunks.peek().is_none() {
                             vec![language::Point::zero()..snapshot.max_point()]
-                        } else if let Some(buffer_diff) = &buffer_diff {
-                            let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
-                            let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
-                            if hunks.peek().is_none() {
-                                vec![language::Point::zero()..snapshot.max_point()]
-                            } else {
-                                hunks
-                                    .map(|hunk| hunk.buffer_range.to_point(&snapshot))
-                                    .collect::<Vec<_>>()
-                            }
                         } else {
-                            vec![language::Point::zero()..snapshot.max_point()]
-                        };
-
-                        let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
-                            buffer,
-                            excerpt_ranges,
-                            multibuffer_context_lines(cx),
-                            cx,
-                        );
-                        if let Some(buffer_diff) = buffer_diff {
-                            multibuffer.add_diff(buffer_diff, cx);
+                            hunks
+                                .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                                .collect::<Vec<_>>()
                         }
-                    });
+                    };
+                    (ranges, path)
                 })?;
+
+                // Batch the insertion of excerpts and yield between batches, to avoid blocking the main thread when a single file has many hunks.
+                const EXCERPT_BATCH_SIZE: usize = 10;
+                let total = excerpt_ranges.len();
+                let mut batch_end = 0;
+                while batch_end < total {
+                    let is_first_batch = batch_end == 0;
+                    batch_end = (batch_end + EXCERPT_BATCH_SIZE).min(total);
+                    let ranges = excerpt_ranges[..batch_end].to_vec();
+                    this.update_in(cx, |this, window, cx| {
+                        this.editor.update(cx, |editor, cx| {
+                            editor.update_excerpts_for_path(
+                                path.clone(),
+                                buffer.clone(),
+                                ranges,
+                                multibuffer_context_lines(cx),
+                                buffer_diff.clone(),
+                                cx,
+                            );
+                            if is_first_batch && editor.diff_view_style() == DiffViewStyle::Split {
+                                editor.split(window, cx);
+                            }
+                        });
+                    })?;
+                    if batch_end < total {
+                        yield_now().await;
+                    }
+                }
             }
 
             this.update(cx, |this, cx| {
                 let commit_view = cx.weak_entity();
-                this.editor.update(cx, |editor, _cx| {
-                    editor.register_addon(CommitDiffAddon {
-                        file_statuses,
-                        commit_view,
+                this.editor.update(cx, |editor, cx| {
+                    editor.rhs_editor().update(cx, |editor, _cx| {
+                        editor.register_addon(CommitDiffAddon {
+                            file_statuses,
+                            commit_view,
+                        });
                     });
                 });
                 if !binary_buffer_ids.is_empty() {
                     this.editor.update(cx, |editor, cx| {
-                        editor.fold_buffers(binary_buffer_ids, cx);
+                        editor.rhs_editor().update(cx, |editor, cx| {
+                            editor.fold_buffers(binary_buffer_ids, cx);
+                        });
                     });
                 }
             })?;
 
             anyhow::Ok(())
-        })
-        .detach();
+        });
 
         let snapshot = repository.read(cx).snapshot();
         let remote_url = snapshot
@@ -449,12 +516,128 @@ impl CommitView {
         Self {
             commit,
             editor,
+            message,
+            message_expanded: false,
+            message_scroll_handle: ScrollHandle::new(),
             multibuffer,
             stash,
             repository,
+            project,
             workspace,
             remote,
+            is_shallow_boundary,
+            file_filter,
+            _load_diff_task: load_diff_task,
         }
+    }
+
+    fn render_shallow_boundary_notice(&self, cx: &App) -> impl IntoElement {
+        let commit_sha = self.commit.sha.to_string();
+        let repository = self.repository.clone();
+        let workspace = self.workspace.clone();
+        let stash = self.stash;
+        let file_filter = self.file_filter.clone();
+        let unshallow_state = self.repository.read(cx).unshallow_state();
+        let can_fetch = !self.project.read(cx).is_via_collab()
+            && unshallow_state != UnshallowState::Unshallowed;
+        let fetch_in_flight = unshallow_state == UnshallowState::InProgress;
+        v_flex()
+            .flex_grow(1.)
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .child(
+                Label::new("This commit is at the boundary of a shallow clone.")
+                    .color(Color::Muted),
+            )
+            .child(
+                Label::new(
+                    "Its parent history was not fetched, so the changes it introduced cannot be shown.",
+                )
+                .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .when(can_fetch, |this| {
+                        let commit_sha = commit_sha.clone();
+                        let repository = repository.clone();
+                        let workspace = workspace.clone();
+                        let file_filter = file_filter.clone();
+                        this.child(
+                            Button::new(
+                                "fetch-unshallow",
+                                if fetch_in_flight {
+                                    "Fetching…"
+                                } else {
+                                    "Fetch Missing History"
+                                },
+                            )
+                                .style(ButtonStyle::Filled)
+                                .disabled(fetch_in_flight)
+                                .tooltip(Tooltip::text(
+                                    "Run `git fetch --unshallow` to download the full history, then show this commit's changes.",
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    let fetch = crate::commit_tooltip::fetch_unshallow(
+                                        repository.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                    let commit_sha = commit_sha.clone();
+                                    let repository = repository.downgrade();
+                                    let workspace = workspace.clone();
+                                    let file_filter = file_filter.clone();
+                                    window
+                                        .spawn(cx, async move |cx| {
+                                            fetch.await?;
+                                            cx.update(|window, cx| {
+                                                Self::open_with_options(
+                                                    commit_sha,
+                                                    repository,
+                                                    workspace,
+                                                    stash,
+                                                    file_filter,
+                                                    false,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                        })
+                                        .detach_and_log_err(cx);
+                                }),
+                        )
+                    })
+                    .child(
+                        Button::new(
+                            "load-shallow-snapshot",
+                            if file_filter.is_some() {
+                                "Load File Snapshot"
+                            } else {
+                                "Load Full Snapshot"
+                            },
+                        )
+                            .style(ButtonStyle::Outlined)
+                            .tooltip(Tooltip::text(if file_filter.is_some() {
+                                "Show this file's full contents at this commit as added."
+                            } else {
+                                "Show every file at this commit as added. This can be slow in large repositories."
+                            }))
+                            .on_click(move |_, window, cx| {
+                                Self::open_with_options(
+                                    commit_sha.clone(),
+                                    repository.downgrade(),
+                                    workspace.clone(),
+                                    stash,
+                                    file_filter.clone(),
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    ),
+            )
     }
 
     fn render_commit_avatar(
@@ -513,6 +696,8 @@ impl CommitView {
         let Some(file) = self
             .editor
             .read(cx)
+            .focused_editor()
+            .read(cx)
             .active_buffer(cx)
             .and_then(|buffer| buffer.read(cx).file().cloned())
         else {
@@ -536,15 +721,23 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
+        let avatar_size = rems_from_px(40_f32);
+        let avatar_size_px = avatar_size.to_pixels(window.rem_size());
         let gutter_width = self.editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let style = editor.style(cx);
-            let font_id = window.text_system().resolve_font(&style.text.font());
-            let font_size = style.text.font_size.to_pixels(window.rem_size());
-            snapshot
-                .gutter_dimensions(font_id, font_size, style, window, cx)
-                .full_width()
+            let editor = editor.rhs_editor().clone();
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let style = editor.style(cx);
+                let font_id = window.text_system().resolve_font(&style.text.font());
+                let font_size = style.text.font_size.to_pixels(window.rem_size());
+                snapshot
+                    .gutter_dimensions(font_id, font_size, style, window, cx)
+                    .full_width()
+            })
         });
+        let avatar_min_side_padding = rems_from_px(6_f32).to_pixels(window.rem_size());
+        let avatar_container_min = avatar_size_px + avatar_min_side_padding;
+        let avatar_container_width = gutter_width.max(avatar_container_min);
 
         let clipboard_has_sha = cx
             .read_from_clipboard()
@@ -559,63 +752,159 @@ impl CommitView {
             (IconName::Copy, Color::Muted)
         };
 
-        h_flex()
-            .py_2()
-            .pr_2p5()
+        let has_more = self.commit.message.trim().contains('\n');
+        let is_expanded = self.message_expanded;
+        let expand_tooltip = if is_expanded {
+            "Fold Commit Description"
+        } else {
+            "Expand Commit Description"
+        };
+
+        v_flex()
             .w_full()
-            .justify_between()
+            .py_2p5()
+            .gap_2()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
-                    .child(h_flex().w(gutter_width).justify_center().child(
-                        self.render_commit_avatar(&commit.sha, rems_from_px(40.), window, cx),
-                    ))
+                    .pr_2p5()
+                    .w_full()
+                    .flex_wrap()
+                    .justify_between()
                     .child(
-                        v_flex().child(Label::new(author_name)).child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(
-                                    Label::new(date_string)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
+                        h_flex()
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .w(avatar_container_width)
+                                    .justify_center()
+                                    .child(self.render_commit_avatar(
+                                        &commit.sha,
+                                        avatar_size,
+                                        window,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                v_flex()
+                                    .child(h_flex().gap_1().child(Label::new(author_name)).when(
+                                        has_more,
+                                        |this| {
+                                            this.child(
+                                                Disclosure::new(
+                                                    "commit-message-disclosure",
+                                                    is_expanded,
+                                                )
+                                                .closed_icon(IconName::ExpandVertical)
+                                                .opened_icon(IconName::FoldVertical)
+                                                .tooltip(Tooltip::text(expand_tooltip))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.message_expanded = !this.message_expanded;
+                                                    cx.notify();
+                                                })),
+                                            )
+                                        },
+                                    ))
+                                    .child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .child(
+                                                Label::new(date_string)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            )
+                                            .child(
+                                                Label::new("•")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .alpha(0.5),
+                                            )
+                                            .child(
+                                                Label::new(author_email)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            ),
+                                    ),
+                            ),
+                    )
+                    .when(self.stash.is_none(), |this| {
+                        this.child(
+                            Button::new("sha", "Commit SHA")
+                                .start_icon(
+                                    Icon::new(copy_icon)
+                                        .size(IconSize::Small)
+                                        .color(copy_icon_color),
                                 )
-                                .child(
-                                    Label::new("•")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .alpha(0.5),
-                                )
-                                .child(
-                                    Label::new(author_email)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
-                                ),
-                        ),
-                    ),
-            )
-            .when(self.stash.is_none(), |this| {
-                this.child(
-                    Button::new("sha", "Commit SHA")
-                        .start_icon(
-                            Icon::new(copy_icon)
-                                .size(IconSize::Small)
-                                .color(copy_icon_color),
+                                .tooltip({
+                                    let commit_sha = commit_sha.clone();
+                                    move |_, cx| {
+                                        Tooltip::with_meta(
+                                            "Copy Commit SHA",
+                                            None,
+                                            commit_sha.clone(),
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        commit_sha.to_string(),
+                                    ));
+                                }),
                         )
-                        .tooltip({
-                            let commit_sha = commit_sha.clone();
-                            move |_, cx| {
-                                Tooltip::with_meta("Copy Commit SHA", None, commit_sha.clone(), cx)
-                            }
-                        })
-                        .on_click(move |_, _, cx| {
-                            cx.stop_propagation();
-                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                commit_sha.to_string(),
-                            ));
-                        }),
-                )
-            })
+                    }),
+            )
+            .children(self.render_commit_message(avatar_container_width, window, cx))
+    }
+
+    fn render_commit_message(
+        &self,
+        avatar_spacer: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let message = self.commit.message.trim();
+        if message.is_empty() {
+            return None;
+        }
+
+        let markdown_style = hover_markdown_style(window, cx);
+
+        let is_expanded = self.message_expanded;
+
+        let has_more = message.contains('\n');
+        let collapsed = has_more && !is_expanded;
+        let collapsed_height = window.line_height();
+        let max_expanded_height = window.line_height() * 12.;
+
+        Some(
+            h_flex()
+                .w_full()
+                .pr_2p5()
+                .child(h_flex().flex_none().w(avatar_spacer))
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .id("commit-message")
+                                .size_full()
+                                .text_sm()
+                                .when(collapsed, |this| this.h(collapsed_height).overflow_hidden())
+                                .when(!collapsed, |this| {
+                                    this.max_h(max_expanded_height)
+                                        .overflow_y_scroll()
+                                        .track_scroll(&self.message_scroll_handle)
+                                })
+                                .child(MarkdownElement::new(self.message.clone(), markdown_style)),
+                        )
+                        .vertical_scrollbar_for(&self.message_scroll_handle, window, cx),
+                ),
+        )
     }
 
     fn apply_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
@@ -822,19 +1111,20 @@ impl language::File for GitBlob {
     }
 }
 
-async fn build_buffer(
+pub(crate) async fn build_buffer(
     mut text: String,
     blob: Arc<dyn File>,
     language_registry: &Arc<language::LanguageRegistry>,
-    cx: &mut AsyncApp,
+    cx: &mut AsyncWindowContext,
 ) -> Result<Entity<Buffer>> {
     let line_ending = LineEnding::detect(&text);
     LineEnding::normalize(&mut text);
     let text = Rope::from(text);
-    let language = cx.update(|cx| language_registry.language_for_file(&blob, Some(&text), cx));
-    let language = if let Some(language) = language {
+    let language =
+        cx.update(|_, cx| language_registry.language_for_file(&blob, Some(&text), cx))?;
+    let language = if let Some(language_id) = language {
         language_registry
-            .load_language(&language)
+            .load_language(language_id)
             .await
             .ok()
             .and_then(|e| e.log_err())
@@ -848,7 +1138,7 @@ async fn build_buffer(
             line_ending,
             text,
         );
-        let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite);
+        let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite, cx);
         buffer.set_language_async(language, cx);
         buffer
     });
@@ -859,32 +1149,24 @@ async fn build_buffer_diff(
     mut old_text: Option<String>,
     buffer: &Entity<Buffer>,
     language_registry: &Arc<LanguageRegistry>,
-    cx: &mut AsyncApp,
+    cx: &mut AsyncWindowContext,
 ) -> Result<Entity<BufferDiff>> {
     if let Some(old_text) = &mut old_text {
         LineEnding::normalize(old_text);
     }
 
-    let language = cx.update(|cx| buffer.read(cx).language().cloned());
-    let buffer = cx.update(|cx| buffer.read(cx).snapshot());
+    let language = cx.update(|_, cx| buffer.read(cx).language().cloned())?;
+    let buffer = cx.update(|_, cx| buffer.read(cx).snapshot())?;
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.text.clone(),
-                old_text.map(|old_text| Arc::from(old_text.as_str())),
-                Some(true),
-                language.clone(),
-                cx,
-            )
-        })
-        .await;
+    let diff =
+        cx.new(|cx| BufferDiff::new(&buffer.text, language, Some(language_registry.clone()), cx));
 
     diff.update(cx, |diff, cx| {
-        diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, cx)
+        diff.set_base_text(
+            old_text.map(|old_text| Arc::from(old_text.as_str())),
+            buffer.text.clone(),
+            cx,
+        )
     })
     .await;
 
@@ -904,16 +1186,6 @@ impl Item for CommitView {
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::GitCommit).color(Color::Muted))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
@@ -960,12 +1232,14 @@ impl Item for CommitView {
         &'a self,
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
-        _: &'a App,
+        cx: &'a App,
     ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
-        } else if type_id == TypeId::of::<Editor>() {
+        } else if type_id == TypeId::of::<SplittableEditor>() {
             Some(self.editor.clone().into())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.editor.read(cx).rhs_editor().clone().into())
         } else {
             None
         }
@@ -980,7 +1254,11 @@ impl Item for CommitView {
         cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
-        self.editor.for_each_project_item(cx, f)
+        self.editor.read(cx).for_each_project_item(cx, f)
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(
@@ -989,8 +1267,10 @@ impl Item for CommitView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
+        self.editor.update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, _| {
+                editor.set_nav_history(Some(nav_history));
+            });
         });
     }
 
@@ -1031,33 +1311,70 @@ impl Item for CommitView {
         let file_statuses = self
             .editor
             .read(cx)
+            .rhs_editor()
+            .read(cx)
             .addon::<CommitDiffAddon>()
             .map(|addon| addon.file_statuses.clone())
             .unwrap_or_default();
+        let Some(workspace_entity) = self.workspace.upgrade() else {
+            return Task::ready(None);
+        };
+        let project = self.project.clone();
+        let diff_view_style = self.editor.read(cx).diff_view_style();
+        let multibuffer = self.multibuffer.clone();
         Task::ready(Some(cx.new(|cx| {
             let commit_view = cx.weak_entity();
             let editor = cx.new({
                 let file_statuses = file_statuses.clone();
-                |cx| {
-                    let mut editor = self
-                        .editor
-                        .update(cx, |editor, cx| editor.clone(window, cx));
-                    editor.register_addon(CommitDiffAddon {
-                        file_statuses,
-                        commit_view,
+                let project = project.clone();
+                let workspace_entity = workspace_entity.clone();
+                let multibuffer = multibuffer.clone();
+                move |cx| {
+                    let editor = SplittableEditor::new(
+                        diff_view_style,
+                        multibuffer.clone(),
+                        project.clone(),
+                        workspace_entity.clone(),
+                        window,
+                        cx,
+                    );
+                    editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
+                    editor.rhs_editor().update(cx, |editor, cx| {
+                        editor.set_show_bookmarks(false, cx);
+                        editor.set_show_breakpoints(false, cx);
+                        editor.set_show_diff_review_button(true, cx);
+                        editor.register_addon(CommitDiffAddon {
+                            file_statuses,
+                            commit_view,
+                        });
                     });
                     editor
                 }
             });
-            let multibuffer = editor.read(cx).buffer().clone();
+            let language_registry = project.read(cx).languages().clone();
+            let message = cx.new(|cx| {
+                Markdown::new(
+                    self.commit.message.clone(),
+                    Some(language_registry),
+                    None,
+                    cx,
+                )
+            });
             Self {
                 editor,
-                multibuffer,
+                message,
+                message_expanded: self.message_expanded,
+                message_scroll_handle: ScrollHandle::new(),
+                multibuffer: self.multibuffer.clone(),
                 commit: self.commit.clone(),
                 stash: self.stash,
                 repository: self.repository.clone(),
+                project: self.project.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
+                is_shallow_boundary: self.is_shallow_boundary,
+                file_filter: self.file_filter.clone(),
+                _load_diff_task: Task::ready(Ok(())),
             }
         })))
     }
@@ -1073,8 +1390,12 @@ impl Render for CommitView {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
-            .when(!self.editor.read(cx).is_empty(cx), |this| {
-                this.child(div().flex_grow().child(self.editor.clone()))
+            .when(
+                !self.editor.read(cx).rhs_editor().read(cx).is_empty(cx),
+                |this| this.child(div().flex_grow(1.).child(self.editor.clone())),
+            )
+            .when(self.is_shallow_boundary, |this| {
+                this.child(self.render_shallow_boundary_notice(cx))
             })
     }
 }
@@ -1158,7 +1479,7 @@ impl Render for CommitViewToolbar {
                         .tooltip(Tooltip::text("Show in Git Graph"))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
-                                Box::new(crate::git_panel::OpenAtCommit {
+                                Box::new(crate::git_graph::OpenAtCommit {
                                     sha: sha_for_graph.clone(),
                                 }),
                                 cx,
@@ -1166,10 +1487,7 @@ impl Render for CommitViewToolbar {
                         }),
                 )
                 .children(remote_info.map(|(provider_name, url)| {
-                    let icon = match provider_name.as_str() {
-                        "GitHub" => IconName::Github,
-                        _ => IconName::Link,
-                    };
+                    let icon = ui::git_hosting_provider_icon(provider_name.as_str());
 
                     IconButton::new("view_on_provider", icon)
                         .icon_size(IconSize::Small)

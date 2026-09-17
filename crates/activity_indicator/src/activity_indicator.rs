@@ -4,11 +4,10 @@ use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
     App, Context, Entity, EventEmitter, InteractiveElement as _, ParentElement as _, Render,
-    SharedString, Styled, Window, actions,
+    SharedString, Styled, Task, Window, actions,
 };
 use language::{
-    BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
-    LanguageServerStatusUpdate, ServerHealth,
+    BinaryStatus, LanguageServerId, LanguageServerName, LanguageServerStatusUpdate, ServerHealth,
 };
 use project::{
     LanguageServerProgress, LspStoreEvent, ProgressToken, Project, ProjectEnvironmentEvent,
@@ -22,11 +21,12 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use ui::{CommonAnimationExt, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
+pub const DEFERRED_SCAN_MESSAGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 actions!(
     activity_indicator,
@@ -48,6 +48,18 @@ pub struct ActivityIndicator {
     project: Entity<Project>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs_jobs: Vec<fs::JobInfo>,
+    deferred_scan_message: DeferredScanMessage,
+}
+
+#[derive(Default)]
+enum DeferredScanMessage {
+    #[default]
+    Undetected,
+    Pending,
+    Shown {
+        _dismiss_timer: Task<()>,
+    },
+    Dismissed,
 }
 
 #[derive(Debug)]
@@ -62,8 +74,13 @@ struct PendingWork<'a> {
     progress: &'a LanguageServerProgress,
 }
 
+enum ActivityIcon {
+    LoadingSpinner,
+    Icon(IconName),
+}
+
 struct Content {
-    icon: Option<gpui::AnyElement>,
+    icon: ActivityIcon,
     message: String,
     on_click:
         Option<Arc<dyn Fn(&mut ActivityIndicator, &mut Window, &mut Context<ActivityIndicator>)>>,
@@ -73,28 +90,11 @@ struct Content {
 impl ActivityIndicator {
     pub fn new(
         workspace: &mut Workspace,
-        languages: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
         let this = cx.new(|cx| {
-            let mut status_events = languages.language_server_binary_statuses();
-            cx.spawn(async move |this, cx| {
-                while let Some((name, binary_status)) = status_events.next().await {
-                    this.update(cx, |this: &mut ActivityIndicator, cx| {
-                        this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(ServerStatus {
-                            name,
-                            status: LanguageServerStatusUpdate::Binary(binary_status),
-                        });
-                        cx.notify();
-                    })?;
-                }
-                anyhow::Ok(())
-            })
-            .detach();
-
             let fs = project.read(cx).fs().clone();
             let mut job_events = fs.subscribe_to_jobs();
             cx.spawn(async move |this, cx| {
@@ -102,11 +102,17 @@ impl ActivityIndicator {
                     this.update(cx, |this: &mut ActivityIndicator, cx| {
                         match job_event {
                             fs::JobEvent::Started { info } => {
-                                this.fs_jobs.retain(|j| j.id != info.id);
+                                this.fs_jobs.retain(|job| job.id != info.id);
                                 this.fs_jobs.push(info);
                             }
+                            fs::JobEvent::Updated { id, message } => {
+                                if let Some(job) = this.fs_jobs.iter_mut().find(|job| job.id == id)
+                                {
+                                    job.message = message;
+                                }
+                            }
                             fs::JobEvent::Completed { id } => {
-                                this.fs_jobs.retain(|j| j.id != id);
+                                this.fs_jobs.retain(|job| job.id != id);
                             }
                         }
                         cx.notify();
@@ -129,7 +135,7 @@ impl ActivityIndicator {
                             let status = match &status_update.status {
                                 Some(proto::status_update::Status::Binary(binary_status)) => {
                                     if let Some(binary_status) =
-                                        proto::ServerBinaryStatus::from_i32(*binary_status)
+                                        proto::ServerBinaryStatus::try_from(*binary_status).ok()
                                     {
                                         let binary_status = match binary_status {
                                             proto::ServerBinaryStatus::None => BinaryStatus::None,
@@ -163,7 +169,7 @@ impl ActivityIndicator {
                                 }
                                 Some(proto::status_update::Status::Health(health_status)) => {
                                     if let Some(health) =
-                                        proto::ServerHealth::from_i32(*health_status)
+                                        proto::ServerHealth::try_from(*health_status).ok()
                                     {
                                         let health = match health {
                                             proto::ServerHealth::Ok => ServerHealth::Ok,
@@ -210,12 +216,28 @@ impl ActivityIndicator {
             )
             .detach();
 
-            Self {
+            cx.subscribe(
+                &project,
+                |this, _, event: &project::Event, cx| match event {
+                    project::Event::WorktreeAdded(_)
+                    | project::Event::WorktreeRemoved(_)
+                    | project::Event::WorktreeUpdatedEntries(..) => {
+                        this.update_deferred_scan_status(cx);
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+
+            let mut this = Self {
                 statuses: Vec::new(),
                 project: project.clone(),
                 context_menu_handle: PopoverMenuHandle::default(),
                 fs_jobs: Vec::new(),
-            }
+                deferred_scan_message: DeferredScanMessage::default(),
+            };
+            this.update_deferred_scan_status(cx);
+            this
         });
 
         cx.subscribe_in(&this, window, move |_, _, event, window, cx| match event {
@@ -310,39 +332,68 @@ impl ActivityIndicator {
             .read(cx)
             .language_server_statuses(cx)
             .rev()
-            .filter_map(|(server_id, status)| {
-                if status.pending_work.is_empty() {
-                    None
-                } else {
-                    let mut pending_work = status
-                        .pending_work
-                        .iter()
-                        .map(|(progress_token, progress)| PendingWork {
-                            language_server_id: server_id,
-                            progress_token,
-                            progress,
-                        })
-                        .collect::<SmallVec<[_; 4]>>();
-                    pending_work.sort_by_key(|work| Reverse(work.progress.last_update_at));
-                    Some(pending_work)
-                }
+            .flat_map(|(server_id, status)| {
+                let mut pending_work = status
+                    .pending_work
+                    .iter()
+                    .map(|(progress_token, progress)| PendingWork {
+                        language_server_id: server_id,
+                        progress_token,
+                        progress,
+                    })
+                    .collect::<SmallVec<[_; 4]>>();
+                pending_work.sort_by_key(|work| Reverse(work.progress.last_update_at));
+                pending_work
             })
-            .flatten()
     }
 
     fn pending_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a String> {
         self.project.read(cx).peek_environment_error(cx)
     }
 
+    fn update_deferred_scan_status(&mut self, cx: &mut Context<Self>) {
+        let has_deferred_scan_dirs = self.project.read(cx).visible_worktrees(cx).any(|worktree| {
+            let worktree = worktree.read(cx);
+            worktree.deferred_scan_dir_count() > 0
+                && worktree.as_local().is_none_or(|local_worktree| {
+                    local_worktree.settings().file_scan_depth.is_some()
+                })
+        });
+        match &self.deferred_scan_message {
+            DeferredScanMessage::Undetected if has_deferred_scan_dirs => {
+                self.deferred_scan_message = DeferredScanMessage::Pending;
+                cx.notify();
+            }
+            DeferredScanMessage::Pending | DeferredScanMessage::Shown { .. }
+                if !has_deferred_scan_dirs =>
+            {
+                self.deferred_scan_message = DeferredScanMessage::Undetected;
+                cx.notify();
+            }
+            DeferredScanMessage::Dismissed if !has_deferred_scan_dirs => {
+                self.deferred_scan_message = DeferredScanMessage::Undetected;
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn message_to_render(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        self.content_to_render(cx).map(|content| content.message)
+    }
+
     fn content_to_render(&mut self, cx: &mut Context<Self>) -> Option<Content> {
+        if let Some(content) = self.primary_content(cx) {
+            return Some(content);
+        }
+        self.deferred_scan_content(cx)
+    }
+
+    fn primary_content(&mut self, cx: &mut Context<Self>) -> Option<Content> {
         // Show if any direnv calls failed
         if let Some(message) = self.pending_environment_error(cx) {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Warning),
                 message: message.clone(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.project.update(cx, |project, cx| {
@@ -379,14 +430,9 @@ impl ActivityIndicator {
                 }
 
                 return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .with_rotate_animation(2)
-                            .into_any_element(),
-                    ),
+                    icon: ActivityIcon::LoadingSpinner,
                     message,
-                    on_click: Some(Arc::new(Self::toggle_language_server_work_context_menu)),
+                    on_click: None,
                     tooltip_message: None,
                 });
             }
@@ -401,12 +447,7 @@ impl ActivityIndicator {
             .find(|s| !s.read(cx).is_started())
         {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::ArrowCircle)
-                        .size(IconSize::Small)
-                        .with_rotate_animation(2)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::LoadingSpinner,
                 message: format!("Debug: {}", session.read(cx).adapter()),
                 tooltip_message: session.read(cx).label().map(|label| label.to_string()),
                 on_click: None,
@@ -424,12 +465,7 @@ impl ActivityIndicator {
             && Instant::now() - job_info.start >= GIT_OPERATION_DELAY
         {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::ArrowCircle)
-                        .size(IconSize::Small)
-                        .with_rotate_animation(2)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::LoadingSpinner,
                 message: job_info.message.into(),
                 on_click: None,
                 tooltip_message: None,
@@ -440,12 +476,7 @@ impl ActivityIndicator {
         for fs_job in &self.fs_jobs {
             if Instant::now().duration_since(fs_job.start) >= GIT_OPERATION_DELAY {
                 return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .with_rotate_animation(2)
-                            .into_any_element(),
-                    ),
+                    icon: ActivityIcon::LoadingSpinner,
                     message: fs_job.message.clone().into(),
                     on_click: None,
                     tooltip_message: None,
@@ -498,11 +529,7 @@ impl ActivityIndicator {
 
         if !downloading.is_empty() {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Download)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Download),
                 message: format!(
                     "Downloading {}...",
                     downloading.iter().map(|name| name.as_ref()).fold(
@@ -527,11 +554,7 @@ impl ActivityIndicator {
 
         if !checking_for_update.is_empty() {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Download)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Download),
                 message: format!(
                     "Checking for updates to {}...",
                     checking_for_update.iter().map(|name| name.as_ref()).fold(
@@ -556,11 +579,7 @@ impl ActivityIndicator {
 
         if !failed.is_empty() {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Warning),
                 message: format!(
                     "Failed to run {}. Click to show error.",
                     failed
@@ -584,11 +603,7 @@ impl ActivityIndicator {
         // Show any formatting failure
         if let Some(failure) = self.project.read(cx).last_formatting_failure(cx) {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Warning),
                 message: format!("Formatting failed: {failure}. Click to see logs."),
                 on_click: Some(Arc::new(|indicator, window, cx| {
                     indicator.project.update(cx, |project, cx| {
@@ -630,11 +645,7 @@ impl ActivityIndicator {
             };
 
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Warning),
                 message: final_message,
                 tooltip_message,
                 on_click: Some(Arc::new(move |activity_indicator, window, cx| {
@@ -656,32 +667,23 @@ impl ActivityIndicator {
             && let Some((extension_id, operation)) =
                 extension_store.outstanding_operations().iter().next()
         {
-            let (message, icon, rotate) = match operation {
+            let (message, icon) = match operation {
                 ExtensionOperation::Install => (
                     format!("Installing {extension_id} extension…"),
-                    IconName::LoadCircle,
-                    true,
+                    ActivityIcon::LoadingSpinner,
                 ),
                 ExtensionOperation::Upgrade => (
                     format!("Updating {extension_id} extension…"),
-                    IconName::Download,
-                    false,
+                    ActivityIcon::Icon(IconName::Download),
                 ),
                 ExtensionOperation::Remove => (
                     format!("Removing {extension_id} extension…"),
-                    IconName::LoadCircle,
-                    true,
+                    ActivityIcon::LoadingSpinner,
                 ),
             };
 
             return Some(Content {
-                icon: Some(Icon::new(icon).size(IconSize::Small).map(|this| {
-                    if rotate {
-                        this.with_rotate_animation(3).into_any_element()
-                    } else {
-                        this.into_any_element()
-                    }
-                })),
+                icon,
                 message,
                 on_click: Some(Arc::new(|this, window, cx| {
                     this.dismiss_message(&Default::default(), window, cx)
@@ -693,12 +695,36 @@ impl ActivityIndicator {
         None
     }
 
-    fn toggle_language_server_work_context_menu(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.context_menu_handle.toggle(window, cx);
+    fn deferred_scan_content(&mut self, cx: &mut Context<Self>) -> Option<Content> {
+        if !matches!(
+            self.deferred_scan_message,
+            DeferredScanMessage::Pending | DeferredScanMessage::Shown { .. }
+        ) {
+            return None;
+        }
+        if matches!(self.deferred_scan_message, DeferredScanMessage::Pending) {
+            self.deferred_scan_message = DeferredScanMessage::Shown {
+                _dismiss_timer: cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(DEFERRED_SCAN_MESSAGE_TIMEOUT)
+                        .await;
+                    this.update(cx, |this, cx| {
+                        this.deferred_scan_message = DeferredScanMessage::Dismissed;
+                        cx.notify();
+                    })
+                    .ok();
+                }),
+            };
+        }
+        Some(Content {
+            icon: ActivityIcon::Icon(IconName::Info),
+            message: "Partial file index".to_string(),
+            tooltip_message: Some("Directories outside of git repositories and deeper than the `file_scan_depth` setting will be indexed on demand.".to_string()),
+            on_click: Some(Arc::new(|this, _, cx| {
+                this.deferred_scan_message = DeferredScanMessage::Dismissed;
+                cx.notify();
+            })),
+        })
     }
 }
 
@@ -712,13 +738,16 @@ impl Render for ActivityIndicator {
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
             .on_action(cx.listener(Self::dismiss_message));
+
         let Some(content) = self.content_to_render(cx) else {
             return result;
         };
+
         let activity_indicator = cx.entity().downgrade();
         let truncate_content = content.message.len() > MAX_MESSAGE_LEN;
+        let has_click_handler = content.on_click.is_some();
 
-        result.gap_2().child(
+        result.child(
             PopoverMenu::new("activity-indicator-popover")
                 .trigger(
                     Button::new("activity-indicator-trigger", {
@@ -729,7 +758,15 @@ impl Render for ActivityIndicator {
                         }
                     })
                     .label_size(LabelSize::Small)
-                    .loading(content.icon.is_some())
+                    .tab_index(0isize)
+                    .map(|this| match content.icon {
+                        ActivityIcon::LoadingSpinner => this.loading(true),
+                        ActivityIcon::Icon(icon_name) => this.start_icon(
+                            Icon::new(icon_name)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    })
                     .map(|button| {
                         if truncate_content {
                             button.tooltip(Tooltip::text(content.message))
@@ -746,64 +783,70 @@ impl Render for ActivityIndicator {
                     }),
                 )
                 .anchor(gpui::Anchor::BottomLeft)
-                .menu(move |window, cx| {
-                    let strong_this = activity_indicator.upgrade()?;
-                    let mut has_work = false;
-                    let menu = ContextMenu::build(window, cx, |mut menu, _, cx| {
-                        for work in strong_this.read(cx).pending_language_server_work(cx) {
-                            has_work = true;
-                            let activity_indicator = activity_indicator.clone();
-                            let mut title = work
-                                .progress
-                                .title
-                                .clone()
-                                .unwrap_or(work.progress_token.to_string());
+                .when(!has_click_handler, |this| {
+                    this.menu(move |window, cx| {
+                        let strong_this = activity_indicator.upgrade()?;
+                        let mut has_cancellable_work = false;
+                        let menu = ContextMenu::build(window, cx, |mut menu, _, cx| {
+                            for work in strong_this.read(cx).pending_language_server_work(cx) {
+                                let activity_indicator = activity_indicator.clone();
+                                let mut title = work
+                                    .progress
+                                    .title
+                                    .clone()
+                                    .unwrap_or(work.progress_token.to_string());
 
-                            if work.progress.is_cancellable {
-                                let language_server_id = work.language_server_id;
-                                let token = work.progress_token.clone();
-                                let title = SharedString::from(title);
-                                menu = menu.custom_entry(
-                                    move |_, _| {
-                                        h_flex()
-                                            .w_full()
-                                            .justify_between()
-                                            .child(Label::new(title.clone()))
-                                            .child(Icon::new(IconName::XCircle))
-                                            .into_any_element()
-                                    },
-                                    move |_, cx| {
-                                        let token = token.clone();
-                                        activity_indicator
-                                            .update(cx, |activity_indicator, cx| {
-                                                activity_indicator.project.update(
-                                                    cx,
-                                                    |project, cx| {
-                                                        project.cancel_language_server_work(
-                                                            language_server_id,
-                                                            Some(token),
-                                                            cx,
-                                                        );
-                                                    },
-                                                );
-                                                activity_indicator.context_menu_handle.hide(cx);
-                                                cx.notify();
-                                            })
-                                            .ok();
-                                    },
-                                );
-                            } else {
-                                if let Some(progress_message) = work.progress.message.as_ref() {
-                                    title.push_str(": ");
-                                    title.push_str(progress_message);
+                                if work.progress.is_cancellable {
+                                    has_cancellable_work = true;
+                                    let language_server_id = work.language_server_id;
+                                    let token = work.progress_token.clone();
+                                    let title = SharedString::from(format!("Cancel {title}"));
+                                    menu = menu.custom_entry(
+                                        move |_, _| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_1()
+                                                .child(
+                                                    Icon::new(IconName::Close)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::Small),
+                                                )
+                                                .child(Label::new(title.clone()))
+                                                .into_any_element()
+                                        },
+                                        move |_, cx| {
+                                            let token = token.clone();
+                                            activity_indicator
+                                                .update(cx, |activity_indicator, cx| {
+                                                    activity_indicator.project.update(
+                                                        cx,
+                                                        |project, cx| {
+                                                            project.cancel_language_server_work(
+                                                                language_server_id,
+                                                                Some(token),
+                                                                cx,
+                                                            );
+                                                        },
+                                                    );
+                                                    activity_indicator.context_menu_handle.hide(cx);
+                                                    cx.notify();
+                                                })
+                                                .ok();
+                                        },
+                                    );
+                                } else {
+                                    if let Some(progress_message) = work.progress.message.as_ref() {
+                                        title.push_str(": ");
+                                        title.push_str(progress_message);
+                                    }
+
+                                    menu = menu.label(title);
                                 }
-
-                                menu = menu.label(title);
                             }
-                        }
-                        menu
-                    });
-                    has_work.then_some(menu)
+                            menu
+                        });
+                        has_cancellable_work.then_some(menu)
+                    })
                 }),
         )
     }
@@ -816,5 +859,10 @@ impl StatusItemView for ActivityIndicator {
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        // Activity indicator auto-hides when there's no work to display.
+        None
     }
 }

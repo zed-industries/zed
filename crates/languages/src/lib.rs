@@ -1,3 +1,4 @@
+use futures::FutureExt as _;
 use gpui::{App, SharedString, UpdateGlobal};
 use node_runtime::NodeRuntime;
 use project::Fs;
@@ -41,11 +42,12 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
             LanguageConfig {
                 name: "Git Commit".into(),
                 soft_wrap: Some(language::SoftWrap::EditorWidth),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
                     first_line_pattern: None,
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 line_comments: vec![Arc::from("#")],
                 ..LanguageConfig::default()
             },
@@ -57,6 +59,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars(grammars::native_grammars());
 
+    let bash_lsp_adapter = Arc::new(bash::BashLspAdapter::new(node.clone()));
     let c_lsp_adapter = Arc::new(c::CLspAdapter);
     let css_lsp_adapter = Arc::new(css::CssLspAdapter::new(node.clone()));
     let eslint_adapter = Arc::new(eslint::EsLintLspAdapter::new(node.clone(), fs.clone()));
@@ -88,6 +91,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         LanguageInfo {
             name: "bash",
             context: Some(Arc::new(bash::bash_task_context())),
+            adapters: vec![bash_lsp_adapter],
             ..Default::default()
         },
         LanguageInfo {
@@ -360,13 +364,20 @@ fn register_language(
         config.hidden,
         manifest_name.clone(),
         Arc::new(move || {
-            Ok(LoadedLanguage {
-                config: config.clone(),
-                queries: grammars::load_queries(name),
-                context_provider: context.clone(),
-                toolchain_provider: toolchain.clone(),
-                manifest_name: manifest_name.clone(),
-            })
+            let config = config.clone();
+            let context = context.clone();
+            let toolchain = toolchain.clone();
+            let manifest_name = manifest_name.clone();
+            async move {
+                Ok(LoadedLanguage {
+                    config,
+                    queries: grammars::load_queries(name),
+                    context_provider: context,
+                    toolchain_provider: toolchain,
+                    manifest_name,
+                })
+            }
+            .boxed()
         }),
     );
 }

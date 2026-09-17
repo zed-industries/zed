@@ -18,9 +18,9 @@ wasmtime::component::bindgen!({
     },
     path: "../extension_api/wit/since_v0.0.4",
     with: {
-         "worktree": ExtensionWorktree,
-         "zed:extension/github": since_v0_6_0::zed::extension::github,
-         "zed:extension/platform": latest::zed::extension::platform,
+        "worktree": ExtensionWorktree,
+        "zed:extension/github": since_v0_6_0::zed::extension::github,
+        "zed:extension/platform": since_v0_6_0::zed::extension::platform,
     },
 });
 
@@ -99,7 +99,7 @@ impl HostWorktree for WasmState {
         latest::HostWorktree::which(self, delegate, binary_name).await
     }
 
-    async fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<Worktree>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of worktrees.
         Ok(())
     }
@@ -140,8 +140,8 @@ impl ExtensionImports for WasmState {
         since_v0_6_0::zed::extension::github::Host::latest_github_release(self, repo, options).await
     }
 
-    async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
-        latest::zed::extension::platform::Host::current_platform(self).await
+    async fn current_platform(&mut self) -> wasmtime::Result<(Os, Architecture)> {
+        since_v0_6_0::zed::extension::platform::Host::current_platform(self).await
     }
 
     async fn set_language_server_installation_status(

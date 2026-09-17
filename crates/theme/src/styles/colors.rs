@@ -204,6 +204,10 @@ pub struct ThemeColors {
     // Editor
     // ===
     pub editor_foreground: Hsla,
+    /// Text color used for CodeLens items in the editor.
+    ///
+    /// Falls back to `text_muted` when not explicitly set.
+    pub editor_code_lens_foreground: Option<Hsla>,
     pub editor_background: Hsla,
     pub editor_gutter_background: Hsla,
     pub editor_subheader_background: Hsla,
@@ -241,6 +245,18 @@ pub struct ThemeColors {
     ///
     /// Matching brackets in the cursor scope are highlighted with this background color.
     pub editor_document_highlight_bracket_background: Hsla,
+    /// Filled background color for added diff hunk row highlights in the editor.
+    pub editor_diff_hunk_added_background: Hsla,
+    /// Hollow background color for added diff hunk row highlights in the editor.
+    pub editor_diff_hunk_added_hollow_background: Hsla,
+    /// Hollow border color for added diff hunk row highlights in the editor.
+    pub editor_diff_hunk_added_hollow_border: Hsla,
+    /// Filled background color for deleted diff hunk row highlights in the editor.
+    pub editor_diff_hunk_deleted_background: Hsla,
+    /// Hollow background color for deleted diff hunk row highlights in the editor.
+    pub editor_diff_hunk_deleted_hollow_background: Hsla,
+    /// Hollow border color for deleted diff hunk row highlights in the editor.
+    pub editor_diff_hunk_deleted_hollow_border: Hsla,
 
     // ===
     // Terminal
@@ -392,6 +408,7 @@ pub enum ThemeColorField {
     MinimapThumbActiveBackground,
     MinimapThumbBorder,
     EditorForeground,
+    EditorCodeLensForeground,
     EditorBackground,
     EditorGutterBackground,
     EditorSubheaderBackground,
@@ -510,6 +527,9 @@ impl ThemeColors {
             ThemeColorField::MinimapThumbActiveBackground => self.minimap_thumb_active_background,
             ThemeColorField::MinimapThumbBorder => self.minimap_thumb_border,
             ThemeColorField::EditorForeground => self.editor_foreground,
+            ThemeColorField::EditorCodeLensForeground => {
+                self.editor_code_lens_foreground.unwrap_or(self.text_muted)
+            }
             ThemeColorField::EditorBackground => self.editor_background,
             ThemeColorField::EditorGutterBackground => self.editor_gutter_background,
             ThemeColorField::EditorSubheaderBackground => self.editor_subheader_background,
