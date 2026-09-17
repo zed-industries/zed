@@ -30,7 +30,9 @@ actions!(
         /// Scrolls to the bottom of the markdown preview.
         ScrollToBottom,
         /// Opens a following markdown preview that syncs with the editor.
-        OpenFollowingPreview
+        OpenFollowingPreview,
+        /// Closes the markdown preview and returns focus to the source editor.
+        CloseAndReturnToEditor
     ]
 );
 

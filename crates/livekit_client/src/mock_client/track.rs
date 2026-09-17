@@ -28,6 +28,10 @@ impl RemoteAudioTrack {
         self.server_track.sid.clone()
     }
 
+    pub fn rtc_track_id(&self) -> String {
+        self.server_track.sid.to_string()
+    }
+
     pub fn publisher_id(&self) -> ParticipantIdentity {
         self.server_track.publisher_id.clone()
     }

@@ -190,26 +190,16 @@ pub(crate) fn down_by_rows(
 }
 
 /// Returns a position of the start of line.
-/// If `stop_at_soft_boundaries` is true, the returned position is that of the
-/// displayed line (e.g. it could actually be in the middle of a text line if that line is soft-wrapped).
-/// Otherwise it's always going to be the start of a logical line.
-pub fn line_beginning(
-    map: &DisplaySnapshot,
-    display_point: DisplayPoint,
-    stop_at_soft_boundaries: bool,
-) -> DisplayPoint {
-    let point = display_point.to_point(map);
-    let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
-    let line_start = map.prev_line_boundary(point).1;
-
-    if stop_at_soft_boundaries && display_point != soft_line_start {
-        soft_line_start
-    } else {
-        line_start
-    }
+///
+/// It's always going to be the start of a logical line.
+/// If you want to stop at last indented position or soft boundaries,
+/// use [`indented_line_beginning`] instead.
+pub fn line_beginning(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    map.prev_line_boundary(display_point.to_point(map)).1
 }
 
-/// Returns the last indented position on a given line.
+/// Returns the last indented position or the start of a given line.
+///
 /// If `stop_at_soft_boundaries` is true, the returned [`DisplayPoint`] is that of a
 /// displayed line (e.g. if there's soft wrap it's gonna be returned),
 /// otherwise it's always going to be a start of a logical line.
@@ -263,14 +253,18 @@ pub fn line_end(
 
 /// Returns a position of the previous word boundary, where a word character is defined as either
 /// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
-pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+pub fn previous_word_start(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    skip_punctuation: bool,
+) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
     let mut is_first_iteration = true;
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, &mut |left, right| {
-        // Make alt-left skip punctuation to respect VSCode behaviour. For example: hello.| goes to |hello.
-        if is_first_iteration
+        if skip_punctuation
+            && is_first_iteration
             && classifier.is_punctuation(right)
             && !classifier.is_punctuation(left)
             && left != '\n'
@@ -438,13 +432,17 @@ pub fn is_subword_start(left: char, right: char, classifier: &CharClassifier) ->
 
 /// Returns a position of the next word boundary, where a word character is defined as either
 /// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
-pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+pub fn next_word_end(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    skip_punctuation: bool,
+) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
     let mut is_first_iteration = true;
     find_boundary(map, point, FindRange::MultiLine, &mut |left, right| {
-        // Make alt-right skip punctuation to respect VSCode behaviour. For example: |.hello goes to .hello|
-        if is_first_iteration
+        if skip_punctuation
+            && is_first_iteration
             && classifier.is_punctuation(left)
             && !classifier.is_punctuation(right)
             && right != '\n'
@@ -580,6 +578,99 @@ pub fn end_of_paragraph(
     }
 
     map.max_point()
+}
+
+/// Returns whether `row` is part of a comment paragraph: a line whose first
+/// non-whitespace character lies within a comment scope and which contains at
+/// least one alphanumeric character.
+///
+/// This intentionally excludes:
+/// - blank lines and code lines,
+/// - end-of-line comments preceded by code (the first non-whitespace character
+///   is then code, not a comment),
+/// - "blank"/divider comment lines such as a bare `//` or `// -----` (no
+///   alphanumeric content), which act as paragraph separators.
+fn is_comment_paragraph_line(snapshot: &MultiBufferSnapshot, row: u32) -> bool {
+    let buffer_row = MultiBufferRow(row);
+    if snapshot.is_line_blank(buffer_row) {
+        return false;
+    }
+    let indent_len = snapshot.indent_size_for_line(buffer_row).len;
+    let indent_end = Point::new(row, indent_len);
+    let in_comment = snapshot.language_scope_at(indent_end).is_some_and(|scope| {
+        matches!(
+            scope.override_name(),
+            Some("comment") | Some("comment.inclusive")
+        )
+    });
+    if !in_comment {
+        return false;
+    }
+    let line_end = Point::new(row, snapshot.line_len(buffer_row));
+    snapshot
+        .text_for_range(indent_end..line_end)
+        .flat_map(|chunk| chunk.chars())
+        .any(|c| c.is_alphanumeric())
+}
+
+/// Returns the position of the first non-whitespace character of the next or
+/// previous comment paragraph, relative to `from`.
+///
+/// A comment paragraph is a run of consecutive comment lines (see
+/// [`is_comment_paragraph_line`]); paragraphs are separated by blank lines, code
+/// lines, and blank/divider comment lines. If no such paragraph exists in the
+/// requested direction, `from` is returned unchanged.
+///
+/// Both directions always move to a *different* paragraph than the one the
+/// caret is in: when the caret is inside a comment paragraph, the entire
+/// current paragraph is skipped, so `Prev` lands on the previous paragraph's
+/// start rather than the current paragraph's own start.
+pub fn comment_paragraph(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let snapshot = map.buffer_snapshot();
+    let from_point = from.to_point(map);
+    let max_row = snapshot.max_row().0;
+
+    let is_paragraph_start = |row: u32| {
+        is_comment_paragraph_line(snapshot, row)
+            && (row == 0 || !is_comment_paragraph_line(snapshot, row - 1))
+    };
+    let paragraph_start_point =
+        |row: u32| Point::new(row, snapshot.indent_size_for_line(MultiBufferRow(row)).len);
+
+    let target = match direction {
+        Direction::Next => (from_point.row..=max_row).find_map(|row| {
+            let point = paragraph_start_point(row);
+            (point > from_point && is_paragraph_start(row)).then_some(point)
+        }),
+        Direction::Prev => {
+            // If the caret is within a comment paragraph, skip over the whole
+            // current paragraph so we land on the *previous* paragraph rather
+            // than stopping at the current paragraph's own start.
+            let mut boundary_row = from_point.row;
+            if is_comment_paragraph_line(snapshot, boundary_row) {
+                while boundary_row > 0 && is_comment_paragraph_line(snapshot, boundary_row - 1) {
+                    boundary_row -= 1;
+                }
+                (0..boundary_row)
+                    .rev()
+                    .find_map(|row| is_paragraph_start(row).then(|| paragraph_start_point(row)))
+            } else {
+                (0..=from_point.row).rev().find_map(|row| {
+                    let point = paragraph_start_point(row);
+                    (point < from_point && is_paragraph_start(row)).then_some(point)
+                })
+            }
+        }
+    };
+
+    match target {
+        Some(point) => map.clip_point(point.to_display_point(map), Bias::Right),
+        None => from,
+    }
 }
 
 pub fn start_of_excerpt(
@@ -944,42 +1035,127 @@ mod tests {
     use settings::SettingsStore;
     use util::post_inc;
 
+    #[derive(Clone, Copy, Debug)]
+    enum WordMovement {
+        PreviousStart,
+        NextEnd,
+    }
+
     #[gpui::test]
-    fn test_previous_word_start(cx: &mut gpui::App) {
+    fn test_word_movement(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::App) {
-            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-            let actual = previous_word_start(&snapshot, display_points[1]);
-            let expected = display_points[0];
-            if actual != expected {
-                eprintln!(
-                    "previous_word_start mismatch for '{}': actual={:?}, expected={:?}",
-                    marked_text, actual, expected
-                );
-            }
-            assert_eq!(actual, expected);
-        }
+        let cases = [
+            (WordMovement::PreviousStart, "    ˇlorˇem"),
+            (WordMovement::PreviousStart, "\nlorem\nˇ   ˇipsum"),
+            (WordMovement::PreviousStart, "\n\nˇ\nˇ"),
+            (WordMovement::PreviousStart, "ˇlorem_ˇipsum"),
+            (WordMovement::PreviousStart, " ˇbcΔˇ"),
+            (WordMovement::PreviousStart, "foo ˇaˇ bar"),
+            (WordMovement::PreviousStart, "foo ˇ..ˇ bar"),
+            (WordMovement::PreviousStart, "wordˇ.ˇ"),
+            (WordMovement::PreviousStart, "wordˇ...ˇ"),
+            (WordMovement::PreviousStart, "wordˇ,;:!?ˇ"),
+            (WordMovement::PreviousStart, "wordˇ()[]{}ˇ"),
+            (WordMovement::PreviousStart, "wordˇ+-=*/&|^~ˇ"),
+            (WordMovement::PreviousStart, "wordˇ\"'`ˇ"),
+            (WordMovement::PreviousStart, "wordˇ—…。ˇ"),
+            (WordMovement::PreviousStart, "foo ˇ.ˇ bar"),
+            (WordMovement::PreviousStart, "foo ˇ...ˇ bar"),
+            (WordMovement::PreviousStart, "foo ˇ()[]{}ˇ bar"),
+            (WordMovement::PreviousStart, "foo ˇ+-=*/&|^~ˇ bar"),
+            (WordMovement::PreviousStart, "foo ˇ\"'`ˇ bar"),
+            (WordMovement::PreviousStart, "foo ˇ—…。ˇ bar"),
+            (WordMovement::PreviousStart, "foo ˇ@ˇbar"),
+            (WordMovement::PreviousStart, "foo ˇ..ˇ.bar"),
+            (WordMovement::PreviousStart, "foo @ˇbarˇ baz"),
+            (WordMovement::PreviousStart, "foo @ˇbˇar"),
+            (WordMovement::PreviousStart, "foo ..ˇbarˇ baz"),
+            (WordMovement::PreviousStart, ".ˇhelloˇ"),
+            (WordMovement::PreviousStart, "@ˇwordˇ"),
+            (WordMovement::PreviousStart, "*ˇConnectorˇ"),
+            (WordMovement::PreviousStart, "\"ˇwordˇ\""),
+            (WordMovement::PreviousStart, "\"expected ˇresultˇ\""),
+            (WordMovement::PreviousStart, "\"ˇexpected ˇresult\""),
+            (WordMovement::PreviousStart, "\\\"ˇunexpectedˇ\\\""),
+            (WordMovement::PreviousStart, "'ˇwordˇ'"),
+            (WordMovement::PreviousStart, "`ˇcodeˇ`"),
+            (WordMovement::PreviousStart, "(ˇargsˇ)"),
+            (WordMovement::PreviousStart, "[ˇitemˇ]"),
+            (WordMovement::PreviousStart, "{ˇvalueˇ}"),
+            (WordMovement::PreviousStart, "a-b-ˇcˇ"),
+            (WordMovement::PreviousStart, "a.b.ˇcˇ"),
+            (WordMovement::PreviousStart, "foo.ˇbarˇ"),
+            (WordMovement::PreviousStart, "a@ˇbˇ"),
+            (WordMovement::PreviousStart, "left::ˇrightˇ"),
+            (WordMovement::PreviousStart, "foo/ˇbarˇ"),
+            (WordMovement::PreviousStart, "foo->ˇbarˇ"),
+            (WordMovement::PreviousStart, "foo&&ˇbarˇ"),
+            (WordMovement::PreviousStart, "func(ˇargsˇ)"),
+            (WordMovement::PreviousStart, "map[string]ˇboolˇ"),
+            (WordMovement::PreviousStart, "if (foo.ˇbarˇ)"),
+            (WordMovement::PreviousStart, "[2001:4860:4860::8888ˇ] ˇ"),
+            (WordMovement::NextEnd, "    lorˇemˇ"),
+            (WordMovement::NextEnd, "loremˇ    ipsumˇ"),
+            (WordMovement::NextEnd, "\nˇ\nˇ\n\n"),
+            (WordMovement::NextEnd, "loremˇ_ipsumˇ"),
+            (WordMovement::NextEnd, " ˇbcΔˇ"),
+            (WordMovement::NextEnd, "foo ˇaˇ bar"),
+            (WordMovement::NextEnd, "foo ˇ..ˇ bar"),
+            (WordMovement::NextEnd, "wordˇ.ˇ"),
+            (WordMovement::NextEnd, "wordˇ...ˇ"),
+            (WordMovement::NextEnd, "wordˇ,;:!?ˇ"),
+            (WordMovement::NextEnd, "wordˇ()[]{}ˇ"),
+            (WordMovement::NextEnd, "wordˇ+-=*/&|^~ˇ"),
+            (WordMovement::NextEnd, "wordˇ\"'`ˇ"),
+            (WordMovement::NextEnd, "wordˇ—…。ˇ"),
+            (WordMovement::NextEnd, "foo ˇ.ˇ bar"),
+            (WordMovement::NextEnd, "foo ˇ...ˇ bar"),
+            (WordMovement::NextEnd, "foo ˇ()[]{}ˇ bar"),
+            (WordMovement::NextEnd, "foo ˇ+-=*/&|^~ˇ bar"),
+            (WordMovement::NextEnd, "foo ˇ\"'`ˇ bar"),
+            (WordMovement::NextEnd, "foo ˇ—…。ˇ bar"),
+            (WordMovement::NextEnd, "ˇ.ˇhello"),
+            (WordMovement::NextEnd, "ˇ@ˇword"),
+            (WordMovement::NextEnd, "ˇ*ˇConnector"),
+            (WordMovement::NextEnd, "ˇ\"ˇword\""),
+            (WordMovement::NextEnd, "\"ˇexpectedˇ result\""),
+            (WordMovement::NextEnd, "ˇ\\\"ˇunexpected\\\""),
+            (WordMovement::NextEnd, "ˇ'ˇword'"),
+            (WordMovement::NextEnd, "ˇ`ˇcode`"),
+            (WordMovement::NextEnd, "ˇ(ˇargs)"),
+            (WordMovement::NextEnd, "ˇ[ˇitem]"),
+            (WordMovement::NextEnd, "ˇ{ˇvalue}"),
+            (WordMovement::NextEnd, "display_pointsˇ[ˇ0]"),
+            (WordMovement::NextEnd, "fooˇ.ˇ bar"),
+            (WordMovement::NextEnd, "foo ˇ@ˇbar baz"),
+            (WordMovement::NextEnd, "foo.ˇ..ˇbar"),
+            (WordMovement::NextEnd, "aˇ-ˇb-c"),
+            (WordMovement::NextEnd, "aˇ.ˇb.c"),
+            (WordMovement::NextEnd, "aˇ@ˇb"),
+            (WordMovement::NextEnd, "leftˇ::ˇright"),
+            (WordMovement::NextEnd, "fooˇ/ˇbar"),
+            (WordMovement::NextEnd, "fooˇ->ˇbar"),
+            (WordMovement::NextEnd, "fooˇ&&ˇbar"),
+            (WordMovement::NextEnd, "funcˇ(ˇargs)"),
+            (WordMovement::NextEnd, "map[stringˇ]ˇbool"),
+            (WordMovement::NextEnd, "if ˇ(ˇfoo.bar)"),
+            (WordMovement::NextEnd, "[2001:4860:4860::8888ˇ]ˇ "),
+        ];
 
-        assert("\nˇ   ˇlorem", cx);
-        assert("ˇ\nˇ   lorem", cx);
-        assert("    ˇloremˇ", cx);
-        assert("ˇ    ˇlorem", cx);
-        assert("    ˇlorˇem", cx);
-        assert("\nlorem\nˇ   ˇipsum", cx);
-        assert("\n\nˇ\nˇ", cx);
-        assert("    ˇlorem  ˇipsum", cx);
-        assert("ˇlorem-ˇipsum", cx);
-        assert("loremˇ-#$@ˇipsum", cx);
-        assert("ˇlorem_ˇipsum", cx);
-        assert(" ˇdefγˇ", cx);
-        assert(" ˇbcΔˇ", cx);
-        // Test punctuation skipping behavior
-        assert("ˇhello.ˇ", cx);
-        assert("helloˇ...ˇ", cx);
-        assert("helloˇ.---..ˇtest", cx);
-        assert("test  ˇ.--ˇtest", cx);
-        assert("oneˇ,;:!?ˇtwo", cx);
+        for (movement, marked_text) in cases {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            assert_eq!(display_points.len(), 2, "{marked_text:?}");
+            let (start, expected) = match movement {
+                WordMovement::PreviousStart => (display_points[1], display_points[0]),
+                WordMovement::NextEnd => (display_points[0], display_points[1]),
+            };
+            let actual = match movement {
+                WordMovement::PreviousStart => previous_word_start(&snapshot, start, false),
+                WordMovement::NextEnd => next_word_end(&snapshot, start, false),
+            };
+            assert_eq!(actual, expected, "{movement:?} failed for {marked_text:?}");
+        }
     }
 
     #[gpui::test]
@@ -1126,43 +1302,6 @@ mod tests {
                 .to_display_point(&snapshot),
             "Should not stop at inlays when looking for boundaries"
         );
-    }
-
-    #[gpui::test]
-    fn test_next_word_end(cx: &mut gpui::App) {
-        init_test(cx);
-
-        fn assert(marked_text: &str, cx: &mut gpui::App) {
-            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-            let actual = next_word_end(&snapshot, display_points[0]);
-            let expected = display_points[1];
-            if actual != expected {
-                eprintln!(
-                    "next_word_end mismatch for '{}': actual={:?}, expected={:?}",
-                    marked_text, actual, expected
-                );
-            }
-            assert_eq!(actual, expected);
-        }
-
-        assert("\nˇ   loremˇ", cx);
-        assert("    ˇloremˇ", cx);
-        assert("    lorˇemˇ", cx);
-        assert("    loremˇ    ˇ\nipsum\n", cx);
-        assert("\nˇ\nˇ\n\n", cx);
-        assert("loremˇ    ipsumˇ   ", cx);
-        assert("loremˇ-ipsumˇ", cx);
-        assert("loremˇ#$@-ˇipsum", cx);
-        assert("loremˇ_ipsumˇ", cx);
-        assert(" ˇbcΔˇ", cx);
-        assert(" abˇ——ˇcd", cx);
-        // Test punctuation skipping behavior
-        assert("ˇ.helloˇ", cx);
-        assert("display_pointsˇ[0ˇ]", cx);
-        assert("ˇ...ˇhello", cx);
-        assert("helloˇ.---..ˇtest", cx);
-        assert("testˇ.--ˇ test", cx);
-        assert("oneˇ,;:!?ˇtwo", cx);
     }
 
     #[gpui::test]
@@ -1453,7 +1592,7 @@ mod tests {
         // Ctrl+Right from before fold ("hello |⋯ world") should skip past the fold.
         // Cursor at column 6 = start of fold.
         let before_fold = DisplayPoint::new(DisplayRow(0), 6);
-        let after_fold = next_word_end(&snapshot, before_fold);
+        let after_fold = next_word_end(&snapshot, before_fold, false);
         // Should land past the fold, not get stuck at fold start.
         assert!(
             after_fold > before_fold,
@@ -1464,7 +1603,7 @@ mod tests {
 
         // Ctrl+Right from "hello" should jump past "hello" to the fold or past it.
         let at_start = DisplayPoint::new(DisplayRow(0), 0);
-        let after_hello = next_word_end(&snapshot, at_start);
+        let after_hello = next_word_end(&snapshot, at_start, false);
         assert_eq!(
             after_hello,
             DisplayPoint::new(DisplayRow(0), 5),
@@ -1474,7 +1613,7 @@ mod tests {
         // Ctrl+Left from after fold should move to before the fold.
         // "⋯" ends at column 9. " world" starts at 9. Column 15 = end of "world".
         let after_world = DisplayPoint::new(DisplayRow(0), 15);
-        let before_world = previous_word_start(&snapshot, after_world);
+        let before_world = previous_word_start(&snapshot, after_world, false);
         assert_eq!(
             before_world,
             DisplayPoint::new(DisplayRow(0), 10),
@@ -1483,7 +1622,7 @@ mod tests {
 
         // Ctrl+Left from start of "world" should land before fold.
         let start_of_world = DisplayPoint::new(DisplayRow(0), 10);
-        let landed = previous_word_start(&snapshot, start_of_world);
+        let landed = previous_word_start(&snapshot, start_of_world, false);
         // The fold acts as a word, so we should land at the fold start (column 6).
         assert_eq!(
             landed,

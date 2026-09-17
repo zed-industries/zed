@@ -19,6 +19,10 @@ Terminal Threads also appear as entries in the sidebar alongside agent threads, 
 
 To focus the sidebar without toggling it, use {#kb multi_workspace::FocusWorkspaceSidebar}. To search your threads, press {#kb agents_sidebar::FocusSidebarFilter} while the sidebar is focused.
 
+To change the sidebar’s default width, open the Settings Editor and search for “Threads Sidebar Default Width”. See [`agent.threads_sidebar_default_width`](../reference/all-settings.md#agent-threads-sidebar-default-width) for values and a configuration example.
+
+Drag the divider to override the configured width. Double-click it to return to the setting and follow subsequent settings changes.
+
 ### Switching Threads {#switching-threads}
 
 Click any thread in the sidebar to switch to it. The Agent Panel updates to show that thread's conversation.
@@ -81,7 +85,7 @@ Worktrees are managed from the title bar. Click the worktree picker (to the righ
 
 Once you're in a new worktree, use the branch picker next to the worktree picker to create a new branch or check out an existing one. If the branch you pick is already checked out in another worktree, the current worktree stays in detached HEAD until you choose a different branch.
 
-To automate setup steps whenever a new worktree is created use a [Task hook](../tasks.md#hooks). The `create_worktree` hook runs automatically after Zed creates a linked worktree, with `ZED_WORKTREE_ROOT` pointing at the new worktree and `ZED_MAIN_GIT_WORKTREE` pointing at the original repository.
+To automate setup steps whenever a new worktree is created, use a [Task hook](../tasks.md#hooks). The `create_worktree` hook runs automatically after Zed creates a linked worktree, with `ZED_WORKTREE_ROOT` pointing at the new worktree and `ZED_MAIN_GIT_WORKTREE` pointing at the original repository.
 
 After the agent finishes, review the diff and merge the changes through your normal Git workflow. If the thread was running in a linked worktree and no other active threads use it, moving the thread to Thread History saves the worktree's Git state and removes it from disk. Restoring the thread from history restores the worktree.
 

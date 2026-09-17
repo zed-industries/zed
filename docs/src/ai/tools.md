@@ -31,6 +31,8 @@ When no path is provided, shows a summary of error and warning counts for all fi
 
 Fetches a URL and returns the content as Markdown. Useful for providing docs as context.
 
+`fetch` is governed by tool permissions, agent profiles, and project trust. It is not run inside the terminal OS sandbox, so terminal sandbox network grants such as `allow_hosts` and `allow_all_hosts` do not apply to it.
+
 **Example:** Fetching a library's changelog page to check whether a breaking API change was introduced in a recent version before writing integration code.
 
 ### `find_path`

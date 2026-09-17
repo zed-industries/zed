@@ -1,10 +1,88 @@
 use crate::highlight_map::HighlightId;
 use std::ops::Range;
 
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum SymbolKind {
+    File,
+    Module,
+    Namespace,
+    Package,
+    Class,
+    Method,
+    Property,
+    Field,
+    Constructor,
+    Enum,
+    Interface,
+    Function,
+    Variable,
+    Constant,
+    String,
+    Number,
+    Boolean,
+    Array,
+    Object,
+    Key,
+    Null,
+    EnumMember,
+    Struct,
+    Event,
+    Operator,
+    TypeParameter,
+}
+
+macro_rules! proto_mapping {
+    ($($kind:ident = $value:literal),* $(,)?) => {
+        pub fn to_proto(self) -> i32 {
+            match self {
+                $(Self::$kind => $value,)*
+            }
+        }
+
+        pub fn from_proto(value: i32) -> Self {
+            match value {
+                $($value => Self::$kind,)*
+                _ => Self::Null,
+            }
+        }
+    };
+}
+
+impl SymbolKind {
+    proto_mapping! {
+        File = 1,
+        Module = 2,
+        Namespace = 3,
+        Package = 4,
+        Class = 5,
+        Method = 6,
+        Property = 7,
+        Field = 8,
+        Constructor = 9,
+        Enum = 10,
+        Interface = 11,
+        Function = 12,
+        Variable = 13,
+        Constant = 14,
+        String = 15,
+        Number = 16,
+        Boolean = 17,
+        Array = 18,
+        Object = 19,
+        Key = 20,
+        Null = 21,
+        EnumMember = 22,
+        Struct = 23,
+        Event = 24,
+        Operator = 25,
+        TypeParameter = 26,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Symbol {
     pub name: String,
-    pub kind: lsp::SymbolKind,
+    pub kind: SymbolKind,
     pub container_name: Option<String>,
 }
 

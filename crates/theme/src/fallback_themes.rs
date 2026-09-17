@@ -247,6 +247,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 minimap_thumb_active_background: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 0.7),
                 minimap_thumb_border: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_foreground: hsla(218. / 360., 14. / 100., 71. / 100., 1.),
+                editor_code_lens_foreground: None,
                 link_text_hover: blue,
                 version_control_added: ADDED_COLOR,
                 version_control_deleted: REMOVED_COLOR,

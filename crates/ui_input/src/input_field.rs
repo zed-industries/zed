@@ -177,11 +177,7 @@ impl Render for InputField {
             .w_full()
             .gap_1()
             .when_some(self.label.clone(), |this, label| {
-                this.child(
-                    Label::new(label)
-                        .size(self.label_size)
-                        .color(Color::Default),
-                )
+                this.child(Label::new(label).size(self.label_size))
             })
             .child(
                 h_flex()

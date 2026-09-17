@@ -582,8 +582,8 @@ pub fn nearest_marker_number(cursor_offset: Option<usize>, marker_offsets: &[usi
 fn cursor_block_index(cursor_offset: Option<usize>, marker_offsets: &[usize]) -> usize {
     let cursor = cursor_offset.unwrap_or(0);
     marker_offsets
-        .windows(2)
-        .position(|window| cursor >= window[0] && cursor < window[1])
+        .array_windows::<2>()
+        .position(|&[a, b]| cursor >= a && cursor < b)
         .unwrap_or_else(|| marker_offsets.len().saturating_sub(2))
 }
 
@@ -1220,10 +1220,7 @@ hhhhhhhhhh = 8;
             Some(text.len()),
             "offsets: {offsets:?}"
         );
-        assert!(
-            offsets.windows(2).all(|window| window[0] <= window[1]),
-            "offsets must be sorted: {offsets:?}"
-        );
+        assert!(offsets.is_sorted(), "offsets must be sorted: {offsets:?}");
     }
 
     #[test]

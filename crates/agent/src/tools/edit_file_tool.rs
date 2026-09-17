@@ -325,6 +325,150 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_exact_fragments(cx: &mut TestAppContext) {
+        let content = concat!(
+            "fn spaces() {\n",
+            "    spaces_old();\n",
+            "}\n",
+            "fn tabs() {\n",
+            "\ttabs_old();\n",
+            "}\n",
+            "controls: keyboard WASD, voxel-based\n",
+            "prefix OLD suffix\n",
+            "foo suffix\n",
+            "foo\n",
+        );
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.rs": content})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.rs".into(),
+                        edits: vec![
+                            Edit {
+                                old_text: "keyboard WASD, voxel-based".into(),
+                                new_text: "arrow keys".into(),
+                            },
+                            Edit {
+                                old_text: "spaces_old();".into(),
+                                new_text: "spaces_new();\nspaces_more();".into(),
+                            },
+                            Edit {
+                                old_text: "tabs_old();".into(),
+                                new_text: "tabs_new();\ntabs_more();".into(),
+                            },
+                            Edit {
+                                old_text: "OLD".into(),
+                                new_text: "NEW\n".into(),
+                            },
+                            Edit {
+                                old_text: "foo\n".into(),
+                                new_text: "bar\n".into(),
+                            },
+                        ],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(
+            new_text,
+            concat!(
+                "fn spaces() {\n",
+                "    spaces_new();\n",
+                "    spaces_more();\n",
+                "}\n",
+                "fn tabs() {\n",
+                "\ttabs_new();\n",
+                "\ttabs_more();\n",
+                "}\n",
+                "controls: arrow keys\n",
+                "prefix NEW\n",
+                " suffix\n",
+                "foo suffix\n",
+                "bar\n",
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_first_line_missing_indent(cx: &mut TestAppContext) {
+        // Reproduces https://github.com/zed-industries/zed/issues/60302: the
+        // first line of the multi-line `old_text` omits its leading
+        // indentation while subsequent lines include theirs, so the indent
+        // delta computed from the first line must not be applied to the
+        // following lines. `old_text` also omits the `self.extra` line, so
+        // the query lines don't correspond one-to-one to the matched buffer
+        // rows and the indent pairing must follow the fuzzy match's
+        // alignment instead of assuming equal line counts.
+        let content = concat!(
+            "class Outer:\n",
+            "    def method(self):\n",
+            "        self.kept = \"unchanged\"\n",
+            "        self.target_a = \"before\"\n",
+            "        self.extra = \"row\"\n",
+            "        self.target_b = \"before\"\n",
+            "        self.target_c = \"before\"\n",
+            "        self.target_d = \"before\"\n",
+            "        self.kept_2 = \"unchanged\"\n",
+        );
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.py": content})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.py".into(),
+                        edits: vec![Edit {
+                            old_text: concat!(
+                                "self.target_a = \"before\"\n",
+                                "        self.target_b = \"before\"\n",
+                                "        self.target_c = \"before\"\n",
+                                "        self.target_d = \"before\"",
+                            )
+                            .into(),
+                            new_text: concat!(
+                                "self.target_a = \"after\"\n",
+                                "        self.target_b = \"after\"\n",
+                                "        self.target_c = \"after\"\n",
+                                "        self.target_d = \"after\"",
+                            )
+                            .into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        // The matched range includes the `self.extra` row, so it is replaced
+        // along with the rest of the match.
+        assert_eq!(
+            new_text,
+            concat!(
+                "class Outer:\n",
+                "    def method(self):\n",
+                "        self.kept = \"unchanged\"\n",
+                "        self.target_a = \"after\"\n",
+                "        self.target_b = \"after\"\n",
+                "        self.target_c = \"after\"\n",
+                "        self.target_d = \"after\"\n",
+                "        self.kept_2 = \"unchanged\"\n",
+            )
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_edit_multiple_edits(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(
             cx,
@@ -554,6 +698,33 @@ mod tests {
             error.contains("Could not find matching text"),
             "Expected error containing 'Could not find matching text' but got: {error}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_rejects_overlapping_matches(cx: &mut TestAppContext) {
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "aaaaa"})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.txt".into(),
+                        edits: vec![Edit {
+                            old_text: "aaaa".into(),
+                            new_text: "replacement".into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Error { error, diff, .. } = result.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(error.contains("matched multiple locations"));
+        assert!(diff.is_empty());
     }
 
     /// When the edit fails after a session is created but before any edits are
@@ -2888,6 +3059,19 @@ mod tests {
         }))
         .expect("input should deserialize");
         assert!(input.edits.is_none());
+    }
+
+    #[test]
+    fn test_wrong_edit_field_names_produce_actionable_error() {
+        let err = serde_json::from_value::<EditFileToolInput>(json!({
+            "path": "test.go",
+            "edits": [{"old_str": "hello", "new_text": "world"}]
+        }))
+        .unwrap_err();
+
+        // When the model uses incorrect field names, the error should
+        // tell it what to fix.
+        assert_eq!(err.to_string(), "missing field `old_text`");
     }
 
     async fn setup_test_with_fs(

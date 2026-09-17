@@ -112,4 +112,9 @@ impl BlinkManager {
     pub fn visible(&self) -> bool {
         self.visible
     }
+
+    #[cfg(test)]
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
 }

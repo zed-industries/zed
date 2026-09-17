@@ -25,6 +25,11 @@ message UpdateDiffBases {
     // and the contents of the index and HEAD differ for this path,
     // where None means the path doesn't exist in that state of the repo.
     INDEX_AND_HEAD = 3;
+    // The contents of the index and HEAD are unchanged. Sent so that
+    // remote clients still recalculate their diffs in response to git
+    // events, just as the host does, even when an index write ends up
+    // changing nothing (e.g. writing content identical to what's there).
+    UNCHANGED = 4;
   }
 
   optional string staged_text = 3;
@@ -71,6 +76,15 @@ message GetPermalinkToLine {
 }
 
 message GetPermalinkToLineResponse {
+  string permalink = 1;
+}
+
+message GetFilePermalink {
+  uint64 project_id = 1;
+  ProjectPath path = 2;
+}
+
+message GetFilePermalinkResponse {
   string permalink = 1;
 }
 
@@ -284,10 +298,12 @@ message LoadCommitDiff {
   reserved 2;
   uint64 repository_id = 3;
   string commit = 4;
+  bool ignore_shallow_boundary = 5;
 }
 
 message LoadCommitDiffResponse {
   repeated CommitFile files = 1;
+  bool is_shallow_boundary = 2;
 }
 
 message CommitFile {
@@ -317,6 +333,22 @@ message GitCheckoutFiles {
   repeated string paths = 5;
 }
 
+message GitAddPathToGitignore {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  string path = 4;
+  bool is_dir = 5;
+}
+
+message GitAddPathToGitInfoExclude {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  string path = 4;
+  bool is_dir = 5;
+}
+
 // Move to `git.proto` once collab's min version is >=0.171.0.
 message StatusEntry {
   string repo_path = 1;
@@ -325,6 +357,10 @@ message StatusEntry {
   GitFileStatus status = 3;
   optional uint32 diff_stat_added = 4;
   optional uint32 diff_stat_deleted = 5;
+  optional uint32 staged_diff_stat_added = 6;
+  optional uint32 staged_diff_stat_deleted = 7;
+  optional uint32 unstaged_diff_stat_added = 8;
+  optional uint32 unstaged_diff_stat_deleted = 9;
 }
 
 message StashEntry {
@@ -353,6 +389,9 @@ message Stash {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   repeated string paths = 3;
+  optional string message = 4;
+  // When set, stash the index only (`git stash push --staged`) and ignore `paths`.
+  optional bool staged = 5;
 }
 
 message StashPop {
@@ -388,6 +427,7 @@ message Commit {
     bool amend = 1;
     bool signoff = 2;
     bool allow_empty = 3;
+    bool no_verify = 4;
   }
 }
 
@@ -419,6 +459,7 @@ message Fetch {
   uint64 repository_id = 3;
   uint64 askpass_id = 4;
   optional string remote = 5;
+  bool unshallow = 6;
 }
 
 message GetRemotes {
@@ -434,6 +475,7 @@ message GetRemotesResponse {
 
   message Remote {
     string name = 1;
+    optional string url = 2;
   }
 }
 
@@ -479,6 +521,7 @@ message BlameEntry {
   optional string previous = 14;
 
   string filename = 15;
+  bool boundary = 16;
 }
 
 message CommitMessage {
@@ -497,6 +540,7 @@ message BlameBufferResponse {
     repeated CommitMessage messages = 2;
     reserved 3;
     reserved 4;
+    repeated CommitTagNames tag_names = 5;
   }
 
   optional BlameResponse blame_response = 5;
@@ -504,9 +548,29 @@ message BlameBufferResponse {
   reserved 1 to 4;
 }
 
+message BlameBufferAtRevision {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string path = 3;
+  string revision = 4;
+}
+
+message BlameBufferAtRevisionResponse {
+  string content = 1;
+  repeated BlameEntry entries = 2;
+  repeated CommitMessage messages = 3;
+  repeated CommitTagNames tag_names = 4;
+}
+
+message CommitTagNames {
+  bytes oid = 1;
+  repeated string tag_names = 2;
+}
+
 message GetDefaultBranch {
   uint64 project_id = 1;
   uint64 repository_id = 2;
+  bool include_remote_name = 3;
 }
 
 message GetDefaultBranchResponse {
@@ -519,6 +583,7 @@ message GetTreeDiff {
   bool is_merge = 3;
   string base = 4;
   string head = 5;
+  bool includes_worktree = 6;
 }
 
 message GetTreeDiffResponse {
@@ -545,6 +610,15 @@ message GetBlobContent {
 
 message GetBlobContentResponse {
   string content = 1;
+}
+
+message LoadCommitTemplate {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message LoadCommitTemplateResponse {
+  optional string template = 1;
 }
 
 message GitGetWorktrees {
@@ -676,6 +750,12 @@ message GitWorktreeCreatedAtResponse {
   optional Timestamp created_at = 1;
 }
 
+// Deprecated: newer clients let `git commit` run hooks natively instead of
+// requesting them explicitly.
+//
+// TODO: once all supported peers commit without sending `RunGitHook`, remove
+// this message (and its handlers) and replace its tag in the Envelope payload
+// oneof with `reserved 399;` so the tag is never reused.
 message RunGitHook {
   enum GitHook {
     PRE_COMMIT = 0;

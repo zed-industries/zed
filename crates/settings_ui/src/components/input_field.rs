@@ -25,6 +25,7 @@ pub struct SettingsInputField {
     action_slot: Option<AnyElement>,
     color: Option<Color>,
     aria_label: Option<SharedString>,
+    aria_description: Option<SharedString>,
 }
 
 impl SettingsInputField {
@@ -49,6 +50,7 @@ impl SettingsInputField {
             action_slot: None,
             color: None,
             aria_label: None,
+            aria_description: None,
         }
     }
 
@@ -114,6 +116,13 @@ impl SettingsInputField {
     /// Defaults to the placeholder text, if any.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the field's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
         self
     }
 }
@@ -211,6 +220,7 @@ impl RenderOnce for SettingsInputField {
         let aria_label = self
             .aria_label
             .or_else(|| self.placeholder.map(SharedString::new_static));
+        let aria_description = self.aria_description;
 
         let (a11y_value, a11y_text_runs) =
             text_field_a11y_state(self.id.clone(), &editor, window, cx);
@@ -221,6 +231,9 @@ impl RenderOnce for SettingsInputField {
             .id(self.id.clone())
             .role(Role::TextInput)
             .when_some(aria_label, |this, label| this.aria_label(label))
+            .when_some(aria_description, |this, description| {
+                this.aria_description(description)
+            })
             .aria_value(a11y_value)
             .when_some(self.placeholder, |this, placeholder| {
                 this.aria_placeholder(placeholder)

@@ -476,6 +476,12 @@ impl LineWrapper {
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
         // is included so it stays attached to the preceding word when wrapping.
         matches!(c, '-' | '_' | '.' | '\'' | '’' | '‘' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':' | ';') ||
+        // Closing punctuation never starts a line (UAX #14 LB13: no break
+        // before `!`, `)`, `]`, `}`, closing quotes or an ellipsis) — `plz!`,
+        // `see)`, `quoted”` wrap as one word instead of orphaning the mark on
+        // the next line. `/` and `?` stay break opportunities so long paths
+        // and URLs (`a/b`, `foo?b=2`) can wrap.
+        matches!(c, '!' | ')' | ']' | '}' | '"' | '”' | '»' | '…') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯') ||
 
@@ -1152,6 +1158,10 @@ mod tests {
         assert_word("more⋯");
         assert_word("won’t");
         assert_word("‘twas");
+        assert_word("plz!");
+        assert_word("see)");
+        assert_word("quoted”");
+        assert_word("well…");
 
         // Space
         assert_not_word("foo bar");

@@ -618,6 +618,7 @@ struct TextLayoutInner {
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
+    truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
 }
@@ -680,16 +681,20 @@ impl TextLayout {
                 // 2. wrap_width matches (or both are None)
                 // 3. truncate_width is None (if truncate_width is Some, we need to re-layout
                 //    because the previous layout may have been computed without truncation)
+                // 4. the cached layout was not truncated (a truncated layout answers an
+                //    unconstrained probe with the truncated size, which poisons intrinsic
+                //    sizing with whatever width some earlier measure pass happened to use)
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
                     && let Some(size) = text_layout.size
                     && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
                     && truncate_width.is_none()
+                    && text_layout.truncate_width.is_none()
                 {
                     return size;
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let (text, runs) = if truncate_width.is_some() {
+                let (text, runs) = if let Some(truncate_width) = truncate_width {
                     if let Some(max_lines) = text_style.line_clamp
                         && let Some(wrap_width) = wrap_width
                     {
@@ -701,10 +706,25 @@ impl TextLayout {
                             &runs,
                             truncate_from,
                         )
+                    } else if let Some(unclipped) = window
+                        .text_system()
+                        .shape_text(text.clone(), font_size, &runs, None, None)
+                        .log_err()
+                        && unclipped
+                            .iter()
+                            .all(|line| line.size(line_height).width <= truncate_width)
+                    {
+                        // The truncation decision below sums per-character advances,
+                        // which overestimates the shaped width (no kerning), truncating
+                        // text that fits exactly in its measured width. Skip truncation
+                        // whenever the honestly-shaped text fits; the shaping result
+                        // comes from the line layout cache when the same text was
+                        // already measured untruncated this frame.
+                        (text.clone(), Cow::Borrowed(&*runs))
                     } else {
                         line_wrapper.truncate_line(
                             text.clone(),
-                            truncate_width.unwrap_or(Pixels::MAX),
+                            truncate_width,
                             &truncation_affix,
                             &runs,
                             truncate_from,
@@ -731,6 +751,7 @@ impl TextLayout {
                         len: 0,
                         line_height,
                         wrap_width,
+                        truncate_width,
                         size: Some(Size::default()),
                         bounds: None,
                     });
@@ -749,6 +770,7 @@ impl TextLayout {
                     len,
                     line_height,
                     wrap_width,
+                    truncate_width,
                     size: Some(size),
                     bounds: None,
                 });
@@ -978,6 +1000,7 @@ pub struct InteractiveTextState {
     mouse_down_index: Rc<Cell<Option<usize>>>,
     hovered_index: Rc<Cell<Option<usize>>>,
     active_tooltip: Rc<RefCell<Option<ActiveTooltip>>>,
+    long_press_tooltip_active: Rc<Cell<bool>>,
 }
 
 /// InteractiveTest is a wrapper around StyledText that adds mouse interactions.
@@ -1085,6 +1108,7 @@ impl Element for InteractiveText {
                             set_tooltip_on_window(&interactive_state.active_tooltip, window);
                     } else {
                         // If there is no longer a tooltip builder, remove the active tooltip.
+                        interactive_state.long_press_tooltip_active.set(false);
                         interactive_state.active_tooltip.take();
                     }
                 }
@@ -1233,6 +1257,7 @@ impl Element for InteractiveText {
                         build_tooltip,
                         check_is_hovered,
                         check_is_hovered_during_prepaint,
+                        interactive_state.long_press_tooltip_active.clone(),
                         None,
                         window,
                     );
