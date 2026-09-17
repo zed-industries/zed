@@ -1629,7 +1629,7 @@ impl ToolCall {
         };
         let was_plain_text =
             self.effective_title().is_none() || self.kind() == &acp_v2::ToolKind::Execute;
-        let mut label_changed = !title.is_undefined() || !kind.is_undefined();
+        let mut label_changed = !kind.is_undefined();
         if !kind.is_undefined() {
             self.reported_kind = kind.take();
         }
@@ -1685,34 +1685,39 @@ impl ToolCall {
         label_changed |= self.tool_name != old_tool_name;
 
         if !title.is_undefined() {
-            self.title = title.take().map(SharedString::from);
-            if self.kind() == &acp_v2::ToolKind::Execute
-                && let Some(title) = self.effective_title()
-            {
-                // A missing tool title must not overwrite an actual terminal command.
-                for terminal in self.terminals() {
-                    if legacy_terminal_labels || terminal.read(cx).is_process_backed() {
-                        terminal.update(cx, |terminal, cx| {
-                            terminal.update_command_label(title, cx);
-                        });
+            let is_title_empty =
+                matches!(&title, MaybeUndefined::Value(value) if value.trim().is_empty());
+            if self.kind() != &acp_v2::ToolKind::Execute || !is_title_empty {
+                self.title = title.take().map(SharedString::from);
+                label_changed = true;
+                if self.kind() == &acp_v2::ToolKind::Execute
+                    && let Some(title) = &self.title
+                {
+                    // A missing tool title must not overwrite an actual terminal command.
+                    for terminal in self.terminals() {
+                        if legacy_terminal_labels || terminal.read(cx).is_process_backed() {
+                            terminal.update(cx, |terminal, cx| {
+                                terminal.update_command_label(title, cx);
+                            });
+                        }
                     }
                 }
             }
         }
         if label_changed {
+            let effective_title = self.effective_title();
             let is_plain_text =
-                self.effective_title().is_none() || self.kind() == &acp_v2::ToolKind::Execute;
+                effective_title.is_none() || self.kind() == &acp_v2::ToolKind::Execute;
             if was_plain_text != is_plain_text {
                 self.label = Self::new_label(
-                    self.effective_title(),
+                    effective_title,
                     self.tool_name.as_ref(),
                     self.kind(),
                     language_registry.clone(),
                     cx,
                 );
             } else {
-                let text =
-                    Self::label_text(self.effective_title(), self.tool_name.as_ref(), self.kind());
+                let text = Self::label_text(effective_title, self.tool_name.as_ref(), self.kind());
                 if self.label.read(cx).source() != &text {
                     self.label.update(cx, |label, cx| label.replace(text, cx));
                 }
@@ -18443,6 +18448,37 @@ mod tests {
                 }
             });
         }
+    }
+
+    #[gpui::test]
+    fn test_empty_execute_title_update_preserves_command(cx: &mut TestAppContext) {
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let command = "glab api projects/example/merge_requests/1/changes";
+        let mut call = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp_v1::ToolCall::new("tool", command).kind(acp_v1::ToolKind::Execute),
+                Some(ToolCallStatus::Pending),
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("tool call should convert")
+        });
+
+        cx.update(|cx| {
+            call.apply_patch(
+                ToolCallPatch::legacy(acp_v1::ToolCallUpdateFields::new().title(""), None),
+                languages,
+                ToolTerminalResolver::registered(&HashMap::default()),
+                cx,
+            )
+            .expect("empty title update should apply");
+        });
+        cx.run_until_parked();
+
+        cx.read(|cx| assert_eq!(call.label.read(cx).source().as_ref(), command));
     }
 
     #[gpui::test]
