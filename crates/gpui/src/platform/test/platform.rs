@@ -584,6 +584,8 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 
     fn set_app_identity(&self, identifier: &str, name: &str) {

@@ -926,6 +926,14 @@ impl FoldSnapshot {
         }
     }
 
+    pub(crate) fn placeholder_range_at(&self, point: FoldPoint) -> Option<Range<FoldPoint>> {
+        let (start, end, item) = self
+            .transforms
+            .find::<FoldPoint, _>((), &point, Bias::Right);
+        item.filter(|transform| transform.placeholder.is_some())
+            .map(|_| start..end)
+    }
+
     #[ztracing::instrument(skip_all)]
     pub(crate) fn chunks<'a>(
         &'a self,

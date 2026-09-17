@@ -853,8 +853,8 @@ fn build_llama_cpp_request(
         model: model_name.to_string(),
         messages,
         stream: true,
-        // Let the server decide the output length (its `n_predict` default).
-        max_tokens: None,
+        // Without an explicit limit, preserve the server's `n_predict` default.
+        max_tokens: request.max_output_tokens.map(i32::try_from).transpose()?,
         stop: if request.stop.is_empty() {
             None
         } else {
@@ -1702,6 +1702,7 @@ mod tests {
                 supports_thinking: true,
             },
             LanguageModelRequest {
+                max_output_tokens: Some(1024),
                 messages: vec![language_model::LanguageModelRequestMessage {
                     role: Role::Assistant,
                     content: vec![
@@ -1719,6 +1720,7 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(serde_json::to_value(&request).unwrap()["max_tokens"], 1024);
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
             llama_cpp::ChatMessage::Assistant {
@@ -1763,6 +1765,12 @@ mod tests {
         )
         .unwrap();
 
+        assert!(
+            serde_json::to_value(&request)
+                .unwrap()
+                .get("max_tokens")
+                .is_none()
+        );
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
             llama_cpp::ChatMessage::Assistant {
