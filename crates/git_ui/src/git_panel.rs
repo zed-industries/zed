@@ -1640,34 +1640,23 @@ impl GitPanel {
         })
     }
 
-    /// Identities of every selectable row in display order, computed in a
-    /// single pass so the running section is tracked instead of re-walked per
-    /// entry.
+    /// Identities of every selectable row in display order, restricted to
+    /// rows that are actually visible (collapsed sections excluded), matching
+    /// what pointer selection can reach.
     fn visible_selectable_entry_ids(&self) -> Vec<GitPanelEntryId> {
-        let mut section = None;
-        let mut ids = Vec::new();
-        for entry in &self.entries {
-            if let GitListEntry::Header(header) = entry {
-                section = Some(header.header);
-                continue;
-            }
-            if !entry.is_selectable() {
-                continue;
-            }
-            let kind = match entry {
-                GitListEntry::Status(_) | GitListEntry::TreeStatus(_) => GitPanelEntryKind::Status,
-                GitListEntry::Directory(_) => GitPanelEntryKind::Directory,
-                _ => continue,
-            };
-            if let Some(path) = entry.repo_path() {
-                ids.push(GitPanelEntryId {
-                    path: path.clone(),
-                    section,
-                    kind,
-                });
-            }
-        }
-        ids
+        let visible_indices: Vec<usize> = match &self.view_mode {
+            GitPanelViewMode::Flat => self.visible_flat_entry_indices(),
+            GitPanelViewMode::Tree(state) => state.logical_indices.clone(),
+        };
+        visible_indices
+            .into_iter()
+            .filter(|&index| {
+                self.entries
+                    .get(index)
+                    .is_some_and(GitListEntry::is_selectable)
+            })
+            .filter_map(|index| self.entry_identity(index))
+            .collect()
     }
 
     fn set_selected_entry_index(&mut self, index: usize) {
