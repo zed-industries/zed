@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/auto_update_ui.rs"
+test = false
+doctest = false
 
 [dependencies]
 agent_skills.workspace = true
