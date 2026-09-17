@@ -778,7 +778,11 @@ impl RenderOnce for ButtonLike {
                     Toggled::False
                 })
             })
-            .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
+            .when_some(self.tab_index, |this, tab_index| {
+                // Keep an already-focused button registered so disabling it does not
+                // move focus outside the view.
+                this.tab_index(tab_index).tab_stop(!self.disabled)
+            })
             .when_some(self.focus_handle, |this, focus_handle| {
                 this.track_focus(&focus_handle)
             })
