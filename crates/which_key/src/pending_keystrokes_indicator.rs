@@ -19,7 +19,7 @@ use crate::{
 const MAX_TOOLTIP_BINDINGS: usize = 10;
 const POPOVER_HIDE_DELAY: Duration = Duration::from_millis(300);
 
-/// A status bar item shown while timed pending input can complete a multi-stroke key binding.
+/// A status bar item shown while pending input can complete a multi-stroke key binding.
 pub struct PendingKeystrokesIndicator {
     render_state: Option<Rc<IndicatorRenderState>>,
     pending_input_generation: u64,
@@ -46,6 +46,10 @@ struct IndicatorRenderState {
     keystrokes: Rc<[KeybindingKeystroke]>,
     pending_input_generation: u64,
     bindings: Vec<(Rc<[KeybindingKeystroke]>, SharedString)>,
+    timeout: Option<IndicatorTimeout>,
+}
+
+struct IndicatorTimeout {
     timeout_duration: Duration,
     remaining_duration: Duration,
     timeout_paused: bool,
@@ -112,9 +116,6 @@ impl PendingKeystrokesIndicator {
         let Some(pending_input) = window.pending_input() else {
             return self.clear_render_state(window, cx);
         };
-        let Some(timeout) = pending_input.timeout() else {
-            return self.clear_render_state(window, cx);
-        };
         let keystrokes = pending_input.keystrokes();
 
         let mut bindings = bindings_for_pending_input(window, keystrokes)
@@ -148,9 +149,11 @@ impl PendingKeystrokesIndicator {
                 .into_iter()
                 .map(|(_, keystrokes, action)| (Rc::from(keystrokes), action))
                 .collect(),
-            timeout_duration: timeout.duration(),
-            remaining_duration: timeout.remaining(cx),
-            timeout_paused: timeout.is_paused(),
+            timeout: pending_input.timeout().map(|timeout| IndicatorTimeout {
+                timeout_duration: timeout.duration(),
+                remaining_duration: timeout.remaining(cx),
+                timeout_paused: timeout.is_paused(),
+            }),
         }));
         true
     }
@@ -225,48 +228,50 @@ impl Render for PendingKeystrokesIndicator {
         let Some(render_state) = self.render_state().cloned() else {
             return div().hidden().into_any_element();
         };
-        let remaining_fraction = if render_state.timeout_duration.is_zero() {
-            0.0
-        } else {
-            (render_state.remaining_duration.as_secs_f32()
-                / render_state.timeout_duration.as_secs_f32())
-            .clamp(0.0, 1.0)
-        };
 
         let button = ButtonLike::new("pending-keystrokes-indicator")
             .on_click(|_, window, cx| {
                 window.dispatch_action(zed_actions::dev::OpenKeyContextView.boxed_clone(), cx);
             })
-            .child(if cx.reduce_motion() {
-                Icon::new(IconName::CountdownTimer)
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted)
-                    .into_any_element()
-            } else {
-                let progress = CircularProgress::new(
-                    remaining_fraction,
-                    1.0,
-                    rems_from_px(13_f32).to_pixels(window.rem_size()),
-                    cx,
-                )
-                .stroke_width(rems_from_px(2_f32).to_pixels(window.rem_size()))
-                .progress_color(cx.theme().colors().text_muted);
-                if render_state.timeout_paused || render_state.remaining_duration.is_zero() {
-                    progress.into_any_element()
+            .when_some(render_state.timeout.as_ref(), |button, timeout| {
+                let remaining_fraction = if timeout.timeout_duration.is_zero() {
+                    0.0
                 } else {
-                    progress
-                        .with_animation(
-                            (
-                                "pending-keystrokes-countdown",
-                                render_state.pending_input_generation,
-                            ),
-                            Animation::new(render_state.remaining_duration).with_max_fps(30.0),
-                            move |progress, delta| {
-                                progress.value(remaining_fraction * (1.0 - delta))
-                            },
-                        )
+                    (timeout.remaining_duration.as_secs_f32()
+                        / timeout.timeout_duration.as_secs_f32())
+                    .clamp(0.0, 1.0)
+                };
+                button.child(if cx.reduce_motion() {
+                    Icon::new(IconName::CountdownTimer)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted)
                         .into_any_element()
-                }
+                } else {
+                    let progress = CircularProgress::new(
+                        remaining_fraction,
+                        1.0,
+                        rems_from_px(13_f32).to_pixels(window.rem_size()),
+                        cx,
+                    )
+                    .stroke_width(rems_from_px(2_f32).to_pixels(window.rem_size()))
+                    .progress_color(cx.theme().colors().text_muted);
+                    if timeout.timeout_paused || timeout.remaining_duration.is_zero() {
+                        progress.into_any_element()
+                    } else {
+                        progress
+                            .with_animation(
+                                (
+                                    "pending-keystrokes-countdown",
+                                    render_state.pending_input_generation,
+                                ),
+                                Animation::new(timeout.remaining_duration).with_max_fps(30.0),
+                                move |progress, delta| {
+                                    progress.value(remaining_fraction * (1.0 - delta))
+                                },
+                            )
+                            .into_any_element()
+                    }
+                })
             })
             .child(
                 KeyBinding::from_keystrokes(render_state.keystrokes.clone(), false)
@@ -483,7 +488,10 @@ mod tests {
                         )
                     })
                     .collect(),
-                timeout_paused: render_state.timeout_paused,
+                timeout_paused: render_state
+                    .timeout
+                    .as_ref()
+                    .is_some_and(|timeout| timeout.timeout_paused),
                 popover_visible: indicator.popover.visible,
                 popover_pointer_over: indicator.popover.pointer_over,
             })
@@ -569,6 +577,23 @@ mod tests {
                         .child(self.indicator.clone()),
                 )
         }
+    }
+
+    #[gpui::test]
+    fn test_indicator_stays_hidden_without_pending_input(cx: &mut TestAppContext) {
+        let (indicator, _, cx) = setup_indicator_test(cx, timed_bindings());
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
+        assert!(cx.debug_bounds("PENDING_KEYSTROKES_INDICATOR").is_none());
+
+        cx.simulate_keystrokes("x");
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
+        assert!(cx.debug_bounds("PENDING_KEYSTROKES_INDICATOR").is_none());
     }
 
     #[gpui::test]
@@ -862,7 +887,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_indicator_ignores_pending_input_without_timeout(cx: &mut TestAppContext) {
+    fn test_indicator_shows_pending_input_without_timeout(cx: &mut TestAppContext) {
         let (indicator, _, cx) = setup_indicator_test(
             cx,
             [KeyBinding::new(
@@ -890,7 +915,36 @@ mod tests {
             let pending_input = window.pending_input().expect("pending input");
             assert!(pending_input.timeout().is_none());
         });
+        let snapshot = indicator
+            .read_with(cx, |indicator, _| {
+                assert!(
+                    indicator
+                        .render_state()
+                        .expect("pending input")
+                        .timeout
+                        .is_none()
+                );
+                indicator_snapshot(indicator)
+            })
+            .expect("pending input snapshot");
+        assert_eq!(snapshot.keystrokes, vec!["ctrl-b"]);
+        assert_eq!(
+            snapshot.bindings,
+            vec![(
+                vec!["h".to_string()],
+                humanize_action_name(LongerBinding.name()),
+            )]
+        );
+        assert!(cx.debug_bounds("PENDING_KEYSTROKES_INDICATOR").is_some());
+        assert!(notification_count.get() > 0);
+
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_some()));
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
         assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
-        assert_eq!(notification_count.get(), 0);
     }
 }
