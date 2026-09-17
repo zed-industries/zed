@@ -258,11 +258,7 @@ impl GroupedModels {
         let mut all_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
         for model in all {
             let provider = model.model.provider_id();
-            if let Some(models) = all_by_provider.get_mut(&provider) {
-                models.push(model);
-            } else {
-                all_by_provider.insert(provider, vec![model]);
-            }
+            all_by_provider.entry(provider).or_default().push(model);
         }
 
         Self {

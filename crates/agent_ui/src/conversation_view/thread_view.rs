@@ -2810,46 +2810,44 @@ impl ThreadView {
     ) {
         let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
 
-        match self.permission_selections.get_mut(&tool_call_id) {
-            Some(PermissionSelection::SelectedPatterns(checked)) => {
-                // Already in pattern mode — toggle the individual pattern.
-                if let Some(pos) = checked.iter().position(|&i| i == action.pattern_index) {
-                    checked.swap_remove(pos);
-                } else {
-                    checked.push(action.pattern_index);
-                }
+        if let Some(PermissionSelection::SelectedPatterns(checked)) =
+            self.permission_selections.get_mut(&tool_call_id)
+        {
+            // Already in pattern mode — toggle the individual pattern.
+            if let Some(pos) = checked.iter().position(|&i| i == action.pattern_index) {
+                checked.swap_remove(pos);
+            } else {
+                checked.push(action.pattern_index);
             }
-            _ => {
-                // First click: activate "Select options" with all patterns checked.
-                let thread = self.thread.read(cx);
-                let pattern_count = thread
-                    .entries()
-                    .iter()
-                    .find_map(|entry| {
-                        if let AgentThreadEntry::ToolCall(call) = entry {
-                            if call.id == tool_call_id {
-                                if let ToolCallStatus::WaitingForConfirmation { options, .. } =
-                                    &call.status
-                                {
-                                    if let PermissionOptions::DropdownWithPatterns {
-                                        patterns,
-                                        ..
-                                    } = options
-                                    {
-                                        return Some(patterns.len());
-                                    }
-                                }
+            cx.notify();
+            return;
+        }
+
+        // First click: activate "Select options" with all patterns checked.
+        let thread = self.thread.read(cx);
+        let pattern_count = thread
+            .entries()
+            .iter()
+            .find_map(|entry| {
+                if let AgentThreadEntry::ToolCall(call) = entry {
+                    if call.id == tool_call_id {
+                        if let ToolCallStatus::WaitingForConfirmation { options, .. } = &call.status
+                        {
+                            if let PermissionOptions::DropdownWithPatterns { patterns, .. } =
+                                options
+                            {
+                                return Some(patterns.len());
                             }
                         }
-                        None
-                    })
-                    .unwrap_or(0);
-                self.permission_selections.insert(
-                    tool_call_id,
-                    PermissionSelection::SelectedPatterns((0..pattern_count).collect()),
-                );
-            }
-        }
+                    }
+                }
+                None
+            })
+            .unwrap_or(0);
+        self.permission_selections.insert(
+            tool_call_id,
+            PermissionSelection::SelectedPatterns((0..pattern_count).collect()),
+        );
         cx.notify();
     }
 

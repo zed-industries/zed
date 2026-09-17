@@ -111,20 +111,23 @@ impl PlatformAtlas for WgpuAtlas {
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
+        // The entry API cannot be used here: a vacant entry would borrow the
+        // map across `allocate`, which needs the whole locked state. The
+        // second search on insertion is fine; it only happens when a new tile
+        // is rasterized and uploaded.
         if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(Some(*tile))
-        } else {
-            profiling::scope!("new tile");
-            let Some((size, bytes)) = build()? else {
-                return Ok(None);
-            };
-            let tile = lock
-                .allocate(size, key.texture_kind())
-                .context("failed to allocate")?;
-            lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile);
-            Ok(Some(tile))
+            return Ok(Some(*tile));
         }
+        profiling::scope!("new tile");
+        let Some((size, bytes)) = build()? else {
+            return Ok(None);
+        };
+        let tile = lock
+            .allocate(size, key.texture_kind())
+            .context("failed to allocate")?;
+        lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
+        lock.tiles_by_key.insert(key.clone(), tile);
+        Ok(Some(tile))
     }
 
     fn remove(&self, key: &AtlasKey) {

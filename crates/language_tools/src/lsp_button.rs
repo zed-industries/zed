@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, hash_map},
     path::{Path, PathBuf},
     rc::Rc,
     time::{Duration, Instant},
@@ -754,19 +754,22 @@ impl LanguageServers {
         message: Option<&str>,
         name: Option<LanguageServerName>,
     ) {
-        if let Some(state) = self.health_statuses.get_mut(&id) {
-            state.health = Some((message.map(SharedString::new), health));
-            if let Some(name) = name {
-                state.name = name;
+        match self.health_statuses.entry(id) {
+            hash_map::Entry::Occupied(mut entry) => {
+                let state = entry.get_mut();
+                state.health = Some((message.map(SharedString::new), health));
+                if let Some(name) = name {
+                    state.name = name;
+                }
             }
-        } else if let Some(name) = name {
-            self.health_statuses.insert(
-                id,
-                LanguageServerHealthStatus {
-                    health: Some((message.map(SharedString::new), health)),
-                    name,
-                },
-            );
+            hash_map::Entry::Vacant(entry) => {
+                if let Some(name) = name {
+                    entry.insert(LanguageServerHealthStatus {
+                        health: Some((message.map(SharedString::new), health)),
+                        name,
+                    });
+                }
+            }
         }
     }
 
