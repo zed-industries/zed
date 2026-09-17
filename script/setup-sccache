@@ -2,16 +2,32 @@
 
 set -euo pipefail
 
-SCCACHE_VERSION="v0.10.0"
+SCCACHE_VERSION="v0.16.0"
 # Use absolute path to avoid issues with working directory changes between steps
 SCCACHE_DIR="$(pwd)/target/sccache"
 
 install_sccache() {
     mkdir -p "$SCCACHE_DIR"
 
-    if [[ -x "${SCCACHE_DIR}/sccache" ]] && "${SCCACHE_DIR}/sccache" --version &>/dev/null; then
-        echo "sccache already cached: $("${SCCACHE_DIR}/sccache" --version)"
+    local expected_version="sccache ${SCCACHE_VERSION#v}"
+    local installed_version=""
+    if [[ -x "${SCCACHE_DIR}/sccache" ]]; then
+        if ! installed_version="$("${SCCACHE_DIR}/sccache" --version 2>/dev/null)"; then
+            echo "Cached sccache binary is invalid; reinstalling"
+            installed_version=""
+        fi
+    fi
+
+    if [[ "${installed_version}" == "${expected_version}" ]]; then
+        echo "sccache already cached: ${installed_version}"
     else
+        if [[ -n "${installed_version}" ]]; then
+            echo "Stopping cached ${installed_version} server before upgrading..."
+            if ! "${SCCACHE_DIR}/sccache" --stop-server &>/dev/null; then
+                echo "No running sccache server to stop"
+            fi
+        fi
+
         echo "Installing sccache ${SCCACHE_VERSION} from GitHub releases..."
 
         local os arch archive basename
@@ -78,7 +94,7 @@ configure_sccache() {
     export SCCACHE_BUCKET="${bucket}"
     export SCCACHE_REGION="auto"
     export SCCACHE_S3_KEY_PREFIX="${key_prefix}"
-    export SCCACHE_BASEDIR="${base_dir}"
+    export SCCACHE_BASEDIRS="${base_dir}"
     export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
     export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
     export RUSTC_WRAPPER="${sccache_bin}"
@@ -90,7 +106,7 @@ configure_sccache() {
             echo "SCCACHE_BUCKET=${SCCACHE_BUCKET}"
             echo "SCCACHE_REGION=${SCCACHE_REGION}"
             echo "SCCACHE_S3_KEY_PREFIX=${SCCACHE_S3_KEY_PREFIX}"
-            echo "SCCACHE_BASEDIR=${SCCACHE_BASEDIR}"
+            echo "SCCACHE_BASEDIRS=${SCCACHE_BASEDIRS}"
             echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
             echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
             echo "RUSTC_WRAPPER=${RUSTC_WRAPPER}"
@@ -108,7 +124,7 @@ show_config() {
     echo "SCCACHE_ENDPOINT: ${SCCACHE_ENDPOINT:-<not set>}"
     echo "SCCACHE_REGION: ${SCCACHE_REGION:-<not set>}"
     echo "SCCACHE_S3_KEY_PREFIX: ${SCCACHE_S3_KEY_PREFIX:-<not set>}"
-    echo "SCCACHE_BASEDIR: ${SCCACHE_BASEDIR:-<not set>}"
+    echo "SCCACHE_BASEDIRS: ${SCCACHE_BASEDIRS:-<not set>}"
     if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
         echo "AWS_ACCESS_KEY_ID: <set, length=${#AWS_ACCESS_KEY_ID}>"
     else

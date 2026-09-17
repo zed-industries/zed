@@ -1163,7 +1163,7 @@ impl KeymapEditor {
                         Tooltip::with_meta(
                             "View conflicts",
                             Some(&ToggleConflictFilter),
-                            "Use alt+click to show all conflicts",
+                            concat!("Use ", ui::alt_key_name!(), "+click to show all conflicts"),
                             cx,
                         )
                     })
@@ -1193,11 +1193,15 @@ impl KeymapEditor {
                     }))
             } else {
                 base_button_style(index, IconName::Info)
-                    .tooltip(|_window, cx|  {
+                    .tooltip(|_window, cx| {
                         Tooltip::with_meta(
                             "Show matching keybinds",
                             Some(&ShowMatchingKeybinds),
-                            "This binding is overridden by other bindings.\nUse alt+click to edit this binding",
+                            concat!(
+                                "This binding is overridden by other bindings.\nUse ",
+                                ui::alt_key_name!(),
+                                "+click to edit this binding"
+                            ),
                             cx,
                         )
                     })
@@ -1678,7 +1682,7 @@ impl KeymapEditor {
                 y: px(2.0),
             })
             .trigger_with_tooltip(
-                IconButton::new("KeymapEditorFilterMenuButton", IconName::Sliders)
+                IconButton::new("KeymapEditorFilterMenuButton", IconName::Filter)
                     .icon_size(IconSize::Small)
                     .when(
                         self.keybinding_conflict_state.any_user_binding_conflicts(),
@@ -1701,7 +1705,7 @@ impl KeymapEditor {
                 menu.toggleable_entry(
                     name,
                     toggled,
-                    IconPosition::End,
+                    IconPosition::Start,
                     action.as_ref().map(|a| a.boxed_clone()),
                     move |window, cx| {
                         window.focus(&focus_handle, cx);
@@ -2018,7 +2022,6 @@ impl Render for KeymapEditor {
                     .child(
                         h_flex()
                             .gap_2()
-                            .items_center()
                             .child(
                                 h_flex()
                                     .key_context({
@@ -2029,9 +2032,7 @@ impl Render for KeymapEditor {
                                     .flex_1()
                                     .min_w_0()
                                     .h_8()
-                                    .pl_2()
-                                    .pr_1()
-                                    .py_1()
+                                    .px_2()
                                     .border_1()
                                     .border_color(theme.colors().border)
                                     .rounded_md()
@@ -2041,7 +2042,9 @@ impl Render for KeymapEditor {
                                 h_flex()
                                     .gap_1()
                                     .flex_none()
-                                    .items_center()
+                                    // Make sure this min-width value aligns with the spacer
+                                    // div in the keystroke search input
+                                    .min_w_80()
                                     .child(
                                         IconButton::new(
                                             "KeymapEditorKeystrokeSearchButton",
@@ -2075,10 +2078,9 @@ impl Render for KeymapEditor {
                                     )
                                     .child(
                                         Button::new("edit-in-json", "Edit in JSON")
-                                            .style(ButtonStyle::Subtle)
                                             .key_binding(
                                                 ui::KeyBinding::for_action_in(&zed_actions::OpenKeymapFile, &focus_handle, cx)
-                                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                                    .map(|kb| kb.size(rems_from_px(10_f32))),
                                             )
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(
@@ -2092,7 +2094,7 @@ impl Render for KeymapEditor {
                                             .style(ButtonStyle::Outlined)
                                             .key_binding(
                                                 ui::KeyBinding::for_action_in(&OpenCreateKeybindingModal, &focus_handle, cx)
-                                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                                    .map(|kb| kb.size(rems_from_px(10_f32))),
                                             )
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(
@@ -2110,7 +2112,7 @@ impl Render for KeymapEditor {
                                 h_flex()
                                     .gap_2()
                                     .child(self.keystroke_editor.clone())
-                                    .child(div().min_w_96()), // Spacer div to align with the search input
+                                    .child(div().min_w_80()), // Spacer div to align with the search input
                             )
                         },
                     ),
@@ -3963,7 +3965,6 @@ impl SerializableItem for KeymapEditor {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;

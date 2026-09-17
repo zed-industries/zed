@@ -1249,6 +1249,19 @@ impl RatePredictionsModal {
                     PredictEditsRequestTrigger::PredictionPartiallyAccepted => {
                         (IconName::CheckDouble, "Prediction Partially Accepted")
                     }
+                    PredictEditsRequestTrigger::EditorCreated => (IconName::File, "Editor Created"),
+                    PredictEditsRequestTrigger::ProviderChanged => {
+                        (IconName::Settings, "Provider Changed")
+                    }
+                    PredictEditsRequestTrigger::UserInfoChanged => {
+                        (IconName::Person, "User Info Changed")
+                    }
+                    PredictEditsRequestTrigger::VimModeChanged => {
+                        (IconName::Keyboard, "Vim Mode Changed")
+                    }
+                    PredictEditsRequestTrigger::SettingsChanged => {
+                        (IconName::Settings, "Settings Changed")
+                    }
                     PredictEditsRequestTrigger::Other => (IconName::CircleHelp, "Other"),
                 };
 

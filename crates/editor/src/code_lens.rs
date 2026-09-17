@@ -5,7 +5,7 @@ use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
 use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
-use multi_buffer::{Anchor, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
+use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
 use project::{CodeAction, TaskSourceKind, lsp_store::code_lens::CodeLensActions};
 use task::TaskContext;
 use text::ToOffset as _;
@@ -17,6 +17,7 @@ use crate::{
     actions::ToggleCodeLens,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     hover_links::HoverLink,
+    runnables::RunnableTaskStatus,
 };
 
 static EMPTY_LENS_FALLBACK_TITLE: SharedString = SharedString::new_static("0 references");
@@ -97,7 +98,7 @@ pub(super) fn try_handle_client_command(
 fn schedule_task(
     task_template: task::TaskTemplate,
     action: &CodeAction,
-    editor: &Editor,
+    editor: &mut Editor,
     workspace: &gpui::Entity<workspace::Workspace>,
     window: &mut Window,
     cx: &mut Context<Editor>,
@@ -127,15 +128,49 @@ fn schedule_task(
         },
     };
 
+    let Some(resolved_task) =
+        task_template.resolve_task(&task_source_kind.to_id_base(), &task_context)
+    else {
+        return true;
+    };
+    let runnable_task_key = editor
+        .buffer()
+        .read(cx)
+        .buffer(action.range.start.buffer_id)
+        .and_then(|buffer| {
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let buffer_id = buffer_snapshot.remote_id();
+            let offset = BufferOffset(action.range.start.to_offset(&buffer_snapshot));
+            editor.runnable_task_key_for_offset(buffer_id, offset)
+        });
+    if let Some((buffer_id, buffer_row)) = runnable_task_key {
+        editor.set_runnable_task_status(buffer_id, buffer_row, RunnableTaskStatus::Running, cx);
+    }
+    let editor_handle = cx.weak_entity();
     workspace.update(cx, |workspace, cx| {
-        workspace.schedule_task(
-            task_source_kind,
-            &task_template,
-            &task_context,
-            false,
-            window,
-            cx,
-        );
+        if let Some((buffer_id, buffer_row)) = runnable_task_key {
+            workspace.schedule_resolved_task_with_completion(
+                task_source_kind,
+                resolved_task,
+                false,
+                move |result, cx| {
+                    editor_handle
+                        .update(cx, |editor, cx| {
+                            editor.set_runnable_task_status(
+                                buffer_id,
+                                buffer_row,
+                                RunnableTaskStatus::from(result),
+                                cx,
+                            );
+                        })
+                        .ok();
+                },
+                window,
+                cx,
+            );
+        } else {
+            workspace.schedule_resolved_task(task_source_kind, resolved_task, false, window, cx);
+        }
     });
     true
 }
@@ -581,6 +616,10 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
         let text_style = &cx.editor_style.text;
         let font = text_style.font();
         let font_size = text_style.font_size.to_pixels(cx.window.rem_size()) * 0.9;
+        let colors = cx.app.theme().colors();
+        let code_lens_color = colors
+            .editor_code_lens_foreground
+            .unwrap_or(colors.text_muted);
 
         for (i, (title, action)) in resolved_items.into_iter().enumerate() {
             if i > 0 {
@@ -588,7 +627,7 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                     div()
                         .font(font.clone())
                         .text_size(font_size)
-                        .text_color(cx.app.theme().colors().text_muted)
+                        .text_color(code_lens_color)
                         .child(CODE_LENS_SEPARATOR)
                         .into_any_element(),
                 );
@@ -599,7 +638,7 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                     .id(ElementId::from(i))
                     .font(font.clone())
                     .text_size(font_size)
-                    .text_color(cx.app.theme().colors().text_muted)
+                    .text_color(code_lens_color)
                     .child(title.clone())
                     .when_some(action, |code_lens_div, action| {
                         let position = line.position;
@@ -1674,10 +1713,11 @@ mod tests {
         language_registry.add(Arc::new(language::Language::new(
             language::LanguageConfig {
                 name: "TypeScript".into(),
-                matcher: language::LanguageMatcher {
+                matcher: (language::LanguageMatcher {
                     path_suffixes: vec!["ts".to_string()],
                     ..language::LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..language::LanguageConfig::default()
             },
             Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),

@@ -6,11 +6,11 @@ use collections::HashMap;
 use futures::{
     AsyncBufReadExt, AsyncRead, AsyncReadExt as _, SinkExt as _,
     channel::mpsc::{Receiver, Sender, channel},
+    io::BufReader,
 };
 use gpui::{BackgroundExecutor, Task};
 use log::warn;
 use parking_lot::Mutex;
-use smol::io::BufReader;
 
 use crate::{
     AnyResponse, CONTENT_LEN_HEADER, IoHandler, IoKind, NotificationOrRequest, RequestId,
@@ -190,12 +190,12 @@ mod tests {
     #[gpui::test]
     async fn test_read_headers() {
         let mut buf = Vec::new();
-        let mut reader = smol::io::BufReader::new(b"Content-Length: 123\r\n\r\n" as &[u8]);
+        let mut reader = BufReader::new(b"Content-Length: 123\r\n\r\n" as &[u8]);
         read_headers(&mut reader, &mut buf).await.unwrap();
         assert_eq!(buf, b"Content-Length: 123\r\n\r\n");
 
         let mut buf = Vec::new();
-        let mut reader = smol::io::BufReader::new(b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n{\"somecontent\":123}" as &[u8]);
+        let mut reader = BufReader::new(b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n{\"somecontent\":123}" as &[u8]);
         read_headers(&mut reader, &mut buf).await.unwrap();
         assert_eq!(
             buf,
@@ -203,7 +203,7 @@ mod tests {
         );
 
         let mut buf = Vec::new();
-        let mut reader = smol::io::BufReader::new(b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n{\"somecontent\":true}" as &[u8]);
+        let mut reader = BufReader::new(b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n{\"somecontent\":true}" as &[u8]);
         read_headers(&mut reader, &mut buf).await.unwrap();
         assert_eq!(
             buf,

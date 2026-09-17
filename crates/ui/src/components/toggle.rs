@@ -343,11 +343,13 @@ pub struct Switch {
     label: Option<SharedString>,
     label_position: Option<SwitchLabelPosition>,
     label_size: LabelSize,
+    label_color: Color,
     full_width: bool,
     key_binding: Option<KeyBinding>,
     color: SwitchColor,
     tab_index: Option<isize>,
     aria_label: Option<SharedString>,
+    aria_description: Option<SharedString>,
 }
 
 impl Switch {
@@ -361,11 +363,13 @@ impl Switch {
             label: None,
             label_position: None,
             label_size: LabelSize::Small,
+            label_color: Color::Default,
             full_width: false,
             key_binding: None,
             color: SwitchColor::default(),
             tab_index: None,
             aria_label: None,
+            aria_description: None,
         }
     }
 
@@ -409,6 +413,11 @@ impl Switch {
         self
     }
 
+    pub fn label_color(mut self, color: Color) -> Self {
+        self.label_color = color;
+        self
+    }
+
     pub fn full_width(mut self, full_width: bool) -> Self {
         self.full_width = full_width;
         self
@@ -431,10 +440,17 @@ impl Switch {
         self.aria_label = Some(label.into());
         self
     }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the switch's name, role, and state.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
+        self
+    }
 }
 
 impl RenderOnce for Switch {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_on = self.toggle_state == ToggleState::Selected;
         let adjust_ratio = if is_light(cx) { 1.5 } else { 1.0 };
 
@@ -457,11 +473,22 @@ impl RenderOnce for Switch {
         let group_id = format!("switch_group_{:?}", self.id);
         let label = self.label;
         let aria_label = self.aria_label.or_else(|| label.clone());
+        let aria_description = self.aria_description;
+        let aria_keyshortcuts = self
+            .key_binding
+            .as_ref()
+            .and_then(|key_binding| key_binding.keyboard_shortcut_text(window, cx));
 
         let switch = div()
             .id((self.id.clone(), "switch"))
             .role(Role::Switch)
             .when_some(aria_label, |this, label| this.aria_label(label))
+            .when_some(aria_keyshortcuts, |this, keyshortcuts| {
+                this.aria_keyshortcuts(keyshortcuts)
+            })
+            .when_some(aria_description, |this, description| {
+                this.aria_description(description)
+            })
             .aria_toggled(match self.toggle_state {
                 ToggleState::Selected => Toggled::True,
                 ToggleState::Indeterminate => Toggled::Mixed,
@@ -523,7 +550,11 @@ impl RenderOnce for Switch {
                 self.label_position == Some(SwitchLabelPosition::Start),
                 |this| {
                     this.when_some(label.clone(), |this, label| {
-                        this.child(Label::new(label).size(self.label_size))
+                        this.child(
+                            Label::new(label)
+                                .size(self.label_size)
+                                .color(self.label_color),
+                        )
                     })
                 },
             )
@@ -532,7 +563,11 @@ impl RenderOnce for Switch {
                 self.label_position == Some(SwitchLabelPosition::End),
                 |this| {
                     this.when_some(label, |this, label| {
-                        this.child(Label::new(label).size(self.label_size))
+                        this.child(
+                            Label::new(label)
+                                .size(self.label_size)
+                                .color(self.label_color),
+                        )
                     })
                 },
             )

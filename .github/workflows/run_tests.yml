@@ -114,7 +114,7 @@ jobs:
 
         check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
         check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
-        check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
+        check_pattern "run_licenses" '^(Cargo\.lock$|script/.*licenses|(?:.*/)?LICENSE[^/]*$)' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)' -qvP
         # Detect changed extension directories (excluding extensions/workflows)
         CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
@@ -157,7 +157,7 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_pnpm
-      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
       with:
         version: '9'
     - name: steps::prettier
@@ -171,13 +171,11 @@ jobs:
     - name: run_tests::check_style::check_for_typos
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
-        config: ./typos.toml
+        config: ./.config/typos.toml
     - name: run_tests::fetch_ts_query_ls
-      uses: dsaltares/fetch-gh-release-asset@aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c
-      with:
-        repo: ribru17/ts_query_ls
-        version: tags/v3.15.1
-        file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+      run: gh release download v3.15.1 --repo ribru17/ts_query_ls --pattern ts_query_ls-x86_64-unknown-linux-gnu.tar.gz --dir "$GITHUB_WORKSPACE"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: run_tests::run_ts_query_ls
       run: |-
         tar -xf "$GITHUB_WORKSPACE/ts_query_ls-x86_64-unknown-linux-gnu.tar.gz" -C "$GITHUB_WORKSPACE"
@@ -344,6 +342,7 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 350 200
       shell: pwsh
@@ -395,17 +394,20 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::download_wasi_sdk
-      run: ./script/download-wasi-sdk
     - name: steps::setup_node
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -454,10 +456,15 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -478,7 +485,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::harden_runner
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
@@ -498,9 +505,11 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: run_tests::miri_scheduler::install_miri
-      run: rustup toolchain install nightly --profile minimal --component miri --component rust-src
+      run: rustup toolchain install nightly-2026-09-09 --profile minimal --component miri --component rust-src
+    - name: run_tests::miri_scheduler::clean_miri
+      run: cargo +nightly-2026-09-09 miri clean
     - name: run_tests::miri_scheduler::run_scheduler_tests_under_miri
-      run: cargo +nightly -q miri test -p scheduler
+      run: cargo +nightly-2026-09-09 -q miri test -p scheduler
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -660,7 +669,7 @@ jobs:
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
     - name: run_tests::check_wasm::cargo_check_wasm
-      run: cargo -Zbuild-std=std,panic_abort check --target wasm32-unknown-unknown -p gpui_platform
+      run: cargo -Zbuild-std=std,panic_abort check --target wasm32-unknown-unknown -p gpui_platform -p cloud_api_client
       env:
         CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals
         RUSTC_BOOTSTRAP: '1'
@@ -674,7 +683,7 @@ jobs:
   check_dependencies:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
+    if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
     env:
       CC: clang
@@ -693,14 +702,16 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - name: run_tests::check_dependencies::install_cargo_machete
-      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
+    - name: run_tests::check_dependencies::install_cargo_shear
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
       with:
-        tool: cargo-machete@0.7.0
-    - name: run_tests::check_dependencies::run_cargo_machete
-      run: cargo machete
+        tool: cargo-shear@1.13.4
+    - name: run_tests::check_dependencies::run_cargo_shear
+      run: cargo shear --locked --deny-warnings --check-test-targets
     - name: run_tests::check_dependencies::check_cargo_lock
       run: cargo update --locked --workspace
+    - name: run_tests::check_dependencies::check_crate_graph
+      run: 'cargo test --package xtask -- workspace::'
     - name: run_tests::check_dependencies::check_vulnerable_dependencies
       if: github.event_name == 'pull_request'
       uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8
@@ -744,7 +755,7 @@ jobs:
     - name: deploy_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
-        args: --no-progress --exclude '^http' './docs/src/**/*'
+        args: --config .config/lychee.toml --no-progress --exclude '^http' './docs/src/**/*'
         fail: true
         jobSummary: false
     - name: deploy_docs::install_mdbook
@@ -761,7 +772,7 @@ jobs:
     - name: deploy_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
-        args: --no-progress --exclude '^http' 'target/deploy/docs'
+        args: --config .config/lychee.toml --no-progress --exclude '^http' 'target/deploy/docs'
         fail: true
         jobSummary: false
     timeout-minutes: 60
@@ -804,13 +815,6 @@ jobs:
         clean: false
     - name: run_tests::check_scripts::run_shellcheck
       run: ./script/shellcheck-scripts error
-    - id: get_actionlint
-      name: run_tests::check_scripts::download_actionlint
-      run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-    - name: run_tests::check_scripts::run_actionlint
-      run: '"$ACTIONLINT_BIN" -color'
-      env:
-        ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -824,12 +828,131 @@ jobs:
           echo "Please run 'cargo xtask workflows' locally and commit the changes"
           exit 1
         fi
+    - id: get_actionlint
+      name: run_tests::check_scripts::download_actionlint
+      run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+    - name: run_tests::check_scripts::run_actionlint
+      run: '"$ACTIONLINT_BIN" -color'
+      env:
+        ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
+    - name: run_tests::check_scripts::run_zizmor
+      uses: zizmorcore/zizmor-action@6599ee8b7a49aef6a770f63d261d214911a7ce02
+      with:
+        advanced-security: false
+        min-severity: high
+        version: latest
+    timeout-minutes: 60
+  check_remote_server_linux_x86_64:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: run_tests::check_remote_server
+      run: rustup target add x86_64-unknown-linux-musl
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
+    - name: run_tests::check_remote_server
+      run: cargo --config .cargo/ci-config.toml check --locked --release --package remote_server --target x86_64-unknown-linux-musl
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
+    timeout-minutes: 60
+  check_remote_server_mac_aarch64:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-mac-large
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::check_remote_server
+      run: rustup target add aarch64-apple-darwin
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
+    - name: run_tests::check_remote_server
+      run: cargo --config .cargo/ci-config.toml check --locked --release --package remote_server --target aarch64-apple-darwin
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
+    timeout-minutes: 60
+  check_remote_server_windows_x86_64:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: run_tests::check_remote_server
+      run: rustup target add x86_64-pc-windows-msvc
+      shell: pwsh
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache.ps1
+      shell: pwsh
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
+    - name: run_tests::check_remote_server
+      run: |
+        $hostArchitecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+            "X64" { "amd64" }
+            "Arm64" { "arm64" }
+            default { throw "Unsupported architecture" }
+        }
+        Push-Location
+        & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch $hostArchitecture
+        Pop-Location
+        cargo --config .cargo/ci-config.toml check --locked --release --package remote_server --target x86_64-pc-windows-msvc
+      shell: pwsh
+    - name: steps::show_sccache_stats
+      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
+      shell: pwsh
     timeout-minutes: 60
   check_postgres_and_protobuf_migrations:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-4x8-ubuntu-2204
     env:
       GIT_AUTHOR_NAME: Protobuf Action
       GIT_AUTHOR_EMAIL: ci@zed.dev
@@ -904,6 +1027,9 @@ jobs:
     - check_docs
     - check_licenses
     - check_scripts
+    - check_remote_server_linux_x86_64
+    - check_remote_server_mac_aarch64
+    - check_remote_server_windows_x86_64
     - extension_tests
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
@@ -936,6 +1062,9 @@ jobs:
         check_result "check_docs" "$RESULT_CHECK_DOCS"
         check_result "check_licenses" "$RESULT_CHECK_LICENSES"
         check_result "check_scripts" "$RESULT_CHECK_SCRIPTS"
+        check_result "check_remote_server_linux_x86_64" "$RESULT_CHECK_REMOTE_SERVER_LINUX_X86_64"
+        check_result "check_remote_server_mac_aarch64" "$RESULT_CHECK_REMOTE_SERVER_MAC_AARCH64"
+        check_result "check_remote_server_windows_x86_64" "$RESULT_CHECK_REMOTE_SERVER_WINDOWS_X86_64"
         check_result "extension_tests" "$RESULT_EXTENSION_TESTS"
 
         exit $EXIT_CODE
@@ -958,6 +1087,9 @@ jobs:
         RESULT_CHECK_DOCS: ${{ needs.check_docs.result }}
         RESULT_CHECK_LICENSES: ${{ needs.check_licenses.result }}
         RESULT_CHECK_SCRIPTS: ${{ needs.check_scripts.result }}
+        RESULT_CHECK_REMOTE_SERVER_LINUX_X86_64: ${{ needs.check_remote_server_linux_x86_64.result }}
+        RESULT_CHECK_REMOTE_SERVER_MAC_AARCH64: ${{ needs.check_remote_server_mac_aarch64.result }}
+        RESULT_CHECK_REMOTE_SERVER_WINDOWS_X86_64: ${{ needs.check_remote_server_windows_x86_64.result }}
         RESULT_EXTENSION_TESTS: ${{ needs.extension_tests.result }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}

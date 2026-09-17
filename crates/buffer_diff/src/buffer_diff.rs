@@ -1,5 +1,5 @@
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
-use imara_diff::{Algorithm, Sink, intern::InternedInput, sources::lines_with_terminator};
+use imara_diff::{Algorithm, Diff, InternedInput, sources::lines};
 use language::{
     Capability, DiffOptions, Language, LanguageName, LanguageRegistry,
     language_settings::LanguageSettings, word_diff_ranges,
@@ -25,6 +25,63 @@ pub struct BufferDiff {
     diff_snapshot: Option<BufferDiffSnapshot>,
     secondary_diff: Option<Entity<BufferDiff>>,
     buffer_snapshot: text::BufferSnapshot,
+    operations: Option<Arc<dyn DiffOperations>>,
+}
+
+pub trait DiffOperations {
+    fn supports_staging(&self) -> bool;
+    fn supports_unstaging(&self) -> bool;
+    fn supports_restore(&self) -> bool;
+    fn stage(
+        &self,
+        _diff: Entity<BufferDiff>,
+        _buffer: Option<Entity<language::Buffer>>,
+        _buffer_ranges: Vec<Range<Anchor>>,
+        _cx: &mut App,
+    ) {
+    }
+    fn unstage(
+        &self,
+        _diff: Entity<BufferDiff>,
+        _buffer: Option<Entity<language::Buffer>>,
+        _buffer_ranges: Vec<Range<Anchor>>,
+        _cx: &mut App,
+    ) {
+    }
+}
+
+pub struct RestoreDiffOperations;
+
+impl DiffOperations for RestoreDiffOperations {
+    fn supports_staging(&self) -> bool {
+        false
+    }
+
+    fn supports_unstaging(&self) -> bool {
+        false
+    }
+
+    fn supports_restore(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct TestDiffOperations;
+
+#[cfg(any(test, feature = "test-support"))]
+impl DiffOperations for TestDiffOperations {
+    fn supports_staging(&self) -> bool {
+        true
+    }
+
+    fn supports_unstaging(&self) -> bool {
+        true
+    }
+
+    fn supports_restore(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -1192,13 +1249,20 @@ fn compute_hunks(
             return tree;
         }
 
-        let input = InternedInput::new(
-            lines_with_terminator(diff_base.as_ref()),
-            lines_with_terminator(buffer_text.as_str()),
-        );
-        let sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
-        let hunks = imara_diff::diff(Algorithm::Histogram, &input, sink);
-        for hunk in hunks {
+        let input = InternedInput::new(lines(diff_base.as_ref()), lines(buffer_text.as_str()));
+        let mut diff = Diff::compute(Algorithm::Histogram, &input);
+        // Canonicalize the placement of ambiguous hunks (git's slider/indent
+        // heuristic). Without this, diffs of the same buffer against different
+        // base texts (e.g. HEAD vs index) can anchor the same logical change at
+        // different rows, and code that correlates hunks across those diffs
+        // misbehaves: hunks render as staged when they aren't, and staging or
+        // unstaging them corrupts the index.
+        diff.postprocess_lines(&input);
+        let mut sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
+        for hunk in diff.hunks() {
+            sink.process_change(hunk.before, hunk.after);
+        }
+        for hunk in sink.finish() {
             tree.push(hunk, buffer);
         }
     } else {
@@ -1244,7 +1308,7 @@ impl<'a> HunkSink<'a> {
     fn compute_line_offsets(text: &str) -> Vec<usize> {
         let mut offsets = vec![0];
         let mut offset = 0;
-        for line in lines_with_terminator(text) {
+        for line in lines(text) {
             offset += line.len();
             offsets.push(offset);
         }
@@ -1252,9 +1316,7 @@ impl<'a> HunkSink<'a> {
     }
 }
 
-impl Sink for HunkSink<'_> {
-    type Out = Vec<InternalDiffHunk>;
-
+impl HunkSink<'_> {
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
         let old_start = before.start as usize;
         let old_end = before.end as usize;
@@ -1321,7 +1383,7 @@ impl Sink for HunkSink<'_> {
         });
     }
 
-    fn finish(self) -> Self::Out {
+    fn finish(self) -> Vec<InternalDiffHunk> {
         self.hunks
     }
 }
@@ -1566,6 +1628,7 @@ impl BufferDiff {
             diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
+            operations: None,
         }
     }
 
@@ -1580,6 +1643,7 @@ impl BufferDiff {
             diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
+            operations: None,
         }
     }
 
@@ -1617,6 +1681,7 @@ impl BufferDiff {
             diff_snapshot: Some(diff_snapshot),
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
+            operations: None,
         }
     }
 
@@ -1627,6 +1692,7 @@ impl BufferDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = BufferDiff::new(buffer, None, None, cx);
+        this.set_operations(Arc::new(TestDiffOperations));
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
         let base_text_buffer = cx.new(|cx| {
@@ -1648,6 +1714,14 @@ impl BufferDiff {
 
     pub fn set_secondary_diff(&mut self, diff: Entity<BufferDiff>) {
         self.secondary_diff = Some(diff);
+    }
+
+    pub fn set_operations(&mut self, operations: Arc<dyn DiffOperations>) {
+        self.operations = Some(operations);
+    }
+
+    pub fn operations(&self) -> Option<Arc<dyn DiffOperations>> {
+        self.operations.clone()
     }
 
     pub fn secondary_diff(&self) -> Option<Entity<BufferDiff>> {
@@ -2115,6 +2189,12 @@ impl BufferDiff {
         self.diff_snapshot
             .as_ref()
             .is_some_and(|diff_snapshot| diff_snapshot.base_text_exists)
+    }
+
+    pub fn changed_row_counts(&self) -> (u32, u32) {
+        self.diff_snapshot
+            .as_ref()
+            .map_or((0, 0), |diff_snapshot| diff_snapshot.changed_row_counts())
     }
 
     pub fn snapshot(&self, cx: &App) -> BufferDiffSnapshot {

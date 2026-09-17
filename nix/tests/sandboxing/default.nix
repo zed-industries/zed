@@ -30,6 +30,8 @@
 #
 #   fs = "restricted";          # or "unrestricted"
 #   writablePaths = [ ];        # writable subtrees when fs = "restricted"
+#   seedFiles = [ ];            # regular files to create before building the
+#                               # policy (e.g. a single-file-worktree root)
 #   networkAccess = "blocked";  # or "unrestricted" / "restricted"
 #   allowedDomains = [ ];       # allowed hosts when networkAccess = "restricted"
 #   protectedPaths = [ ];       # paths that remain readable but not writable,
@@ -248,6 +250,27 @@ in
         writablePaths = [ "/sandbox-test/not-yet-created/deep" ];
         networkAccess = "blocked";
         write = "/sandbox-test/not-yet-created/deep/ok.txt";
+        succeeds = true;
+      }
+
+      # Regression: a protected `.git` path routed through a regular file must
+      # not break sandbox creation. A single-file worktree (e.g. `settings.json`
+      # opened on its own) is rooted at the file, so the agent synthesizes
+      # `settings.json/.git` as a protected path; capturing it reports
+      # `NotADirectory`. That case must be *skipped* (the path can't exist, so
+      # there's nothing to protect), not treated as a fatal capture error — the
+      # bug that surfaced as a "cannot capture protected sandbox path
+      # .../settings.json/.git" popup. `seedFiles` makes `settings.json` a real
+      # file so the protected path routes through it; the sandbox must still be
+      # created and a normal write inside the worktree must succeed.
+      {
+        name = "protected .git routed through a regular file is skipped, not fatal";
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/single-file-worktree" ];
+        seedFiles = [ "/sandbox-test/single-file-worktree/settings.json" ];
+        protectedPaths = [ "/sandbox-test/single-file-worktree/settings.json/.git" ];
+        networkAccess = "blocked";
+        write = "/sandbox-test/single-file-worktree/ok.txt";
         succeeds = true;
       }
 

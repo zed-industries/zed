@@ -53,6 +53,7 @@ pub struct LanguageModelRegistry {
     inline_assistant_model: Option<ConfiguredModel>,
     commit_message_model: Option<ConfiguredModel>,
     thread_summary_model: Option<ConfiguredModel>,
+    compaction_model: Option<ConfiguredModel>,
     providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
     inline_alternatives: Vec<Arc<dyn LanguageModel>>,
     /// Set of installed extension IDs that provide language models.
@@ -111,6 +112,7 @@ pub enum Event {
     DefaultModelChanged,
     InlineAssistantModelChanged,
     CommitMessageModelChanged,
+    CompactionModelChanged,
     ThreadSummaryModelChanged,
     ProviderStateChanged(LanguageModelProviderId),
     AddedProvider(LanguageModelProviderId),
@@ -324,6 +326,15 @@ impl LanguageModelRegistry {
         self.set_thread_summary_model(configured_model, cx);
     }
 
+    pub fn select_compaction_model(
+        &mut self,
+        model: Option<&SelectedModel>,
+        cx: &mut Context<Self>,
+    ) {
+        let configured_model = model.and_then(|model| self.select_model(model, cx));
+        self.set_compaction_model(configured_model, cx);
+    }
+
     /// Selects and sets the inline alternatives for language models based on
     /// provider name and id.
     pub fn select_inline_alternative_models(
@@ -436,6 +447,15 @@ impl LanguageModelRegistry {
         self.thread_summary_model = model;
     }
 
+    pub fn set_compaction_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
+        match (self.compaction_model.as_ref(), model.as_ref()) {
+            (Some(old), Some(new)) if old.is_same_as(new) => {}
+            (None, None) => {}
+            _ => cx.emit(Event::CompactionModelChanged),
+        }
+        self.compaction_model = model;
+    }
+
     pub fn default_model(&self) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
@@ -468,7 +488,7 @@ impl LanguageModelRegistry {
 
         self.inline_assistant_model
             .clone()
-            .or_else(|| self.default_model.clone())
+            .or_else(|| self.default_model())
     }
 
     pub fn commit_message_model(&self, cx: &App) -> Option<ConfiguredModel> {
@@ -495,6 +515,18 @@ impl LanguageModelRegistry {
             .or_else(|| self.default_model())
     }
 
+    /// Returns the configured compaction model without falling back through
+    /// `default_fast_model`/`default_model`. Callers that want a fallback to
+    /// the thread's primary model should handle `None` themselves.
+    pub fn compaction_model(&self) -> Option<ConfiguredModel> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
+        }
+
+        self.compaction_model.clone()
+    }
+
     /// The models to use for inline assists. Returns the union of the active
     /// model and all inline alternatives. When there are multiple models, the
     /// user will be able to cycle through results.
@@ -506,7 +538,7 @@ impl LanguageModelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake_provider::FakeLanguageModelProvider;
+    use crate::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
 
     #[test]
     fn selected_model_allows_slashes_in_model_id() {
@@ -669,12 +701,61 @@ mod tests {
             );
 
             assert!(registry.default_model().is_none());
+            assert!(registry.inline_assistant_model().is_none());
 
             registry.set_should_use_fallback(true);
 
             let default_model = registry.default_model().unwrap();
             assert_eq!(default_model.model.id(), model.id());
             assert_eq!(default_model.provider.id(), provider.id());
+            assert!(
+                registry
+                    .inline_assistant_model()
+                    .is_some_and(|inline_model| inline_model.is_same_as(&default_model))
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_inline_assistant_model_precedence(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+        let [inline_model, default_model, fallback_model] =
+            ["inline", "default", "fallback"].map(|model_id| ConfiguredModel {
+                provider: provider.clone(),
+                model: Arc::new(FakeLanguageModel::with_id_and_thinking(
+                    "fake", model_id, model_id, false,
+                )),
+            });
+
+        registry.update(cx, |registry, cx| {
+            registry.set_should_use_fallback(true);
+            registry.set_fallback_model(Some(fallback_model.clone()), cx);
+            registry.set_default_model(Some(default_model.clone()), cx);
+            registry.set_inline_assistant_model(Some(inline_model.clone()), cx);
+
+            assert!(
+                registry
+                    .inline_assistant_model()
+                    .is_some_and(|model| model.is_same_as(&inline_model))
+            );
+
+            registry.set_inline_assistant_model(None, cx);
+            assert!(
+                registry
+                    .inline_assistant_model()
+                    .is_some_and(|model| model.is_same_as(&default_model))
+            );
+
+            registry.set_default_model(None, cx);
+            assert!(
+                registry
+                    .inline_assistant_model()
+                    .is_some_and(|model| model.is_same_as(&fallback_model))
+            );
+
+            registry.set_should_use_fallback(false);
+            assert!(registry.inline_assistant_model().is_none());
         });
     }
 

@@ -464,11 +464,11 @@ pub enum ButtonSize {
 impl ButtonSize {
     pub fn rems(self) -> Rems {
         match self {
-            ButtonSize::Large => rems_from_px(32.),
-            ButtonSize::Medium => rems_from_px(28.),
-            ButtonSize::Default => rems_from_px(22.),
-            ButtonSize::Compact => rems_from_px(18.),
-            ButtonSize::None => rems_from_px(16.),
+            ButtonSize::Large => rems_from_px(32_f32),
+            ButtonSize::Medium => rems_from_px(28_f32),
+            ButtonSize::Default => rems_from_px(22_f32),
+            ButtonSize::Compact => rems_from_px(18_f32),
+            ButtonSize::None => rems_from_px(16_f32),
         }
     }
 }
@@ -493,7 +493,10 @@ pub struct ButtonLike {
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     pub(super) aria_label: Option<SharedString>,
-    aria_role: Option<Role>,
+    aria_description: Option<SharedString>,
+    pub(super) aria_value: Option<SharedString>,
+    pub(super) aria_keyshortcuts: Option<SharedString>,
+    pub(super) aria_role: Option<Role>,
     aria_expanded: Option<bool>,
     toggled: Option<bool>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -523,6 +526,9 @@ impl ButtonLike {
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::ALL),
             aria_label: None,
+            aria_description: None,
+            aria_value: None,
+            aria_keyshortcuts: None,
             aria_role: None,
             aria_expanded: None,
             toggled: None,
@@ -588,6 +594,32 @@ impl ButtonLike {
         self
     }
 
+    /// Sets the keyboard shortcut announced by assistive technology for this
+    /// button. Use a human-friendly display string (the accelerator shown to
+    /// sighted users), e.g. `"Ctrl-S"` - see
+    /// [`KeyBinding::keyboard_shortcut_text`](crate::KeyBinding::keyboard_shortcut_text).
+    /// [`Button`](crate::Button) sets this automatically from its displayed
+    /// keybinding.
+    pub fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.aria_keyshortcuts = Some(keyshortcuts.into());
+        self
+    }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the button's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
+        self
+    }
+
+    /// Sets the current value reported to assistive technology. Use this when
+    /// the button represents a control with a value, such as a combobox
+    /// trigger whose value is the current selection.
+    pub fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
+        self.aria_value = Some(value.into());
+        self
+    }
+
     /// Overrides the role reported to assistive technology.
     /// Defaults to [`Role::Button`].
     pub fn aria_role(mut self, role: Role) -> Self {
@@ -638,6 +670,7 @@ impl SelectableButton for ButtonLike {
 }
 
 impl Clickable for ButtonLike {
+    #[inline(always)]
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
@@ -676,6 +709,7 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
+    #[inline(always)]
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
@@ -727,6 +761,13 @@ impl RenderOnce for ButtonLike {
             .id(self.id.clone())
             .role(self.aria_role.unwrap_or(Role::Button))
             .when_some(self.aria_label, |this, label| this.aria_label(label))
+            .when_some(self.aria_keyshortcuts, |this, keyshortcuts| {
+                this.aria_keyshortcuts(keyshortcuts)
+            })
+            .when_some(self.aria_description, |this, description| {
+                this.aria_description(description)
+            })
+            .when_some(self.aria_value, |this, value| this.aria_value(value))
             .when_some(self.aria_expanded, |this, expanded| {
                 this.aria_expanded(expanded)
             })
@@ -737,7 +778,11 @@ impl RenderOnce for ButtonLike {
                     Toggled::False
                 })
             })
-            .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
+            .when_some(self.tab_index, |this, tab_index| {
+                // Keep an already-focused button registered so disabling it does not
+                // move focus outside the view.
+                this.tab_index(tab_index).tab_stop(!self.disabled)
+            })
             .when_some(self.focus_handle, |this, focus_handle| {
                 this.track_focus(&focus_handle)
             })

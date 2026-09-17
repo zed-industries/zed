@@ -7,7 +7,7 @@ use gpui_util::defer;
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, FutureExt as _, TryStreamExt as _};
-use http_client::{RedirectPolicy, Url, http};
+use http_client::{RedirectPolicy, RequestTimeout, Url, http};
 use regex::Regex;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -26,8 +26,12 @@ pub struct ReqwestClient {
 }
 
 impl ReqwestClient {
-    fn builder() -> reqwest::ClientBuilder {
-        reqwest::Client::builder()
+    /// Shared connection-management configuration for every client this type
+    /// builds. `read_timeout` sets an idle timeout on each body read (see
+    /// [`ReqwestClient::proxy_user_agent_and_read_timeout`]); `None` leaves
+    /// reads without a timeout.
+    fn builder(read_timeout: Option<Duration>) -> reqwest::ClientBuilder {
+        let builder = reqwest::Client::builder()
             .use_rustls_tls()
             .connect_timeout(Duration::from_secs(10))
             // Detect and drop connections that have silently gone bad on a
@@ -38,11 +42,15 @@ impl ReqwestClient {
             .pool_idle_timeout(Duration::from_secs(30))
             .http2_keep_alive_interval(Duration::from_secs(15))
             .http2_keep_alive_timeout(Duration::from_secs(10))
-            .http2_keep_alive_while_idle(true)
+            .http2_keep_alive_while_idle(true);
+        match read_timeout {
+            Some(read_timeout) => builder.read_timeout(read_timeout),
+            None => builder,
+        }
     }
 
     pub fn new() -> Self {
-        Self::builder()
+        Self::builder(None)
             .build()
             .expect("Failed to initialize HTTP client")
             .into()
@@ -51,16 +59,37 @@ impl ReqwestClient {
     pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        let client = Self::builder().default_headers(map).build()?;
+        let client = Self::builder(None).default_headers(map).build()?;
         Ok(client.into())
     }
 
     pub fn proxy_and_user_agent(proxy: Option<Url>, user_agent: &str) -> anyhow::Result<Self> {
+        Self::proxy_user_agent_and_read_timeout(proxy, user_agent, None)
+    }
+
+    /// Like [`ReqwestClient::proxy_and_user_agent`], but also applies a
+    /// per-read idle timeout. `read_timeout` fires only after that long with no
+    /// bytes received on a response body and resets on every chunk, so it
+    /// aborts a silently stalled stream without disturbing a healthy one that
+    /// merely goes quiet between chunks. Callers streaming long-lived responses
+    /// (e.g. LLM completions, which can pause for tens of seconds during
+    /// provider-side reasoning while keep-alive bytes still flow) should size
+    /// it comfortably above the provider's keep-alive interval.
+    ///
+    /// Note: on macOS the timeout is measured against a monotonic clock that
+    /// pauses during system sleep, so it does not fire from a suspend alone;
+    /// callers that need prompt detection of a connection killed while
+    /// suspended must re-validate the stream on wake themselves.
+    pub fn proxy_user_agent_and_read_timeout(
+        proxy: Option<Url>,
+        user_agent: &str,
+        read_timeout: Option<Duration>,
+    ) -> anyhow::Result<Self> {
         let user_agent = HeaderValue::from_str(user_agent)?;
 
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, user_agent.clone());
-        let mut client = Self::builder().default_headers(map);
+        let mut client = Self::builder(read_timeout).default_headers(map);
         let client_has_proxy;
 
         if let Some(proxy) = proxy.as_ref().and_then(|proxy_url| {
@@ -245,16 +274,19 @@ impl http_client::HttpClient for ReqwestClient {
     > {
         let (parts, body) = req.into_parts();
 
-        let mut request = self.client.request(parts.method, parts.uri.to_string());
-        request = request.headers(parts.headers);
+        let mut request_builder = self.client.request(parts.method, parts.uri.to_string());
+        request_builder = request_builder.headers(parts.headers);
         if let Some(redirect_policy) = parts.extensions.get::<RedirectPolicy>() {
-            request = request.redirect_policy(match redirect_policy {
+            request_builder = request_builder.redirect_policy(match redirect_policy {
                 RedirectPolicy::NoFollow => redirect::Policy::none(),
                 RedirectPolicy::FollowLimit(limit) => redirect::Policy::limited(*limit as usize),
                 RedirectPolicy::FollowAll => redirect::Policy::limited(100),
             });
         }
-        let request = request.body(match body.0 {
+        if let Some(timeout) = parts.extensions.get::<RequestTimeout>() {
+            request_builder = request_builder.timeout(timeout.0);
+        }
+        let request = request_builder.body(match body.0 {
             http_client::Inner::Empty => reqwest::Body::default(),
             http_client::Inner::Bytes(cursor) => cursor.into_inner().into(),
             http_client::Inner::AsyncReader(stream) => {
@@ -290,10 +322,14 @@ impl http_client::HttpClient for ReqwestClient {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read as _, Write as _};
+    use std::io::{BufRead as _, BufReader, Read as _, Write as _};
     use std::net::TcpListener;
+    use std::time::{Duration, Instant};
 
-    use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, Url};
+    use futures::AsyncReadExt as _;
+    use http_client::{
+        AsyncBody, HttpClient, HttpRequestExt as _, Method, Request as HttpRequest, Url,
+    };
 
     use crate::ReqwestClient;
 
@@ -371,6 +407,58 @@ mod tests {
             .unwrap();
         let response = futures::executor::block_on(client.send(request)).unwrap();
         assert!(response.status().is_success());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_request_timeout_applies_while_reading_response_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(&mut stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            drop(reader);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 1\r\n\r\n")
+                .unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut buffer = [0; 1];
+            match stream.read(&mut buffer) {
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) => {}
+                Err(error) => panic!("failed while waiting for the client to close: {error}"),
+            }
+        });
+
+        let client = ReqwestClient::new();
+        let request = HttpRequest::get(format!("http://{address}/"))
+            .timeout(Duration::from_millis(100))
+            .body(AsyncBody::default())
+            .unwrap();
+        let started_at = Instant::now();
+        let mut response = futures::executor::block_on(client.send(request)).unwrap();
+        let mut body = Vec::new();
+        let result = futures::executor::block_on(response.body_mut().read_to_end(&mut body));
+        assert!(result.is_err(), "the response body should time out");
+        assert!(
+            started_at.elapsed() < Duration::from_millis(500),
+            "the request timeout should not wait for the server to close the connection"
+        );
+        drop(response);
         server.join().unwrap();
     }
 

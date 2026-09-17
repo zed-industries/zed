@@ -80,7 +80,7 @@ To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS lan
 
 ## Large projects
 
-`vtsls` may run out of memory on very large projects. We default the limit to 8092 (8 GiB) vs. the default of 3072 but this may not be sufficient for you:
+`vtsls` may run out of memory on very large projects. We default the limit to 8192 (8 GiB) vs. the default of 3072 but this may not be sufficient for you:
 
 ```json [settings]
 {
@@ -88,9 +88,9 @@ To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS lan
     "vtsls": {
       "settings": {
         // For TypeScript:
-        "typescript": { "tsserver": { "maxTsServerMemory": 16184 } },
+        "typescript": { "tsserver": { "maxTsServerMemory": 16384 } },
         // For JavaScript:
-        "javascript": { "tsserver": { "maxTsServerMemory": 16184 } }
+        "javascript": { "tsserver": { "maxTsServerMemory": 16384 } }
       }
     }
   }
