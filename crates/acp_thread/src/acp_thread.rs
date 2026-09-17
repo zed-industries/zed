@@ -1098,7 +1098,7 @@ impl ToolCall {
         } = fields;
 
         let was_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
-        let mut label_changed = title.is_some() || kind.is_some();
+        let mut label_changed = kind.is_some();
         if let Some(kind) = kind {
             self.kind = kind;
         }
@@ -1135,15 +1135,19 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
-            self.title = Some(SharedString::from(title)).filter(|title| !title.trim().is_empty());
-            if self.kind == acp::ToolKind::Execute
-                && let Some(title) = &self.title
-            {
-                // A missing tool title must not overwrite an actual terminal command.
-                for terminal in self.terminals() {
-                    terminal.update(cx, |terminal, cx| {
-                        terminal.update_command_label(title, cx);
-                    });
+            let title = SharedString::from(title);
+            if self.kind != acp::ToolKind::Execute || !title.trim().is_empty() {
+                self.title = Some(title).filter(|title| !title.trim().is_empty());
+                label_changed = true;
+                if self.kind == acp::ToolKind::Execute
+                    && let Some(title) = &self.title
+                {
+                    // A missing tool title must not overwrite an actual terminal command.
+                    for terminal in self.terminals() {
+                        terminal.update(cx, |terminal, cx| {
+                            terminal.update_command_label(title, cx);
+                        });
+                    }
                 }
             }
         }
@@ -7250,6 +7254,40 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    fn test_empty_execute_title_update_preserves_command(cx: &mut TestAppContext) {
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let command = "glab api projects/example/merge_requests/1/changes";
+        let mut call = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("tool", command).kind(acp::ToolKind::Execute),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                PathStyle::local(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("tool call should convert")
+        });
+
+        cx.update(|cx| {
+            call.update_fields(
+                acp::ToolCallUpdateFields::new().title(""),
+                None,
+                languages,
+                PathStyle::local(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("empty title update should apply");
+        });
+        cx.run_until_parked();
+
+        cx.read(|cx| assert_eq!(call.label.read(cx).source().as_ref(), command));
     }
 
     #[gpui::test]
