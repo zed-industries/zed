@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/language_models_cloud.rs"
+doctest = false
 
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }

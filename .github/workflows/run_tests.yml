@@ -114,7 +114,7 @@ jobs:
 
         check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
         check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
-        check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
+        check_pattern "run_licenses" '^(Cargo\.lock$|script/.*licenses|(?:.*/)?LICENSE[^/]*$)' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)' -qvP
         # Detect changed extension directories (excluding extensions/workflows)
         CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
@@ -485,7 +485,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::harden_runner
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
@@ -707,7 +707,7 @@ jobs:
       with:
         tool: cargo-shear@1.13.4
     - name: run_tests::check_dependencies::run_cargo_shear
-      run: cargo shear --locked --deny-warnings
+      run: cargo shear --locked --deny-warnings --check-test-targets
     - name: run_tests::check_dependencies::check_cargo_lock
       run: cargo update --locked --workspace
     - name: run_tests::check_dependencies::check_crate_graph
@@ -952,7 +952,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: namespace-profile-4x8-ubuntu-2204
     env:
       GIT_AUTHOR_NAME: Protobuf Action
       GIT_AUTHOR_EMAIL: ci@zed.dev
