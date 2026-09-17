@@ -1,7 +1,7 @@
 use crate::{TestClient, TestServer};
 use async_trait::async_trait;
 use collab::{
-    db::{self, NewUserParams, UserId},
+    db::{self, UserId},
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
 };
 use futures::StreamExt;
@@ -224,13 +224,7 @@ impl<T: RandomizedTest> TestPlan<T> {
             let user_id = server
                 .app_state
                 .db
-                .create_user(
-                    false,
-                    NewUserParams {
-                        github_login: username.clone(),
-                        github_user_id: ix as i32,
-                    },
-                )
+                .create_user(false)
                 .await
                 .unwrap()
                 .user_id;

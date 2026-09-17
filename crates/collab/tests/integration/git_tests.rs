@@ -8,10 +8,12 @@ use client::RECEIVE_TIMEOUT;
 use collections::HashMap;
 use git::{
     Oid,
-    repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree as GitWorktree},
+    repository::{
+        CommitData, GitCommitTemplate, InitialGraphCommitData, RepoPath, Worktree as GitWorktree,
+    },
     status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
-use git_graph::GitGraph;
+use git_ui::git_graph::GitGraph;
 use git_ui::{git_panel::GitPanel, project_diff::ProjectDiff};
 use gpui::{
     AppContext as _, BackgroundExecutor, Entity, IntoElement as _, SharedString, TestAppContext,
@@ -81,6 +83,67 @@ async fn test_root_repo_common_dir_sync(
     assert_eq!(
         guest_common_dir, host_common_dir,
         "guest should see the same root_repo_common_dir as host",
+    );
+}
+
+#[gpui::test]
+async fn test_remote_file_permalink(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let fs = client_a.fs();
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "tracked.txt": "tracked",
+        }),
+    )
+    .await;
+
+    let dot_git = Path::new(path!("/project/.git"));
+    let sha = "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7";
+    fs.set_head_for_repo(dot_git, &[("tracked.txt", "tracked".into())], sha);
+    fs.set_remote_for_repo(
+        dot_git,
+        "origin",
+        "https://github.com/zed-industries/zed.git",
+    );
+
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/project"), cx_a).await;
+    project_a
+        .update(cx_a, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let tracked_path = ProjectPath {
+        worktree_id,
+        path: rel_path("tracked.txt").into(),
+    };
+    let permalink = project_b
+        .update(cx_b, |project, cx| {
+            project.get_file_permalink(&tracked_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        permalink.as_str(),
+        format!("https://github.com/zed-industries/zed/blob/{sha}/tracked.txt")
     );
 }
 
@@ -763,11 +826,9 @@ async fn test_remote_git_graph_data_and_search(
         .await;
     cx_a.update(|cx| {
         git_ui::init(cx);
-        git_graph::init(cx);
     });
     cx_b.update(|cx| {
         git_ui::init(cx);
-        git_graph::init(cx);
     });
     let active_call_a = cx_a.read(ActiveCall::global);
 
@@ -781,7 +842,7 @@ async fn test_remote_git_graph_data_and_search(
 
     let search_query = "graph search match";
     let mut rng = StdRng::seed_from_u64(7);
-    let commits = git_graph::generate_random_commit_dag(&mut rng, 12, true);
+    let commits = git_ui::git_graph::generate_random_commit_dag(&mut rng, 12, true);
 
     let dot_git = Path::new(path!("/project/.git"));
     client_a.fs().set_graph_commits(dot_git, commits.clone());
@@ -1404,4 +1465,61 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
         stats_b, expected_after_edit,
         "remote diff stats should be restored from the database after rejoining the call"
     );
+}
+
+#[gpui::test]
+async fn test_load_commit_template_over_collab(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "README.md": "# Project's README"
+            }),
+        )
+        .await;
+
+    client_a
+        .fs()
+        .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "feat: add awesome feature".to_string(),
+            })
+        })
+        .expect("Should update git state");
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repository_b = project_b.update(cx_b, |project, cx| project.active_repository(cx).unwrap());
+    let commit_template = repository_b
+        .update(cx_b, |repository, _cx| {
+            repository.load_commit_template_text()
+        })
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("Guest should be able to load the host's commit template");
+
+    assert_eq!(commit_template.template, "feat: add awesome feature");
 }

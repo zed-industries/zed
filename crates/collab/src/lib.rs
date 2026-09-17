@@ -72,24 +72,22 @@ impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         match self {
             Error::Http(code, message, headers) => {
-                log::error!("HTTP error {}: {}", code, &message);
+                log::error!("HTTP error {code}: {message}");
                 (code, headers, message).into_response()
             }
             Error::Database(error) => {
                 log::error!(
-                    "HTTP error {}: {:?}",
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &error
+                    "HTTP error {}: {error:?}",
+                    StatusCode::INTERNAL_SERVER_ERROR
                 );
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{error}")).into_response()
             }
             Error::Internal(error) => {
                 log::error!(
-                    "HTTP error {}: {:?}",
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &error
+                    "HTTP error {}: {error:?}",
+                    StatusCode::INTERNAL_SERVER_ERROR
                 );
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{error}")).into_response()
             }
         }
     }

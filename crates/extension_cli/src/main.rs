@@ -3,15 +3,20 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr as _;
 use std::sync::Arc;
 
-use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
+use ::fs::{CopyOptions, Fs, RealFs, RemoveOptions, copy_recursive};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
 use cloud_api_types::ExtensionProvides;
+use extension::build_debug_adapter_schema_path;
+use extension::extension_builder::CompilationConcurrency;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
+use http_client::Url;
 use language::LanguageConfig;
+use language::QueryFile;
 use reqwest_client::ReqwestClient;
 use settings_content::SemanticTokenRules;
 use snippet_provider::file_to_snippets;
@@ -19,6 +24,28 @@ use snippet_provider::format::VsSnippetsFile;
 use task::TaskTemplates;
 use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
+
+struct TestingContext {
+    known_resources: BTreeSet<PathBuf>,
+}
+
+impl TestingContext {
+    fn new(manifest: &ExtensionManifest, extension_path: &Path) -> Self {
+        let known_resources = manifest
+            .snippets
+            .as_ref()
+            .map(ExtensionSnippets::paths)
+            .into_iter()
+            .flatten()
+            .map(|relative_path| extension_path.join(relative_path))
+            .collect();
+        Self { known_resources }
+    }
+
+    fn is_known_resource(&self, path: &Path) -> bool {
+        self.known_resources.contains(path)
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "zed-extension")]
@@ -39,7 +66,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let fs = Arc::new(RealFs::new(None, gpui_platform::background_executor()));
+    let fs = RealFs::new(None, gpui_platform::background_executor());
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(&engine)?;
 
@@ -47,6 +74,11 @@ async fn main() -> Result<()> {
         .source_dir
         .canonicalize()
         .context("failed to canonicalize source_dir")?;
+
+    fs.create_dir(&args.scratch_dir)
+        .await
+        .context("failed to create scratch dir")?;
+
     let scratch_dir = args
         .scratch_dir
         .canonicalize()
@@ -75,22 +107,36 @@ async fn main() -> Result<()> {
         .compile_extension(
             &extension_path,
             &mut manifest,
-            CompileExtensionOptions { release: true },
+            CompileExtensionOptions {
+                release: true,
+                max_concurrency: CompilationConcurrency::Unbounded,
+            },
             fs.clone(),
         )
         .await
         .context("failed to compile extension")?;
 
+    validate_extension_manifest(&manifest)?;
     let extension_provides = manifest.provides();
     validate_extension_features(&extension_provides)?;
 
+    let cx = TestingContext::new(&manifest, &extension_path);
     let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
-    test_languages(&manifest, &extension_path, &grammars)?;
+    test_languages(&manifest, &extension_path, &grammars, &cx)?;
     test_themes(&manifest, &extension_path, fs.clone()).await?;
     test_snippets(&manifest, &extension_path, fs.clone()).await?;
+    test_debug_adapter_schemas(&manifest, &extension_path, fs.clone()).await?;
 
     let archive_dir = output_dir.join("archive");
-    fs::remove_dir_all(&archive_dir).ok();
+    fs.remove_dir(
+        &archive_dir,
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: true,
+        },
+    )
+    .await
+    .ok();
     copy_extension_resources(&manifest, &extension_path, &archive_dir, fs.clone())
         .await
         .context("failed to copy extension resources")?;
@@ -120,8 +166,16 @@ async fn main() -> Result<()> {
         wasm_api_version: manifest.lib.version.map(|version| version.to_string()),
         provides: extension_provides,
     })?;
-    fs::remove_dir_all(&archive_dir)?;
-    fs::write(output_dir.join("manifest.json"), manifest_json.as_bytes())?;
+    fs.remove_dir(
+        &archive_dir,
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await?;
+    fs.write(&output_dir.join("manifest.json"), manifest_json.as_bytes())
+        .await?;
 
     Ok(())
 }
@@ -132,68 +186,107 @@ async fn copy_extension_resources(
     output_dir: &Path,
     fs: Arc<dyn Fs>,
 ) -> Result<()> {
-    fs::create_dir_all(output_dir).context("failed to create output dir")?;
+    fs.create_dir(output_dir)
+        .await
+        .context("failed to create output dir")?;
 
     let manifest_toml = toml::to_string(&manifest).context("failed to serialize manifest")?;
-    fs::write(output_dir.join("extension.toml"), &manifest_toml)
+    fs.write(&output_dir.join("extension.toml"), manifest_toml.as_bytes())
+        .await
         .context("failed to write extension.toml")?;
 
     if manifest.lib.kind.is_some() {
-        fs::copy(
-            extension_path.join("extension.wasm"),
-            output_dir.join("extension.wasm"),
+        fs.copy_file(
+            &extension_path.join("extension.wasm"),
+            &output_dir.join("extension.wasm"),
+            CopyOptions {
+                overwrite: true,
+                ignore_if_exists: false,
+            },
         )
+        .await
         .context("failed to copy extension.wasm")?;
     }
 
     if !manifest.grammars.is_empty() {
         let source_grammars_dir = extension_path.join("grammars");
         let output_grammars_dir = output_dir.join("grammars");
-        fs::create_dir_all(&output_grammars_dir)?;
-        for grammar_name in manifest.grammars.keys() {
-            let mut grammar_filename = PathBuf::from(grammar_name.as_ref());
-            grammar_filename.set_extension("wasm");
-            fs::copy(
-                source_grammars_dir.join(&grammar_filename),
-                output_grammars_dir.join(&grammar_filename),
-            )
-            .with_context(|| format!("failed to copy grammar '{}'", grammar_filename.display()))?;
-        }
+        fs.create_dir(&output_grammars_dir).await?;
+        futures::future::try_join_all(manifest.grammars.keys().map(|grammar_name| {
+            let fs = fs.clone();
+            let source_grammars_dir = source_grammars_dir.as_path();
+            let output_grammars_dir = output_grammars_dir.as_path();
+            async move {
+                let mut grammar_filename = PathBuf::from(grammar_name.as_ref());
+                grammar_filename.set_extension("wasm");
+                fs.copy_file(
+                    &source_grammars_dir.join(&grammar_filename),
+                    &output_grammars_dir.join(&grammar_filename),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| format!("failed to copy grammar '{}'", grammar_filename.display()))
+            }
+        }))
+        .await?;
     }
 
     if !manifest.themes.is_empty() {
         let output_themes_dir = output_dir.join("themes");
-        fs::create_dir_all(&output_themes_dir)?;
-        for theme_path in &manifest.themes {
-            let theme_path = theme_path.as_std_path();
-            fs::copy(
-                extension_path.join(theme_path),
-                output_themes_dir.join(theme_path.file_name().context("invalid theme path")?),
-            )
-            .with_context(|| format!("failed to copy theme '{}'", theme_path.display()))?;
-        }
+        fs.create_dir(&output_themes_dir).await?;
+        futures::future::try_join_all(manifest.themes.iter().map(|theme_path| {
+            let fs = fs.clone();
+            let output_themes_dir = output_themes_dir.as_path();
+            async move {
+                let theme_path = theme_path.as_std_path();
+                fs.copy_file(
+                    &extension_path.join(theme_path),
+                    &output_themes_dir.join(theme_path.file_name().context("invalid theme path")?),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| format!("failed to copy theme '{}'", theme_path.display()))
+            }
+        }))
+        .await?;
     }
 
     if !manifest.icon_themes.is_empty() {
         let output_icon_themes_dir = output_dir.join("icon_themes");
-        fs::create_dir_all(&output_icon_themes_dir)?;
-        for icon_theme_path in &manifest.icon_themes {
-            let icon_theme_path = icon_theme_path.as_std_path();
-            fs::copy(
-                extension_path.join(icon_theme_path),
-                output_icon_themes_dir.join(
-                    icon_theme_path
-                        .file_name()
-                        .context("invalid icon theme path")?,
-                ),
-            )
-            .with_context(|| {
-                format!("failed to copy icon theme '{}'", icon_theme_path.display())
-            })?;
-        }
+        fs.create_dir(&output_icon_themes_dir).await?;
+        futures::future::try_join_all(manifest.icon_themes.iter().map(|icon_theme_path| {
+            let fs = fs.clone();
+            let output_icon_themes_dir = output_icon_themes_dir.as_path();
+            async move {
+                let icon_theme_path = icon_theme_path.as_std_path();
+                fs.copy_file(
+                    &extension_path.join(icon_theme_path),
+                    &output_icon_themes_dir.join(
+                        icon_theme_path
+                            .file_name()
+                            .context("invalid icon theme path")?,
+                    ),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| {
+                    format!("failed to copy icon theme '{}'", icon_theme_path.display())
+                })
+            }
+        }))
+        .await?;
 
         let output_icons_dir = output_dir.join("icons");
-        fs::create_dir_all(&output_icons_dir)?;
+        fs.create_dir(&output_icons_dir).await?;
         copy_recursive(
             fs.as_ref(),
             &extension_path.join("icons"),
@@ -209,73 +302,90 @@ async fn copy_extension_resources(
 
     if !manifest.languages.is_empty() {
         let output_languages_dir = output_dir.join("languages");
-        fs::create_dir_all(&output_languages_dir)?;
-        for language_path in &manifest.languages {
-            let language_path = language_path.as_std_path();
-            copy_recursive(
-                fs.as_ref(),
-                &extension_path.join(language_path),
-                &output_languages_dir
-                    .join(language_path.file_name().context("invalid language path")?),
-                CopyOptions {
-                    overwrite: true,
-                    ignore_if_exists: false,
-                },
-            )
-            .await
-            .with_context(|| {
-                format!("failed to copy language dir '{}'", language_path.display())
-            })?;
-        }
+        fs.create_dir(&output_languages_dir).await?;
+        futures::future::try_join_all(manifest.languages.iter().map(|language_path| {
+            let fs = fs.clone();
+            let output_languages_dir = output_languages_dir.clone();
+            async move {
+                let language_path = language_path.as_std_path();
+                copy_recursive(
+                    fs.as_ref(),
+                    &extension_path.join(language_path),
+                    &output_languages_dir
+                        .join(language_path.file_name().context("invalid language path")?),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| {
+                    format!("failed to copy language dir '{}'", language_path.display())
+                })
+            }
+        }))
+        .await?;
     }
 
     if !manifest.debug_adapters.is_empty() {
-        for (debug_adapter, entry) in &manifest.debug_adapters {
-            let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, entry)?;
-            let parent = schema_path
-                .parent()
-                .with_context(|| format!("invalid empty schema path for {debug_adapter}"))?;
-            let schema_path = schema_path.as_std_path();
-            fs::create_dir_all(output_dir.join(parent))?;
-            copy_recursive(
-                fs.as_ref(),
-                &extension_path.join(&schema_path),
-                &output_dir.join(&schema_path),
-                CopyOptions {
-                    overwrite: true,
-                    ignore_if_exists: false,
-                },
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to copy debug adapter schema '{}'",
-                    schema_path.display(),
-                )
-            })?;
-        }
+        futures::future::try_join_all(manifest.debug_adapters.iter().map(
+            |(debug_adapter, entry)| {
+                let fs = fs.clone();
+                let debug_adapter = debug_adapter.clone();
+                async move {
+                    let schema_path =
+                        extension::build_debug_adapter_schema_path(&debug_adapter, &entry)?;
+                    let parent = schema_path.parent().with_context(|| {
+                        format!("invalid empty schema path for {debug_adapter}")
+                    })?;
+                    let schema_path = schema_path.as_std_path();
+                    fs.create_dir(&output_dir.join(parent)).await?;
+                    copy_recursive(
+                        fs.as_ref(),
+                        &extension_path.join(schema_path),
+                        &output_dir.join(schema_path),
+                        CopyOptions {
+                            overwrite: true,
+                            ignore_if_exists: false,
+                        },
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to copy debug adapter schema '{}'",
+                            schema_path.display(),
+                        )
+                    })
+                }
+            },
+        ))
+        .await?;
     }
 
     if let Some(snippets) = manifest.snippets.as_ref() {
-        for snippets_path in snippets.paths() {
-            let parent = snippets_path.parent();
-            if let Some(parent) = parent.filter(|p| p.components().next().is_some()) {
-                fs::create_dir_all(output_dir.join(parent))?;
+        futures::future::try_join_all(snippets.paths().map(|snippets_path| {
+            let fs = fs.clone();
+            async move {
+                let parent = snippets_path.parent();
+                if let Some(parent) = parent.filter(|p| p.components().next().is_some()) {
+                    fs.create_dir(&output_dir.join(parent)).await?;
+                }
+                copy_recursive(
+                    fs.as_ref(),
+                    &extension_path.join(&snippets_path),
+                    &output_dir.join(&snippets_path),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| {
+                    format!("failed to copy snippets from '{}'", snippets_path.display())
+                })
             }
-            copy_recursive(
-                fs.as_ref(),
-                &extension_path.join(&snippets_path),
-                &output_dir.join(&snippets_path),
-                CopyOptions {
-                    overwrite: true,
-                    ignore_if_exists: false,
-                },
-            )
-            .await
-            .with_context(|| {
-                format!("failed to copy snippets from '{}'", snippets_path.display())
-            })?;
-        }
+        }))
+        .await?;
     }
 
     Ok(())
@@ -327,6 +437,82 @@ fn validate_extension_features(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum ExtensionManifestValidationError {
+    #[error("extension manifest must specify a name")]
+    MissingName,
+    #[error("extension manifest must specify a description")]
+    MissingDescription,
+    #[error("extension manifest description must be more expressive than the name")]
+    DescriptionNotLongerThanName,
+    #[error("extension manifest must specify at least one author")]
+    MissingAuthors,
+    #[error("extension manifest must specify a repository")]
+    MissingRepository,
+    #[error("extension manifest repository is not a valid URL: {0}")]
+    InvalidRepository(String),
+    #[error(
+        "extension manifest must not provide language model providers, \
+        as these are currently unsupported"
+    )]
+    LanguageModelProvidersUnsupported,
+}
+
+fn validate_extension_manifest(
+    manifest: &ExtensionManifest,
+) -> Result<(), ExtensionManifestValidationError> {
+    if manifest.name.trim().is_empty() {
+        return Err(ExtensionManifestValidationError::MissingName);
+    }
+
+    let description_is_empty = manifest
+        .description
+        .as_ref()
+        .is_none_or(|description| description.trim().is_empty());
+    if description_is_empty {
+        return Err(ExtensionManifestValidationError::MissingDescription);
+    }
+
+    let description_is_longer_than_name =
+        manifest.description.as_ref().is_some_and(|description| {
+            description.trim().chars().count() > manifest.name.trim().chars().count()
+        });
+    if !description_is_longer_than_name {
+        return Err(ExtensionManifestValidationError::DescriptionNotLongerThanName);
+    }
+
+    if manifest
+        .authors
+        .iter()
+        .all(|author| author.trim().is_empty())
+    {
+        return Err(ExtensionManifestValidationError::MissingAuthors);
+    }
+
+    let repository = manifest
+        .repository
+        .as_ref()
+        .map(|repository| repository.trim())
+        .filter(|repository| !repository.is_empty())
+        .ok_or(ExtensionManifestValidationError::MissingRepository)?;
+
+    let repository_url = repository
+        .parse::<Url>()
+        .map_err(|_| ExtensionManifestValidationError::InvalidRepository(repository.to_string()))?;
+
+    if repository_url.host_str().is_none() {
+        return Err(ExtensionManifestValidationError::InvalidRepository(
+            repository.to_string(),
+        ));
+    };
+
+    if !manifest.language_model_providers.is_empty() {
+        return Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported);
+    }
+
+    Ok(())
+}
+
 fn test_grammars(
     manifest: &ExtensionManifest,
     extension_path: &Path,
@@ -352,6 +538,7 @@ fn test_languages(
     manifest: &ExtensionManifest,
     extension_path: &Path,
     grammars: &HashMap<String, Language>,
+    context: &TestingContext,
 ) -> Result<()> {
     for relative_language_dir in &manifest.languages {
         let language_dir = extension_path.join(relative_language_dir);
@@ -399,19 +586,26 @@ fn test_languages(
                                 )
                             })?;
                 }
-                _ if file_name.ends_with(".scm") => {
-                    let grammar = grammar.with_context(|| {
-                        format! {
-                            "language {} provides query {} but no grammar",
-                            config.name,
-                            file_path.display()
-                        }
-                    })?;
+                _ => {
+                    if let Ok(_query) = file_name.parse::<QueryFile>() {
+                        let grammar = grammar.with_context(|| {
+                            format! {
+                                "language {} provides query {} but no grammar",
+                                config.name,
+                                file_path.display()
+                            }
+                        })?;
 
-                    let query_source = fs::read_to_string(&file_path)?;
-                    let _query = Query::new(grammar, &query_source)?;
+                        let query_source = fs::read_to_string(&file_path)?;
+                        let _query = Query::new(grammar, &query_source)?;
+                    } else if file_name.ends_with(".scm") {
+                        bail!("query {file_name} is not supported by Zed and should be removed")
+                    } else if !context.is_known_resource(&file_path) {
+                        bail!(
+                            "'{file_name}' is not a supported file in a language directory and should be removed"
+                        )
+                    }
                 }
-                _ => {}
             }
         }
 
@@ -486,11 +680,222 @@ async fn test_snippets(
     Ok(())
 }
 
+async fn test_debug_adapter_schemas(
+    manifest: &ExtensionManifest,
+    extension_path: &Path,
+    fs: Arc<dyn Fs>,
+) -> Result<()> {
+    futures::future::try_join_all(manifest.debug_adapters.iter().map(
+        |(debug_adapter_name, meta)| {
+            let fs = fs.clone();
+            async move {
+                let debug_adapter_schema_path =
+                    extension_path.join(build_debug_adapter_schema_path(debug_adapter_name, meta)?);
+
+                let debug_adapter_schema =
+                    fs.load(&debug_adapter_schema_path).await.with_context(|| {
+                        anyhow::anyhow!(
+                            "failed to read debug adapter schema for \
+                        `{debug_adapter_name}` from `{debug_adapter_schema_path:?}`"
+                        )
+                    })?;
+                _ = serde_json::Value::from_str(&debug_adapter_schema).with_context(|| {
+                    anyhow::anyhow!(
+                        "Debug adapter schema for `{debug_adapter_name}`\
+                        (path: `{debug_adapter_schema_path:?}`) is not a valid JSON"
+                    )
+                })?;
+
+                Ok(())
+            }
+        },
+    ))
+    .await
+    .map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use cloud_api_types::ExtensionProvides;
+    use extension::{LanguageModelProviderManifestEntry, SchemaVersion};
 
     use super::*;
+
+    fn valid_manifest() -> ExtensionManifest {
+        ExtensionManifest {
+            id: "test".into(),
+            name: "Test Extension".to_string(),
+            version: "1.0.0".into(),
+            schema_version: SchemaVersion::ZERO,
+            description: Some("A test extension".to_string()),
+            repository: Some("https://github.com/zed-industries/zed".to_string()),
+            authors: vec!["Zed".to_string()],
+            lib: Default::default(),
+            themes: Vec::new(),
+            icon_themes: Vec::new(),
+            languages: Vec::new(),
+            grammars: BTreeMap::default(),
+            language_servers: BTreeMap::default(),
+            context_servers: BTreeMap::default(),
+            slash_commands: BTreeMap::default(),
+            snippets: None,
+            capabilities: Vec::new(),
+            debug_adapters: BTreeMap::default(),
+            debug_locators: BTreeMap::default(),
+            language_model_providers: BTreeMap::default(),
+        }
+    }
+
+    #[test]
+    fn test_validate_manifest_valid() {
+        assert!(validate_extension_manifest(&valid_manifest()).is_ok());
+    }
+
+    #[test]
+    fn test_validate_manifest_missing_name() {
+        let manifest = ExtensionManifest {
+            name: "   ".to_string(),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingName),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_missing_description() {
+        let manifest = ExtensionManifest {
+            description: None,
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingDescription),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_empty_description() {
+        let manifest = ExtensionManifest {
+            description: Some("  ".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingDescription),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_description_equal_to_name() {
+        let manifest = ExtensionManifest {
+            description: Some("Test Extension".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::DescriptionNotLongerThanName),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_description_shorter_than_name() {
+        let manifest = ExtensionManifest {
+            description: Some("Test".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::DescriptionNotLongerThanName),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_missing_authors() {
+        let manifest = ExtensionManifest {
+            authors: Vec::new(),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingAuthors),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_blank_authors() {
+        let manifest = ExtensionManifest {
+            authors: vec!["   ".to_string()],
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingAuthors),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_missing_repository() {
+        let manifest = ExtensionManifest {
+            repository: None,
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingRepository),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_invalid_repository() {
+        let manifest = ExtensionManifest {
+            repository: Some("not-a-valid-url".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::InvalidRepository(
+                "not-a-valid-url".to_string()
+            )),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_repository_without_host() {
+        let manifest = ExtensionManifest {
+            repository: Some("file:///some/local/path".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::InvalidRepository(
+                "file:///some/local/path".to_string()
+            )),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_language_model_providers_unsupported() {
+        let mut language_model_providers = BTreeMap::new();
+        language_model_providers.insert(
+            "provider".into(),
+            LanguageModelProviderManifestEntry {
+                name: "Provider".to_string(),
+                icon: None,
+            },
+        );
+        let manifest = ExtensionManifest {
+            language_model_providers,
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported),
+        );
+    }
 
     #[test]
     fn test_validate_empty_features() {

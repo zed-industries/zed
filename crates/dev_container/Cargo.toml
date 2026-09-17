@@ -4,6 +4,9 @@ version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
 
+[lib]
+doctest = false
+
 [dependencies]
 anyhow.workspace = true
 async-tar.workspace = true
@@ -11,6 +14,7 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
+serde_yaml.workspace = true
 yaml-rust2.workspace = true
 shlex.workspace = true
 http_client.workspace = true
@@ -20,7 +24,6 @@ fs.workspace = true
 futures.workspace = true
 log.workspace = true
 menu.workspace = true
-paths.workspace = true
 regex.workspace = true
 picker.workspace = true
 project.workspace = true
@@ -33,6 +36,7 @@ workspace.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true

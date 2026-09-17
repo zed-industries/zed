@@ -54,7 +54,6 @@ pub struct ImportCursorSettings {
 }
 
 pub const FIRST_OPEN: &str = "first_open";
-pub const DOCS_URL: &str = "https://zed.dev/docs/";
 
 actions!(
     onboarding,
@@ -238,6 +237,7 @@ impl Onboarding {
                 Some(Plan::ZedPro) => "pro",
                 Some(Plan::ZedProTrial) => "trial",
                 Some(Plan::ZedBusiness) => "business",
+                Some(Plan::ZedVip) => "vip",
                 Some(Plan::ZedStudent) => "student",
                 Some(Plan::ZedFree) | None => "free",
             }
@@ -334,7 +334,7 @@ impl Render for Onboarding {
                     .child(
                         v_flex()
                             .min_w_0()
-                            .max_w(rems_from_px(780.))
+                            .max_w(rems_from_px(780_f32))
                             .w_full()
                             .mx_auto()
                             .p_12()
@@ -366,7 +366,7 @@ impl Render for Onboarding {
                                         Button::new("finish_setup", "Finish Setup")
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Medium)
-                                            .width(rems_from_px(200.))
+                                            .width(rems_from_px(200_f32))
                                             .key_binding(KeyBinding::for_action_in(
                                                 &Finish,
                                                 &self.focus_handle,
@@ -486,7 +486,7 @@ pub async fn handle_import_vscode_settings(
                     gpui::PromptLevel::Info,
                     &format!("Could not find or load a {source} settings file"),
                     None,
-                    &["Ok"],
+                    &["OK"],
                 );
                 return;
             }
@@ -502,7 +502,7 @@ pub async fn handle_import_vscode_settings(
                 truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128),
             ),
             None,
-            &["Ok", "Cancel"],
+            &["Import", "Cancel"],
         );
         let result = cx.spawn(async move |_| prompt.await.ok()).await;
         if result != Some(0) {
@@ -630,7 +630,6 @@ impl workspace::SerializableItem for Onboarding {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;

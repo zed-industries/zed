@@ -3,20 +3,13 @@ use super::*;
 impl Database {
     /// Creates a new user.
     #[cfg(feature = "test-support")]
-    pub async fn create_user(&self, admin: bool, params: NewUserParams) -> Result<NewUserResult> {
+    pub async fn create_user(&self, admin: bool) -> Result<NewUserResult> {
         self.transaction(|tx| async {
             let tx = tx;
             let user = user::Entity::insert(user::ActiveModel {
-                github_login: ActiveValue::set(params.github_login.clone()),
-                github_user_id: ActiveValue::set(params.github_user_id),
                 admin: ActiveValue::set(admin),
                 ..Default::default()
             })
-            .on_conflict(
-                OnConflict::column(user::Column::GithubUserId)
-                    .update_columns([user::Column::Admin, user::Column::GithubLogin])
-                    .to_owned(),
-            )
             .exec_with_returning(&*tx)
             .await?;
 

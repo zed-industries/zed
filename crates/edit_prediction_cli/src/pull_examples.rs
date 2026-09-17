@@ -12,10 +12,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use telemetry_events::EditPredictionRating;
 
-use zeta_prompt::{ZetaFormat, ZetaPromptInput, excerpt_range_for_format};
+use zeta_prompt::{Zeta2PromptInput, ZetaFormat, excerpt_range_for_format};
 
 use crate::PredictionProvider;
-use crate::example::{Example, ExamplePrompt};
+use crate::example::{Example, ExamplePrediction, ExamplePrompt};
 use crate::progress::{InfoStyle, Progress, Step};
 use edit_prediction::example_spec::{ExampleSpec, TelemetrySource};
 
@@ -24,10 +24,13 @@ pub(crate) const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
 const SNOWFLAKE_TIMEOUT_CODE: &str = "000630";
 
 /// Minimum Zed version for filtering captured examples.
-/// For example, `MinCaptureVersion { minor: 224, patch: 1 }` means only pull examples
-/// where `zed_version >= 0.224.1`.
+/// For example, `MinCaptureVersion { major: 0, minor: 224, patch: 1 }` means only pull
+/// examples where `zed_version >= 0.224.1`. The `major` component is required because Zed
+/// moved from the `0.<minor>.<patch>` scheme to `1.<minor>.<patch>`; comparing on `minor`
+/// alone would exclude all `1.*` versions (whose `minor` resets to small values).
 #[derive(Clone, Copy, Debug)]
 pub struct MinCaptureVersion {
+    pub major: u32,
     pub minor: u32,
     pub patch: u32,
 }
@@ -45,9 +48,20 @@ pub fn parse_captured_after_input(input: &str) -> Option<&str> {
     input.strip_prefix("captured-after:")
 }
 
+/// Parse an input token of the form `accepted-after:{timestamp}`.
+pub fn parse_accepted_after_input(input: &str) -> Option<&str> {
+    input.strip_prefix("accepted-after:")
+}
+
 /// Parse an input token of the form `rejected-after:{timestamp}`.
-pub fn parse_rejected_after_input(input: &str) -> Option<&str> {
-    input.strip_prefix("rejected-after:")
+pub fn parse_rejected_after_input(input: &str) -> Option<(bool, &str)> {
+    if let Some(timestamp) = input.strip_prefix("rejected-after:") {
+        Some((false, timestamp))
+    } else if let Some(timestamp) = input.strip_prefix("explicitly-rejected-after:") {
+        Some((true, timestamp))
+    } else {
+        None
+    }
 }
 
 /// Parse an input token of the form `requested-after:{timestamp}`.
@@ -543,7 +557,7 @@ pub(crate) async fn run_sql(
 
 pub async fn fetch_rejected_examples_after(
     http_client: Arc<dyn HttpClient>,
-    after_timestamps: &[String],
+    after_timestamps: &[(bool, String)],
     max_rows_per_timestamp: Option<usize>,
     offset: usize,
     background_executor: BackgroundExecutor,
@@ -557,15 +571,16 @@ pub async fn fetch_rejected_examples_after(
 
     let mut all_examples = Vec::new();
 
-    for after_date in after_timestamps.iter() {
+    for (explicit, after_date) in after_timestamps.iter() {
         let step_progress_name = format!("rejected>{after_date}");
         let step_progress = progress.start(Step::PullExamples, &step_progress_name);
         step_progress.set_substatus("querying");
 
-        let min_minor_str = min_capture_version.map(|version| version.minor.to_string());
-        let min_patch_str = min_capture_version.map(|version| version.patch.to_string());
-        let min_minor_str_ref = min_minor_str.as_deref();
-        let min_patch_str_ref = min_patch_str.as_deref();
+        let min_version_str = min_capture_version.map(|version| {
+            (version.major as u64 * 1_000_000 + version.minor as u64 * 1_000 + version.patch as u64)
+                .to_string()
+        });
+        let min_version_ref = min_version_str.as_deref();
 
         let statement = indoc! {r#"
             SELECT
@@ -581,16 +596,107 @@ pub async fn fetch_rejected_examples_after(
                 ep_rejected_reason AS reason,
                 zed_version AS zed_version
             FROM ZED_DBT.DBT_PROD.fct_edit_prediction_examples
-            WHERE ep_outcome LIKE 'Rejected%'
+            WHERE ep_outcome LIKE ?
                 AND is_ep_shown_before_rejected = true
                 AND requested_at > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
-                    TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) > ?
-                    OR (
-                        TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) = ?
-                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER) >= ?
-                    )
-                ))
+                    COALESCE(TRY_CAST(SPLIT_PART(zed_version, '.', 1) AS INTEGER), 0) * 1000000
+                    + COALESCE(TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER), 0) * 1000
+                    + COALESCE(TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER), 0)
+                ) >= ?)
+            ORDER BY requested_at ASC
+            LIMIT ?
+            OFFSET ?
+        "#};
+
+        let examples = fetch_examples_with_query(
+            http_client.clone(),
+            &step_progress,
+            background_executor.clone(),
+            statement,
+            QueryRetryState {
+                resume_after: after_date.clone(),
+                remaining_limit: max_rows_per_timestamp,
+                offset,
+            },
+            |retry_state| {
+                json!({
+                    "1": { "type": "TEXT", "value": if *explicit { "Rejected (Explicit)" } else { "Rejected%" } },
+                    "2": { "type": "TEXT", "value": retry_state.resume_after },
+                    "3": { "type": "FIXED", "value": min_version_ref },
+                    "4": { "type": "FIXED", "value": min_version_ref },
+                    "5": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "6": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                })
+            },
+            &[
+                "request_id",
+                "device_id",
+                "time",
+                "input",
+                "prompt",
+                "output",
+                "settled_editable_region",
+                "was_shown",
+                "reason",
+                "zed_version",
+            ],
+            rejected_examples_from_response,
+        )
+        .await?;
+
+        all_examples.extend(examples);
+    }
+
+    Ok(all_examples)
+}
+
+pub async fn fetch_accepted_examples_after(
+    http_client: Arc<dyn HttpClient>,
+    after_timestamps: &[String],
+    max_rows_per_timestamp: Option<usize>,
+    offset: usize,
+    background_executor: BackgroundExecutor,
+    min_capture_version: Option<MinCaptureVersion>,
+) -> Result<Vec<Example>> {
+    if after_timestamps.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let progress = Progress::global();
+
+    let mut all_examples = Vec::new();
+
+    for after_date in after_timestamps.iter() {
+        let step_progress_name = format!("accepted>{after_date}");
+        let step_progress = progress.start(Step::PullExamples, &step_progress_name);
+        step_progress.set_substatus("querying");
+
+        let min_version_str = min_capture_version.map(|version| {
+            (version.major as u64 * 1_000_000 + version.minor as u64 * 1_000 + version.patch as u64)
+                .to_string()
+        });
+        let min_version_ref = min_version_str.as_deref();
+
+        let statement = indoc! {r#"
+            SELECT
+                ep_request_id AS request_id,
+                device_id AS device_id,
+                requested_at::string AS continuation_time,
+                requested_at::string AS time,
+                input_payload AS input,
+                prompt AS prompt,
+                requested_output AS output,
+                settled_editable_region AS settled_editable_region,
+                zed_version AS zed_version
+            FROM ZED_DBT.DBT_PROD.fct_edit_prediction_examples
+            WHERE ep_outcome = 'Accepted'
+                AND requested_at > TRY_TO_TIMESTAMP_NTZ(?)
+                AND (? IS NULL OR (
+                    COALESCE(TRY_CAST(SPLIT_PART(zed_version, '.', 1) AS INTEGER), 0) * 1000000
+                    + COALESCE(TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER), 0) * 1000
+                    + COALESCE(TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER), 0)
+                ) >= ?)
             ORDER BY requested_at ASC
             LIMIT ?
             OFFSET ?
@@ -609,12 +715,10 @@ pub async fn fetch_rejected_examples_after(
             |retry_state| {
                 json!({
                     "1": { "type": "TEXT", "value": retry_state.resume_after },
-                    "2": { "type": "FIXED", "value": min_minor_str_ref },
-                    "3": { "type": "FIXED", "value": min_minor_str_ref },
-                    "4": { "type": "FIXED", "value": min_minor_str_ref },
-                    "5": { "type": "FIXED", "value": min_patch_str_ref },
-                    "6": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
-                    "7": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                    "2": { "type": "FIXED", "value": min_version_ref },
+                    "3": { "type": "FIXED", "value": min_version_ref },
+                    "4": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "5": { "type": "FIXED", "value": retry_state.offset.to_string() }
                 })
             },
             &[
@@ -625,11 +729,9 @@ pub async fn fetch_rejected_examples_after(
                 "prompt",
                 "output",
                 "settled_editable_region",
-                "was_shown",
-                "reason",
                 "zed_version",
             ],
-            rejected_examples_from_response,
+            accepted_examples_from_response,
         )
         .await?;
 
@@ -664,10 +766,11 @@ pub async fn fetch_requested_examples_after(
         let step_progress = progress.start(Step::PullExamples, &step_progress_name);
         step_progress.set_substatus("querying");
 
-        let min_minor_str = min_capture_version.map(|version| version.minor.to_string());
-        let min_patch_str = min_capture_version.map(|version| version.patch.to_string());
-        let min_minor_str_ref = min_minor_str.as_deref();
-        let min_patch_str_ref = min_patch_str.as_deref();
+        let min_version_str = min_capture_version.map(|version| {
+            (version.major as u64 * 1_000_000 + version.minor as u64 * 1_000 + version.patch as u64)
+                .to_string()
+        });
+        let min_version_ref = min_version_str.as_deref();
 
         let statement = indoc! {r#"
             SELECT
@@ -680,12 +783,10 @@ pub async fn fetch_requested_examples_after(
             FROM ZED_DBT.DBT_PROD.fct_edit_prediction_examples
             WHERE requested_at > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
-                    TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) > ?
-                    OR (
-                        TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) = ?
-                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER) >= ?
-                    )
-                ))
+                    COALESCE(TRY_CAST(SPLIT_PART(zed_version, '.', 1) AS INTEGER), 0) * 1000000
+                    + COALESCE(TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER), 0) * 1000
+                    + COALESCE(TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER), 0)
+                ) >= ?)
             ORDER BY requested_at ASC
             LIMIT ?
             OFFSET ?
@@ -704,12 +805,10 @@ pub async fn fetch_requested_examples_after(
             |retry_state| {
                 json!({
                     "1": { "type": "TEXT", "value": retry_state.resume_after },
-                    "2": { "type": "FIXED", "value": min_minor_str_ref },
-                    "3": { "type": "FIXED", "value": min_minor_str_ref },
-                    "4": { "type": "FIXED", "value": min_minor_str_ref },
-                    "5": { "type": "FIXED", "value": min_patch_str_ref },
-                    "6": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
-                    "7": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                    "2": { "type": "FIXED", "value": min_version_ref },
+                    "3": { "type": "FIXED", "value": min_version_ref },
+                    "4": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "5": { "type": "FIXED", "value": retry_state.offset.to_string() }
                 })
             },
             &["request_id", "device_id", "time", "input", "zed_version"],
@@ -744,10 +843,11 @@ pub async fn fetch_captured_examples_after(
         let step_progress = progress.start(Step::PullExamples, &step_progress_name);
         step_progress.set_substatus("querying");
 
-        let min_minor_str = min_capture_version.map(|version| version.minor.to_string());
-        let min_patch_str = min_capture_version.map(|version| version.patch.to_string());
-        let min_minor_str_ref = min_minor_str.as_deref();
-        let min_patch_str_ref = min_patch_str.as_deref();
+        let min_version_str = min_capture_version.map(|version| {
+            (version.major as u64 * 1_000_000 + version.minor as u64 * 1_000 + version.patch as u64)
+                .to_string()
+        });
+        let min_version_ref = min_version_str.as_deref();
 
         let statement = indoc! {r#"
             SELECT
@@ -764,12 +864,10 @@ pub async fn fetch_captured_examples_after(
                 AND example_payload IS NOT NULL
                 AND requested_at > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
-                    TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) > ?
-                    OR (
-                        TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) = ?
-                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER) >= ?
-                    )
-                ))
+                    COALESCE(TRY_CAST(SPLIT_PART(zed_version, '.', 1) AS INTEGER), 0) * 1000000
+                    + COALESCE(TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER), 0) * 1000
+                    + COALESCE(TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER), 0)
+                ) >= ?)
             ORDER BY requested_at ASC
             LIMIT ?
             OFFSET ?
@@ -788,12 +886,10 @@ pub async fn fetch_captured_examples_after(
             |retry_state| {
                 json!({
                     "1": { "type": "TEXT", "value": retry_state.resume_after },
-                    "2": { "type": "FIXED", "value": min_minor_str_ref },
-                    "3": { "type": "FIXED", "value": min_minor_str_ref },
-                    "4": { "type": "FIXED", "value": min_minor_str_ref },
-                    "5": { "type": "FIXED", "value": min_patch_str_ref },
-                    "6": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
-                    "7": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                    "2": { "type": "FIXED", "value": min_version_ref },
+                    "3": { "type": "FIXED", "value": min_version_ref },
+                    "4": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "5": { "type": "FIXED", "value": retry_state.offset.to_string() }
                 })
             },
             &[
@@ -1034,7 +1130,7 @@ fn rated_examples_from_response<'a>(
 
             let request_id = get_string("request_id");
             let inputs_json = get_json("inputs");
-            let inputs: Option<ZetaPromptInput> = match &inputs_json {
+            let inputs: Option<Zeta2PromptInput> = match &inputs_json {
                 Some(v) => match serde_json::from_value(v.clone()) {
                     Ok(parsed) => Some(parsed),
                     Err(e) => {
@@ -1092,7 +1188,7 @@ fn build_rated_example(
     request_id: Option<String>,
     device_id: String,
     time: String,
-    input: ZetaPromptInput,
+    input: Zeta2PromptInput,
     output: String,
     settled_editable_region: Option<String>,
     rating: String,
@@ -1200,7 +1296,7 @@ fn requested_examples_from_response<'a>(
             let device_id = get_string("device_id");
             let time = get_string("time");
             let input_json = get_json("input");
-            let input: Option<ZetaPromptInput> =
+            let input: Option<Zeta2PromptInput> =
                 input_json.clone().and_then(|v| serde_json::from_value(v).ok());
             let zed_version = get_string("zed_version");
 
@@ -1280,7 +1376,7 @@ fn settled_examples_from_response<'a>(
             let time = get_string("time");
             let input_raw = get_value("input");
             let input_json = parse_json_value(input_raw.as_ref());
-            let input: Option<ZetaPromptInput> = input_json
+            let input: Option<Zeta2PromptInput> = input_json
                 .as_ref()
                 .and_then(|parsed| serde_json::from_value(parsed.clone()).ok());
             let requested_output = get_string("requested_output");
@@ -1401,7 +1497,7 @@ fn captured_examples_from_response<'a>(
             let time = get_string("time");
             let input_raw = get_value("input");
             let input_json = parse_json_value(input_raw.as_ref());
-            let input: Option<ZetaPromptInput> = input_json
+            let input: Option<Zeta2PromptInput> = input_json
                 .as_ref()
                 .and_then(|parsed| serde_json::from_value(parsed.clone()).ok());
             let example_raw = get_value("example");
@@ -1484,7 +1580,7 @@ fn build_settled_example(
     request_id: String,
     device_id: String,
     time: String,
-    input: ZetaPromptInput,
+    input: Zeta2PromptInput,
     requested_output: String,
     settled_editable_region: String,
     requested_format: ZetaFormat,
@@ -1540,7 +1636,7 @@ fn build_captured_example(
     request_id: String,
     device_id: String,
     time: String,
-    input: ZetaPromptInput,
+    input: Zeta2PromptInput,
     mut example_spec: ExampleSpec,
     settled_editable_region: String,
     zed_version: Option<String>,
@@ -1625,7 +1721,7 @@ fn rejected_examples_from_response<'a>(
             let device_id = get_string("device_id");
             let time = get_string("time");
             let input_json = get_json("input");
-            let input: Option<ZetaPromptInput> =
+            let input: Option<Zeta2PromptInput> =
                 input_json.clone().and_then(|v| serde_json::from_value(v).ok());
             let prompt = get_string("prompt");
             let output = get_string("output");
@@ -1672,7 +1768,7 @@ fn build_rejected_example(
     request_id: String,
     device_id: String,
     time: String,
-    input: ZetaPromptInput,
+    input: Zeta2PromptInput,
     prompt: Option<String>,
     output: String,
     settled_editable_region: Option<String>,
@@ -1705,10 +1801,19 @@ fn build_rejected_example(
         Some(RejectionInfo { reason, was_shown }),
         zed_version,
     );
-    example.spec.rejected_patch = Some(rejected_patch);
+    example.spec.rejected_patch = Some(rejected_patch.clone());
     if let Some(expected_patch) = expected_patch {
         example.spec.expected_patches = vec![expected_patch];
     }
+    example.predictions.push(ExamplePrediction {
+        provider: PredictionProvider::default(),
+        actual_output: output.clone(),
+        actual_patch: Some(rejected_patch),
+        actual_cursor: None,
+        error: None,
+        cumulative_logprob: None,
+        avg_logprob: None,
+    });
     example.prompt = prompt.map(|prompt| ExamplePrompt {
         input: prompt,
         expected_output: None,
@@ -1724,11 +1829,148 @@ struct RejectionInfo {
     was_shown: bool,
 }
 
+fn accepted_examples_from_response<'a>(
+    response: &'a SnowflakeStatementResponse,
+    column_indices: &'a std::collections::HashMap<String, usize>,
+) -> Result<Box<dyn Iterator<Item = Example> + 'a>> {
+    if let Some(code) = &response.code {
+        if code != SNOWFLAKE_SUCCESS_CODE {
+            anyhow::bail!(
+                "snowflake sql api returned error code={code} message={}",
+                response.message.as_deref().unwrap_or("<no message>")
+            );
+        }
+    }
+
+    let iter = response
+        .data
+        .iter()
+        .enumerate()
+        .filter_map(move |(row_index, data_row)| {
+            let get_string = |name: &str| -> Option<String> {
+                let index = column_indices.get(name).copied()?;
+                match data_row.get(index)? {
+                    JsonValue::String(s) => Some(s.clone()),
+                    JsonValue::Null => None,
+                    other => Some(other.to_string()),
+                }
+            };
+
+            let get_json = |name: &str| -> Option<JsonValue> {
+                let index = column_indices.get(name).copied()?;
+                let value = data_row.get(index)?;
+                if value.is_null() {
+                    return None;
+                }
+                match value {
+                    JsonValue::String(s) => serde_json::from_str(s).ok(),
+                    other => Some(other.clone()),
+                }
+            };
+
+            let request_id_str = get_string("request_id");
+            let device_id = get_string("device_id");
+            let time = get_string("time");
+            let input_json = get_json("input");
+            let input: Option<Zeta2PromptInput> =
+                input_json.clone().and_then(|v| serde_json::from_value(v).ok());
+            let prompt = get_string("prompt");
+            let output = get_string("output");
+            let settled_editable_region = get_string("settled_editable_region");
+            let zed_version = get_string("zed_version");
+
+            match (request_id_str.clone(), device_id.clone(), time.clone(), input, output.clone()) {
+                (Some(request_id), Some(device_id), Some(time), Some(input), Some(output)) => {
+                    Some(build_accepted_example(
+                        request_id,
+                        device_id,
+                        time,
+                        input,
+                        prompt,
+                        output,
+                        settled_editable_region,
+                        zed_version,
+                    ))
+                }
+                _ => {
+                    log::warn!(
+                        "skipping row {row_index}: missing fields - request_id={:?} device_id={:?} time={:?} input={:?} output={:?}",
+                        request_id_str.is_some(),
+                        device_id.is_some(),
+                        time.is_some(),
+                        input_json.is_some(),
+                        output.is_some(),
+                    );
+                    None
+                }
+            }
+        });
+
+    Ok(Box::new(iter))
+}
+
+fn build_accepted_example(
+    request_id: String,
+    device_id: String,
+    time: String,
+    input: Zeta2PromptInput,
+    prompt: Option<String>,
+    output: String,
+    settled_editable_region: Option<String>,
+    zed_version: Option<String>,
+) -> Example {
+    let accepted_patch = build_output_patch(
+        &input.cursor_path,
+        input.cursor_excerpt.as_ref(),
+        &input.excerpt_ranges.editable_350,
+        &output,
+    );
+    let expected_patch = settled_editable_region
+        .as_ref()
+        .map(|settled_editable_region| {
+            build_output_patch(
+                &input.cursor_path,
+                input.cursor_excerpt.as_ref(),
+                &input.excerpt_ranges.editable_350,
+                settled_editable_region,
+            )
+        });
+    let mut example = build_example_from_snowflake(
+        request_id,
+        device_id,
+        time,
+        input,
+        vec!["accepted".to_string()],
+        None,
+        zed_version,
+    );
+    if let Some(expected_patch) = expected_patch {
+        example.spec.expected_patches = vec![expected_patch];
+    }
+    example.predictions.push(ExamplePrediction {
+        provider: PredictionProvider::default(),
+        actual_output: output.clone(),
+        actual_patch: Some(accepted_patch),
+        actual_cursor: None, // todo: why no cursor?
+        error: None,
+        cumulative_logprob: None,
+        avg_logprob: None,
+    });
+    example.prompt = prompt.map(|prompt| ExamplePrompt {
+        input: prompt,
+        expected_output: Some(output),
+        rejected_output: None,
+        prefill: None,
+        provider: PredictionProvider::default(),
+    });
+    example
+}
+
 fn build_example_from_snowflake(
     request_id: String,
     device_id: String,
     time: String,
-    input: ZetaPromptInput,
+    input: Zeta2PromptInput,
     tags: Vec<String>,
     rejection: Option<RejectionInfo>,
     zed_version: Option<String>,

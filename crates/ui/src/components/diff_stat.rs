@@ -44,12 +44,12 @@ impl RenderOnce for DiffStat {
             .gap_1()
             .child(
                 Label::new(format!("+\u{2009}{added}"))
-                    .color(Color::Success)
+                    .color(Color::VersionControlAdded)
                     .size(self.label_size),
             )
             .child(
                 Label::new(format!("\u{2012}\u{2009}{removed}"))
-                    .color(Color::Error)
+                    .color(Color::VersionControlDeleted)
                     .size(self.label_size),
             )
             .when_some(tooltip, |this, tooltip| {
@@ -63,7 +63,12 @@ impl Component for DiffStat {
         ComponentScope::VersionControl
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A compact summary of additions and deletions for a diff, \
+        displayed as colored insertion and deletion counts."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let container = || {
             h_flex()
                 .py_4()
@@ -81,10 +86,8 @@ impl Component for DiffStat {
                 .into_any_element(),
         )];
 
-        Some(
-            example_group(diff_stat_example)
-                .vertical()
-                .into_any_element(),
-        )
+        example_group(diff_stat_example)
+            .vertical()
+            .into_any_element()
     }
 }

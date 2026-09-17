@@ -1,5 +1,5 @@
 use action_log::ActionLog;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -155,11 +155,13 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
 ///   Do NOT retry reading the same file without line numbers if you receive an outline.
 /// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
 ///   Image files are returned as visual content that you can analyze directly.
+///
+/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
-    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill under `~/.agents/skills`.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -169,6 +171,10 @@ pub struct ReadFileToolInput {
     ///
     /// If you want to access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.
     /// If you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
+    /// </example>
+    ///
+    /// <example>
+    /// To read a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)
@@ -251,8 +257,8 @@ impl AgentTool for ReadFileTool {
                 .map_err(tool_content_err)?;
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
 
-            // Fast path: if the model passes an absolute path that resolves
-            // under the global skills directory, read it directly via the
+            // Fast path: if the model passes a path that resolves under the
+            // global skills directory, read it directly via the
             // filesystem. Global skills live outside any worktree, so the
             // standard project-path machinery would refuse them.
             if let Some(skill_path) =
@@ -289,7 +295,7 @@ impl AgentTool for ReadFileTool {
                     project.absolute_path(&project_path, cx)
                 })
                 .ok_or_else(|| {
-                    anyhow!("Failed to convert {} to absolute path", &input.path)
+                    anyhow!("Failed to convert {} to absolute path", input.path)
                 }).map_err(tool_content_err)?;
 
             // Check settings exclusions synchronously
@@ -298,14 +304,14 @@ impl AgentTool for ReadFileTool {
                 if global_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the global `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if global_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the global `private_files` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -313,14 +319,14 @@ impl AgentTool for ReadFileTool {
                 if worktree_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the worktree `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if worktree_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the worktree `private_files` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -330,7 +336,7 @@ impl AgentTool for ReadFileTool {
             if fs.is_dir(&abs_path).await {
                 return Err(tool_content_err(format!(
                     "{} is a directory, not a file. Use the list_directory tool to explore directory contents.",
-                    &input.path
+                    input.path
                 )));
             }
 
@@ -536,7 +542,7 @@ mod test {
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, SplicingVec};
     use std::path::PathBuf;
     use std::sync::Arc;
     use util::path;
@@ -1045,10 +1051,10 @@ mod test {
             use settings::SettingsStore;
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions = Some(vec![
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
-                    ]);
+                    ]));
                     settings.project.worktree.private_files = Some(
                         vec![
                             "**/.mysecrets".to_string(),
@@ -1351,8 +1357,10 @@ mod test {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                        "**/.git".to_string(),
+                        "**/node_modules".to_string(),
+                    ]));
                     settings.project.worktree.private_files =
                         Some(vec!["**/.env".to_string()].into());
                 });
