@@ -2930,6 +2930,31 @@ Example:
 
 `boolean` values
 
+## Hidden Files {#hidden-files}
+
+- Description: Glob patterns that mark files and folders as hidden in the Project Panel.
+- Setting: `hidden_files`
+- Default: `["**/.*"]`
+
+**Options**
+
+List of `string` glob patterns.
+
+The default matches files and folders whose names start with a dot. Files inside matching folders are also considered hidden.
+
+The [Project Panel](../project-panel.md#hiding-files) shows hidden entries by default. To hide them, enable **Hide Hidden** under **Panels > Project Panel** in the Settings Editor, or set `project_panel.hide_hidden` to `true`.
+
+Customizing `hidden_files` replaces the default patterns. To hide `*.log` files while keeping dotfiles and dotfolders hidden, add this to your `settings.json`:
+
+```json [settings]
+{
+  "hidden_files": ["**/*.log", "**/.*"],
+  "project_panel": {
+    "hide_hidden": true
+  }
+}
+```
+
 ## Indent Guides
 
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
