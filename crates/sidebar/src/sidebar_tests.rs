@@ -5008,10 +5008,9 @@ async fn test_click_clears_selection_and_focus_in_does_not_restore_it(cx: &mut T
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
-    let thread_session_id = acp::SessionId::new(Arc::from("thread-a"));
     // Keep the thread above the terminal, whose creation time is set to now.
     save_thread_metadata(
-        thread_session_id.clone(),
+        acp::SessionId::new(Arc::from("thread-a")),
         Some("Thread A".into()),
         Utc::now() + chrono::Duration::days(1),
         None,
