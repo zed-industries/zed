@@ -2831,10 +2831,10 @@ impl FakeFs {
 
                 None
             }
-            btree_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().file_content(&path)?;
-                Some(entry.remove())
-            }
+            btree_map::Entry::Occupied(entry) => match entry.get() {
+                FakeFsEntry::File { .. } | FakeFsEntry::Symlink { .. } => Some(entry.remove()),
+                FakeFsEntry::Dir { .. } => anyhow::bail!("not a file: {path:?}"),
+            },
         };
 
         state.emit_event([(path, Some(PathEventKind::Removed))]);

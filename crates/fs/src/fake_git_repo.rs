@@ -491,9 +491,31 @@ impl GitRepository for FakeGitRepository {
                 .await?;
 
             for (path, content) in &contents {
-                self.fs
-                    .write(&work_dir.join(path.as_std_path()), content)
-                    .await?;
+                let worktree_path = work_dir.join(path.as_std_path());
+                if let Some(metadata) = self.fs.metadata(&worktree_path).await? {
+                    if metadata.is_symlink {
+                        self.fs
+                            .remove_file(
+                                &worktree_path,
+                                RemoveOptions {
+                                    recursive: false,
+                                    ignore_if_not_exists: true,
+                                },
+                            )
+                            .await?;
+                    } else if metadata.is_dir {
+                        self.fs
+                            .remove_dir(
+                                &worktree_path,
+                                RemoveOptions {
+                                    recursive: false,
+                                    ignore_if_not_exists: true,
+                                },
+                            )
+                            .await?;
+                    }
+                }
+                self.fs.write(&worktree_path, content).await?;
             }
 
             self.with_state_async(true, move |state| {

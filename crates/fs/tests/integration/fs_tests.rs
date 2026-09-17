@@ -122,6 +122,52 @@ async fn test_fake_fs(executor: BackgroundExecutor) {
 }
 
 #[gpui::test]
+async fn test_fake_fs_remove_file_removes_symlinks_but_not_directories(
+    executor: BackgroundExecutor,
+) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir": {
+                "kept.txt": "kept",
+            },
+            "file.txt": "file",
+        }),
+    )
+    .await;
+    fs.create_symlink(path!("/root/link-to-dir").as_ref(), "dir".into())
+        .await
+        .unwrap();
+    fs.create_symlink(path!("/root/link-to-file").as_ref(), "file.txt".into())
+        .await
+        .unwrap();
+
+    for link in [path!("/root/link-to-dir"), path!("/root/link-to-file")] {
+        fs.remove_file(link.as_ref(), RemoveOptions::default())
+            .await
+            .unwrap();
+        assert!(fs.metadata(link.as_ref()).await.unwrap().is_none());
+    }
+    assert_eq!(
+        fs.load(path!("/root/dir/kept.txt").as_ref()).await.unwrap(),
+        "kept"
+    );
+    assert_eq!(
+        fs.load(path!("/root/file.txt").as_ref()).await.unwrap(),
+        "file"
+    );
+
+    fs.remove_file(path!("/root/dir").as_ref(), RemoveOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        fs.load(path!("/root/dir/kept.txt").as_ref()).await.unwrap(),
+        "kept"
+    );
+}
+
+#[gpui::test]
 async fn test_copy_recursive_with_single_file(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor.clone());
     fs.insert_tree(
