@@ -63,7 +63,6 @@ profiles = ["release"]
 # Own non-.rs files read at build time (protobufs, bindgen headers, doc/data).
 proto = ["proto/**"]
 livekit_api = ["vendored/protocol/**"]
-media = ["src/bindings.h"]
 gpui = [
     "README.md",
     "examples/image/exif-orientation-rotate-180.jpg",
