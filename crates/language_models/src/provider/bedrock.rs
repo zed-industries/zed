@@ -2004,6 +2004,9 @@ pub fn into_bedrock(
     guardrail_identifier: Option<String>,
     guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
+    let max_output_tokens = request
+        .max_output_tokens
+        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
     if request.contains_custom_tool_input() {
         anyhow::bail!("Bedrock does not support custom tools");
     }
@@ -2948,10 +2951,15 @@ mod tests {
         // Claude Opus 5 runs adaptive thinking by default when the `thinking`
         // field is omitted, so suppressing thinking requires an explicit
         // `disabled` opt-out. Earlier Claude models treat omission as "off".
-        for (model, expects_explicit_opt_out) in [
-            ("us.anthropic.claude-opus-5", true),
-            ("global.anthropic.claude-opus-5", true),
-            ("us.anthropic.claude-opus-4-8", false),
+        for (model, expects_explicit_opt_out, output_limit, expected_output) in [
+            ("us.anthropic.claude-opus-5", true, None, 128_000),
+            ("global.anthropic.claude-opus-5", true, Some(8192), 8192),
+            (
+                "us.anthropic.claude-opus-4-8",
+                false,
+                Some(256_000),
+                128_000,
+            ),
         ] {
             let request = into_bedrock(
                 LanguageModelRequest {
@@ -2962,6 +2970,7 @@ mod tests {
                         reasoning_details: None,
                     }],
                     thinking_allowed: false,
+                    max_output_tokens: output_limit,
                     ..Default::default()
                 },
                 model.to_string(),
@@ -2977,6 +2986,7 @@ mod tests {
             )
             .unwrap();
 
+            assert_eq!(request.max_tokens, expected_output);
             if expects_explicit_opt_out {
                 assert!(
                     matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
