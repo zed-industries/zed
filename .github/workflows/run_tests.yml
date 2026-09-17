@@ -485,7 +485,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::harden_runner
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
@@ -952,7 +952,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: namespace-profile-4x8-ubuntu-2204
     env:
       GIT_AUTHOR_NAME: Protobuf Action
       GIT_AUTHOR_EMAIL: ci@zed.dev
