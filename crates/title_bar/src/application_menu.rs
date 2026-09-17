@@ -1,4 +1,5 @@
 use gpui::{Action, Entity, OwnedMenu, OwnedMenuItem, Subscription, actions};
+use project::DisableAiSettings;
 use settings::{Settings, SettingsStore};
 use workspace::AccessibleMode;
 
@@ -52,20 +53,40 @@ pub struct ApplicationMenu {
 impl ApplicationMenu {
     pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
         let menus = cx.get_menus().unwrap_or_default();
-        // Re-render when settings change so toggling "accessible mode" expands or
-        // collapses the menu bar (see `all_menus_shown`).
-        let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
+
+        let entries = Self::build_entries(menus);
+        let mut disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+        let settings_subscription =
+            cx.observe_global::<SettingsStore>(move |application_menu, cx| {
+                let new_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+                if new_disable_ai != disable_ai {
+                    disable_ai = new_disable_ai;
+                    for entry in &application_menu.entries {
+                        if entry.handle.is_deployed() {
+                            entry.handle.hide(cx);
+                        }
+                    }
+                    let menus = cx.get_menus().unwrap_or_default();
+                    application_menu.entries = Self::build_entries(menus);
+                }
+                cx.notify();
+            });
+
         Self {
-            entries: menus
-                .into_iter()
-                .map(|menu| MenuEntry {
-                    menu,
-                    handle: PopoverMenuHandle::default(),
-                })
-                .collect(),
+            entries,
             pending_menu_open: None,
             _settings_subscription: settings_subscription,
         }
+    }
+
+    fn build_entries(menus: Vec<OwnedMenu>) -> SmallVec<[MenuEntry; 8]> {
+        menus
+            .into_iter()
+            .map(|menu| MenuEntry {
+                menu,
+                handle: PopoverMenuHandle::default(),
+            })
+            .collect()
     }
 
     fn sanitize_menu_items(items: Vec<OwnedMenuItem>) -> Vec<OwnedMenuItem> {
@@ -341,5 +362,202 @@ impl Render for ApplicationMenu {
                         .map(|entry| self.render_standard_menu(entry)),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Action, Menu, MenuItem, OwnedMenu, OwnedMenuItem, TestAppContext, UpdateGlobal};
+    use project::DisableAiSettings;
+    use settings::{Settings, SettingsStore};
+
+    use crate::application_menu::{ApplicationMenu, MenuEntry, OpenApplicationMenu};
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            DisableAiSettings::register(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    fn owned_menu(name: &str, item_name: &str) -> OwnedMenu {
+        OwnedMenu {
+            name: name.into(),
+            disabled: false,
+            items: vec![OwnedMenuItem::Action {
+                name: item_name.to_string(),
+                action: OpenApplicationMenu(String::new()).boxed_clone(),
+                os_action: None,
+                checked: false,
+                disabled: false,
+            }],
+        }
+    }
+
+    fn has_item(entries: &[MenuEntry], menu_name: &str, item_name: &str) -> bool {
+        entries.iter().any(|entry| {
+            entry.menu.name == menu_name
+                && entry.menu.items.iter().any(
+                    |item| matches!(item, OwnedMenuItem::Action { name, .. } if name == item_name),
+                )
+        })
+    }
+
+    fn menu_entry<'a>(entries: &'a [MenuEntry], menu_name: &str) -> &'a MenuEntry {
+        entries
+            .iter()
+            .find(|entry| entry.menu.name == menu_name)
+            .expect("expected menu")
+    }
+
+    fn view_menu(include_agent_panel: bool) -> Menu {
+        let mut items = Vec::new();
+        if include_agent_panel {
+            items.push(MenuItem::action(
+                "Agent Panel",
+                OpenApplicationMenu(String::new()),
+            ));
+        }
+        items.push(MenuItem::action(
+            "Diagnostics",
+            OpenApplicationMenu(String::new()),
+        ));
+
+        Menu {
+            name: "View".into(),
+            items,
+            disabled: false,
+        }
+    }
+
+    #[test]
+    fn test_build_entries_reflects_current_menu_data() {
+        let with_agent_panel =
+            ApplicationMenu::build_entries(vec![owned_menu("View", "Agent Panel")]);
+        assert!(has_item(&with_agent_panel, "View", "Agent Panel"));
+
+        let without_agent_panel =
+            ApplicationMenu::build_entries(vec![owned_menu("View", "Diagnostics")]);
+        assert!(!has_item(&without_agent_panel, "View", "Agent Panel"));
+    }
+
+    #[gpui::test]
+    fn test_entries_refresh_on_settings_change(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_menus(vec![view_menu(true)]);
+        });
+
+        let (app_menu, cx) = cx.add_window_view(|window, cx| ApplicationMenu::new(window, cx));
+        let view_handle = cx.update(|window, cx| {
+            let view_handle = app_menu.read_with(cx, |app_menu, _| {
+                menu_entry(&app_menu.entries, "View").handle.clone()
+            });
+            view_handle.show(window, cx);
+            view_handle
+        });
+        assert!(view_handle.is_deployed());
+
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Agent Panel"
+        )));
+
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Diagnostics"
+        )));
+
+        cx.update(|_, cx| {
+            cx.set_menus(vec![view_menu(false)]);
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
+        });
+
+        assert!(!view_handle.is_deployed());
+        assert!(
+            !app_menu.read_with(cx, |app_menu, _| has_item(
+                &app_menu.entries,
+                "View",
+                "Agent Panel"
+            )),
+            "expected Agent Panel is not in the View menu"
+        );
+
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Diagnostics"
+        )));
+
+        cx.update(|_, cx| {
+            cx.set_menus(vec![view_menu(true)]);
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: false }, cx);
+        });
+
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Agent Panel"
+        )));
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Diagnostics"
+        )));
+    }
+
+    #[gpui::test]
+    fn test_entries_preserve_deployed_menu_on_unrelated_settings_change(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_menus(vec![
+                Menu::new("Zed").items([MenuItem::action(
+                    "Settings",
+                    OpenApplicationMenu(String::new()),
+                )]),
+                view_menu(true),
+            ]);
+        });
+
+        let (app_menu, cx) = cx.add_window_view(|window, cx| ApplicationMenu::new(window, cx));
+
+        let zed_handle = cx.update(|window, cx| {
+            let zed_handle = app_menu.read_with(cx, |app_menu, _| {
+                menu_entry(&app_menu.entries, "Zed").handle.clone()
+            });
+            zed_handle.show(window, cx);
+            zed_handle
+        });
+        cx.run_until_parked();
+        assert!(zed_handle.is_deployed());
+
+        cx.update(|window, cx| {
+            let view_handle = app_menu.read_with(cx, |app_menu, _| {
+                menu_entry(&app_menu.entries, "View").handle.clone()
+            });
+            zed_handle.hide(cx);
+            view_handle.show(window, cx);
+        });
+        cx.run_until_parked();
+        assert!(!zed_handle.is_deployed());
+
+        assert!(app_menu.read_with(cx, |app_menu, _| {
+            menu_entry(&app_menu.entries, "View").handle.is_deployed()
+        }));
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |_, _| {});
+        });
+        cx.run_until_parked();
+
+        assert!(app_menu.read_with(cx, |app_menu, _| {
+            menu_entry(&app_menu.entries, "View").handle.is_deployed()
+        }));
     }
 }

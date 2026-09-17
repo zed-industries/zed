@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
+    os::windows::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{
@@ -10,8 +11,8 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use futures::channel::oneshot::{self, Receiver};
-use gpui_util::{ResultExt, get_windows_system_shell, new_std_command};
+use futures::channel::oneshot::Receiver;
+use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -21,7 +22,15 @@ use windows::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*},
+        System::{
+            Com::*,
+            LibraryLoader::*,
+            Ole::*,
+            Power::*,
+            SystemInformation::*,
+            SystemServices::POWER_REQUEST_CONTEXT_VERSION,
+            Threading::{POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0},
+        },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -78,12 +87,13 @@ pub(crate) struct WindowsPlatformState {
 #[derive(Default)]
 struct PlatformCallbacks {
     open_urls: Cell<Option<Box<dyn FnMut(Vec<String>)>>>,
-    quit: Cell<Option<Box<dyn FnMut()>>>,
+    quit: Cell<Option<Box<dyn FnMut() -> bool>>>,
     reopen: Cell<Option<Box<dyn FnMut()>>>,
     app_menu_action: Cell<Option<Box<dyn FnMut(&dyn Action)>>>,
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
     validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
+    system_sleep: Cell<Option<Box<dyn FnMut()>>>,
     system_wake: Cell<Option<Box<dyn FnMut()>>>,
 }
 
@@ -102,6 +112,51 @@ impl WindowsPlatformState {
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
         }
+    }
+}
+
+struct PowerRequest {
+    handle: HANDLE,
+    // `PowerCreateRequest` retains a pointer into the reason string for the
+    // lifetime of the handle, so the UTF-16 buffer must outlive the request.
+    _reason: Vec<u16>,
+}
+
+unsafe impl Send for PowerRequest {}
+
+impl PowerRequest {
+    fn prevent_idle_sleep(reason: &str) -> Result<Self> {
+        let mut reason = reason.encode_utf16().chain([0]).collect::<Vec<_>>();
+        let context = REASON_CONTEXT {
+            Version: POWER_REQUEST_CONTEXT_VERSION,
+            Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING,
+            Reason: REASON_CONTEXT_0 {
+                SimpleReasonString: PWSTR(reason.as_mut_ptr()),
+            },
+        };
+        let handle = unsafe { PowerCreateRequest(&context) }
+            .context("Failed to create a Windows power request")?;
+        if let Err(error) = unsafe { PowerSetRequest(handle, PowerRequestSystemRequired) } {
+            unsafe { CloseHandle(handle) }
+                .context("Failed to close the Windows power request")
+                .log_err();
+            return Err(error).context("Failed to set the Windows power request");
+        }
+        Ok(Self {
+            handle,
+            _reason: reason,
+        })
+    }
+}
+
+impl Drop for PowerRequest {
+    fn drop(&mut self) {
+        unsafe { PowerClearRequest(self.handle, PowerRequestSystemRequired) }
+            .context("Failed to clear the Windows power request")
+            .log_err();
+        unsafe { CloseHandle(self.handle) }
+            .context("Failed to close the Windows power request")
+            .log_err();
     }
 }
 
@@ -371,6 +426,39 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
     (result.0 == 0).then_some(())
 }
 
+fn encode_restart_arguments(arguments: &[OsString]) -> OsString {
+    // `Start-Process` accepts a single native command line, so quote each argument according to
+    // the Windows argv parsing rules before passing the complete string through the environment.
+    let mut encoded = Vec::new();
+
+    for (index, argument) in arguments.iter().enumerate() {
+        if index > 0 {
+            encoded.push(b' ' as u16);
+        }
+        encoded.push(b'"' as u16);
+
+        let mut backslash_count = 0;
+        for code_unit in argument.encode_wide() {
+            if code_unit == b'\\' as u16 {
+                backslash_count += 1;
+            } else {
+                if code_unit == b'"' as u16 {
+                    encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count * 2 + 1));
+                } else {
+                    encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count));
+                }
+                backslash_count = 0;
+                encoded.push(code_unit);
+            }
+        }
+
+        encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count * 2));
+        encoded.push(b'"' as u16);
+    }
+
+    OsString::from_wide(&encoded)
+}
+
 impl Platform for WindowsPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
@@ -410,6 +498,13 @@ impl Platform for WindowsPlatform {
         ThermalState::Nominal
     }
 
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(
+            PowerRequest::prevent_idle_sleep(reason)
+                .map(|request| ActivityGuard::new(move || drop(request))),
+        )
+    }
+
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
         if !self.headless {
@@ -426,8 +521,12 @@ impl Platform for WindowsPlatform {
             }
         }
 
-        self.inner
-            .with_callback(|callbacks| &callbacks.quit, |callback| callback());
+        self.inner.with_callback(
+            |callbacks| &callbacks.quit,
+            |callback| {
+                callback();
+            },
+        );
     }
 
     fn quit(&self) {
@@ -436,44 +535,58 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
         let pid = std::process::id();
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
-        let script = format!(
-            r#"
-            $pidToWaitFor = {}
-            $exePath = "{}"
+        let script = r#"
+            $pidToWaitFor = $env:ZED_RESTART_PID
+            $exePath = $env:ZED_RESTART_EXECUTABLE
+            $argumentList = $env:ZED_RESTART_ARGUMENTS
 
-            while ($true) {{
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_PID", $null)
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_EXECUTABLE", $null)
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_ARGUMENTS", $null)
+
+            while ($true) {
                 $process = Get-Process -Id $pidToWaitFor -ErrorAction SilentlyContinue
-                if (-not $process) {{
-                    Start-Process -FilePath $exePath
+                if (-not $process) {
+                    if ([string]::IsNullOrEmpty($argumentList)) {
+                        Start-Process -FilePath $exePath
+                    } else {
+                        Start-Process -FilePath $exePath -ArgumentList $argumentList
+                    }
                     break
-                }}
+                }
                 Start-Sleep -Seconds 0.1
-            }}
-            "#,
-            pid,
-            app_path.display(),
-        );
+            }
+            "#;
 
         // Defer spawning to the foreground executor so it runs after the
         // current `AppCell` borrow is released. On Windows, `Command::spawn()`
         // can pump the Win32 message loop (via `CreateProcessW`), which
         // re-enters message handling possibly resulting in another mutable
         // borrow of the `AppCell` ending up with a double borrow panic
+        let Some(powershell) = get_powershell() else {
+            log::error!("failed to restart: PowerShell is unavailable");
+            return;
+        };
         self.foreground_executor
             .spawn(async move {
+                let mut command = new_std_command(powershell);
+                let arguments = encode_restart_arguments(&arguments);
+                command
+                    .arg("-command")
+                    .arg(script)
+                    .env("ZED_RESTART_PID", pid.to_string())
+                    .env("ZED_RESTART_EXECUTABLE", app_path)
+                    .env("ZED_RESTART_ARGUMENTS", arguments);
                 #[allow(
                     clippy::disallowed_methods,
                     reason = "We are restarting ourselves, using std command thus is fine"
                 )]
-                let restart_process = new_std_command(get_windows_system_shell())
-                    .arg("-command")
-                    .arg(script)
-                    .spawn();
+                let restart_process = command.spawn();
 
                 match restart_process {
                     Ok(_) => unsafe { PostQuitMessage(0) },
@@ -513,7 +626,7 @@ impl Platform for WindowsPlatform {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
+    ) -> futures::channel::oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         gpui::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
     }
 
@@ -561,15 +674,13 @@ impl Platform for WindowsPlatform {
         &self,
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
-        let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
-        self.foreground_executor()
-            .spawn(async move {
-                let _ = tx.send(file_open_dialog(options, window));
-            })
-            .detach();
-
-        rx
+        let owner = self
+            .find_current_active_window()
+            .and_then(|hwnd| self.window_from_hwnd(hwnd))
+            .map(|window| window.dialog_owner.clone());
+        crate::dialog::show_dialog(owner, &self.foreground_executor, move |window| {
+            file_open_dialog(options, Some(window))
+        })
     }
 
     fn prompt_for_new_path(
@@ -579,15 +690,13 @@ impl Platform for WindowsPlatform {
     ) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let suggested_name = suggested_name.map(|s| s.to_owned());
-        let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
-        self.foreground_executor()
-            .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory, suggested_name, window));
-            })
-            .detach();
-
-        rx
+        let owner = self
+            .find_current_active_window()
+            .and_then(|hwnd| self.window_from_hwnd(hwnd))
+            .map(|window| window.dialog_owner.clone());
+        crate::dialog::show_dialog(owner, &self.foreground_executor, move |window| {
+            file_save_dialog(directory, suggested_name, Some(window))
+        })
     }
 
     fn can_select_mixed_files_and_dirs(&self) -> bool {
@@ -623,12 +732,16 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
         self.inner.state.callbacks.quit.set(Some(callback));
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.inner.state.callbacks.reopen.set(Some(callback));
+    }
+
+    fn on_system_sleep(&self, callback: Box<dyn FnMut()>) {
+        self.inner.state.callbacks.system_sleep.set(Some(callback));
     }
 
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
@@ -801,7 +914,7 @@ impl Platform for WindowsPlatform {
             .encode_utf16()
             .chain(Some(0))
             .collect_vec();
-        self.foreground_executor().spawn(async move {
+        self.background_executor().spawn(async move {
             let credentials = CREDENTIALW {
                 LastWritten: unsafe { GetSystemTimeAsFileTime() },
                 Flags: CRED_FLAGS(0),
@@ -830,7 +943,7 @@ impl Platform for WindowsPlatform {
             .encode_utf16()
             .chain(Some(0))
             .collect_vec();
-        self.foreground_executor().spawn(async move {
+        self.background_executor().spawn(async move {
             let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
             let result = unsafe {
                 CredReadW(
@@ -872,7 +985,7 @@ impl Platform for WindowsPlatform {
             .encode_utf16()
             .chain(Some(0))
             .collect_vec();
-        self.foreground_executor().spawn(async move {
+        self.background_executor().spawn(async move {
             unsafe {
                 CredDeleteW(
                     PCWSTR::from_raw(target_name.as_ptr()),
@@ -953,7 +1066,8 @@ impl WindowsPlatformInner {
             | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
-            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_GPU_DEVICE_LOST
+            | WM_GPUI_END_SESSION => self.handle_gpui_events(msg, wparam, lparam),
             WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
             _ => None,
         };
@@ -978,8 +1092,27 @@ impl WindowsPlatformInner {
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_END_SESSION => self.handle_end_session(),
             _ => unreachable!(),
         }
+    }
+
+    fn handle_end_session(&self) -> Option<isize> {
+        let mut shutdown_completed = false;
+        self.with_callback(
+            |callbacks| &callbacks.quit,
+            |callback| shutdown_completed = callback(),
+        );
+        log::logger().flush();
+        if shutdown_completed {
+            std::process::exit(0);
+        }
+
+        // Shutdown couldn't run synchronously, since the AppCell is already borrowed.
+        // Windows may terminate the application as soon as we return from this handler, but if we post a WM_QUIT message now,
+        // we may get to gracefully shut down the app before we're terminated by the OS.
+        unsafe { PostQuitMessage(0) };
+        Some(0)
     }
 
     fn close_one_window(&self, target_window: HWND) -> bool {
@@ -1092,8 +1225,14 @@ impl WindowsPlatformInner {
     }
 
     fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
-        if wparam.0 as u32 == PBT_APMRESUMEAUTOMATIC {
-            self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+        match wparam.0 as u32 {
+            PBT_APMSUSPEND => {
+                self.with_callback(|callbacks| &callbacks.system_sleep, |callback| callback());
+            }
+            PBT_APMRESUMEAUTOMATIC => {
+                self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+            }
+            _ => {}
         }
         Some(1)
     }
@@ -1255,9 +1394,11 @@ fn file_open_dialog(
             folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
         }
 
-        if folder_dialog.Show(window).is_err() {
-            // User cancelled
-            return Ok(None);
+        if let Err(error) = folder_dialog.Show(window) {
+            if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(error.into());
         }
     }
 
@@ -1315,9 +1456,11 @@ fn file_save_dialog(
             pszName: windows::core::w!("All files"),
             pszSpec: windows::core::w!("*.*"),
         }])?;
-        if dialog.Show(window).is_err() {
-            // User cancelled
-            return Ok(None);
+        if let Err(error) = dialog.Show(window) {
+            if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(error.into());
         }
     }
     let shell_item = unsafe { dialog.GetResult()? };
@@ -1493,8 +1636,28 @@ unsafe extern "system" fn window_procedure(
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::{OsStr, OsString};
+
     use crate::{read_from_clipboard, write_to_clipboard};
     use gpui::ClipboardItem;
+
+    use super::encode_restart_arguments;
+
+    #[test]
+    fn test_encode_restart_arguments() {
+        assert_eq!(encode_restart_arguments(&[]), OsStr::new(""));
+        assert_eq!(
+            encode_restart_arguments(&[
+                OsString::from("--user-data-dir"),
+                OsString::from(r"C:\Zed Data"),
+            ]),
+            OsStr::new(r#""--user-data-dir" "C:\Zed Data""#)
+        );
+        assert_eq!(
+            encode_restart_arguments(&[OsString::from(r"C:\")]),
+            OsStr::new(r#""C:\\""#)
+        );
+    }
 
     #[test]
     fn test_clipboard() {

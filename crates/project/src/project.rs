@@ -50,7 +50,7 @@ pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
-    worktrees_directory_for_repo,
+    repo_identity_path_if_local, worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -164,10 +164,12 @@ pub use task_inventory::{
 };
 
 pub use buffer_store::ProjectTransaction;
+pub use lsp_command::{CallHierarchyItem, IncomingCall, OutgoingCall};
 pub use lsp_store::{
     DiagnosticSummary, InvalidationStrategy, LanguageServerLogType, LanguageServerProgress,
-    LanguageServerPromptRequest, LanguageServerStatus, LanguageServerToQuery, LspStore,
-    LspStoreEvent, ProgressToken, SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    LanguageServerPromptRequest, LanguageServerShowDocumentRequest, LanguageServerStatus,
+    LanguageServerToQuery, LspStore, LspStoreEvent, ProgressToken,
+    SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
@@ -335,7 +337,9 @@ pub struct ToastLink {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
+    SupplementaryLanguageServerAdded(LanguageServerId, LanguageServerName),
     LanguageServerRemoved(LanguageServerId),
+    SupplementaryLanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
     // [`lsp::notification::DidOpenTextDocument`] was sent to this server using the buffer data.
     // Zed's buffer-related data is updated accordingly.
@@ -360,6 +364,7 @@ pub enum Event {
         notification_id: SharedString,
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
+    LanguageServerShowDocument(LanguageServerShowDocumentRequest),
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -412,6 +417,9 @@ pub enum Event {
     RefreshDocumentLinks {
         server_id: Option<LanguageServerId>,
     },
+    RefreshDocumentHighlights {
+        server_id: Option<LanguageServerId>,
+    },
     RefreshFoldingRanges {
         server_id: Option<LanguageServerId>,
     },
@@ -421,7 +429,12 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
-    EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
+    EntryRenamed {
+        transaction: ProjectTransaction,
+        new_project_path: ProjectPath,
+        old_abs_path: PathBuf,
+        new_abs_path: PathBuf,
+    },
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
     BufferEdited {
@@ -478,7 +491,10 @@ impl ProjectPath {
 
 #[derive(Debug, Default)]
 pub enum PrepareRenameResponse {
-    Success(Range<Anchor>),
+    Success {
+        range: Range<Anchor>,
+        language_server_id: Option<LanguageServerId>,
+    },
     OnlyUnpreparedRenameSupported,
     #[default]
     InvalidPosition,
@@ -506,7 +522,7 @@ impl InlayId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InlayHint {
     pub position: language::Anchor,
     pub label: InlayHintLabel,
@@ -622,6 +638,19 @@ impl CompletionSource {
     pub fn server_id(&self) -> Option<LanguageServerId> {
         if let CompletionSource::Lsp { server_id, .. } = self {
             Some(*server_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn filter_text(&self) -> Option<&str> {
+        if let Self::Lsp { lsp_completion, .. } = self {
+            Some(
+                lsp_completion
+                    .filter_text
+                    .as_deref()
+                    .unwrap_or(lsp_completion.label.as_str()),
+            )
         } else {
             None
         }
@@ -827,17 +856,18 @@ impl InlayHint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InlayHintLabel {
     String(String),
     LabelParts(Vec<InlayHintLabelPart>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InlayHintLabelPart {
     pub value: String,
     pub tooltip: Option<InlayHintLabelPartTooltip>,
     pub location: Option<(LanguageServerId, lsp::Location)>,
+    pub command: Option<(LanguageServerId, lsp::Command)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1243,7 +1273,7 @@ impl Project {
                 .detach();
 
             let bookmark_store =
-                cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+                cx.new(|cx| BookmarkStore::new(worktree_store.clone(), buffer_store.clone(), cx));
 
             let breakpoint_store =
                 cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
@@ -1286,6 +1316,7 @@ impl Project {
                     cx,
                 )
             });
+            git_store.update(cx, |git_store, _| git_store.set_project(weak_self.clone()));
 
             let task_store = cx.new(|cx| {
                 TaskStore::local(
@@ -1498,7 +1529,7 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let bookmark_store =
-                cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+                cx.new(|cx| BookmarkStore::new(worktree_store.clone(), buffer_store.clone(), cx));
 
             let breakpoint_store = cx.new(|_| {
                 BreakpointStore::remote(
@@ -1531,6 +1562,7 @@ impl Project {
                     cx,
                 )
             });
+            git_store.update(cx, |git_store, _| git_store.set_project(weak_self.clone()));
 
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
@@ -1649,6 +1681,8 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_toast);
             remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
+            remote_proto
+                .add_entity_request_handler(Self::handle_language_server_show_document_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
             remote_proto.add_entity_request_handler(Self::handle_trust_worktrees);
@@ -1761,7 +1795,7 @@ impl Project {
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
 
         let bookmark_store =
-            cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+            cx.new(|cx| BookmarkStore::new(worktree_store.clone(), buffer_store.clone(), cx));
 
         let breakpoint_store = cx.new(|_| {
             BreakpointStore::remote(
@@ -1838,6 +1872,7 @@ impl Project {
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let weak_self = cx.weak_entity();
+            git_store.update(cx, |git_store, _| git_store.set_project(weak_self.clone()));
             let context_server_store = cx.new(|cx| {
                 ContextServerStore::local(worktree_store.clone(), Some(weak_self), false, cx)
             });
@@ -2031,7 +2066,7 @@ impl Project {
     ) -> Entity<Project> {
         use clock::FakeSystemClock;
 
-        let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
+        let fs = RealFs::new(None, cx.background_executor().clone());
         let languages = LanguageRegistry::test(cx.background_executor().clone());
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
@@ -2659,11 +2694,12 @@ impl Project {
 
             project
                 .update(cx, |_, cx| {
-                    cx.emit(Event::EntryRenamed(
+                    cx.emit(Event::EntryRenamed {
                         transaction,
-                        new_path.clone(),
-                        new_abs_path.clone(),
-                    ));
+                        new_project_path: new_path.clone(),
+                        old_abs_path: old_abs_path.clone(),
+                        new_abs_path: new_abs_path.clone(),
+                    });
                 })
                 .ok();
 
@@ -3673,8 +3709,28 @@ impl Project {
             LspStoreEvent::LanguageServerAdded(server_id, name, worktree_id) => cx.emit(
                 Event::LanguageServerAdded(*server_id, name.clone(), *worktree_id),
             ),
+            LspStoreEvent::SupplementaryLanguageServerAdded(server_id, name) => cx.emit(
+                Event::SupplementaryLanguageServerAdded(*server_id, name.clone()),
+            ),
             LspStoreEvent::LanguageServerRemoved(server_id) => {
+                if self.is_local()
+                    && let Some(project_id) = self.remote_id()
+                {
+                    self.collab_client
+                        .send(proto::UpdateLanguageServer {
+                            project_id,
+                            server_name: None,
+                            language_server_id: server_id.to_proto(),
+                            variant: Some(proto::update_language_server::Variant::Removed(
+                                proto::ServerRemoved {},
+                            )),
+                        })
+                        .log_err();
+                }
                 cx.emit(Event::LanguageServerRemoved(*server_id))
+            }
+            LspStoreEvent::SupplementaryLanguageServerRemoved(server_id) => {
+                cx.emit(Event::SupplementaryLanguageServerRemoved(*server_id))
             }
             LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
                 Event::LanguageServerLog(*server_id, log_type.clone(), string.clone()),
@@ -3709,6 +3765,11 @@ impl Project {
                     server_id: *server_id,
                 })
             }
+            LspStoreEvent::RefreshDocumentHighlights { server_id } => {
+                cx.emit(Event::RefreshDocumentHighlights {
+                    server_id: *server_id,
+                })
+            }
             LspStoreEvent::RefreshFoldingRanges { server_id } => {
                 cx.emit(Event::RefreshFoldingRanges {
                     server_id: *server_id,
@@ -3721,6 +3782,9 @@ impl Project {
             }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
+            }
+            LspStoreEvent::LanguageServerShowDocument(request) => {
+                cx.emit(Event::LanguageServerShowDocument(request.clone()))
             }
             LspStoreEvent::DiskBasedDiagnosticsStarted { language_server_id } => {
                 cx.emit(Event::DiskBasedDiagnosticsStarted {
@@ -3737,7 +3801,12 @@ impl Project {
                 name,
                 message,
             } => {
-                if self.is_local() {
+                if self.is_local()
+                    && !matches!(
+                        message,
+                        proto::update_language_server::Variant::MetadataUpdated(_)
+                    )
+                {
                     self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id: *language_server_id,
@@ -3751,14 +3820,11 @@ impl Project {
                 match message {
                     proto::update_language_server::Variant::MetadataUpdated(update) => {
                         self.lsp_store.update(cx, |lsp_store, _| {
-                            if let Some(capabilities) = update
-                                .capabilities
-                                .as_ref()
-                                .and_then(|capabilities| serde_json::from_str(capabilities).ok())
-                            {
-                                lsp_store
-                                    .lsp_server_capabilities
-                                    .insert(*language_server_id, capabilities);
+                            if let Some(capabilities) = update.capabilities.as_ref() {
+                                lsp_store.insert_synced_server_capabilities(
+                                    *language_server_id,
+                                    capabilities,
+                                );
                             }
 
                             if let Some(language_server_status) = lsp_store
@@ -3842,6 +3908,7 @@ impl Project {
                 });
                 cx.emit(Event::DisconnectedFromRemote { server_not_running });
             }
+            &remote::RemoteClientEvent::Reconnected => {}
         }
     }
 
@@ -3898,6 +3965,8 @@ impl Project {
                 }),
                 Err(_) => {}
             },
+            SettingsObserverEvent::GlobalTasksUpdated(_)
+            | SettingsObserverEvent::GlobalDebugScenariosUpdated(_) => {}
         }
     }
 
@@ -4099,6 +4168,9 @@ impl Project {
         new_language: Arc<Language>,
         cx: &mut Context<Self>,
     ) {
+        buffer.update(cx, |buffer, _| {
+            buffer.set_content_language_detection_enabled(false);
+        });
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.set_language_for_buffer(buffer, new_language, cx)
         })
@@ -4430,6 +4502,56 @@ impl Project {
         })
     }
 
+    pub fn prepare_call_hierarchy<T: ToPointUtf16>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<CallHierarchyItem>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.prepare_call_hierarchy(buffer, position, cx)
+        });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
+    pub fn incoming_calls(
+        &mut self,
+        item: CallHierarchyItem,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<IncomingCall>>>> {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self
+            .lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.incoming_calls(item, cx));
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
+    pub fn outgoing_calls(
+        &mut self,
+        item: CallHierarchyItem,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<OutgoingCall>>>> {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self
+            .lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.outgoing_calls(item, cx));
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
     pub fn document_highlights<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -4608,20 +4730,32 @@ impl Project {
         buffer: Entity<Buffer>,
         position: T,
         new_name: String,
+        language_server_id: Option<LanguageServerId>,
         cx: &mut Context<Self>,
     ) -> Task<Result<ProjectTransaction>> {
         let push_to_history = true;
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(
-            buffer,
-            LanguageServerToQuery::FirstCapable,
-            PerformRename {
-                position,
-                new_name,
-                push_to_history,
-            },
-            cx,
-        )
+        let mut request = PerformRename {
+            position,
+            new_name,
+            push_to_history,
+            language_server_id,
+        };
+        if let Some(server_id) = request.language_server_id {
+            let server_is_capable = !self.is_local()
+                || self.lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_store
+                        .language_server_capable_of_lsp_request(&buffer, server_id, &request, cx)
+                });
+            if !server_is_capable {
+                request.language_server_id = None;
+            }
+        }
+        let server_to_query = request
+            .language_server_id
+            .map(LanguageServerToQuery::Other)
+            .unwrap_or(LanguageServerToQuery::FirstCapable);
+        self.request_lsp(buffer, server_to_query, request, cx)
     }
 
     pub fn on_type_format<T: ToPointUtf16>(
@@ -4631,7 +4765,7 @@ impl Project {
         trigger: String,
         push_to_history: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Transaction>>> {
+    ) -> Option<Task<Result<Option<Transaction>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.on_type_format(buffer, position, trigger, push_to_history, cx)
         })
@@ -5272,6 +5406,16 @@ impl Project {
         })
     }
 
+    pub fn get_file_permalink(
+        &self,
+        project_path: &ProjectPath,
+        cx: &mut App,
+    ) -> Task<Result<url::Url>> {
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.get_file_permalink(project_path, cx)
+        })
+    }
+
     // RPC message handlers
 
     async fn handle_unshare_project(
@@ -5505,6 +5649,49 @@ impl Project {
         })
     }
 
+    async fn handle_language_server_show_document_request(
+        project: Entity<Self>,
+        envelope: TypedEnvelope<proto::LanguageServerShowDocumentRequest>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let payload = envelope.payload;
+        let selection = payload.selection_start.zip(payload.selection_end).map(
+            |(selection_start, selection_end)| lsp::Range {
+                start: lsp::Position {
+                    line: selection_start.row,
+                    character: selection_start.column,
+                },
+                end: lsp::Position {
+                    line: selection_end.row,
+                    character: selection_end.column,
+                },
+            },
+        );
+        let uri = lsp::Uri::from_str(&payload.uri)
+            .with_context(|| format!("parsing show document uri {}", payload.uri))?;
+        let (tx, rx) = async_channel::bounded(1);
+        project.update(&mut cx, |_, cx| {
+            cx.emit(Event::LanguageServerShowDocument(
+                LanguageServerShowDocumentRequest {
+                    uri,
+                    external: payload.external,
+                    take_focus: payload.take_focus,
+                    selection,
+                    response_channel: tx,
+                },
+            ));
+        });
+        drop(project);
+
+        let success = rx.recv().await.unwrap_or(false);
+        anyhow::ensure!(
+            success,
+            "show document request for {} was not handled successfully",
+            payload.uri
+        );
+        Ok(proto::Ack {})
+    }
+
     async fn handle_hide_toast(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::HideToast>,
@@ -5697,7 +5884,8 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         let toggled_log_kind =
-            match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+            match proto::toggle_lsp_logs::LogType::try_from(envelope.payload.log_type)
+                .ok()
                 .context("invalid log type")?
             {
                 proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,
@@ -5775,6 +5963,13 @@ impl Project {
             });
 
             while let Some((buffer, _)) = new_matches.next().await {
+                let is_private = buffer.read_with(cx, |buffer, _| {
+                    buffer.file().is_some_and(|file| file.is_private())
+                });
+                if is_private {
+                    continue;
+                }
+
                 let buffer_id = this.update(cx, |this, cx| {
                     this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
                 });
@@ -6170,13 +6365,6 @@ impl Project {
         Ok(())
     }
 
-    pub fn supplementary_language_servers<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl 'a + Iterator<Item = (LanguageServerId, LanguageServerName)> {
-        self.lsp_store.read(cx).supplementary_language_servers()
-    }
-
     pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {
         let Some(language) = buffer.language().cloned() else {
             return false;
@@ -6242,14 +6430,16 @@ impl Project {
         if !relevant_language_servers.contains(name) {
             return None;
         }
+        let opened_in_servers = self
+            .lsp_store
+            .read(cx)
+            .language_server_ids_for_opened_buffer(buffer.remote_id());
         self.language_server_statuses(cx)
             .filter(|(_, server_status)| relevant_language_servers.contains(&server_status.name))
             .find_map(|(server_id, server_status)| {
-                if &server_status.name == name {
-                    Some(server_id)
-                } else {
-                    None
-                }
+                (&server_status.name == name
+                    && opened_in_servers.is_none_or(|server_ids| server_ids.contains(&server_id)))
+                .then_some(server_id)
             })
     }
 
@@ -6758,6 +6948,12 @@ impl Completion {
         self.source
             .lsp_completion(false)
             .map(|lsp_completion| lsp_completion.label.clone())
+    }
+
+    pub fn filter_text(&self) -> &str {
+        self.source
+            .filter_text()
+            .unwrap_or_else(|| self.label.filter_text())
     }
 
     /// A key that can be used to sort completions when displaying

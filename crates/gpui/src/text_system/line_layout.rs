@@ -6,7 +6,10 @@ use std::{
     borrow::Borrow,
     hash::{Hash, Hasher},
     ops::Range,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use super::LineWrapper;
@@ -123,6 +126,68 @@ impl LineLayout {
             }
         }
         None
+    }
+
+    /// Split this layout at a byte index, returning `(prefix, suffix)`.
+    ///
+    /// - `prefix` contains glyphs for bytes `[0, byte_index)` with original positions.
+    ///   Its width equals the x-advance up to the split point.
+    /// - `suffix` contains glyphs for bytes `[byte_index, len)` with positions
+    ///   shifted left so the first glyph starts at x=0, and byte indices rebased to 0.
+    /// - `font_size`, `ascent`, and `descent` are copied to both halves.
+    pub fn split_at(&self, byte_index: usize) -> (LineLayout, LineLayout) {
+        let x_offset = self.x_for_index(byte_index);
+
+        // Partition glyph runs. A single run may contribute glyphs to both halves.
+        let mut left_runs = Vec::new();
+        let mut right_runs = Vec::new();
+
+        for run in &self.runs {
+            let split_pos = run.glyphs.partition_point(|g| g.index < byte_index);
+
+            if split_pos > 0 {
+                left_runs.push(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs: run.glyphs[..split_pos].to_vec(),
+                });
+            }
+
+            if split_pos < run.glyphs.len() {
+                let right_glyphs = run.glyphs[split_pos..]
+                    .iter()
+                    .map(|g| ShapedGlyph {
+                        id: g.id,
+                        position: point(g.position.x - x_offset, g.position.y),
+                        index: g.index - byte_index,
+                        is_emoji: g.is_emoji,
+                    })
+                    .collect();
+                right_runs.push(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs: right_glyphs,
+                });
+            }
+        }
+
+        let left = LineLayout {
+            font_size: self.font_size,
+            width: x_offset,
+            ascent: self.ascent,
+            descent: self.descent,
+            runs: left_runs,
+            len: byte_index,
+        };
+
+        let right = LineLayout {
+            font_size: self.font_size,
+            width: self.width - x_offset,
+            ascent: self.ascent,
+            descent: self.descent,
+            runs: right_runs,
+            len: self.len - byte_index,
+        };
+
+        (left, right)
     }
 
     fn compute_wrap_boundaries(
@@ -393,6 +458,10 @@ pub(crate) struct LineLayoutCache {
     previous_frame: Mutex<FrameCache>,
     current_frame: RwLock<FrameCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
+    /// Advances when [`TextSystem::add_fonts`] successfully changes the font database.
+    font_generation: Arc<AtomicUsize>,
+    /// Records the generation represented by both frame caches.
+    cached_font_generation: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -416,6 +485,7 @@ struct FrameCache {
 
 #[derive(Clone, Default)]
 pub(crate) struct LineLayoutIndex {
+    font_generation: usize,
     lines_index: usize,
     wrapped_lines_index: usize,
     lines_by_hash_index: usize,
@@ -423,17 +493,25 @@ pub(crate) struct LineLayoutIndex {
 }
 
 impl LineLayoutCache {
-    pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
+    pub fn new(
+        platform_text_system: Arc<dyn PlatformTextSystem>,
+        font_generation: Arc<AtomicUsize>,
+    ) -> Self {
+        let cached_font_generation = font_generation.load(Ordering::Acquire);
         Self {
             previous_frame: Mutex::default(),
             current_frame: RwLock::default(),
             platform_text_system,
+            font_generation,
+            cached_font_generation: AtomicUsize::new(cached_font_generation),
         }
     }
 
     pub fn layout_index(&self) -> LineLayoutIndex {
+        let font_generation = self.clear_if_font_generation_changed();
         let frame = self.current_frame.read();
         LineLayoutIndex {
+            font_generation,
             lines_index: frame.used_lines.len(),
             wrapped_lines_index: frame.used_wrapped_lines.len(),
             lines_by_hash_index: frame.used_lines_by_hash.len(),
@@ -442,8 +520,14 @@ impl LineLayoutCache {
     }
 
     pub fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {
-        let mut previous_frame = &mut *self.previous_frame.lock();
+        let font_generation = self.clear_if_font_generation_changed();
+        if range.start.font_generation != font_generation
+            || range.end.font_generation != font_generation
+        {
+            return;
+        }
         let mut current_frame = &mut *self.current_frame.write();
+        let mut previous_frame = &mut *self.previous_frame.lock();
 
         for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
             if let Some((key, line)) = previous_frame.lines.remove_entry(key) {
@@ -481,6 +565,10 @@ impl LineLayoutCache {
     }
 
     pub fn truncate_layouts(&self, index: LineLayoutIndex) {
+        let font_generation = self.clear_if_font_generation_changed();
+        if index.font_generation != font_generation {
+            return;
+        }
         let mut current_frame = &mut *self.current_frame.write();
         current_frame.used_lines.truncate(index.lines_index);
         current_frame
@@ -495,8 +583,9 @@ impl LineLayoutCache {
     }
 
     pub fn finish_frame(&self) {
-        let mut prev_frame = self.previous_frame.lock();
+        let _font_generation = self.clear_if_font_generation_changed();
         let mut curr_frame = self.current_frame.write();
+        let mut prev_frame = self.previous_frame.lock();
         std::mem::swap(&mut *prev_frame, &mut *curr_frame);
         curr_frame.lines.clear();
         curr_frame.wrapped_lines.clear();
@@ -521,6 +610,7 @@ impl LineLayoutCache {
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
+        let _font_generation = self.clear_if_font_generation_changed();
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
@@ -585,6 +675,7 @@ impl LineLayoutCache {
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
+        let _font_generation = self.clear_if_font_generation_changed();
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
@@ -643,6 +734,7 @@ impl LineLayoutCache {
         runs: &[FontRun],
         force_width: Option<Pixels>,
     ) -> Option<Arc<LineLayout>> {
+        let _font_generation = self.clear_if_font_generation_changed();
         let key_ref = HashedCacheKeyRef {
             text_hash,
             text_len,
@@ -700,6 +792,7 @@ impl LineLayoutCache {
         force_width: Option<Pixels>,
         materialize_text: impl FnOnce() -> SharedString,
     ) -> Arc<LineLayout> {
+        let _font_generation = self.clear_if_font_generation_changed();
         let key_ref = HashedCacheKeyRef {
             text_hash,
             text_len,
@@ -776,6 +869,24 @@ impl LineLayoutCache {
             .insert(key.clone(), layout.clone());
         current_frame.used_lines_by_hash.push(key);
         layout
+    }
+
+    fn clear_if_font_generation_changed(&self) -> usize {
+        let font_generation = self.font_generation.load(Ordering::Acquire);
+        if self.cached_font_generation.load(Ordering::Acquire) == font_generation {
+            return font_generation;
+        }
+
+        let mut current_frame = self.current_frame.write();
+        if self.cached_font_generation.load(Ordering::Acquire) == font_generation {
+            return font_generation;
+        }
+
+        *current_frame = FrameCache::default();
+        *self.previous_frame.lock() = FrameCache::default();
+        self.cached_font_generation
+            .store(font_generation, Ordering::Release);
+        font_generation
     }
 }
 

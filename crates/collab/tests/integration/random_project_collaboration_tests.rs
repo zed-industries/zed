@@ -1116,7 +1116,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     .map(|_| files.choose(&mut rng).unwrap().clone())
                                     .collect::<Vec<_>>();
                                 async move {
-                                    log::info!("LSP: Returning definitions in files {:?}", &files);
+                                    log::info!("LSP: Returning definitions in files {files:?}");
                                     Ok(Some(lsp::GotoDefinitionResponse::Array(
                                         files
                                             .into_iter()

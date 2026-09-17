@@ -2,6 +2,7 @@ use scheduler::Instant;
 use std::{
     any::{TypeId, type_name},
     cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
+    ffi::OsString,
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -13,17 +14,13 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
-use futures::{
-    Future, FutureExt,
-    channel::oneshot,
-    future::{LocalBoxFuture, Shared},
-};
+use futures::{Future, FutureExt, channel::oneshot, future::LocalBoxFuture};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
-#[cfg(feature = "bench")]
+#[cfg(feature = "bench-support")]
 pub use bench_context::{BenchAppContext, BenchReport, BenchWindowContext, bench_platform};
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;
@@ -42,24 +39,25 @@ pub use visual_test_context::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
+use crate::asset_cache::CachedLoad;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
-    ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
-    DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload, FocusHandle, FocusMap,
-    ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu,
-    MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
-    PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
-    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
-    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator,
+    Action, ActionBuildError, ActionRegistry, ActivityGuard, Any, AnyView, AnyWindowHandle,
+    AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
+    ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload,
+    FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke,
+    LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
+    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
 
 mod async_context;
-#[cfg(feature = "bench")]
+#[cfg(feature = "bench-support")]
 mod bench_context;
 mod context;
 mod entity_map;
@@ -72,7 +70,8 @@ mod test_context;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 mod visual_test_context;
 
-/// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
+/// The duration for which native applications wait for futures returned from
+/// [Context::on_app_quit] before fully quitting.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
@@ -206,6 +205,12 @@ impl Application {
         self
     }
 
+    /// Configures arguments to pass when restarting the application.
+    pub fn with_restart_arguments(self, arguments: Vec<OsString>) -> Self {
+        self.0.borrow_mut().restart_arguments = arguments;
+        self
+    }
+
     /// Sets the HTTP client for the application.
     pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
         let mut context_lock = self.0.borrow_mut();
@@ -223,6 +228,9 @@ impl Application {
 
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
+    ///
+    /// On WebAssembly, this returns immediately and retains the app for the lifetime
+    /// of the Wasm instance. Use [`Self::run_embedded`] to control its lifetime explicitly.
     pub fn run<F>(self, on_finish_launching: F)
     where
         F: 'static + FnOnce(&mut App),
@@ -233,6 +241,9 @@ impl Application {
             let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
         }));
+
+        #[cfg(target_family = "wasm")]
+        std::mem::forget(self);
     }
 
     /// Start the application for an embedder that drives the run loop itself.
@@ -282,23 +293,6 @@ impl Application {
         self
     }
 
-    /// Invokes a handler when the system wakes from sleep.
-    pub fn on_system_wake<F>(&self, mut callback: F) -> &Self
-    where
-        F: 'static + FnMut(&mut App),
-    {
-        let this = Rc::downgrade(&self.0);
-        self.0
-            .borrow_mut()
-            .platform
-            .on_system_wake(Box::new(move || {
-                if let Some(app) = this.upgrade() {
-                    callback(&mut app.borrow_mut());
-                }
-            }));
-        self
-    }
-
     /// Returns a handle to the [`BackgroundExecutor`] associated with this app, which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.0.borrow().background_executor.clone()
@@ -322,12 +316,70 @@ impl Application {
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
+type MissingGlyphCallback = Box<dyn FnMut(&[MissingGlyph], &mut App) + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
 type WindowClosedHandler = Box<dyn FnMut(&mut App, WindowId)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
+
+struct MissingGlyphCallbackEntry {
+    registration: Rc<()>,
+    callback: Option<MissingGlyphCallback>,
+}
+
+#[derive(Default)]
+struct MissingGlyphCallbackSlot {
+    entry: RefCell<Option<MissingGlyphCallbackEntry>>,
+}
+
+impl MissingGlyphCallbackSlot {
+    fn replace(&self, callback: MissingGlyphCallback) -> Rc<()> {
+        let registration = Rc::new(());
+        self.entry.borrow_mut().replace(MissingGlyphCallbackEntry {
+            registration: registration.clone(),
+            callback: Some(callback),
+        });
+        registration
+    }
+
+    fn invoke(&self, missing_glyphs: &[MissingGlyph], cx: &mut App) {
+        let Some((registration, mut callback)) =
+            self.entry.borrow_mut().as_mut().and_then(|entry| {
+                entry
+                    .callback
+                    .take()
+                    .map(|callback| (entry.registration.clone(), callback))
+            })
+        else {
+            return;
+        };
+        callback(missing_glyphs, cx);
+
+        let mut entry = self.entry.borrow_mut();
+        let is_current = entry
+            .as_ref()
+            .is_some_and(|entry| Rc::ptr_eq(&entry.registration, &registration));
+        if is_current {
+            let Some(entry) = entry.as_mut() else {
+                return;
+            };
+            entry.callback = Some(callback);
+        }
+    }
+
+    fn remove(&self, registration: &Rc<()>) -> bool {
+        let mut entry = self.entry.borrow_mut();
+        let is_current = entry
+            .as_ref()
+            .is_some_and(|entry| Rc::ptr_eq(&entry.registration, registration));
+        if is_current {
+            entry.take();
+        }
+        is_current
+    }
+}
 
 /// Defines when the application should automatically quit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -699,6 +751,8 @@ pub struct App {
     platform_owned_drag: Option<PlatformOwnedDrag>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
+    #[cfg(feature = "profiler")]
+    foreground_journal: crate::profiler::journal::ForegroundJournal,
     pub(crate) entities: EntityMap,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
@@ -716,7 +770,10 @@ pub struct App {
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
+    missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+    pub(crate) system_sleep_observers: SubscriberSet<(), Handler>,
+    pub(crate) system_wake_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -745,6 +802,7 @@ pub struct App {
     pub(crate) pending_notifications: FxHashSet<EntityId>,
     pub(crate) pending_global_notifications: TypeIdHashSet,
     pub(crate) restart_path: Option<PathBuf>,
+    pub(crate) restart_arguments: Vec<OsString>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
@@ -793,6 +851,8 @@ impl App {
             background_executor.is_main_thread(),
             "must construct App on main thread"
         );
+        #[cfg(feature = "profiler")]
+        let foreground_journal = crate::profiler::journal::install_foreground_journal();
         let synced_animation_epoch = background_executor.now();
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
@@ -817,6 +877,8 @@ impl App {
                 platform_owned_drag: None,
                 background_executor,
                 foreground_executor,
+                #[cfg(feature = "profiler")]
+                foreground_journal,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
@@ -844,11 +906,15 @@ impl App {
                 keystroke_observers: SubscriberSet::new(),
                 keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
+                missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SubscriberSet::new(),
+                system_sleep_observers: SubscriberSet::new(),
+                system_wake_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
                 restart_path: None,
+                restart_arguments: Vec::new(),
                 window_closed_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
@@ -876,6 +942,8 @@ impl App {
 
         init_app_menus(platform.as_ref(), &app.borrow());
         SystemWindowTabController::init(&mut app.borrow_mut());
+        #[cfg(feature = "profiler")]
+        crate::profiler::journal::observe_power(&app.borrow());
 
         platform.on_keyboard_layout_change(Box::new({
             let app = Rc::downgrade(&app);
@@ -903,11 +971,46 @@ impl App {
             }
         }));
 
+        platform.on_system_sleep(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.system_sleep_observers
+                        .clone()
+                        .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_system_wake(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.system_wake_observers
+                        .clone()
+                        .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
+
         platform.on_quit(Box::new({
             let cx = Rc::downgrade(&app);
             move || {
-                if let Some(cx) = cx.upgrade() {
-                    cx.borrow_mut().shutdown();
+                let Some(cx) = cx.upgrade() else {
+                    return true;
+                };
+                match cx.try_borrow_mut() {
+                    Ok(mut cx) => {
+                        cx.shutdown();
+                        true
+                    }
+                    Err(_) => {
+                        // Quit was requested while the AppCell was borrowed, so we can't shut down synchronously.
+                        // The platform decides how to proceed.
+                        false
+                    }
                 }
             }
         }));
@@ -946,8 +1049,11 @@ impl App {
         self.entities.assert_no_new_leaks(snapshot)
     }
 
-    /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
-    /// will be given `SHUTDOWN_TIMEOUT` to complete before exiting.
+    /// Quit the application gracefully.
+    ///
+    /// Native applications give handlers registered with [`Context::on_app_quit`]
+    /// [`SHUTDOWN_TIMEOUT`] to complete. WebAssembly runs them asynchronously as best-effort cleanup
+    /// because its event-loop thread cannot block.
     pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
 
@@ -961,6 +1067,7 @@ impl App {
         self.quitting = true;
 
         let futures = futures::future::join_all(futures);
+        #[cfg(not(target_family = "wasm"))]
         if self
             .foreground_executor
             .block_with_timeout(SHUTDOWN_TIMEOUT, futures)
@@ -968,6 +1075,8 @@ impl App {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+        #[cfg(target_family = "wasm")]
+        self.foreground_executor.spawn(futures).detach();
 
         self.quitting = false;
     }
@@ -1323,12 +1432,52 @@ impl App {
         self.platform.thermal_state()
     }
 
+    /// Prevents idle sleep while the returned guard is held.
+    pub fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        self.platform.prevent_idle_sleep(reason)
+    }
+
     /// Invokes a handler when the thermal state changes
     pub fn on_thermal_state_change<F>(&self, mut callback: F) -> Subscription
     where
         F: 'static + FnMut(&mut App),
     {
         let (subscription, activate) = self.thermal_state_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Invokes a handler when the system is about to sleep.
+    ///
+    /// The platform gives the process only a short time before suspending, so
+    /// handlers should record state or cancel work rather than start it.
+    pub fn on_system_sleep<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let (subscription, activate) = self.system_sleep_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Invokes a handler when the system wakes from sleep.
+    pub fn on_system_wake<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let (subscription, activate) = self.system_wake_observers.insert(
             (),
             Box::new(move |cx| {
                 callback(cx);
@@ -1366,6 +1515,19 @@ impl App {
     /// Reads data from the platform clipboard.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.platform.read_from_clipboard()
+    }
+
+    /// Reads data from the platform clipboard, resolving once the contents
+    /// are available.
+    ///
+    /// Prefer this over [`App::read_from_clipboard`] in code that can await:
+    /// on platforms where clipboard access is asynchronous and
+    /// permission-gated (e.g. web), the synchronous read always returns
+    /// `None` while this method performs a real read.
+    pub fn read_from_clipboard_async(
+        &self,
+    ) -> Task<Result<Option<ClipboardItem>, ClipboardReadError>> {
+        self.platform.read_from_clipboard_async()
     }
 
     /// Sets the text rendering mode for the application.
@@ -1561,7 +1723,10 @@ impl App {
         self.restart_observers
             .clone()
             .retain(&(), |observer| observer(self));
-        self.platform.restart(self.restart_path.take())
+        self.platform.restart(
+            self.restart_path.take(),
+            std::mem::take(&mut self.restart_arguments),
+        )
     }
 
     /// Sets the path to use when restarting the application.
@@ -1647,21 +1812,32 @@ impl App {
                     }
                 }
             } else {
-                #[cfg(any(test, feature = "test-support", feature = "bench"))]
-                for window in self
-                    .windows
-                    .values()
-                    .filter_map(|window| {
-                        let window = window.as_deref()?;
-                        window.invalidator.is_dirty().then_some(window.handle)
-                    })
-                    .collect::<Vec<_>>()
-                {
-                    self.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
-                        .unwrap();
+                #[cfg(any(test, feature = "test-support"))]
+                if matches!(self.mode, GpuiMode::Test { .. }) {
+                    for window in self
+                        .windows
+                        .values()
+                        .filter_map(|window| {
+                            let window = window.as_deref()?;
+                            window.invalidator.is_dirty().then_some(window.handle)
+                        })
+                        .collect::<Vec<_>>()
+                    {
+                        self.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+                            .unwrap();
+                    }
                 }
 
                 if self.pending_effects.is_empty() {
+                    for window in self.windows.values().filter_map(|window| window.as_deref()) {
+                        if window.invalidator.is_dirty()
+                            || window.needs_present.get()
+                            || !window.next_frame_callbacks.borrow().is_empty()
+                        {
+                            window.platform_window.schedule_frame();
+                        }
+                    }
+
                     self.event_arena.clear();
                     break;
                 }
@@ -1700,9 +1876,9 @@ impl App {
                 if focus.ref_count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
-                            .update(self, |_, window, _| {
+                            .update(self, |_, window, cx| {
                                 if window.focus == Some(handle_id) {
-                                    window.blur();
+                                    window.blur(cx);
                                 }
                             })
                             .unwrap();
@@ -1882,6 +2058,13 @@ impl App {
         &self.foreground_executor
     }
 
+    /// Returns the foreground work journal for this app's foreground thread.
+    /// Apps constructed on the same thread share the stream.
+    #[cfg(feature = "profiler")]
+    pub fn foreground_journal(&self) -> crate::profiler::journal::ForegroundJournal {
+        self.foreground_journal.clone()
+    }
+
     /// Spawns the future returned by the given function on the main thread. The closure will be invoked
     /// with [AsyncApp], which allows the application state to be accessed across await points.
     #[track_caller]
@@ -1934,6 +2117,42 @@ impl App {
     /// Accessor for the text system.
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
+    }
+
+    /// Invokes a callback with grapheme clusters that exhausted font fallback.
+    ///
+    /// Registering a callback replaces the previous callback and enables missing-glyph
+    /// detection. The callback runs on the foreground executor after shaping has
+    /// released its internal locks. Dropping its subscription disables detection until
+    /// another callback is registered.
+    ///
+    /// Reports are queued without blocking shaping, then deduplicated before delivery.
+    /// The bounded queue can drop reports on overflow. Dropped reports may be reported
+    /// again when the text is reshaped; no retry is scheduled automatically.
+    pub fn on_missing_glyphs(
+        &self,
+        callback: impl FnMut(&[MissingGlyph], &mut App) + 'static,
+    ) -> Subscription {
+        let registration = self.missing_glyph_callback.replace(Box::new(callback));
+
+        if let Some(mut receiver) = self.text_system.take_missing_glyph_receiver() {
+            let callback = self.missing_glyph_callback.clone();
+            self.spawn(async move |cx| {
+                while let Ok(missing_glyphs) = receiver.recv().await {
+                    cx.update(|cx| callback.invoke(&missing_glyphs, cx));
+                }
+            })
+            .detach();
+        }
+        self.text_system.enable_missing_glyph_reporting();
+
+        let callback = self.missing_glyph_callback.clone();
+        let text_system = self.text_system.clone();
+        Subscription::new(move || {
+            if callback.remove(&registration) {
+                text_system.disable_missing_glyph_reporting();
+            }
+        })
     }
 
     /// Check whether a global of the given type has been assigned.
@@ -2319,10 +2538,7 @@ impl App {
         for window in self.windows() {
             window
                 .update(self, |_, window, cx| {
-                    if window.pending_input_keystrokes().is_some() {
-                        window.clear_pending_keystrokes();
-                        window.pending_input_changed(cx);
-                    }
+                    window.clear_pending_keystrokes(cx);
                 })
                 .ok();
         }
@@ -2581,27 +2797,25 @@ impl App {
         self.loading_assets.contains_key(&asset_id)
     }
 
-    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
+    /// Starts loading an uncached asset and returns its result once available.
     ///
-    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
-    /// time, and the results of this call will be cached
-    pub fn fetch_asset<A: Asset>(&mut self, source: &A::Source) -> (Shared<Task<A::Output>>, bool) {
+    /// Pending loads and completed results are cached until [`Self::remove_asset`].
+    /// This method does not subscribe a view to completion notifications.
+    pub fn fetch_asset<A: Asset>(&mut self, source: &A::Source) -> Option<A::Output> {
+        self.asset_entry::<A>(source).get()
+    }
+
+    pub(crate) fn asset_entry<A: Asset>(&mut self, source: &A::Source) -> &CachedLoad<A::Output> {
         let asset_id = (TypeId::of::<A>(), hash(source));
-        let mut is_first = false;
-        let task = self
-            .loading_assets
-            .remove(&asset_id)
-            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
-            .unwrap_or_else(|| {
-                is_first = true;
-                let future = A::load(source.clone(), self);
-
-                self.background_executor().spawn(future).shared()
-            });
-
-        self.loading_assets.insert(asset_id, Box::new(task.clone()));
-
-        (task, is_first)
+        if !self.loading_assets.contains_key(&asset_id) {
+            let future = A::load(source.clone(), self);
+            let entry = CachedLoad::new(future, self);
+            self.loading_assets.insert(asset_id, Box::new(entry));
+        }
+        self.loading_assets
+            .get(&asset_id)
+            .and_then(|entry| entry.downcast_ref())
+            .expect("asset cache entries are keyed by their asset type")
     }
 
     /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
@@ -2683,11 +2897,13 @@ impl App {
 
     /// Registers a renderer specific to an inspector state.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn register_inspector_element<T: 'static, R: crate::IntoElement>(
+    pub fn register_inspector_element<T: 'static, R: crate::IntoElement, F>(
         &mut self,
-        f: impl 'static + Fn(crate::InspectorElementId, &T, &mut Window, &mut App) -> R,
-    ) {
-        self.inspector_element_registry.register(f);
+        factory: impl 'static + Fn(&mut Window, &mut App) -> F,
+    ) where
+        F: 'static + FnMut(crate::InspectorElementId, &T, &mut Window, &mut App) -> R,
+    {
+        self.inspector_element_registry.register(factory);
     }
 
     /// Initializes gpui's default colors for the application.
@@ -3024,9 +3240,105 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
 
 #[cfg(test)]
 mod test {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        ffi::OsString,
+        path::PathBuf,
+        rc::Rc,
+    };
 
-    use crate::{AppContext, TestAppContext};
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+
+    use crate::{
+        AppContext, Context, Empty, FallbackFontClass, IntoElement, MissingGlyph, Render,
+        TestAppContext, Window,
+    };
+
+    struct RenderCounter(Rc<Cell<usize>>);
+
+    impl Render for RenderCounter {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.set(self.0.get() + 1);
+            Empty
+        }
+    }
+
+    #[gpui::test]
+    fn async_app_refresh_flushes_refresh_effect(cx: &mut TestAppContext) {
+        let render_count = Rc::new(Cell::new(0));
+
+        let _window = cx.add_window({
+            let render_count = render_count.clone();
+            move |_, _| RenderCounter(render_count)
+        });
+
+        cx.run_until_parked();
+        let render_count_before_refresh = render_count.get();
+
+        cx.to_async().refresh();
+
+        assert_eq!(render_count.get(), render_count_before_refresh + 1);
+    }
+
+    #[gpui::test]
+    fn missing_glyph_callbacks_follow_subscription_lifetime(cx: &mut TestAppContext) {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let subscription = cx.update(|cx| {
+            let observed = observed.clone();
+            cx.on_missing_glyphs(move |missing_glyphs, _| {
+                observed.borrow_mut().extend_from_slice(missing_glyphs);
+            })
+        });
+        cx.update(|cx| {
+            cx.text_system()
+                .report_missing_glyphs_in_test(vec![missing_glyph("active")]);
+        });
+        cx.run_until_parked();
+        assert_eq!(observed.borrow().as_slice(), &[missing_glyph("active")]);
+
+        let second_observed = Rc::new(RefCell::new(Vec::new()));
+        let second_subscription = cx.update(|cx| {
+            let second_observed = second_observed.clone();
+            cx.on_missing_glyphs(move |missing_glyphs, _| {
+                second_observed
+                    .borrow_mut()
+                    .extend_from_slice(missing_glyphs);
+            })
+        });
+        cx.update(|cx| {
+            cx.text_system()
+                .report_missing_glyphs_in_test(vec![missing_glyph("replacement")]);
+        });
+        cx.run_until_parked();
+        assert_eq!(observed.borrow().as_slice(), &[missing_glyph("active")]);
+        assert_eq!(
+            second_observed.borrow().as_slice(),
+            &[missing_glyph("replacement")]
+        );
+
+        drop(subscription);
+        cx.update(|cx| {
+            cx.text_system()
+                .report_missing_glyphs_in_test(vec![missing_glyph("after old drop")]);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            second_observed.borrow().as_slice(),
+            &[
+                missing_glyph("replacement"),
+                missing_glyph("after old drop")
+            ]
+        );
+
+        drop(second_subscription);
+        cx.update(|cx| {
+            cx.text_system()
+                .report_missing_glyphs_in_test(vec![missing_glyph("inactive")]);
+        });
+        cx.run_until_parked();
+        assert_eq!(second_observed.borrow().len(), 2);
+    }
 
     #[test]
     fn test_gpui_borrow() {
@@ -3057,5 +3369,31 @@ mod test {
         });
 
         assert_eq!(*observation_count.borrow(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_restart_preserves_path_and_arguments(cx: &mut TestAppContext) {
+        #[cfg(unix)]
+        let user_data_dir = OsString::from_vec(b"/tmp/zed data/\xff".to_vec());
+        #[cfg(not(unix))]
+        let user_data_dir = OsString::from("C:\\zed data");
+        let arguments = vec![OsString::from("--user-data-dir"), user_data_dir];
+        let restart_path = PathBuf::from("updated-zed");
+        let _application =
+            super::Application(cx.app.clone()).with_restart_arguments(arguments.clone());
+        let restart = cx.expect_restart();
+
+        cx.update(|cx| {
+            cx.set_restart_path(restart_path.clone());
+            cx.restart();
+        });
+
+        let (path, restart_arguments) = restart.await.expect("restart was not requested");
+        assert_eq!(path, Some(restart_path));
+        assert_eq!(restart_arguments, arguments);
+    }
+
+    fn missing_glyph(grapheme: &'static str) -> MissingGlyph {
+        MissingGlyph::new(grapheme.into(), FallbackFontClass::Proportional)
     }
 }

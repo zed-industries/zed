@@ -1106,7 +1106,7 @@ impl TerminalElement {
     }
 
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
-        let settings = ThemeSettings::get_global(cx).clone();
+        let settings = ThemeSettings::get_global(cx);
         let buffer_font_size = settings.buffer_font_size(cx);
         let rem_size_scale = {
             // Our default UI font size is 14px on a 16px base scale.
@@ -1205,7 +1205,7 @@ impl Element for TerminalElement {
             cx,
             |_, _, hitbox, window, cx| {
                 let hitbox = hitbox.unwrap();
-                let settings = ThemeSettings::get_global(cx).clone();
+                let settings = ThemeSettings::get_global(cx);
 
                 let buffer_font_size = settings.buffer_font_size(cx);
 
@@ -1357,30 +1357,29 @@ impl Element for TerminalElement {
 
                 let background_color = theme.colors().terminal_background;
 
-                let (last_hovered_word, hover_tooltip) =
-                    self.terminal.update(cx, |terminal, cx| {
-                        terminal.set_size(dimensions);
-                        terminal.sync(window, cx);
+                let (hover_tooltip, hover_match) = self.terminal.update(cx, |terminal, cx| {
+                    terminal.set_size(dimensions);
+                    terminal.sync(window, cx);
 
-                        if window.modifiers().secondary()
-                            && bounds.contains(&window.mouse_position())
-                            && self.terminal_view.read(cx).hover.is_some()
+                    if window.modifiers().secondary()
+                        && bounds.contains(&window.mouse_position())
+                        && let Some(registered_hover) = self.terminal_view.read(cx).hover.as_ref()
+                    {
+                        if let Some(last_hovered_word) =
+                            terminal.last_content.last_hovered_word.as_ref()
+                            && registered_hover.hovered_word.id == last_hovered_word.id
                         {
-                            let registered_hover = self.terminal_view.read(cx).hover.as_ref();
-                            if terminal.last_content.last_hovered_word.as_ref()
-                                == registered_hover.map(|hover| &hover.hovered_word)
-                            {
-                                (
-                                    terminal.last_content.last_hovered_word.clone(),
-                                    registered_hover.map(|hover| hover.tooltip.clone()),
-                                )
-                            } else {
-                                (None, None)
-                            }
+                            (
+                                Some(registered_hover.tooltip.clone()),
+                                Some(last_hovered_word.word_match),
+                            )
                         } else {
                             (None, None)
                         }
-                    });
+                    } else {
+                        (None, None)
+                    }
+                });
 
                 let scroll_top = self.terminal_view.read(cx).scroll_top;
                 let hyperlink_tooltip = hover_tooltip.map(|hover_tooltip| {
@@ -1448,9 +1447,9 @@ impl Element for TerminalElement {
                         cells.iter(),
                         0,
                         &text_style,
-                        last_hovered_word
+                        hover_match
                             .as_ref()
-                            .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                            .map(|hover_match| (link_style, hover_match)),
                         minimum_contrast,
                         cx,
                     )
@@ -1479,9 +1478,9 @@ impl Element for TerminalElement {
                             .flat_map(|(_, line_cells)| line_cells),
                         rows_above_viewport as i32,
                         &text_style,
-                        last_hovered_word
+                        hover_match
                             .as_ref()
-                            .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                            .map(|hover_match| (link_style, hover_match)),
                         minimum_contrast,
                         cx,
                     )

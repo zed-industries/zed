@@ -29,6 +29,7 @@ message Entry {
   optional uint64 size = 11;
   optional string canonical_path = 12;
   bool is_hidden = 13;
+  bool is_unloaded = 14;
 }
 
 message AddWorktree {
