@@ -464,7 +464,7 @@ fn check_dependencies() -> NamedJob {
     }
 
     fn run_cargo_shear() -> Step<Run> {
-        named::bash("cargo shear --locked --deny-warnings")
+        named::bash("cargo shear --locked --deny-warnings --check-test-targets")
     }
 
     fn check_cargo_lock() -> Step<Run> {

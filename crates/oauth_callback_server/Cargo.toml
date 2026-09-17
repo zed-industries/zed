@@ -12,6 +12,7 @@ workspace = true
 [lib]
 path = "src/oauth_callback_server.rs"
 doctest = false
+test = false
 
 [dependencies]
 anyhow.workspace = true

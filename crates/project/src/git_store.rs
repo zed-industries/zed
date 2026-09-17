@@ -11746,29 +11746,25 @@ mod tests {
 
     #[gpui::test]
     async fn test_merge_base_status_uses_worktree_contents(cx: &mut TestAppContext) {
-        use util::rel_path::rel_path;
+        use util::{path, rel_path::rel_path};
 
         init_test(cx);
 
+        let project_root = Path::new(path!("/project"));
+        let dot_git = project_root.join(".git");
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            Path::new("/project"),
+            project_root,
             json!({
                 ".git": {},
                 "committed.txt": "base\n",
             }),
         )
         .await;
-        fs.set_head_and_index_for_repo(
-            Path::new("/project/.git"),
-            &[("committed.txt", "head\n".into())],
-        );
-        fs.set_merge_base_content_for_repo(
-            Path::new("/project/.git"),
-            &[("committed.txt", "base\n".into())],
-        );
+        fs.set_head_and_index_for_repo(&dot_git, &[("committed.txt", "head\n".into())]);
+        fs.set_merge_base_content_for_repo(&dot_git, &[("committed.txt", "base\n".into())]);
 
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let project = Project::test(fs.clone(), [project_root], cx).await;
         project
             .update(cx, |project, cx| project.git_scans_complete(cx))
             .await;
@@ -11836,10 +11832,7 @@ mod tests {
             assert_eq!(display_snapshot.statuses_by_path.iter().count(), 0);
         });
 
-        fs.set_merge_base_content_for_repo(
-            Path::new("/project/.git"),
-            &[("committed.txt", "head\n".into())],
-        );
+        fs.set_merge_base_content_for_repo(&dot_git, &[("committed.txt", "head\n".into())]);
         let repository =
             project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
         let branches = repository.read_with(cx, |repository, _| {

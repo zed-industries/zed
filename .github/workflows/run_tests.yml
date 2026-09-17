@@ -707,7 +707,7 @@ jobs:
       with:
         tool: cargo-shear@1.13.4
     - name: run_tests::check_dependencies::run_cargo_shear
-      run: cargo shear --locked --deny-warnings
+      run: cargo shear --locked --deny-warnings --check-test-targets
     - name: run_tests::check_dependencies::check_cargo_lock
       run: cargo update --locked --workspace
     - name: run_tests::check_dependencies::check_crate_graph

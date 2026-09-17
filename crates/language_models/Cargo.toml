@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/language_models.rs"
+doctest = false
 
 [features]
 test-support = []

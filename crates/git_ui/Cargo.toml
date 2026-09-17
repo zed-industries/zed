@@ -11,6 +11,7 @@ workspace = true
 [lib]
 name = "git_ui"
 path = "src/git_ui.rs"
+doctest = false
 
 [features]
 test-support = ["multi_buffer/test-support", "remote_connection/test-support"]

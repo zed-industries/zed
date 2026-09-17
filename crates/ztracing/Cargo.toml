@@ -8,6 +8,9 @@ license = "Apache-2.0"
 [lints]
 workspace = true
 
+[lib]
+doctest = false
+
 [features]
 tracy = ["tracing-tracy", "tracy-client"]
 web = ["dep:async-channel", "dep:js-sys", "dep:wasm-bindgen", "dep:web-sys"]
