@@ -15,6 +15,7 @@ multithreaded = ["dep:wasm_thread", "scheduler/wasm-threads"]
 
 [lib]
 path = "src/gpui_web.rs"
+doctest = false
 
 [dependencies]
 unicode-properties = "=0.1.3"
