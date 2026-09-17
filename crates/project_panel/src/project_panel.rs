@@ -68,7 +68,7 @@ use util::{
     ResultExt, TakeUntilExt, TryFutureExt,
     markdown::MarkdownInlineCode,
     maybe,
-    paths::{PathExt, PathStyle, compare_paths},
+    paths::{PathExt, PathStyle, SanitizedPath, compare_paths},
     rel_path::{RelPath, RelPathBuf},
 };
 use workspace::{
@@ -2658,12 +2658,25 @@ impl ProjectPanel {
                 .unwrap_or_else(|| worktree.read(cx).root_name_str())
                 .to_string();
 
-            let restored_project_paths = repo_paths
-                .iter()
-                .filter_map(|repo_path| {
-                    repository.read(cx).repo_path_to_project_path(repo_path, cx)
-                })
-                .collect::<Vec<_>>();
+            // Buffers are keyed by (worktree, path), so when worktree roots overlap the same
+            // file can be open through several worktrees. Collect the path in each of them.
+            let mut restored_project_paths = Vec::new();
+            for restored_repo_path in &repo_paths {
+                let abs_path = snapshot.repo_path_to_abs_path(restored_repo_path);
+                let abs_path = SanitizedPath::new(&abs_path);
+                for worktree in project.worktrees(cx) {
+                    let worktree = worktree.read(cx);
+                    if let Some(path) = worktree
+                        .path_style()
+                        .strip_prefix(abs_path.as_ref(), worktree.abs_path().as_ref())
+                    {
+                        restored_project_paths.push(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: path.into_arc(),
+                        });
+                    }
+                }
+            }
 
             let answer = if !action.skip_prompt {
                 let (prompt, detail) = if is_dir {
@@ -2737,26 +2750,25 @@ impl ProjectPanel {
                     return anyhow::Ok(());
                 }
 
-                panel
-                    .update(cx, |panel, cx| {
-                        panel.project.update(cx, |project, cx| {
-                            for project_path in &restored_project_paths {
-                                let buffer_id = project
-                                    .buffer_store()
-                                    .read(cx)
-                                    .buffer_id_for_project_path(project_path)
-                                    .copied();
-                                if let Some(buffer_id) = buffer_id
-                                    && let Some(buffer) = project.buffer_for_id(buffer_id, cx)
-                                {
-                                    buffer.update(cx, |buffer, cx| {
-                                        let _ = buffer.reload(cx);
-                                    });
-                                }
+                let reloads = panel.update(cx, |panel, cx| {
+                    panel.project.update(cx, |project, cx| {
+                        let mut reloads = Vec::new();
+                        for project_path in &restored_project_paths {
+                            let buffer_id = project
+                                .buffer_store()
+                                .read(cx)
+                                .buffer_id_for_project_path(project_path)
+                                .copied();
+                            if let Some(buffer_id) = buffer_id
+                                && let Some(buffer) = project.buffer_for_id(buffer_id, cx)
+                            {
+                                reloads.push(buffer.update(cx, |buffer, cx| buffer.reload(cx)));
                             }
-                        })
+                        }
+                        reloads
                     })
-                    .ok();
+                })?;
+                futures::future::join_all(reloads).await;
 
                 anyhow::Ok(())
             })
