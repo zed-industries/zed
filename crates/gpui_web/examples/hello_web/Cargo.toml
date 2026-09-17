@@ -35,6 +35,10 @@ name = "font_fallback_test"
 path = "font_fallback_test.rs"
 
 [[bin]]
+name = "queue_test"
+path = "queue_test.rs"
+
+[[bin]]
 name = "dynamic_fonts"
 path = "dynamic_fonts.rs"
 
@@ -46,5 +50,6 @@ gpui_platform = { path = "../../../gpui_platform" }
 gpui_util = { path = "../../../gpui_util" }
 unicode-segmentation = "1"
 wasm-bindgen = "0.2"
+wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", features = ["es_modules"] }
 web-sys = { version = "0.3", features = ["console", "Location", "Window"] }
 web-time = "1"

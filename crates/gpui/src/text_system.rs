@@ -51,6 +51,15 @@ pub const SUBPIXEL_VARIANTS_X: u8 = 4;
 /// Number of subpixel glyph variants along the Y axis.
 pub const SUBPIXEL_VARIANTS_Y: u8 = 1;
 
+// Leave enough room below the underline for its stroke while keeping it below the baseline.
+const UNDERLINE_DESCENT_OFFSET_FACTOR: f32 = 0.618;
+
+/// Returns the vertical offset used to paint an underline within a line.
+pub fn underline_y_offset(line_height: Pixels, ascent: Pixels, descent: Pixels) -> Pixels {
+    let padding_top = (line_height - ascent - descent) / 2.;
+    padding_top + ascent + descent * UNDERLINE_DESCENT_OFFSET_FACTOR
+}
+
 const MAX_REPORTED_MISSING_GLYPHS: usize = 1024;
 
 /// The spacing behavior required of a fallback font.

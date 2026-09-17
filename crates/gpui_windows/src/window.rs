@@ -93,6 +93,7 @@ pub struct WindowsWindowState {
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
+    pub(crate) dialog_owner: Rc<crate::dialog::DialogOwner>,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: WindowsWindowState,
     system_settings: WindowsSystemSettings,
@@ -281,6 +282,7 @@ impl WindowsWindowInner {
 
         Ok(Rc::new(Self {
             hwnd,
+            dialog_owner: crate::dialog::DialogOwner::new(hwnd),
             drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
@@ -605,6 +607,8 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
+        self.0.dialog_owner.close();
+        unsafe { ShowWindowAsync(self.0.hwnd, SW_HIDE).ok().log_err() };
         // `DestroyWindow` below sends `WM_SHOWWINDOW`; without a callback the
         // resulting visibility report has nothing to notify.
         self.0.state.callbacks.visibility_change.take();
@@ -613,6 +617,7 @@ impl Drop for WindowsWindow {
         self.0
             .executor
             .spawn(async move {
+                this.dialog_owner.when_idle().await;
                 let handle = this.hwnd;
                 unsafe {
                     RevokeDragDrop(handle).log_err();
@@ -717,18 +722,19 @@ impl PlatformWindow for WindowsWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
-        let (done_tx, done_rx) = oneshot::channel();
+        let (mut done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
         let detail_string = detail.map(|detail| detail.to_string());
-        let handle = self.0.hwnd;
         let answers = answers.to_vec();
-        self.0
-            .executor
-            .spawn(async move {
+        let dialog = crate::dialog::show_dialog(
+            Some(self.0.dialog_owner.clone()),
+            &self.0.executor,
+            move |handle| {
                 unsafe {
                     let mut config = TASKDIALOGCONFIG::default();
                     config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
                     config.hwndParent = handle;
+                    config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION;
                     let title;
                     let main_icon;
                     match level {
@@ -776,17 +782,26 @@ impl PlatformWindow for WindowsWindow {
                     config.cButtons = buttons.len() as _;
                     config.pButtons = buttons.as_ptr();
 
-                    config.pfCallback = None;
+                    config.pfCallback = Some(crate::dialog::task_dialog_callback);
+                    config.lpCallbackData = button_id_map.contains(&IDCANCEL.0) as isize;
                     let mut res = std::mem::zeroed();
-                    let _ = TaskDialogIndirect(&config, Some(&mut res), None, None)
-                        .context("unable to create task dialog")
-                        .log_err();
-
-                    if let Some(clicked) =
-                        button_id_map.iter().position(|&button_id| button_id == res)
-                    {
-                        let _ = done_tx.send(clicked);
-                    }
+                    TaskDialogIndirect(&config, Some(&mut res), None, None)
+                        .context("unable to create task dialog")?;
+                    Ok(button_id_map.iter().position(|&button_id| button_id == res))
+                }
+            },
+        );
+        self.0
+            .executor
+            .spawn(async move {
+                if let futures::future::Either::Left((result, _)) =
+                    futures::future::select(dialog, done_tx.cancellation()).await
+                    && let Some(Some(clicked)) = result
+                        .context("native dialog thread stopped")
+                        .and_then(|result| result)
+                        .log_err()
+                {
+                    done_tx.send(clicked).ok();
                 }
             })
             .detach();
@@ -1447,6 +1462,9 @@ unsafe extern "system" fn window_procedure(
     }
     let inner = unsafe { &*ptr };
     let result = if let Some(inner) = inner.upgrade() {
+        if msg == WM_NCDESTROY {
+            inner.dialog_owner.close();
+        }
         inner.handle_msg(hwnd, msg, wparam, lparam)
     } else {
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
