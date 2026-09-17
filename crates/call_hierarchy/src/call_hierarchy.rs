@@ -10,9 +10,9 @@ use editor::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AbsoluteLength, Action, AnyView, App, AsyncWindowContext, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, HighlightStyle, ParentElement, Point, Render, Styled,
-    StyledText, Subscription, Task, TextRun, TextStyle, WeakEntity, Window,
+    Action, AnyView, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, HighlightStyle, ParentElement, Point, Render, Styled, StyledText,
+    Subscription, Task, TextRun, WeakEntity, Window,
 };
 use language::{
     Buffer, CodeLabel, File as _, Language, Location, Rope, ToOffset, ToPoint, lsp_to_symbol_kind,
@@ -20,9 +20,10 @@ use language::{
 use picker::{Picker, PickerDelegate};
 use project::{CallHierarchyItem, LspStoreEvent, Project};
 use settings::Settings;
-use theme::SyntaxTheme;
 use theme_settings::ThemeSettings;
-use ui::{KeyBinding, ListItem, ListItemSpacing, prelude::*, tooltip_container};
+use ui::{
+    KeyBinding, ListItem, ListItemSpacing, prelude::*, tooltip_container, utils::buffer_text_style,
+};
 use util::{ResultExt, paths::PathExt};
 use workspace::{DismissDecision, ModalView, Workspace};
 pub use zed_actions::{ShowIncomingCalls, ShowOutgoingCalls, ToggleDirection};
@@ -640,8 +641,16 @@ impl PickerDelegate for CallHierarchyDelegate {
                     workspace.active_pane().clone()
                 };
 
-                let editor = workspace
-                    .open_project_item::<Editor>(pane, buffer, true, true, true, true, window, cx);
+                let editor = workspace.open_project_item::<Editor>(
+                    Some(pane),
+                    buffer,
+                    true,
+                    true,
+                    true,
+                    true,
+                    window,
+                    cx,
+                );
 
                 editor.update(cx, |editor, cx| {
                     editor.change_selections(
@@ -806,7 +815,7 @@ impl Render for CallSignatureTooltip {
             Some((label, label_text)) => StyledText::new(label_text.clone())
                 .with_default_highlights(
                     &signature_style,
-                    label_syntax_runs(label, cx.theme().syntax()),
+                    cx.theme().syntax().resolve_runs(&label.runs),
                 )
                 .into_any_element(),
             None => div().child(self.full_signature.clone()).into_any_element(),
@@ -1170,29 +1179,6 @@ fn shaped_width(
         .width
 }
 
-fn buffer_text_style(cx: &App) -> TextStyle {
-    let settings = ThemeSettings::get_global(cx);
-    TextStyle {
-        color: cx.theme().colors().text,
-        font_family: settings.buffer_font.family.clone(),
-        font_features: settings.buffer_font.features.clone(),
-        font_fallbacks: settings.buffer_font.fallbacks.clone(),
-        font_size: AbsoluteLength::from(settings.buffer_font_size(cx)),
-        font_weight: settings.buffer_font.weight,
-        line_height: relative(1.),
-        ..TextStyle::default()
-    }
-}
-
-fn label_syntax_runs<'a>(
-    label: &'a CodeLabel,
-    syntax_theme: &'a SyntaxTheme,
-) -> impl Iterator<Item = (Range<usize>, HighlightStyle)> + 'a {
-    label.runs.iter().filter_map(|(range, highlight_id)| {
-        Some((range.clone(), *syntax_theme.get(*highlight_id)?))
-    })
-}
-
 fn render_item(
     call_item: &Call,
     match_ranges: impl IntoIterator<Item = Range<usize>>,
@@ -1225,7 +1211,7 @@ fn render_item(
         .as_ref()
         .zip(call_item.display.label_text.clone())
     {
-        let syntax_runs = label_syntax_runs(label, cx.theme().syntax());
+        let syntax_runs = cx.theme().syntax().resolve_runs(&label.runs);
         let custom_highlights = match_ranges.into_iter().map(|range| {
             let start = label.filter_range.start + range.start;
             let end = label.filter_range.start + range.end;

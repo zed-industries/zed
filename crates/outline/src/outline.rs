@@ -7,15 +7,12 @@ use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy_nucleo::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Rems, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
-    div, rems,
+    ParentElement, Point, Rems, Render, Styled, StyledText, Task, WeakEntity, Window, div, rems,
 };
 use language::{OffsetRangeExt, Outline, OutlineItem, OutlineSearchEntry};
 use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
-use settings::Settings;
 use theme::ActiveTheme;
-use theme_settings::ThemeSettings;
-use ui::{ListItem, ListItemSpacing, prelude::*};
+use ui::{ListItem, ListItemSpacing, prelude::*, utils::buffer_text_style};
 use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
@@ -463,11 +460,11 @@ impl PickerDelegate for OutlineViewDelegate {
     }
 }
 
-pub fn render_item<T>(
+pub fn render_item<T, M: IntoIterator<Item = Range<usize>>>(
     outline_item: &OutlineItem<T>,
-    match_ranges: impl IntoIterator<Item = Range<usize>>,
+    match_ranges: M,
     cx: &App,
-) -> StyledText {
+) -> impl IntoElement + use<T, M> {
     let highlight_style = HighlightStyle {
         background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
         ..Default::default()
@@ -476,27 +473,16 @@ pub fn render_item<T>(
         .into_iter()
         .map(|range| (range, highlight_style));
 
-    let settings = ThemeSettings::get_global(cx);
-
-    // TODO: We probably shouldn't need to build a whole new text style here
-    // but I'm not sure how to get the current one and modify it.
-    // Before this change TextStyle::default() was used here, which was giving us the wrong font and text color.
-    let text_style = TextStyle {
-        color: cx.theme().colors().text,
-        font_family: settings.buffer_font.family.clone(),
-        font_features: settings.buffer_font.features.clone(),
-        font_fallbacks: settings.buffer_font.fallbacks.clone(),
-        font_size: settings.buffer_font_size(cx).into(),
-        font_weight: settings.buffer_font.weight,
-        line_height: relative(1.),
-        ..Default::default()
-    };
+    let text_style = buffer_text_style(cx);
+    let buffer_font_size = text_style.font_size;
     let highlights = gpui::combine_highlights(
         custom_highlights,
         outline_item.highlight_ranges.iter().cloned(),
     );
 
-    StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights)
+    div().text_size(buffer_font_size).child(
+        StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights),
+    )
 }
 
 #[cfg(test)]

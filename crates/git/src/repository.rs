@@ -3,7 +3,7 @@ use crate::stash::GitStash;
 use crate::status::{
     DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
 };
-use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
+use crate::{Oid, RunHook, SHA256_HEX_LENGTH, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
 use collections::HashMap;
@@ -350,7 +350,7 @@ impl Worktree {
             .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
 
-    pub fn directory_name(&self, main_worktree_path: Option<&Path>) -> String {
+    pub fn directory_name(&self, name_anchor_path: Option<&Path>) -> String {
         if self.is_main {
             return "main worktree".to_string();
         }
@@ -361,14 +361,14 @@ impl Worktree {
             .and_then(|name| name.to_str())
             .unwrap_or(self.display_name());
 
-        if let Some(main_path) = main_worktree_path {
-            let main_dir = main_path.file_name().and_then(|n| n.to_str());
-            if main_dir == Some(dir_name) {
+        if let Some(name_anchor_path) = name_anchor_path {
+            let name_anchor_dir = name_anchor_path.file_name().and_then(|name| name.to_str());
+            if name_anchor_dir == Some(dir_name) {
                 if let Some(parent_name) = self
                     .path
                     .parent()
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
+                    .and_then(|parent| parent.file_name())
+                    .and_then(|name| name.to_str())
                 {
                     return parent_name.to_string();
                 }
@@ -738,7 +738,7 @@ pub enum LogSource {
 
 impl LogSource {
     fn get_args(&self) -> Vec<Cow<'_, str>> {
-        match self {
+        let mut args = match self {
             LogSource::All => vec![
                 Cow::Borrowed("--ignore-missing"), // needed in case of unborn HEAD
                 Cow::Borrowed("--branches"),
@@ -753,7 +753,14 @@ impl LogSource {
                 Cow::Borrowed("--"),
                 Cow::Borrowed(path.as_unix_str()),
             ],
+        };
+        // Without a terminator git cannot tell a branch named `docs/rewrite` from a
+        // `docs/rewrite` directory in the working tree, and refuses the argument as
+        // ambiguous. `Path` states its own separator before the path it passes.
+        if !matches!(self, LogSource::Path(_)) {
+            args.push(Cow::Borrowed("--"));
         }
+        args
     }
 }
 
@@ -764,7 +771,7 @@ pub struct SearchCommitArgs {
 
 pub fn commit_hash_search_query(query: &str) -> Option<&str> {
     let query = query.trim();
-    (7..=40)
+    (SHORT_SHA_LENGTH..=SHA256_HEX_LENGTH)
         .contains(&query.len())
         .then_some(query)
         .filter(|query| query.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -1379,6 +1386,19 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     .await
 }
 
+fn parse_remote_urls(stdout: &str) -> HashMap<String, String> {
+    let mut urls = HashMap::default();
+    for line in stdout.lines() {
+        if let Some((line, suffix)) = line.rsplit_once(" (fetch)")
+            && (suffix.is_empty() || suffix.starts_with(" [") && suffix.ends_with(']'))
+            && let Some((name, url)) = line.split_once(char::is_whitespace)
+        {
+            urls.insert(name.to_string(), url.trim_start().to_string());
+        }
+    }
+    urls
+}
+
 impl GitRepository for RealGitRepository {
     fn path(&self) -> PathBuf {
         self.git_dir.clone()
@@ -1398,6 +1418,9 @@ impl GitRepository for RealGitRepository {
                         "--no-patch",
                         "--format=%H%x00%B%x00%at%x00%ae%x00%an%x00",
                         &commit,
+                        // `commit` reaches here as whatever the user typed, so it can name
+                        // a branch that also names a path in the working tree.
+                        "--",
                     ])
                     .output()
                     .await?;
@@ -1451,6 +1474,7 @@ impl GitRepository for RealGitRepository {
                     "--first-parent",
                 ])
                 .arg(&commit)
+                .arg("--")
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1735,17 +1759,11 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let mut urls = HashMap::default();
                 if let Ok(stdout) = git.run(&["remote", "-v"]).await {
-                    for line in stdout.lines() {
-                        if let Some(line) = line.strip_suffix(" (fetch)")
-                            && let Some((name, url)) = line.split_once(char::is_whitespace)
-                        {
-                            urls.insert(name.to_string(), url.trim_start().to_string());
-                        }
-                    }
+                    parse_remote_urls(&stdout)
+                } else {
+                    HashMap::default()
                 }
-                urls
             })
             .boxed()
     }
@@ -1918,6 +1936,7 @@ impl GitRepository for RealGitRepository {
                 "--merge-base",
                 base.as_str(),
                 head.as_str(),
+                "--",
             ]
             .map(OsString::from)
             .to_vec(),
@@ -1929,6 +1948,7 @@ impl GitRepository for RealGitRepository {
                 "--no-renames",
                 "--merge-base",
                 base.as_str(),
+                "--",
             ]
             .map(OsString::from)
             .to_vec(),
@@ -1940,6 +1960,7 @@ impl GitRepository for RealGitRepository {
                 "--no-renames",
                 base.as_str(),
                 head.as_str(),
+                "--",
             ]
             .map(OsString::from)
             .to_vec(),
@@ -2487,7 +2508,7 @@ impl GitRepository for RealGitRepository {
                     }
                     DiffType::HeadToWorktree => git.build_command(&["diff"]).output().await?,
                     DiffType::MergeBase { base_ref } => {
-                        git.build_command(&["diff", "--merge-base", base_ref.as_ref()])
+                        git.build_command(&["diff", "--merge-base", base_ref.as_ref(), "--"])
                             .output()
                             .await?
                     }
@@ -3977,13 +3998,20 @@ impl GitBinary {
             command.args(["-c", "protocol.ext.allow=never"]);
             command.args(["-c", "diff.external="]);
         }
-        command.args(args);
-
         // If the `diff` command is being used, we'll want to add the
         // `--no-ext-diff` flag when working on an untrusted repository,
-        // preventing any external diff programs from being invoked.
-        if !self.is_trusted && args.iter().any(|arg| arg.as_ref() == "diff") {
-            command.arg("--no-ext-diff");
+        // preventing any external diff programs from being invoked. It goes
+        // directly after the subcommand: callers end their revisions with `--`,
+        // and anything after that separator is read as a pathspec rather than as
+        // an option.
+        let mut args = args.iter();
+        if let Some(subcommand) = args.next() {
+            let is_diff = subcommand.as_ref() == "diff";
+            command.arg(subcommand);
+            if !self.is_trusted && is_diff {
+                command.arg("--no-ext-diff");
+            }
+            command.args(args);
         }
 
         if let Some(index_file_path) = self.index_file_path.as_ref() {
@@ -4265,6 +4293,26 @@ mod tests {
 
     use super::*;
     use gpui::TestAppContext;
+
+    #[test]
+    fn test_commit_hash_search_query_accepts_sha1_and_sha256_hashes() {
+        assert_eq!(
+            commit_hash_search_query("0123456789abcdef0123456789abcdef01234567"),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+        assert_eq!(
+            commit_hash_search_query(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(
+            commit_hash_search_query(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+            ),
+            None
+        );
+    }
 
     fn disable_git_global_config() {
         unsafe {
@@ -5263,6 +5311,164 @@ mod tests {
         let graph_data = request_rx.recv().await.unwrap();
         assert_eq!(graph_data.len(), 1);
         assert_eq!(graph_data[0].sha, commit_sha);
+    }
+
+    /// A branch whose name also names a path in the working tree - `docs/rewrite` in a
+    /// repository that also has a `docs/rewrite` directory - made git reject the revision
+    /// as ambiguous, so the git panel's History tab reported "Failed to load commit
+    /// history" and commit search silently returned nothing.
+    #[gpui::test]
+    async fn test_initial_graph_data_with_branch_named_after_a_path(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::create_dir_all(repo_dir.path().join("docs/rewrite")).unwrap();
+        fs::write(repo_dir.path().join("docs/rewrite/notes.md"), "notes").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add rewrite notes"]);
+        git_command(repo_dir.path(), ["checkout", "-b", "docs/rewrite"]);
+
+        let commit_sha: Oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"])
+            .parse()
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let (request_tx, request_rx) = async_channel::unbounded();
+
+        repo.initial_graph_data(
+            LogSource::Branch("docs/rewrite".into()),
+            LogOrder::DateOrder,
+            request_tx,
+        )
+        .await
+        .unwrap();
+
+        let graph_data = request_rx.recv().await.unwrap();
+        assert_eq!(graph_data.len(), 1);
+        assert_eq!(graph_data[0].sha, commit_sha);
+    }
+
+    /// The branch diff passes the base ref straight to `git diff`, so a branch named after
+    /// a path in the working tree broke it the same way. `git diff` takes the same `--`
+    /// terminator, so the base ref is terminated like the log sources are.
+    #[gpui::test]
+    async fn test_merge_base_worktree_diff_with_branch_named_after_a_path(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::create_dir_all(repo_dir.path().join("docs/rewrite")).unwrap();
+        let notes_path = repo_dir.path().join("docs/rewrite/notes.md");
+        fs::write(&notes_path, "notes\n").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add rewrite notes"]);
+        git_command(repo_dir.path(), ["checkout", "-b", "docs/rewrite"]);
+
+        let base_oid: Oid =
+            git_command_output(repo_dir.path(), ["rev-parse", "HEAD:docs/rewrite/notes.md"])
+                .parse()
+                .unwrap();
+
+        fs::write(&notes_path, "edited\n").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let diff = repo
+            .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                base: "docs/rewrite".into(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            diff,
+            TreeDiff {
+                entries: HashMap::from_iter([(
+                    RepoPath::new("docs/rewrite/notes.md").unwrap(),
+                    TreeDiffStatus::Modified { old: base_oid },
+                )]),
+            }
+        );
+    }
+
+    /// `show` takes the revision the user typed in the "open commit by ref" input, so a
+    /// branch named after a path in the working tree reaches git unqualified there too.
+    #[gpui::test]
+    async fn test_show_with_branch_named_after_a_path(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::create_dir_all(repo_dir.path().join("docs/rewrite")).unwrap();
+        fs::write(repo_dir.path().join("docs/rewrite/notes.md"), "notes").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add rewrite notes"]);
+        git_command(repo_dir.path(), ["checkout", "-b", "docs/rewrite"]);
+
+        let commit_sha: Oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"])
+            .parse()
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let details = repo.show("docs/rewrite".to_string()).await.unwrap();
+        assert_eq!(details.sha.as_ref(), commit_sha.to_string());
+    }
+
+    #[test]
+    fn test_log_source_terminates_revisions() {
+        // Every revision-taking source has to end the revision list, or git cannot tell a
+        // branch name from an identically named path. `Path` is the exception: it states
+        // the separator itself, before the path it is passing.
+        for source in [
+            LogSource::All,
+            LogSource::Branch("docs/rewrite".into()),
+            LogSource::Sha(Oid::from_str("0000000000000000000000000000000000000000").unwrap()),
+        ] {
+            let args = source.get_args();
+            assert_eq!(
+                args.last().map(|arg| arg.as_ref()),
+                Some("--"),
+                "{source:?} must terminate its revisions"
+            );
+        }
+
+        let path_source = LogSource::Path(RepoPath::new("docs/rewrite").unwrap());
+        let path_args = path_source.get_args();
+        assert_eq!(
+            path_args.iter().filter(|arg| arg.as_ref() == "--").count(),
+            1,
+            "Path states the separator itself and must not gain a second one"
+        );
     }
 
     #[gpui::test]
@@ -6681,6 +6887,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_remote_urls() {
+        let stdout = concat!(
+            "origin\thttps://github.com/zed-industries/zed.git (fetch) [blob:none]\n",
+            "origin\thttps://github.com/zed-industries/zed.git (push)\n",
+            "upstream\t/Users/user/My Projects/upstream.git (fetch)\n",
+            "upstream\t/Users/user/My Projects/upstream.git (push)\n",
+            "a\t/x (fetch) dir (fetch)\n",
+            "a\t/x (fetch) dir (push)\n",
+            "archive\t/tmp/remote [archive].git (fetch)\n",
+            "archive\t/tmp/remote [archive].git (push)\n",
+        );
+
+        let remote_urls = parse_remote_urls(stdout);
+        assert_eq!(remote_urls.len(), 4);
+        assert_eq!(
+            remote_urls.get("origin").map(String::as_str),
+            Some("https://github.com/zed-industries/zed.git")
+        );
+        assert_eq!(
+            remote_urls.get("upstream").map(String::as_str),
+            Some("/Users/user/My Projects/upstream.git")
+        );
+        assert_eq!(
+            remote_urls.get("a").map(String::as_str),
+            Some("/x (fetch) dir")
+        );
+        assert_eq!(
+            remote_urls.get("archive").map(String::as_str),
+            Some("/tmp/remote [archive].git")
+        );
+    }
+
     #[gpui::test]
     async fn test_remote_urls(cx: &mut TestAppContext) {
         disable_git_global_config();
@@ -6717,6 +6956,12 @@ mod tests {
         ])
         .await
         .unwrap();
+        git.run(&["config", "remote.origin.promisor", "true"])
+            .await
+            .unwrap();
+        git.run(&["config", "remote.origin.partialclonefilter", "blob:none"])
+            .await
+            .unwrap();
 
         let remote_urls = repo.remote_urls().await;
         assert_eq!(remote_urls.len(), 2);

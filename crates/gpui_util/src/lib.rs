@@ -4,6 +4,7 @@
 use std::{
     env,
     ffi::OsStr,
+    fmt,
     ops::AddAssign,
     panic::Location,
     pin::Pin,
@@ -32,7 +33,7 @@ pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
 }
 
 #[cfg(target_os = "windows")]
-pub fn get_windows_system_shell() -> String {
+pub fn get_powershell() -> Option<String> {
     use std::path::PathBuf;
 
     fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
@@ -71,7 +72,7 @@ pub fn get_windows_system_shell() -> String {
                 };
 
                 let exe_path = entry.path().join("pwsh.exe");
-                if exe_path.exists() {
+                if exe_path.is_file() {
                     Some((version, exe_path))
                 } else {
                     None
@@ -84,41 +85,34 @@ pub fn get_windows_system_shell() -> String {
     fn find_pwsh_in_msix(find_preview: bool) -> Option<PathBuf> {
         let msix_app_dir =
             PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft\\WindowsApps");
-        if !msix_app_dir.exists() {
-            return None;
-        }
-
-        let prefix = if find_preview {
-            "Microsoft.PowerShellPreview_"
+        let package_family_name = if find_preview {
+            "Microsoft.PowerShellPreview_8wekyb3d8bbwe"
         } else {
-            "Microsoft.PowerShell_"
+            "Microsoft.PowerShell_8wekyb3d8bbwe"
         };
-        msix_app_dir
-            .read_dir()
-            .ok()?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
-                    return None;
-                }
-
-                if !entry.file_name().to_string_lossy().starts_with(prefix) {
-                    return None;
-                }
-
-                let exe_path = entry.path().join("pwsh.exe");
-                exe_path.exists().then_some(exe_path)
-            })
-            .next()
+        let pwsh_exe = msix_app_dir.join(package_family_name).join("pwsh.exe");
+        pwsh_exe.exists().then_some(pwsh_exe)
     }
 
     fn find_pwsh_in_scoop() -> Option<PathBuf> {
         let pwsh_exe =
             PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
-        pwsh_exe.exists().then_some(pwsh_exe)
+        pwsh_exe.is_file().then_some(pwsh_exe)
     }
 
-    static SYSTEM_SHELL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    fn find_pwsh_in_dotnet_tools() -> Option<PathBuf> {
+        let pwsh_exe =
+            PathBuf::from(std::env::var_os("USERPROFILE")?).join(".dotnet\\tools\\pwsh.exe");
+        pwsh_exe.is_file().then_some(pwsh_exe)
+    }
+
+    fn find_windows_powershell() -> Option<PathBuf> {
+        let system_root = PathBuf::from(std::env::var_os("SystemRoot")?);
+        let powershell = system_root.join("System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        powershell.is_file().then_some(powershell)
+    }
+
+    static POWERSHELL: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
         let locations = [
             || find_pwsh_in_programfiles(false, false),
             || find_pwsh_in_programfiles(true, false),
@@ -127,8 +121,10 @@ pub fn get_windows_system_shell() -> String {
             || find_pwsh_in_msix(true),
             || find_pwsh_in_programfiles(true, true),
             || find_pwsh_in_scoop(),
+            || find_pwsh_in_dotnet_tools(),
             || which::which_global("pwsh.exe").ok(),
             || which::which_global("powershell.exe").ok(),
+            || find_windows_powershell(),
         ];
 
         locations
@@ -136,13 +132,22 @@ pub fn get_windows_system_shell() -> String {
             .find_map(|f| f())
             .map(|p| p.to_string_lossy().trim().to_owned())
             .inspect(|shell| log::info!("Found powershell in: {}", shell))
-            .unwrap_or_else(|| {
-                log::warn!("Powershell not found, falling back to `cmd`");
-                "cmd.exe".to_string()
-            })
     });
 
-    (*SYSTEM_SHELL).clone()
+    (*POWERSHELL).clone()
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_windows_system_shell() -> String {
+    static CMD: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        log::warn!("Powershell not found, falling back to `cmd`");
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        std::path::PathBuf::from(system_root)
+            .join("System32\\cmd.exe")
+            .to_string_lossy()
+            .into_owned()
+    });
+    get_powershell().unwrap_or_else(|| (*CMD).clone())
 }
 
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
@@ -247,7 +252,7 @@ where
             Err(error) => {
                 log_error_with_caller(
                     *Location::caller(),
-                    DebugAsDisplay(&error),
+                    format_args!("{:#}", DebugAsDisplay(&error)),
                     log::Level::Error,
                 );
                 None
@@ -273,7 +278,7 @@ where
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log_error_with_caller(*Location::caller(), error, level);
+                log_error_with_caller(*Location::caller(), format_args!("{error:#}"), level);
                 None
             }
         }
@@ -287,10 +292,12 @@ where
     }
 }
 
-fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: log::Level)
-where
-    E: std::fmt::Display,
-{
+#[inline(never)]
+fn log_error_with_caller(
+    caller: core::panic::Location<'_>,
+    arguments: fmt::Arguments<'_>,
+    level: log::Level,
+) {
     #[cfg(not(windows))]
     let file = caller.file();
     #[cfg(windows)]
@@ -312,7 +319,7 @@ where
         &log::Record::builder()
             .target(module_path.as_deref().unwrap_or(""))
             .module_path(file.as_deref())
-            .args(format_args!("{:#}", error))
+            .args(arguments)
             .file(Some(caller.file()))
             .line(Some(caller.line()))
             .level(level)
@@ -322,7 +329,11 @@ where
 
 #[track_caller]
 pub fn log_err<E: std::fmt::Display>(error: &E) {
-    log_error_with_caller(*Location::caller(), error, log::Level::Error);
+    log_error_with_caller(
+        *Location::caller(),
+        format_args!("{error:#}"),
+        log::Level::Error,
+    );
 }
 
 // Forces `{:?}` formatting through a `Display`-bounded logging helper so `anyhow::Error` emits a
@@ -448,7 +459,7 @@ where
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    log_error_with_caller(location, error, level);
+                    log_error_with_caller(location, format_args!("{error:#}"), level);
                     None
                 }
             }),
@@ -475,7 +486,11 @@ where
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    log_error_with_caller(location, DebugAsDisplay(&error), level);
+                    log_error_with_caller(
+                        location,
+                        format_args!("{:#}", DebugAsDisplay(&error)),
+                        level,
+                    );
                     None
                 }
             }),
@@ -600,4 +615,69 @@ where
     items.select_nth_unstable_by(limit, compare);
     items.truncate(limit);
     items.sort_by(compare);
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use super::{ResultExt, TryFutureExt, TryFutureExtBacktrace};
+    use log::{Level, Log, Metadata, Record};
+    use std::{
+        cell::RefCell,
+        future::ready,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    #[test]
+    fn logging_preserves_diagnostics_and_callers() {
+        log::set_logger(&TestLogger).expect("failed to install test logger");
+        let error = anyhow::anyhow!("root failure")
+            .context("inner context")
+            .context("outer context");
+        let display = "outer context: inner context: root failure";
+        let debug = format!("{error:?}");
+        let line = line!() + 1;
+        assert_eq!(Err::<(), _>(&error).log_err(), None);
+        assert_logged(line, display);
+        let line = line!() + 1;
+        assert_eq!(Err::<(), _>(&error).log_err_with_backtrace(), None);
+        assert_logged(line, &debug);
+        let mut context = Context::from_waker(Waker::noop());
+        let line = line!() + 1;
+        let mut future = pin!(ready(Err::<(), _>(&error)).log_err());
+        assert_eq!(future.as_mut().poll(&mut context), Poll::Ready(None));
+        assert_logged(line, display);
+        let line = line!() + 1;
+        let mut future = pin!(ready(Err::<(), _>(&error)).log_err_with_backtrace());
+        assert_eq!(future.as_mut().poll(&mut context), Poll::Ready(None));
+        assert_logged(line, &debug);
+    }
+
+    thread_local! {
+        static RECORDS: RefCell<Vec<(Option<u32>, String)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    struct TestLogger;
+
+    impl Log for TestLogger {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &Record<'_>) {
+            assert_eq!(record.target(), "gpui_util::lib");
+            assert_eq!(record.module_path(), Some("crates/gpui_util/src/lib.rs"));
+            assert_eq!(record.file(), Some(file!()));
+            assert_eq!(record.level(), Level::Error);
+            RECORDS.with_borrow_mut(|records| {
+                records.push((record.line(), record.args().to_string()));
+            });
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn assert_logged(line: u32, message: &str) {
+        assert_eq!(RECORDS.take(), [(Some(line), message.to_owned())]);
+    }
 }

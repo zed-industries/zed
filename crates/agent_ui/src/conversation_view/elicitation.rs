@@ -1823,7 +1823,7 @@ impl<'a> ElicitationCard<'a> {
             .min_w_0()
             .flex_1()
             .gap_0p5()
-            .child(Label::new(option.label).size(LabelSize::Small).truncate())
+            .child(Label::new(option.label).size(LabelSize::Small))
             .when_some(option.description, |this, description| {
                 this.child(
                     Label::new(description)

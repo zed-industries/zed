@@ -22,7 +22,9 @@ use project::{
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
     image_store::ImageId,
-    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind, LogKind},
+    lsp_store::log_store::{
+        self, GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind,
+    },
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -408,13 +410,39 @@ impl HeadlessProject {
                     });
                 }
             }
-            LspStoreEvent::LanguageServerRemoved(id) => {
+            LspStoreEvent::SupplementaryLanguageServerAdded(id, name) => {
                 let log_store = cx
                     .try_global::<GlobalLogStore>()
                     .map(|lsp_logs| lsp_logs.0.clone());
                 if let Some(log_store) = log_store {
                     log_store.update(cx, |log_store, cx| {
-                        log_store.remove_language_server(*id, cx);
+                        log_store.add_language_server(
+                            LanguageServerKind::LocalSsh {
+                                lsp_store: self.lsp_store.downgrade(),
+                            },
+                            *id,
+                            Some(name.clone()),
+                            None,
+                            lsp_store.read(cx).language_server_for_id(*id),
+                            cx,
+                        );
+                    });
+                }
+            }
+            LspStoreEvent::LanguageServerRemoved(id)
+            | LspStoreEvent::SupplementaryLanguageServerRemoved(id) => {
+                let log_store = cx
+                    .try_global::<GlobalLogStore>()
+                    .map(|lsp_logs| lsp_logs.0.clone());
+                if let Some(log_store) = log_store {
+                    let server_key = LanguageServerLogKey::new(
+                        LanguageServerKind::LocalSsh {
+                            lsp_store: self.lsp_store.downgrade(),
+                        },
+                        *id,
+                    );
+                    log_store.update(cx, |log_store, cx| {
+                        log_store.remove_language_server(&server_key, cx);
                     });
                 }
                 self.session
@@ -428,6 +456,10 @@ impl HeadlessProject {
                     })
                     .log_err();
             }
+            LspStoreEvent::LanguageServerUpdate {
+                message: proto::update_language_server::Variant::MetadataUpdated(_),
+                ..
+            } => {}
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
@@ -450,6 +482,33 @@ impl HeadlessProject {
                         message: message.clone(),
                     })
                     .log_err();
+            }
+            LspStoreEvent::LanguageServerShowDocument(show_document_request) => {
+                let request = self
+                    .session
+                    .request(proto::LanguageServerShowDocumentRequest {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        uri: show_document_request.uri.as_str().to_owned(),
+                        external: show_document_request.external,
+                        take_focus: show_document_request.take_focus,
+                        selection_start: show_document_request.selection.map(|selection| {
+                            proto::PointUtf16 {
+                                row: selection.start.line,
+                                column: selection.start.character,
+                            }
+                        }),
+                        selection_end: show_document_request.selection.map(|selection| {
+                            proto::PointUtf16 {
+                                row: selection.end.line,
+                                column: selection.end.character,
+                            }
+                        }),
+                    });
+                let show_document_request = show_document_request.clone();
+                cx.background_spawn(async move {
+                    show_document_request.respond(request.await.is_ok());
+                })
+                .detach();
             }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 let request = self.session.request(proto::LanguageServerPromptRequest {
@@ -837,11 +896,12 @@ impl HeadlessProject {
     }
 
     async fn handle_toggle_lsp_logs(
-        _: Entity<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
         cx: AsyncApp,
     ) -> Result<()> {
         let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
+        let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.downgrade());
         cx.update(|cx| {
             let log_store = cx
                 .try_global::<GlobalLogStore>()
@@ -856,8 +916,10 @@ impl HeadlessProject {
                     proto::toggle_lsp_logs::LogType::Trace => LogKind::Trace,
                     proto::toggle_lsp_logs::LogType::Rpc => LogKind::Rpc,
                 };
+            let server_key =
+                LanguageServerLogKey::new(LanguageServerKind::LocalSsh { lsp_store }, server_id);
             log_store.update(cx, |log_store, _| {
-                log_store.toggle_lsp_logs(server_id, envelope.payload.enabled, toggled_log_kind);
+                log_store.toggle_lsp_logs(&server_key, envelope.payload.enabled, toggled_log_kind);
             });
             anyhow::Ok(())
         })?;

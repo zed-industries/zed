@@ -194,7 +194,7 @@ pub trait ParentElement {
     where
         Self: Sized,
     {
-        self.extend(std::iter::once(child.into_element().into_any()));
+        self.extend(std::iter::once(child.into_any_element()));
         self
     }
 
@@ -305,13 +305,17 @@ impl<E: Element> Drawable<E> {
                 let inspector_id;
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 {
-                    inspector_id = self.element.source_location().map(|source| {
-                        let path = crate::InspectorElementPath {
-                            global_id: GlobalElementId(Arc::from(&*window.element_id_stack)),
-                            source_location: source,
-                        };
-                        window.build_inspector_element_id(path)
-                    });
+                    inspector_id = if window.inspector_enabled() {
+                        self.element.source_location().map(|source| {
+                            let path = crate::InspectorElementPath {
+                                global_id: GlobalElementId(Arc::from(&*window.element_id_stack)),
+                                source_location: source,
+                            };
+                            window.build_inspector_element_id(path)
+                        })
+                    } else {
+                        None
+                    };
                 }
                 #[cfg(not(any(feature = "inspector", debug_assertions)))]
                 {
