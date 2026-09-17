@@ -5087,9 +5087,10 @@ async fn test_click_clears_selection_and_focus_in_does_not_restore_it(cx: &mut T
         );
     });
 
-    // The focus handler must not restore the cleared selection.
+    // Refocusing the sidebar moves focus to search without restoring selection.
+    focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.focus_in(window, cx);
+        assert!(sidebar.filter_editor.read(cx).is_focused(window));
     });
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
 
@@ -5125,9 +5126,10 @@ async fn test_click_clears_selection_and_focus_in_does_not_restore_it(cx: &mut T
         );
     });
 
-    // The focus handler must leave selection cleared after a terminal click too.
+    // Refocusing after a terminal click must also focus search and leave selection clear.
+    focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.focus_in(window, cx);
+        assert!(sidebar.filter_editor.read(cx).is_focused(window));
     });
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
 }
