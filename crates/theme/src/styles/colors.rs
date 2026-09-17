@@ -269,6 +269,18 @@ pub struct ThemeColors {
     pub terminal_bright_foreground: Hsla,
     /// Dim terminal foreground color.
     pub terminal_dim_foreground: Hsla,
+    /// The terminal scrollbar thumb color.
+    pub terminal_scrollbar_thumb_background: Option<Hsla>,
+    /// The hovered terminal scrollbar thumb color.
+    pub terminal_scrollbar_thumb_hover_background: Option<Hsla>,
+    /// The dragged terminal scrollbar thumb color.
+    pub terminal_scrollbar_thumb_active_background: Option<Hsla>,
+    /// The terminal scrollbar thumb border color.
+    pub terminal_scrollbar_thumb_border: Option<Hsla>,
+    /// The terminal scrollbar track background.
+    pub terminal_scrollbar_track_background: Option<Hsla>,
+    /// The terminal scrollbar track border color.
+    pub terminal_scrollbar_track_border: Option<Hsla>,
     /// Terminal ANSI background color.
     pub terminal_ansi_background: Hsla,
     /// Black ANSI terminal color.
@@ -428,6 +440,12 @@ pub enum ThemeColorField {
     TerminalForeground,
     TerminalBrightForeground,
     TerminalDimForeground,
+    TerminalScrollbarThumbBackground,
+    TerminalScrollbarThumbHoverBackground,
+    TerminalScrollbarThumbActiveBackground,
+    TerminalScrollbarThumbBorder,
+    TerminalScrollbarTrackBackground,
+    TerminalScrollbarTrackBorder,
     TerminalAnsiBackground,
     TerminalAnsiBlack,
     TerminalAnsiBrightBlack,
@@ -557,6 +575,24 @@ impl ThemeColors {
             ThemeColorField::TerminalForeground => self.terminal_foreground,
             ThemeColorField::TerminalBrightForeground => self.terminal_bright_foreground,
             ThemeColorField::TerminalDimForeground => self.terminal_dim_foreground,
+            ThemeColorField::TerminalScrollbarThumbBackground => self
+                .terminal_scrollbar_thumb_background
+                .unwrap_or(self.scrollbar_thumb_background),
+            ThemeColorField::TerminalScrollbarThumbHoverBackground => self
+                .terminal_scrollbar_thumb_hover_background
+                .unwrap_or(self.scrollbar_thumb_hover_background),
+            ThemeColorField::TerminalScrollbarThumbActiveBackground => self
+                .terminal_scrollbar_thumb_active_background
+                .unwrap_or(self.scrollbar_thumb_active_background),
+            ThemeColorField::TerminalScrollbarThumbBorder => self
+                .terminal_scrollbar_thumb_border
+                .unwrap_or(gpui::transparent_black()),
+            ThemeColorField::TerminalScrollbarTrackBackground => self
+                .terminal_scrollbar_track_background
+                .unwrap_or(self.scrollbar_track_background),
+            ThemeColorField::TerminalScrollbarTrackBorder => self
+                .terminal_scrollbar_track_border
+                .unwrap_or(self.border_variant.opacity(0.6)),
             ThemeColorField::TerminalAnsiBackground => self.terminal_ansi_background,
             ThemeColorField::TerminalAnsiBlack => self.terminal_ansi_black,
             ThemeColorField::TerminalAnsiBrightBlack => self.terminal_ansi_bright_black,
