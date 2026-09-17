@@ -5246,7 +5246,7 @@ mod tests {
             .update_window(any_window, |_, window, cx| {
                 window.dispatch_event(
                     MouseMoveEvent {
-                        position: point(px(75.), px(10.)),
+                        position: point(px(75.0), px(10.0)),
                         modifiers: Default::default(),
                         pressed_button: None,
                     }
@@ -5276,7 +5276,7 @@ mod tests {
             .update_window(any_window, |_, window, cx| {
                 window.dispatch_event(
                     MouseMoveEvent {
-                        position: point(px(10.), px(10.)),
+                        position: point(px(10.0), px(10.0)),
                         modifiers: Default::default(),
                         pressed_button: None,
                     }
@@ -5313,7 +5313,7 @@ mod tests {
             .update_window(any_window, |_, window, cx| {
                 window.dispatch_event(
                     MouseMoveEvent {
-                        position: point(px(75.), px(10.)),
+                        position: point(px(75.0), px(10.0)),
                         modifiers: Default::default(),
                         pressed_button: None,
                     }
@@ -5345,6 +5345,141 @@ mod tests {
             Some(ActiveTooltip::Visible { .. })
         ));
         assert!(child_active_tooltip.borrow().is_none());
+    }
+
+    #[gpui::test]
+    fn test_parent_tooltip_when_child_is_invisible(cx: &mut TestAppContext) {
+        struct TestView(CapturedActiveTooltip);
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                TooltipCaptureElement {
+                    child: div()
+                        .size_full()
+                        .child(
+                            div()
+                                .id("parent")
+                                .size(px(100.0))
+                                .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                                .child(
+                                    div()
+                                        .id("child")
+                                        .size(px(50.0))
+                                        .invisible()
+                                        .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                                ),
+                        )
+                        .into_any_element(),
+                    tooltip_owner_id: "parent".into(),
+                    tooltip_owner_capture: self.0.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        let captured_parent_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let window = cx.add_window({
+            let captured_parent_active_tooltip = captured_parent_active_tooltip.clone();
+            move |_, _| TestView(captured_parent_active_tooltip)
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: point(px(10.0), px(10.0)),
+                    modifiers: Default::default(),
+                    pressed_button: None,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        let parent_active_tooltip = captured_parent_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        assert!(
+            matches!(
+                parent_active_tooltip.borrow().as_ref(),
+                Some(ActiveTooltip::Visible { .. })
+            ),
+            "hovering the hidden child's bounds should show the parent's tooltip"
+        );
+    }
+
+    #[gpui::test]
+    fn test_parent_tooltip_when_child_container_is_invisible(cx: &mut TestAppContext) {
+        struct TestView(CapturedActiveTooltip);
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                TooltipCaptureElement {
+                    child: div()
+                        .size_full()
+                        .child(
+                            div()
+                                .id("parent")
+                                .size(px(100.0))
+                                .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                                .child(
+                                    div().size(px(50.0)).invisible().child(
+                                        div()
+                                            .id("child")
+                                            .size(px(50.0))
+                                            .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                                    ),
+                                ),
+                        )
+                        .into_any_element(),
+                    tooltip_owner_id: "parent".into(),
+                    tooltip_owner_capture: self.0.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        let captured_parent_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let window = cx.add_window({
+            let captured_parent_active_tooltip = captured_parent_active_tooltip.clone();
+            move |_, _| TestView(captured_parent_active_tooltip)
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: point(px(10.0), px(10.0)),
+                    modifiers: Default::default(),
+                    pressed_button: None,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        let parent_active_tooltip = captured_parent_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        assert!(
+            matches!(
+                parent_active_tooltip.borrow().as_ref(),
+                Some(ActiveTooltip::Visible { .. })
+            ),
+            "hovering the hidden child's bounds should show the parent's tooltip"
+        );
     }
 
     struct MouseDownOutOwner {
