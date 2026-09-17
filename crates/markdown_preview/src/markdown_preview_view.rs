@@ -1640,6 +1640,14 @@ impl Item for MarkdownPreviewView {
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
 
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+        self.active_editor
+            .as_ref()?
+            .editor
+            .read(cx)
+            .tab_tooltip_text(cx)
+    }
+
     fn telemetry_event_text(&self) -> Option<&'static str> {
         Some("Markdown Preview Opened")
     }
@@ -2214,7 +2222,7 @@ mod tests {
     use util::paths::{PathStyle, PathWithPosition};
     use util::rel_path::{RelPath, rel_path};
     use util::test::TempTree;
-    use workspace::item::{ItemHandle, SerializableItem};
+    use workspace::item::{Item, ItemHandle, SerializableItem};
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
     use workspace::{
         AppState, ItemId, MultiWorkspace, Pane, SaveIntent, Workspace, WorkspaceId, open_paths,
@@ -2243,6 +2251,31 @@ mod tests {
         assert_eq!(
             filter_non_rendered_matches(vec![58..65, 1..9, 30..37], &non_rendered_ranges),
             vec![58..65, 1..9]
+        );
+    }
+
+    #[gpui::test]
+    async fn preview_tab_tooltip_matches_source_file_path(cx: &mut TestAppContext) {
+        let (project, _, multi_workspace) = markdown_workspace(
+            cx,
+            json!({
+                "docs": {
+                    "guide.md": "# Guide"
+                }
+            }),
+            false,
+        )
+        .await;
+        let source_item =
+            open_project_file(cx, &project, &multi_workspace, "docs/guide.md", None, true).await;
+        let source_editor = cx.update(|cx| source_item.act_as::<Editor>(cx).unwrap());
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+
+        let source_tooltip = source_editor.read_with(cx, |editor, cx| editor.tab_tooltip_text(cx));
+        assert!(source_tooltip.is_some());
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview.tab_tooltip_text(cx)),
+            source_tooltip
         );
     }
 

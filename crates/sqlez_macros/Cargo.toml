@@ -12,6 +12,7 @@ workspace = true
 path = "src/sqlez_macros.rs"
 proc-macro = true
 doctest = false
+test = false
 
 [dependencies]
 sqlez.workspace = true
