@@ -163,9 +163,12 @@ impl MetalRenderer {
         layer.set_device(&device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
         if use_display_p3 {
-            if let Some(display_p3_color_space) =
-                CGColorSpace::create_with_name(unsafe { kCGColorSpaceDisplayP3 })
-            {
+            // SAFETY: The constant is extern, from Core Graphics
+            let display_p3_name = unsafe { kCGColorSpaceDisplayP3 };
+            if let Some(display_p3_color_space) = CGColorSpace::create_with_name(display_p3_name) {
+                // SAFETY: `layer` is a CAMetalLayer and the color space remains valid for the call.
+                // 'metal-rs' does not expose CAMetalLayer's typed `colorspace` setter.
+                // Could be replaced with a native binding via objc2-* in future
                 unsafe {
                     let _: () = msg_send![
                         &*layer,
