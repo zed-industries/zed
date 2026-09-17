@@ -145,6 +145,28 @@ If you haven’t manually resized the sidebar, its width follows changes to this
 
 Widths saved by older versions of Zed are preserved if they differ from the previous default of 300 pixels. A saved width of 300 pixels uses this setting instead.
 
+### Threads Sidebar Auto Open {#agent-threads-sidebar-auto-open}
+
+- Description: Whether opening a folder in an existing window automatically opens the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
+- Setting: `agent.threads_sidebar_auto_open`
+- Default: `true`
+
+**Options**
+
+`true` or `false`.
+
+This applies when a folder opens in an existing window instead of a new one, which happens when `default_open_behavior` or `cli_default_open_behavior` is set to `existing_window`. With `false`, the folder still opens in that window, but the sidebar stays closed until you open it with {#action multi_workspace::ToggleWorkspaceSidebar}.
+
+Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads_sidebar_auto_open": false
+  }
+}
+```
+
 ## Agent UI Font Size
 
 - Description: The font size for text in the agent panel. Inherits the UI font size if unset.
@@ -5924,7 +5946,7 @@ Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more 
 {
   "collaboration_panel": {
     "button": true,
-    "dock": "left",
+    "dock": "right",
     "default_width": 240
   }
 }
@@ -5965,17 +5987,24 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 {
   "git_panel": {
     "button": true,
-    "dock": "left",
+    "dock": "right",
     "default_width": 360,
     "status_style": "icon",
+    "file_icons": false,
+    "folder_indicator": "icon",
     "fallback_branch_name": "main",
     "sort_by": "path",
     "group_by": "status",
     "collapse_untracked_diff": false,
+    "tree_view": false,
     "scrollbar": {
       "show": null
     },
-    "starts_open": false
+    "starts_open": false,
+    "show_count_badge": false,
+    "diff_stats": true,
+    "commit_title_max_length": 0,
+    "entry_primary_click_action": "project_diff"
   }
 }
 ```
@@ -5986,12 +6015,19 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `dock`: Where to dock the git panel. Can be `left` or `right`
 - `default_width`: Default width of the git panel
 - `status_style`: How to display git status. Can be `label_color` or `icon`
+- `file_icons`: Whether to show file icons in the git panel
+- `folder_indicator`: What to show for directories in the git panel. Can be `icon`, `chevron`, or `both`
 - `fallback_branch_name`: What branch name to use if `init.defaultBranch` is not set
 - `sort_by`: How to sort entries in the git panel. Can be `path` or `name`
 - `group_by`: How to group entries in the git panel. Can be `none` or `status`
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
+- `tree_view`: Whether to show entries in tree or flat view in the panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+- `show_count_badge`: Whether to show a badge on the git panel icon with the count of uncommitted changes
+- `diff_stats`: Whether to show the addition/deletion change count next to each file in the git panel
+- `commit_title_max_length`: Maximum length of the commit message title before a warning is shown. Set to `0` to disable
+- `entry_primary_click_action`: Default action when clicking a changed file in the git panel. Can be `project_diff`, `file_diff`, or `view_file`
 
 ## Git Worktree Directory
 
@@ -6049,7 +6085,7 @@ You can define these in user or project settings; project settings are merged on
 
 ## Outline Panel
 
-- Description: Customize outline Panel
+- Description: Customize outline panel
 - Setting: `outline_panel`
 - Default:
 
@@ -6058,7 +6094,7 @@ You can define these in user or project settings; project settings are merged on
   "outline_panel": {
     "button": true,
     "default_width": 300,
-    "dock": "left",
+    "dock": "right",
     "file_icons": true,
     "folder_indicator": "icon",
     "git_status": true,
