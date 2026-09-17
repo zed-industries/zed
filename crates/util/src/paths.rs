@@ -2651,10 +2651,7 @@ mod tests {
     fn test_sanitized_path_verbatim_unc() {
         let path: Arc<Path> = PathBuf::from("\\\\?\\UNC\\server\\share\\file.txt").into();
         let sanitized_path = SanitizedPath::from_arc(path);
-        assert_eq!(
-            sanitized_path.to_string(),
-            "\\\\server\\share\\file.txt"
-        );
+        assert_eq!(sanitized_path.to_string(), "\\\\server\\share\\file.txt");
     }
 
     #[perf]
