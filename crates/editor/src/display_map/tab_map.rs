@@ -1,6 +1,6 @@
 use super::{
     Highlights,
-    fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
+    fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldOffset, FoldPoint, FoldSnapshot},
 };
 
 use language::{LanguageAwareStyling, Point};
@@ -9,6 +9,7 @@ use std::{cmp, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
+const MAX_ROW_SCAN_CHUNKS: usize = 8;
 
 // Handles a tab width <= 128
 const SPACES: &[u8; rope::Chunk::MASK_BITS] = &[b' '; _];
@@ -364,14 +365,22 @@ impl TabSnapshot {
     #[ztracing::instrument(skip_all)]
     pub fn fold_point_to_tab_point(&self, input: FoldPoint) -> TabPoint {
         let chunks = self.fold_snapshot.chunks_at(FoldPoint::new(input.row(), 0));
-        let tab_cursor = TabStopCursor::new(chunks);
-        let expanded = self.expand_tabs(tab_cursor, input.column());
+        let mut tab_cursor = TabStopCursor::new(chunks);
+        let expanded = self.expand_tabs(&mut tab_cursor, &mut 0, &mut 0, input.column());
         TabPoint::new(input.row(), expanded)
     }
 
     #[ztracing::instrument(skip_all)]
     pub fn tab_point_cursor(&self) -> TabPointCursor<'_> {
-        TabPointCursor { this: self }
+        TabPointCursor {
+            snapshot: self,
+            tab_stop_cursor: None,
+            row: 0,
+            tab_count: 0,
+            expanded_tab_len: 0,
+            needs_seek: false,
+            max_scan_chunks: MAX_ROW_SCAN_CHUNKS,
+        }
     }
 
     #[ztracing::instrument(skip_all)]
@@ -413,8 +422,17 @@ impl TabSnapshot {
             .to_buffer_point(inlay_point)
     }
 
+    /// Expands the tabs between the cursor's position and `column`. `tab_count`
+    /// and `expanded_tab_len` carry the tabs already passed on this row, so the
+    /// same cursor can be advanced to a later column of the row.
     #[ztracing::instrument(skip_all)]
-    fn expand_tabs<'a>(&self, mut cursor: TabStopCursor<'a>, column: u32) -> u32 {
+    fn expand_tabs(
+        &self,
+        cursor: &mut TabStopCursor<'_>,
+        tab_count: &mut u32,
+        expanded_tab_len: &mut u32,
+        column: u32,
+    ) -> u32 {
         // we only ever act on a single row at a time
         // so the main difference is that other layers build a transform sumtree, and can then just run through that
         // we cant quite do this here, as we need to work with the previous layer chunk to understand the tabs of the corresponding row
@@ -422,15 +440,13 @@ impl TabSnapshot {
         let tab_size = self.tab_size.get();
 
         let end_column = column.min(self.max_expansion_column);
-        let mut seek_target = end_column;
-        let mut tab_count = 0;
-        let mut expanded_tab_len = 0;
+        let mut seek_target = end_column - cursor.byte_offset;
 
         while let Some(tab_stop) = cursor.seek_forward(seek_target) {
-            let expanded_chars_old = tab_stop.char_offset + expanded_tab_len - tab_count;
+            let expanded_chars_old = tab_stop.char_offset + *expanded_tab_len - *tab_count;
             let tab_len = tab_size - ((expanded_chars_old - 1) % tab_size);
-            tab_count += 1;
-            expanded_tab_len += tab_len;
+            *tab_count += 1;
+            *expanded_tab_len += tab_len;
 
             seek_target = end_column - cursor.byte_offset;
         }
@@ -443,7 +459,7 @@ impl TabSnapshot {
 
         let collapsed_bytes = cursor.byte_offset() + left_over_char_bytes;
         let expanded_bytes =
-            cursor.byte_offset() + expanded_tab_len - tab_count + left_over_char_bytes;
+            cursor.byte_offset() + *expanded_tab_len - *tab_count + left_over_char_bytes;
 
         expanded_bytes + column.saturating_sub(collapsed_bytes)
     }
@@ -505,19 +521,69 @@ impl TabSnapshot {
     }
 }
 
-// todo(lw): Implement TabPointCursor properly
-pub struct TabPointCursor<'this> {
-    this: &'this TabSnapshot,
+/// Maps `FoldPoint`s to `TabPoint`s, reusing the scan over the fold chunks
+/// across calls. It is most efficient when points are supplied in
+/// non-decreasing order; a point before the previous one is still mapped
+/// correctly, at the cost of an extra seek.
+pub struct TabPointCursor<'a> {
+    snapshot: &'a TabSnapshot,
+    tab_stop_cursor: Option<TabStopCursor<'a>>,
+    row: u32,
+    tab_count: u32,
+    expanded_tab_len: u32,
+    needs_seek: bool,
+    max_scan_chunks: usize,
 }
 
 impl TabPointCursor<'_> {
-    /// No-op; this cursor is stateless. Provided for symmetry with the other
-    /// display-map layer cursors.
-    pub fn reset(&mut self) {}
+    /// Resets the cursor to the start so it can seek backward again.
+    pub fn reset(&mut self) {
+        self.needs_seek = true;
+    }
 
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: FoldPoint) -> TabPoint {
-        self.this.fold_point_to_tab_point(point)
+        let snapshot = self.snapshot;
+        let row = point.row();
+        let end_column = point.column().min(snapshot.max_expansion_column);
+
+        let cursor = match &mut self.tab_stop_cursor {
+            Some(cursor) => {
+                let can_continue = !self.needs_seek && !cursor.crossed_newline;
+                if !(can_continue && row == self.row && end_column >= cursor.byte_offset) {
+                    // Scanning over the rows in between is cheaper than seeking
+                    // the fold chunks, as long as the target row is nearby.
+                    let advanced = can_continue
+                        && row > self.row
+                        && cursor.advance_rows(row - self.row, self.max_scan_chunks);
+                    if !advanced {
+                        let row_start = FoldPoint::new(row, 0).to_offset(&snapshot.fold_snapshot);
+                        cursor.seek_to(row_start..snapshot.fold_snapshot.len());
+                    }
+                    self.tab_count = 0;
+                    self.expanded_tab_len = 0;
+                    self.needs_seek = false;
+                }
+                cursor
+            }
+            None => {
+                self.tab_count = 0;
+                self.expanded_tab_len = 0;
+                self.needs_seek = false;
+                self.tab_stop_cursor.insert(TabStopCursor::new(
+                    snapshot.fold_snapshot.chunks_at(FoldPoint::new(row, 0)),
+                ))
+            }
+        };
+        self.row = row;
+
+        let expanded = snapshot.expand_tabs(
+            cursor,
+            &mut self.tab_count,
+            &mut self.expanded_tab_len,
+            point.column(),
+        );
+        TabPoint::new(row, expanded)
     }
 }
 
@@ -785,12 +851,32 @@ struct TabStopCursor<'a> {
     /// Chunk
     /// last tab position iterated through
     current_chunk: Option<(TabStopChunk<'a>, u32)>,
+    /// Whether a seek moved past the end of the row it started on, which only
+    /// happens for columns beyond the end of the row.
+    crossed_newline: bool,
 }
 
 struct TabStopChunk<'a> {
     chars: u128,
     text: &'a str,
     tabs: u128,
+    newlines: u128,
+}
+
+impl<'a> TabStopChunk<'a> {
+    fn new(chunk: Chunk<'a>) -> Self {
+        Self {
+            chars: chunk.chars,
+            text: chunk.text,
+            tabs: chunk.tabs,
+            newlines: chunk.newlines,
+        }
+    }
+
+    fn has_newline_in_byte_range(&self, range: Range<u32>) -> bool {
+        let mask = u128::MAX.unbounded_shl(range.start) & !u128::MAX.unbounded_shl(range.end);
+        self.newlines & mask != 0
+    }
 }
 
 impl<'a> TabStopCursor<'a> {
@@ -800,6 +886,59 @@ impl<'a> TabStopCursor<'a> {
             byte_offset: 0,
             char_offset: 0,
             current_chunk: None,
+            crossed_newline: false,
+        }
+    }
+
+    fn seek_to(&mut self, range: Range<FoldOffset>) {
+        self.chunks.seek(range);
+        self.byte_offset = 0;
+        self.char_offset = 0;
+        self.current_chunk = None;
+        self.crossed_newline = false;
+    }
+
+    /// Moves to the start of the row that is `row_delta` rows below the current
+    /// one, pulling at most `max_chunks` new chunks. Returns false if that row
+    /// was not reached, in which case the cursor must be repositioned with
+    /// `seek_to`.
+    fn advance_rows(&mut self, row_delta: u32, max_chunks: usize) -> bool {
+        let mut rows_remaining = row_delta;
+        let mut chunks_remaining = max_chunks;
+        loop {
+            let (mut chunk, chunk_position) = match self.current_chunk.take() {
+                Some(current_chunk) => current_chunk,
+                None => {
+                    if chunks_remaining == 0 {
+                        return false;
+                    }
+                    chunks_remaining -= 1;
+                    match self.chunks.next() {
+                        Some(chunk) => (TabStopChunk::new(chunk), 0),
+                        None => return false,
+                    }
+                }
+            };
+
+            let mut pending_newlines = chunk.newlines & u128::MAX.unbounded_shl(chunk_position);
+            let newline_count = pending_newlines.count_ones();
+            if newline_count < rows_remaining {
+                rows_remaining -= newline_count;
+                continue;
+            }
+
+            for _ in 1..rows_remaining {
+                pending_newlines &= pending_newlines - 1;
+            }
+            let row_start = pending_newlines.trailing_zeros() + 1;
+            // `seek_forward` relies on every remaining tab being at or after the chunk position.
+            chunk.tabs &= u128::MAX.unbounded_shl(row_start);
+            if (row_start as usize) < chunk.text.len() {
+                self.current_chunk = Some((chunk, row_start));
+            }
+            self.byte_offset = 0;
+            self.char_offset = 0;
+            return true;
         }
     }
 
@@ -833,16 +972,9 @@ impl<'a> TabStopCursor<'a> {
         let mut distance_remaining = distance;
 
         while let Some((mut chunk, chunk_position)) = self.current_chunk.take().or_else(|| {
-            self.chunks.next().map(|chunk| {
-                (
-                    TabStopChunk {
-                        chars: chunk.chars,
-                        text: chunk.text,
-                        tabs: chunk.tabs,
-                    },
-                    0,
-                )
-            })
+            self.chunks
+                .next()
+                .map(|chunk| (TabStopChunk::new(chunk), 0))
         }) {
             let chunk_len = chunk.text.len() as u32;
 
@@ -850,6 +982,7 @@ impl<'a> TabStopCursor<'a> {
                 let chunk_remaining = chunk_len - chunk_position;
                 if chunk_remaining >= distance_remaining {
                     let end = chunk_position + distance_remaining;
+                    self.crossed_newline |= chunk.has_newline_in_byte_range(chunk_position..end);
                     self.byte_offset += distance_remaining;
                     self.char_offset +=
                         count_chars_in_byte_range(chunk_position..(end - 1), chunk.chars);
@@ -859,6 +992,7 @@ impl<'a> TabStopCursor<'a> {
                     return None;
                 }
 
+                self.crossed_newline |= chunk.has_newline_in_byte_range(chunk_position..chunk_len);
                 self.byte_offset += chunk_remaining;
                 self.char_offset +=
                     count_chars_in_byte_range(chunk_position..(chunk_len - 1), chunk.chars);
@@ -871,6 +1005,7 @@ impl<'a> TabStopCursor<'a> {
 
             if bytes_to_tab > distance_remaining {
                 let end = chunk_position + distance_remaining;
+                self.crossed_newline |= chunk.has_newline_in_byte_range(chunk_position..end);
                 self.byte_offset += distance_remaining;
                 self.char_offset +=
                     count_chars_in_byte_range(chunk_position..(end - 1), chunk.chars);
@@ -878,6 +1013,7 @@ impl<'a> TabStopCursor<'a> {
                 return None;
             }
 
+            self.crossed_newline |= chunk.has_newline_in_byte_range(chunk_position..tab_end);
             self.byte_offset += bytes_to_tab;
             self.char_offset +=
                 count_chars_in_byte_range(chunk_position..(tab_end - 1), chunk.chars);
@@ -1605,6 +1741,7 @@ mod tests {
         };
 
         let mut cursor = tab_snapshot.tab_point_cursor();
+        cursor.max_scan_chunks = rng.random_range(0..=3);
         for fold_point in &fold_points {
             assert_maps(&mut cursor, *fold_point, "forward");
         }
