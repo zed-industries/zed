@@ -7585,7 +7585,6 @@ dependencies = [
  "block",
  "cbindgen",
  "cocoa 0.26.0",
- "collections",
  "core-foundation 0.10.0",
  "core-video",
  "derive_more",

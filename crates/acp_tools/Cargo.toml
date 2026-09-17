@@ -12,6 +12,7 @@ workspace = true
 [lib]
 path = "src/acp_tools.rs"
 doctest = false
+test = false
 
 [features]
 test-support = ["workspace/test-support"]
