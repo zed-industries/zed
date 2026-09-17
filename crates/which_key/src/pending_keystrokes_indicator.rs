@@ -142,9 +142,21 @@ impl PendingKeystrokesIndicator {
             text_a == text_b && action_a == action_b
         });
 
+        let keystrokes = map_pending_keystrokes(keystrokes, cx.keyboard_mapper().as_ref());
+        // Pause/resume notifications must not end the pointer handoff grace period.
+        if self.popover.visible
+            && !self.popover.is_pointer_over()
+            && self
+                .render_state
+                .as_ref()
+                .is_some_and(|previous| previous.keystrokes.as_ref() != keystrokes.as_slice())
+        {
+            self.popover = PopoverState::default();
+        }
+
         self.pending_input_generation = self.pending_input_generation.wrapping_add(1);
         self.render_state = Some(Rc::new(IndicatorRenderState {
-            keystrokes: map_pending_keystrokes(keystrokes, cx.keyboard_mapper().as_ref()).into(),
+            keystrokes: keystrokes.into(),
             pending_input_generation: self.pending_input_generation,
             bindings: bindings
                 .into_iter()
@@ -555,6 +567,12 @@ mod tests {
         cx.simulate_mouse_move(outside, None, Modifiers::none());
     }
 
+    fn start_popover_dismissal(cx: &mut VisualTestContext) {
+        start_pending_input_and_hover_indicator(cx);
+        move_pointer_over_popover(cx);
+        move_pointer_outside(cx);
+    }
+
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             div()
@@ -882,15 +900,98 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_timed_chord_progress_dismisses_popover_during_grace_period(cx: &mut TestAppContext) {
+        assert_chord_progress_dismisses_popover(cx, nested_timed_bindings());
+    }
+
+    #[gpui::test]
+    fn test_newly_timed_chord_progress_dismisses_popover_during_grace_period(
+        cx: &mut TestAppContext,
+    ) {
+        assert_chord_progress_dismisses_popover(cx, nested_timed_bindings().into_iter().skip(1));
+    }
+
+    fn assert_chord_progress_dismisses_popover(
+        cx: &mut TestAppContext,
+        bindings: impl IntoIterator<Item = KeyBinding>,
+    ) {
+        let (indicator, _, cx) = setup_indicator_test(cx, bindings);
+        start_popover_dismissal(cx);
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        indicator.read_with(cx, |indicator, _| {
+            assert!(indicator.popover.visible);
+            assert!(indicator.popover.hide_task.is_some());
+        });
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+
+        indicator.read_with(cx, |indicator, _| {
+            assert!(!indicator.popover.visible);
+            assert!(indicator.popover.hide_task.is_none());
+        });
+
+        cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .expect("pending chord")
+                .timeout()
+                .expect("timed chord");
+            assert!(!timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), Duration::from_secs(1));
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(999));
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
+    }
+
+    #[gpui::test]
+    fn test_timeout_notifications_preserve_popover_grace_period(cx: &mut TestAppContext) {
+        let (indicator, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        start_popover_dismissal(cx);
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&indicator, false, cx));
+            assert!(window.set_pending_input_timeout_paused(&indicator, true, cx));
+        });
+        cx.run_until_parked();
+
+        assert!(indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+
+        cx.executor().advance_clock(Duration::from_millis(199));
+        cx.run_until_parked();
+
+        assert!(indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+
+        assert!(!indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+    }
+
+    #[gpui::test]
     fn test_popover_hides_and_timeout_resumes_after_delay(cx: &mut TestAppContext) {
         let (indicator, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
-        start_pending_input_and_hover_indicator(cx);
-        move_pointer_over_popover(cx);
-        move_pointer_outside(cx);
+        start_popover_dismissal(cx);
 
         cx.executor()
             .advance_clock(POPOVER_HIDE_DELAY - Duration::from_millis(1));
         cx.run_until_parked();
+
         let grace_period_render_state = indicator
             .read_with(cx, |indicator, _| indicator_snapshot(indicator))
             .expect("pending input during popover dismissal grace period");
@@ -899,6 +1000,7 @@ mod tests {
 
         cx.executor().advance_clock(Duration::from_millis(1));
         cx.run_until_parked();
+
         let resumed_render_state = indicator
             .read_with(cx, |indicator, _| indicator_snapshot(indicator))
             .expect("resumed pending input");
