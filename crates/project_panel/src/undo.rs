@@ -439,7 +439,7 @@ impl UndoMessage {
     }
 }
 
-fn project_path_display(
+pub(crate) fn project_path_display(
     project: &Project,
     project_path: &ProjectPath,
     path_style: PathStyle,
@@ -448,6 +448,21 @@ fn project_path_display(
     project
         .short_full_path_for_project_path(project_path, cx)
         .unwrap_or_else(|| project_path.path.display(path_style).to_string())
+}
+
+/// Returns `true` if a rename failed because something already exists at the destination.
+///
+/// `RealFs::rename` may return an error other than `io::Error` when the file already exists,
+/// in this case(its fallback uses `bail`, and `FakeFs` uses its own message),
+/// so we also check the text of the whole error chain
+pub(crate) fn already_exists_error(err: &anyhow::Error) -> bool {
+    let already_exists = err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::AlreadyExists)
+    }) || format!("{err:#}").contains("already exists");
+
+    already_exists
 }
 
 impl Inner {
@@ -668,16 +683,7 @@ impl Inner {
         });
 
         res?.await.map_err(|err| {
-            // It is possible for `RealFs::rename` to return an error other than
-            // `io::Error` when the file already exists, hence why we're also
-            // checking if the error contains the "already exists" string.
-            let already_exists = err.chain().any(|cause| {
-                cause
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::AlreadyExists)
-            }) || format!("{err:#}").contains("already exists");
-
-            if already_exists {
+            if already_exists_error(&err) {
                 anyhow!(
                     "Failed to {operation} `{from_name}` to `{to_name}`. A file or folder already exists there."
                 )
