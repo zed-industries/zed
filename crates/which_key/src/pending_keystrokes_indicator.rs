@@ -62,6 +62,7 @@ impl PendingKeystrokesIndicator {
                 if this.refresh_render_state(window, cx) {
                     cx.notify();
                 }
+                this.update_pointer_over_state(window, cx);
             });
 
         let mut enabled = Self::enabled(cx);
@@ -820,6 +821,61 @@ mod tests {
         cx.simulate_keystrokes("j");
         cx.run_until_parked();
 
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
+        assert!(cx.debug_bounds("PENDING_KEYSTROKES_POPOVER").is_none());
+    }
+
+    #[gpui::test]
+    fn test_hover_pauses_timeout_when_untimed_input_becomes_timed(cx: &mut TestAppContext) {
+        let (indicator, _, cx) =
+            setup_indicator_test(cx, nested_timed_bindings().into_iter().skip(1));
+        start_pending_input_and_hover_indicator(cx);
+        move_pointer_over_popover(cx);
+        cx.update(|window, _| {
+            assert!(
+                window
+                    .pending_input()
+                    .expect("untimed prefix")
+                    .timeout()
+                    .is_none()
+            );
+        });
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        cx.update(|window, _| {
+            assert!(
+                window
+                    .pending_input()
+                    .expect("timed prefix")
+                    .timeout()
+                    .expect("new timeout")
+                    .is_paused()
+            );
+        });
+
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_some()));
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+
+        move_pointer_outside(cx);
+        cx.executor().advance_clock(POPOVER_HIDE_DELAY);
+        cx.run_until_parked();
+        cx.update(|window, _| {
+            assert!(
+                !window
+                    .pending_input()
+                    .expect("pending input after leaving popover")
+                    .timeout()
+                    .expect("resumed timeout")
+                    .is_paused()
+            );
+        });
+
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
         assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
         assert!(cx.debug_bounds("PENDING_KEYSTROKES_POPOVER").is_none());
