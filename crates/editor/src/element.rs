@@ -11424,8 +11424,8 @@ mod tests {
     use multi_buffer::PathKey;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
-    use ui::scrollbars::ScrollbarAutoHide;
     use text::PointUtf16;
+    use ui::scrollbars::ScrollbarAutoHide;
     use util::test::sample_text;
 
     enum PrimaryNavigationOverlay {}
