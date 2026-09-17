@@ -14,7 +14,12 @@ use util::{ResultExt, paths::SanitizedPath};
 
 use crate::{Fs, PathEvent, PathEventKind, Watcher};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+mod diagnostics;
+pub use diagnostics::{
+    WatchDiagnosticEvent, WatchRecording, WatchRoot, WatchSnapshot, WatcherSnapshot,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum OsWatcherKind {
     Native,
     Poll,
@@ -690,10 +695,6 @@ fn push_notify_event(
         .collect::<Vec<_>>();
 
     if event.need_rescan() {
-        if !watcher_logging_rate_limited() {
-            log::warn!("filesystem watcher lost sync for {watched_root:?}; scheduling rescan");
-        }
-
         // A rescan event names the subtrees that lost sync (FSEvents
         // `MustScanSubDirs`); only a pathless one (inotify queue overflow) means
         // the whole watched root is suspect.
@@ -710,28 +711,6 @@ fn push_notify_event(
     }
     log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
-}
-
-fn watcher_logging_rate_limited() -> bool {
-    static LAST_WARN: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
-    let Some((ref mut started, ref mut emitted)) = *LAST_WARN.lock() else {
-        *LAST_WARN.lock() = Some((Instant::now(), 0));
-        return false;
-    };
-
-    if started.elapsed().as_secs() < 1 {
-        if *emitted < 20 {
-            log::warn!("filesystem watcher lost sync for many files, not logging more");
-            return true;
-        } else {
-            *emitted += 1;
-        }
-    } else {
-        *emitted = 0;
-        *started = Instant::now()
-    }
-
-    true
 }
 
 fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
@@ -907,6 +886,7 @@ pub struct OsWatcher {
     backend: Mutex<Option<Box<dyn WatchBackend>>>,
     event_tx: async_channel::Sender<notify::Result<notify::Event>>,
     _dispatch_task: Task<()>,
+    diagnostics: Arc<diagnostics::DiagnosticRecorder>,
 }
 
 impl OsWatcher {
@@ -933,8 +913,9 @@ impl OsWatcher {
         let dispatch_task = executor.spawn({
             let state = state.clone();
             async move {
+                let mut rescan_history = diagnostics::RescanHistory::default();
                 while let Ok(first) = event_rx.recv().await {
-                    dispatch_batch(kind, &state, first, &event_rx);
+                    dispatch_batch(kind, &state, &mut rescan_history, first, &event_rx);
                 }
             }
         });
@@ -945,6 +926,7 @@ impl OsWatcher {
             backend: Mutex::new(backend),
             event_tx,
             _dispatch_task: dispatch_task,
+            diagnostics: Default::default(),
         })
     }
 
@@ -954,7 +936,21 @@ impl OsWatcher {
         &self,
     ) -> impl Fn(notify::Result<notify::Event>) + Send + Sync + 'static {
         let event_tx = self.event_tx.clone();
-        move |event| enqueue(&event_tx, event)
+        let diagnostics = self.diagnostics.clone();
+        let kind = self.kind;
+        move |event| {
+            diagnostics.record(|| match &event {
+                Ok(event) => WatchDiagnosticEvent::from_notify_event(kind, event),
+                Err(error) => WatchDiagnosticEvent::new(
+                    kind,
+                    "error",
+                    &error.paths,
+                    format!("{error:?}"),
+                    false,
+                ),
+            });
+            enqueue(&event_tx, event);
+        }
     }
 
     pub(crate) fn is_recursive(&self) -> bool {
@@ -978,6 +974,16 @@ impl OsWatcher {
 
         if !path_already_covered && !path_already_registered {
             if self.kind == OsWatcherKind::Native && state.is_native_watch_limit_cooldown_active() {
+                self.diagnostics.record(|| {
+                    WatchDiagnosticEvent::new(
+                        self.kind,
+                        "watch_skipped",
+                        &[path.as_path().to_owned()],
+                        "Native watch limit cooldown is active; registration will be retried"
+                            .into(),
+                        false,
+                    )
+                });
                 return Ok(None);
             }
 
@@ -1027,7 +1033,13 @@ impl OsWatcher {
         first: notify::Result<notify::Event>,
         event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
     ) {
-        dispatch_batch(self.kind, &self.state, first, event_rx);
+        dispatch_batch(
+            self.kind,
+            &self.state,
+            &mut diagnostics::RescanHistory::default(),
+            first,
+            event_rx,
+        );
     }
 
     fn start_native_watch_limit_cooldown(&self, path: &Path) {
@@ -1054,7 +1066,8 @@ impl OsWatcher {
 
     fn watch(&self, path: &Path) -> anyhow::Result<()> {
         self.ensure_backend()?;
-        self.backend
+        let result = self
+            .backend
             .lock()
             .as_mut()
             .expect("watcher backend initialized")
@@ -1065,7 +1078,24 @@ impl OsWatcher {
                 } else {
                     notify::RecursiveMode::NonRecursive
                 },
-            )?;
+            );
+        self.diagnostics.record(|| {
+            WatchDiagnosticEvent::new(
+                self.kind,
+                if result.is_ok() {
+                    "watch"
+                } else {
+                    "watch_error"
+                },
+                &[path.to_owned()],
+                match &result {
+                    Ok(()) => format!("recursive={}", self.recursive),
+                    Err(error) => format!("{error:?}"),
+                },
+                false,
+            )
+        });
+        result?;
         Ok(())
     }
 
@@ -1076,6 +1106,22 @@ impl OsWatcher {
             .as_mut()
             .map(|watcher| watcher.unwatch(path));
 
+        self.diagnostics.record(|| {
+            WatchDiagnosticEvent::new(
+                self.kind,
+                if matches!(&watcher, Some(Err(_))) {
+                    "unwatch_error"
+                } else {
+                    "unwatch"
+                },
+                &[path.to_owned()],
+                match &watcher {
+                    Some(Err(error)) => format!("{error:?}"),
+                    _ => String::new(),
+                },
+                false,
+            )
+        });
         match watcher {
             // inotify auto-removes a watch when its directory is deleted, so a
             // later unwatch races that and fails with a benign error. Either way
@@ -1103,18 +1149,36 @@ impl OsWatcher {
                     // workloads like grep or language server indexing.
                     let config =
                         notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
-                    Box::new(<notify::RecommendedWatcher as notify::Watcher>::new(
-                        self.event_sink(),
-                        config,
-                    )?)
+                    Box::new(
+                        <notify::RecommendedWatcher as notify::Watcher>::new(
+                            self.event_sink(),
+                            config,
+                        )
+                        .inspect_err(|error| self.record_backend_error(error))?,
+                    )
                 }
                 OsWatcherKind::Poll => {
                     let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
-                    Box::new(notify::PollWatcher::new(self.event_sink(), config)?)
+                    Box::new(
+                        notify::PollWatcher::new(self.event_sink(), config)
+                            .inspect_err(|error| self.record_backend_error(error))?,
+                    )
                 }
             });
         }
         Ok(())
+    }
+
+    fn record_backend_error(&self, error: &notify::Error) {
+        self.diagnostics.record(|| {
+            WatchDiagnosticEvent::new(
+                self.kind,
+                "backend_error",
+                &error.paths,
+                format!("{error:?}"),
+                false,
+            )
+        });
     }
 }
 
@@ -1136,16 +1200,11 @@ fn dispatch(
     let callbacks = {
         let state = state.lock();
         if event.need_rescan() {
-            let callbacks = state
+            state
                 .watchers
                 .values()
                 .map(|registration| registration.callback.clone())
-                .collect::<Vec<_>>();
-            log::warn!(
-                "{kind:?} filesystem watcher lost sync; scheduling rescans for {} registrations",
-                callbacks.len()
-            );
-            callbacks
+                .collect::<Vec<_>>()
         } else {
             let mut ids = Vec::new();
             for path in &event.paths {
@@ -1169,6 +1228,7 @@ fn dispatch(
 fn dispatch_batch(
     kind: OsWatcherKind,
     state: &Mutex<WatcherState>,
+    rescan_history: &mut diagnostics::RescanHistory,
     first: notify::Result<notify::Event>,
     event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
 ) {
@@ -1189,6 +1249,12 @@ fn dispatch_batch(
             rescan_dispatched = true;
         }
 
+        // Log writes can block, so keep them off the native watcher reader.
+        if let Ok(event) = &event
+            && let Some(report) = rescan_history.record(event)
+        {
+            log::error!("{kind:?} filesystem watcher requested rescan: {report}");
+        }
         dispatch(kind, state, event);
     }
 }
@@ -1317,6 +1383,7 @@ mod tests {
             ),
             event_tx,
             _dispatch_task: Task::ready(()),
+            diagnostics: Default::default(),
         }
     }
 

@@ -63,8 +63,12 @@ profiles = ["release"]
 # Own non-.rs files read at build time (protobufs, bindgen headers, doc/data).
 proto = ["proto/**"]
 livekit_api = ["vendored/protocol/**"]
-media = ["src/bindings.h"]
-gpui = ["README.md"]
+gpui = [
+    "README.md",
+    "examples/image/exif-orientation-rotate-180.jpg",
+    "../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
+    "../../assets/fonts/lilex/Lilex-Regular.ttf",
+]
 git = ["src/checkpoint.gitignore"]
 git_ui = ["src/commit_message_prompt.txt"]
 editor = ["../grammars/src/**"]
@@ -78,7 +82,8 @@ zed_extension_api = ["wit/**"]
 gpui_wgpu = ["src/*.wgsl"]
 # Cross-package reads (and, for gpui_apple, its own metal shader source).
 extension_host = ["../extension_api/wit/**"]
-gpui_apple = ["../gpui/src/**", "src/shaders.metal"]
+# cbindgen reads the renderer source directly from build.rs to generate shader bindings.
+gpui_apple = ["../gpui/src/**", "src/metal_renderer.rs", "src/shaders.metal"]
 eval_cli = ["../zed/Cargo.toml"]
 prompt_store = ["../git_ui/src/commit_message_prompt.txt"]
 release_channel = ["../zed/RELEASE_CHANNEL"]
