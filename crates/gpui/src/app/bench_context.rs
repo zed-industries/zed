@@ -189,8 +189,8 @@ impl BenchReport {
                         .reused_subtrees
                         .record(timing.view_tree.reused_subtrees as u64)
                         .ok();
-                    if timing.view_tree.globals_written_during_draw > 0 {
-                        snapshot.frames_writing_globals += 1;
+                    if let Some(reason) = timing.view_tree.full_refresh_reason {
+                        *snapshot.full_refreshes.entry(reason).or_default() += 1;
                     }
                 }
                 FrameEvent::Present(timing) => {
@@ -306,12 +306,25 @@ impl BenchReport {
                 frame_snapshot.reused_subtrees.mean(),
                 frame_snapshot.reused_subtrees.max()
             );
-            if frame_snapshot.frames_writing_globals > 0 {
+            for (reason, frames) in &frame_snapshot.full_refreshes {
                 eprintln!(
-                    "  WARNING: globals written during draw in {} of {} frames — their readers are re-rendered every frame: {}",
-                    frame_snapshot.frames_writing_globals,
-                    frame_snapshot.rebuilt_scopes.len(),
-                    crate::profiler::globals_written_during_draw().join(", ")
+                    "  full refresh ({reason}): {frames} of {} frames",
+                    frame_snapshot.rebuilt_scopes.len()
+                );
+            }
+            // Globals are not dependencies, so a write during draw does not itself break
+            // reuse; it is still frame state kept in the wrong place, and where a
+            // render-time write does invalidate (an entity notified from a render) it
+            // shows up above as rebuilt scopes.
+            let written_during_draw: Vec<String> = crate::profiler::global_writes()
+                .into_iter()
+                .filter(|(_, writes)| writes.during_draw > 0)
+                .map(|(name, writes)| format!("{name} ×{}", writes.during_draw))
+                .collect();
+            if !written_during_draw.is_empty() {
+                eprintln!(
+                    "  globals written during draw: {}",
+                    written_during_draw.join(", ")
                 );
             }
         }
@@ -397,7 +410,7 @@ struct WindowFrameSnapshot {
     invalidations_per_frame: Histogram<u64>,
     rebuilt_scopes: Histogram<u64>,
     reused_subtrees: Histogram<u64>,
-    frames_writing_globals: u64,
+    full_refreshes: std::collections::BTreeMap<&'static str, u64>,
     foreground_work: DurationHistogram,
 }
 
@@ -410,7 +423,7 @@ impl WindowFrameSnapshot {
             invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
             rebuilt_scopes: Histogram::new(3).expect("3 significant digits is valid"),
             reused_subtrees: Histogram::new(3).expect("3 significant digits is valid"),
-            frames_writing_globals: 0,
+            full_refreshes: Default::default(),
             foreground_work: DurationHistogram::new(),
         }
     }

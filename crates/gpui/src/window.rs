@@ -169,10 +169,6 @@ impl WindowInvalidator {
         }
     }
 
-    pub(crate) fn invalidate_on_next_frame(&self, entity: EntityId) {
-        self.inner.borrow_mut().dirty_views.insert(entity);
-    }
-
     pub fn invalidate_view(&self, entity: EntityId, cx: &mut App) -> bool {
         let mut inner = self.inner.borrow_mut();
         inner.update_count += 1;
@@ -1084,9 +1080,8 @@ pub struct Window {
     /// current element path is the last entry and never needs a walk.
     element_id_hashes: SmallVec<[u64; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    /// The hitboxes of the `.group()` elements being prepainted, for their descendants'
-    /// group styles. Frame-local: it is part of drawing, not app state, so touching it
-    /// must not count as a dependency of the node being drawn.
+    /// The hitboxes of the `.group()` elements being painted, for their descendants'
+    /// group styles. Frame-local: it is part of drawing, not app state.
     pub(crate) group_hitboxes: crate::elements::GroupHitboxes,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -3037,21 +3032,15 @@ impl Window {
         }
         self.needs_present.set(true);
 
-        let globals_written = std::mem::take(&mut cx.globals_written_during_draw);
-        self.view_tree.last_frame_stats.globals_written_during_draw = globals_written.len();
-
         #[cfg(feature = "profiler")]
         {
             let draw_duration = self.window_profiler.end_draw(
                 frame_dirty.dirty_at,
                 frame_dirty.invalidations,
                 self.view_tree.last_frame_stats,
-                globals_written,
             );
             self.debug_frame_overlay.record_frame(draw_duration);
         }
-        #[cfg(not(feature = "profiler"))]
-        drop(globals_written);
 
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.

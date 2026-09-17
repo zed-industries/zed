@@ -58,6 +58,25 @@ There is no fourth category. Adding an ambient input to `Window` or `App` that
 renders can observe means adding it to (2) or (3). Falling back to `Window::refresh`
 is acceptable only as a stopgap and must be listed in the plan.
 
+Two things are deliberately outside the three:
+
+- **Globals are not dependencies.** A global write notifies the global's observers and
+  nothing else, as it did when every frame rebuilt every view; a writer that changes
+  what views show calls `refresh_windows()` (a full refresh) or notifies the views, as
+  it always had to. Tracking global reads was tried and removed: the accessors that
+  hand out `&mut G` (`default_global`, `global_mut`) cannot tell a read from a write,
+  so render-time reads through them invalidated every other reader on every frame
+  (`ScrollbarAutoHide`, `KeyBindingVisibility`), silently. The profiler counts globals
+  written while a frame draws; state that is written every frame belongs elsewhere.
+- **Frame scratch is not state.** Hitboxes, the group-hitbox stack, the element-id and
+  text-style stacks, the scene: these are produced by drawing and live on `Window` for
+  the frame. Modelling any of them as app state makes every reader depend on every
+  frame. `GroupHitboxes` was an app global written by every grouped `div`'s paint; it
+  kept every editor from ever being reused until it moved onto `Window`.
+
+The invariant behind both: a node is reusable only if every read beneath it was
+recorded, and only App state a render can observe *across* frames counts as a read.
+
 ### Mount lifecycle
 
 - A node is created the first time its occurrence renders and removed at the end of
@@ -483,7 +502,8 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   found rather than papered over by a fallback render.
 - [ ] Track remaining ambient inputs as dependencies instead of `refresh()`: focus,
   window active state, viewport size, mouse position, input modality, hover. Focus is
-  the largest source of full rebuilds. Globals are already tracked. Cut from the first
+  the largest source of full rebuilds. Globals are deliberately not tracked (see
+  "Everything a render reads is tracked"). Cut from the first
   PR: a full refresh costs what every frame cost before the view tree, so these are
   a missed win rather than a regression. Sketch: an `AmbientInput` read set per node
   (`Focus`, `WindowActive`, `ViewportSize`, `MousePosition`, `Hover(HitboxId)`),

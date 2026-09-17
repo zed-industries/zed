@@ -736,11 +736,6 @@ pub struct App {
     // the tokio runtime. As any task attempting to spawn a blocking tokio task,
     // might panic.
     pub(crate) globals_by_type: TypeIdHashMap<Box<dyn Any>>,
-    global_dependencies: RefCell<TypeIdHashMap<Slot<()>>>,
-    /// Globals written while a window was drawing, drained by the draw. Every such write
-    /// invalidates every view that read the global, so a write that happens on every
-    /// frame keeps its readers from ever being reused; the frame profiler reports them.
-    pub(crate) globals_written_during_draw: Vec<&'static str>,
 
     // assets
     loading_assets: FxHashMap<(TypeId, u64), CachedAsset>,
@@ -835,8 +830,6 @@ impl App {
                 asset_source,
                 http_client,
                 globals_by_type: Default::default(),
-                global_dependencies: RefCell::default(),
-                globals_written_during_draw: Vec::new(),
                 entities,
                 new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
@@ -1675,32 +1668,6 @@ impl App {
                 }
             }
             Effect::NotifyGlobalObservers { global_type } => {
-                let dependency = self
-                    .global_dependencies
-                    .get_mut()
-                    .get(global_type)
-                    .map(|dependency| dependency.entity_id());
-                if let Some(dependency) = dependency {
-                    // Global observers retain control of frame demand. Mutating globals
-                    // during rendering or cleanup must not create a redraw feedback loop.
-                    for notifications in &mut self.render_notifications {
-                        notifications.insert(dependency);
-                    }
-                    for (window_id, invalidator) in self
-                        .window_invalidators_by_entity
-                        .get(&dependency)
-                        .into_iter()
-                        .flatten()
-                    {
-                        if self
-                            .tracked_entities
-                            .get(window_id)
-                            .is_some_and(|entities| entities.contains(&dependency))
-                        {
-                            invalidator.invalidate_on_next_frame(dependency);
-                        }
-                    }
-                }
                 if !self.pending_global_notifications.insert(*global_type) {
                     return;
                 }
@@ -2055,29 +2022,14 @@ impl App {
         &self.text_system
     }
 
-    fn track_global<G: Global>(&self) {
-        if !self.is_drawing() {
-            return;
-        }
-        // Reserve an entity identity even for absent globals, so insertion and removal
-        // invalidate negative reads through the same graph as entity mutations.
-        let mut dependencies = self.global_dependencies.borrow_mut();
-        let dependency = dependencies
-            .entry(TypeId::of::<G>())
-            .or_insert_with(|| self.entities.reserve::<()>());
-        self.entities.record_access(dependency.entity_id());
-    }
-
     /// Check whether a global of the given type has been assigned.
     pub fn has_global<G: Global>(&self) -> bool {
-        self.track_global::<G>();
         self.globals_by_type.contains_key(&TypeId::of::<G>())
     }
 
     /// Access the global of the given type. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global<G: Global>(&self) -> &G {
-        self.track_global::<G>();
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -2086,26 +2038,26 @@ impl App {
 
     /// Access the global of the given type if a value has been assigned.
     pub fn try_global<G: Global>(&self) -> Option<&G> {
-        self.track_global::<G>();
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
     }
 
-    /// Records a write to the global `G`: notifies its observers and, during a draw,
-    /// notes it for the frame profiler (see [`App::globals_written_during_draw`]).
+    /// Records a write to the global `G`: notifies its observers. Global reads are not
+    /// dependencies of the views that make them, so a write does not invalidate or redraw
+    /// anything by itself; a writer that changes what views show calls `refresh_windows`
+    /// or notifies them, as it always had to. The profiler counts writes made while a
+    /// frame is drawing, where they are most likely to be frame state in the wrong place.
     fn note_global_write<G: Global>(&mut self) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
-        if self.is_drawing() {
-            self.globals_written_during_draw.push(type_name::<G>());
-        }
+        #[cfg(feature = "profiler")]
+        crate::profiler::note_global_write(type_name::<G>(), self.is_drawing());
     }
 
     /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global_mut<G: Global>(&mut self) -> &mut G {
-        self.track_global::<G>();
         let global_type = TypeId::of::<G>();
         self.note_global_write::<G>();
         self.globals_by_type
@@ -2117,7 +2069,6 @@ impl App {
     /// Access the global of the given type mutably. A default value is assigned if a global of this type has not
     /// yet been assigned.
     pub fn default_global<G: Global + Default>(&mut self) -> &mut G {
-        self.track_global::<G>();
         let global_type = TypeId::of::<G>();
         self.note_global_write::<G>();
         self.globals_by_type
@@ -2125,24 +2076,6 @@ impl App {
             .or_insert_with(|| Box::<G>::default())
             .downcast_mut::<G>()
             .unwrap()
-    }
-
-    /// Reads the global of the given type, assigning its default first if none has been
-    /// assigned. Unlike [`App::default_global`] this is a read: it does not notify the
-    /// global's observers or invalidate the views that read it, so it is the accessor to
-    /// use from `render`.
-    pub fn global_or_default<G: Global + Default>(&mut self) -> &G {
-        self.track_global::<G>();
-        let global_type = TypeId::of::<G>();
-        if !self.globals_by_type.contains_key(&global_type) {
-            self.note_global_write::<G>();
-            self.globals_by_type
-                .insert(global_type, Box::<G>::default());
-        }
-        self.globals_by_type
-            .get(&global_type)
-            .and_then(|any_state| any_state.downcast_ref::<G>())
-            .unwrap_or_else(|| panic!("no state of type {} exists", type_name::<G>()))
     }
 
     /// Sets the value of the global of the given type.
@@ -2189,7 +2122,6 @@ impl App {
     /// Move the global of the given type to the stack.
     #[track_caller]
     pub(crate) fn lease_global<G: Global>(&mut self) -> GlobalLease<G> {
-        self.track_global::<G>();
         GlobalLease::new(
             self.globals_by_type
                 .remove(&TypeId::of::<G>())
@@ -2815,6 +2747,7 @@ impl App {
         (result, notified)
     }
 
+    #[cfg(feature = "profiler")]
     pub(crate) fn is_drawing(&self) -> bool {
         !self.render_notifications.is_empty()
     }

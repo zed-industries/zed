@@ -762,14 +762,15 @@ mod tests {
         });
     }
 
+    /// Globals are not dependencies: as on an unretained frame, a write does not redraw
+    /// or invalidate the views that read the global. A writer that changes what views
+    /// show refreshes the windows (which rebuilds every view) or notifies the views.
     #[gpui::test]
-    fn global_changes_only_invalidate_reading_scopes(cx: &mut TestAppContext) {
+    fn global_writes_do_not_invalidate_views(cx: &mut TestAppContext) {
         struct LeftColor(u32);
         impl crate::Global for LeftColor {}
         struct RightColor(u32);
         impl crate::Global for RightColor {}
-        struct UnusedGlobal;
-        impl crate::Global for UnusedGlobal {}
         struct Leaf {
             left: bool,
             renders: Rc<Cell<usize>>,
@@ -818,24 +819,25 @@ mod tests {
         assert_eq!(
             (left.get(), right.get()),
             (1, 1),
-            "global writes preserve frame demand"
+            "a global write does not demand a frame"
         );
         draw(cx);
-        assert_eq!((left.get(), right.get()), (2, 1));
         cx.update(|cx| cx.global_mut::<LeftColor>().0 = 0x00ff00);
         draw(cx);
-        assert_eq!((left.get(), right.get()), (3, 1));
-        cx.update(|cx| {
-            cx.remove_global::<LeftColor>();
-        });
-        draw(cx);
-        assert_eq!((left.get(), right.get()), (4, 1));
         cx.update(|cx| cx.set_global(RightColor(0x0000ff)));
         draw(cx);
-        assert_eq!((left.get(), right.get()), (4, 2));
-        cx.update(|cx| cx.set_global(UnusedGlobal));
-        draw(cx);
-        assert_eq!((left.get(), right.get()), (4, 2));
+        assert_eq!(
+            (left.get(), right.get()),
+            (1, 1),
+            "global writes are not dependencies of the views that read the global"
+        );
+        cx.update(|cx| cx.refresh_windows());
+        cx.run_until_parked();
+        assert_eq!(
+            (left.get(), right.get()),
+            (2, 2),
+            "refreshing the windows rebuilds every view, so it sees the new globals"
+        );
     }
 
     /// Group styles resolve through per-frame bookkeeping that every prepaint of a grouped
@@ -2082,15 +2084,24 @@ mod tests {
         let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         for step in 0..9 {
+            // Globals are not dependencies: a writer that changes what views show
+            // refreshes the windows, as it always had to.
             if step == 1 {
-                cx.update(|cx| cx.set_global(AmbientStyle(0x335577)));
+                cx.update(|cx| {
+                    cx.set_global(AmbientStyle(0x335577));
+                    cx.refresh_windows();
+                });
             }
             if step == 2 {
-                cx.update(|cx| cx.global_mut::<AmbientStyle>().0 = 0x7799bb);
+                cx.update(|cx| {
+                    cx.global_mut::<AmbientStyle>().0 = 0x7799bb;
+                    cx.refresh_windows();
+                });
             }
             if step == 3 {
                 cx.update(|cx| {
                     cx.remove_global::<AmbientStyle>();
+                    cx.refresh_windows();
                 });
             }
             for handle in [eager, memoized] {

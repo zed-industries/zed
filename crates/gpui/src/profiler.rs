@@ -802,16 +802,44 @@ pub struct FrameTiming {
     pub view_tree: crate::ViewTreeStats,
 }
 
-/// The globals written while some frame was drawing, by type name, since tracing began.
-/// Kept aside from the per-frame ring so a report can name them.
+/// The globals written since tracing began, by type name, with how many of the writes
+/// happened while a frame was drawing. Globals are not view dependencies, so such a write
+/// is not itself a reuse problem, but it is frame state kept in the wrong place (see
+/// `Window::group_hitboxes` for the shape it should take) and worth naming in a report.
 #[cfg(feature = "profiler")]
-static GLOBALS_WRITTEN_DURING_DRAW: spin::Mutex<std::collections::BTreeSet<&'static str>> =
-    spin::Mutex::new(std::collections::BTreeSet::new());
+static GLOBAL_WRITES: spin::Mutex<std::collections::BTreeMap<&'static str, GlobalWrites>> =
+    spin::Mutex::new(std::collections::BTreeMap::new());
 
-/// The type names of every global written while a frame was drawing since tracing began.
+/// How often a global was written, in total and while a frame was drawing.
 #[cfg(feature = "profiler")]
-pub fn globals_written_during_draw() -> Vec<&'static str> {
-    GLOBALS_WRITTEN_DURING_DRAW.lock().iter().copied().collect()
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GlobalWrites {
+    /// Writes since tracing began.
+    pub total: u64,
+    /// Of those, writes made while a window frame was drawing.
+    pub during_draw: u64,
+}
+
+#[cfg(feature = "profiler")]
+pub(crate) fn note_global_write(type_name: &'static str, during_draw: bool) {
+    let mut writes = GLOBAL_WRITES.lock();
+    let entry = writes.entry(type_name).or_default();
+    entry.total += 1;
+    if during_draw {
+        entry.during_draw += 1;
+    }
+}
+
+/// Every global written since tracing began, most written first.
+#[cfg(feature = "profiler")]
+pub fn global_writes() -> Vec<(&'static str, GlobalWrites)> {
+    let mut writes: Vec<_> = GLOBAL_WRITES
+        .lock()
+        .iter()
+        .map(|(name, writes)| (*name, *writes))
+        .collect();
+    writes.sort_by_key(|(_, writes)| std::cmp::Reverse(writes.total));
+    writes
 }
 
 #[cfg(feature = "profiler")]
@@ -1041,7 +1069,6 @@ impl WindowProfiler {
         dirty_at: Option<Instant>,
         invalidations: u64,
         view_tree: crate::ViewTreeStats,
-        globals_written: Vec<&'static str>,
     ) -> Duration {
         let Some(WindowActivity::Draw {
             started_at: draw_start,
@@ -1052,9 +1079,6 @@ impl WindowProfiler {
             return Duration::ZERO;
         };
 
-        if !globals_written.is_empty() {
-            GLOBALS_WRITTEN_DURING_DRAW.lock().extend(globals_written);
-        }
         let draw_end = Instant::now();
         let frame_timing = FrameTiming {
             window_id: self.window_id,
@@ -1276,7 +1300,7 @@ mod tests {
         let mut collector = FrameTimingCollector::new();
 
         window_profiler.begin_draw();
-        window_profiler.end_draw(Some(dirty_at), 3, Default::default(), Vec::new());
+        window_profiler.end_draw(Some(dirty_at), 3, Default::default());
         assert!(
             collector
                 .collect_unseen()
@@ -1287,7 +1311,7 @@ mod tests {
         set_trace_enabled(true);
         let mut collector = FrameTimingCollector::new();
         window_profiler.begin_draw();
-        window_profiler.end_draw(Some(dirty_at), 3, Default::default(), Vec::new());
+        window_profiler.end_draw(Some(dirty_at), 3, Default::default());
 
         let timing = collector
             .collect_unseen()
@@ -1360,7 +1384,7 @@ mod tests {
         let mut collector = FrameTimingCollector::new();
 
         window_profiler.begin_draw();
-        window_profiler.end_draw(None, 0, Default::default(), Vec::new());
+        window_profiler.end_draw(None, 0, Default::default());
         assert!(
             FRAME_TIMINGS
                 .lock()
@@ -1511,7 +1535,7 @@ mod tests {
         window_profiler.begin_draw();
         begin_input_at(&mut window_profiler, Instant::now());
         window_profiler.end_input(true);
-        window_profiler.end_draw(None, 0, Default::default(), Vec::new());
+        window_profiler.end_draw(None, 0, Default::default());
 
         let snapshot = window_profiler.input_latency_snapshot();
         assert!(snapshot.latency_histogram.is_empty());
