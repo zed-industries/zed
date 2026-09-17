@@ -421,6 +421,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         } else {
             None
         },
+        use_display_p3: WorkspaceSettings::get_global(cx).use_display_p3,
         ..Default::default()
     }
 }
