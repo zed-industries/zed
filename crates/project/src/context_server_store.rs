@@ -303,6 +303,9 @@ pub struct ContextServerStore {
     /// `maintain_servers` restart a server when its working directory changes,
     /// since the working directory is not part of `ContextServerConfiguration`.
     server_working_directories: HashMap<ContextServerId, Option<Arc<Path>>>,
+    /// For servers running on a remote host, the command as the remote host runs
+    /// it, without the transport wrapper that `ContextServerConfiguration` holds.
+    remote_native_commands: HashMap<ContextServerId, ContextServerCommand>,
     needs_server_update: bool,
     ai_disabled: bool,
     _subscriptions: Vec<Subscription>,
@@ -521,6 +524,7 @@ impl ContextServerStore {
             update_servers_task: None,
             context_server_factory,
             server_working_directories: HashMap::default(),
+            remote_native_commands: HashMap::default(),
         };
         if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
             this.available_context_servers_changed(cx);
@@ -549,6 +553,17 @@ impl ContextServerStore {
         id: &ContextServerId,
     ) -> Option<Arc<ContextServerConfiguration>> {
         self.servers.get(id).map(|state| state.configuration())
+    }
+
+    /// For a server running on a remote host, returns the command as the remote
+    /// host runs it. [`Self::configuration_for_server`] instead reports the
+    /// command Zed spawns locally, which wraps this one in the transport's
+    /// launcher and is therefore only meaningful on the local machine.
+    pub fn remote_native_command_for_server(
+        &self,
+        id: &ContextServerId,
+    ) -> Option<&ContextServerCommand> {
+        self.remote_native_commands.get(id)
     }
 
     /// Returns the configured settings for a server, if it is present in the user
@@ -956,11 +971,23 @@ impl ContextServerStore {
                 })
                 .await?;
 
+            let env: HashMap<String, String> = response.env.into_iter().collect();
+
+            // The command as it runs on the remote host, before being wrapped in
+            // the transport's launcher (`ssh ...`, `wsl.exe ...`). Consumers that
+            // already execute on the remote host need this one, not the wrapper.
+            let native_command = ContextServerCommand {
+                path: response.path.clone().into(),
+                args: response.args.clone(),
+                env: Some(env.clone()),
+                timeout: None,
+            };
+
             let remote_command = upstream_client.update(cx, |client, _| {
                 client.build_command(
                     Some(response.path),
                     &response.args,
-                    &response.env.into_iter().collect(),
+                    &env,
                     root_dir,
                     None,
                     Interactive::Yes,
@@ -973,6 +1000,11 @@ impl ContextServerStore {
                 env: Some(remote_command.env.into_iter().collect()),
                 timeout: None,
             };
+
+            this.update(cx, |this, _| {
+                this.remote_native_commands
+                    .insert(id.clone(), native_command);
+            })?;
 
             Arc::new(ContextServerConfiguration::Custom { command, remote })
         } else {

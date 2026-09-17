@@ -189,7 +189,8 @@ impl ExtensionManifest {
     pub fn remote_load(&self) -> Option<RemoteLoad<'_>> {
         (!self.language_servers.is_empty()
             || !self.debug_adapters.is_empty()
-            || !self.debug_locators.is_empty())
+            || !self.debug_locators.is_empty()
+            || !self.context_servers.is_empty())
         .then_some(RemoteLoad { manifest: self })
     }
 }

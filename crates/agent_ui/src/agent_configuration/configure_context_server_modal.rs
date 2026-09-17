@@ -592,13 +592,32 @@ impl ConfigureContextServerModal {
             return;
         };
 
-        let (id, settings) = match self.source.output(cx) {
+        let (id, mut settings) = match self.source.output(cx) {
             Ok(val) => val,
             Err(error) => {
                 self.set_error(error.to_string(), cx);
                 return;
             }
         };
+
+        // This modal has no control for `remote`, so `output` always reports it
+        // as false. Carry the configured value over instead, otherwise saving
+        // here silently moves an MCP server back onto the local machine.
+        let configured_remote = {
+            let project_settings = ProjectSettings::get_global(cx);
+            project_settings
+                .context_servers
+                .get(&id.0)
+                .or_else(|| {
+                    self.original_server_id.as_ref().and_then(|original_id| {
+                        project_settings.context_servers.get(&original_id.0)
+                    })
+                })
+                .map(ContextServerSettings::remote)
+        };
+        if let Some(remote) = configured_remote {
+            settings.set_remote(remote);
+        }
 
         self.state = State::Waiting;
 

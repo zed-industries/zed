@@ -9,8 +9,9 @@ use anyhow::{Context as _, Result};
 use client::{TypedEnvelope, proto};
 use collections::{BTreeMap, FxHasher, HashSet};
 use extension::{
-    Event, Extension, ExtensionDebugAdapterProviderProxy, ExtensionEvents, ExtensionHostProxy,
-    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionManifest,
+    Event, Extension, ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy,
+    ExtensionEvents, ExtensionHostProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
+    ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::{
@@ -55,6 +56,7 @@ pub(crate) struct LoadedExtension {
     pub language_servers: Vec<(LanguageServerName, LanguageName)>,
     pub debug_adapters: Vec<(Arc<str>, PathBuf)>,
     pub debug_locators: Vec<Arc<str>>,
+    pub context_servers: Vec<Arc<str>>,
     pub wasm_extension: Option<Arc<dyn Extension>>,
     pub content_fingerprint: Option<u64>,
 }
@@ -280,6 +282,7 @@ impl HeadlessExtensionStore {
         let mut language_servers = Vec::new();
         let mut debug_adapters = Vec::new();
         let mut debug_locators = Vec::new();
+        let mut context_servers = Vec::new();
         let mut wasm_extension: Option<Arc<dyn Extension>> = None;
         if manifest.allow_remote_load() {
             wasm_extension = Some(Arc::new(
@@ -298,6 +301,8 @@ impl HeadlessExtensionStore {
             }
 
             debug_locators = manifest.debug_locators.keys().cloned().collect();
+
+            context_servers = manifest.context_servers.keys().cloned().collect();
         }
 
         Ok(LoadedExtension {
@@ -306,6 +311,7 @@ impl HeadlessExtensionStore {
             language_servers,
             debug_adapters,
             debug_locators,
+            context_servers,
             wasm_extension,
             content_fingerprint,
         })
@@ -399,6 +405,22 @@ impl HeadlessExtensionStore {
                     None => self.proxy.unregister_debug_locator(locator_name.clone()),
                 }
             }
+
+            for server_id in &previous.context_servers {
+                if current
+                    .as_ref()
+                    .is_some_and(|current| current.context_servers.iter().any(|id| id == server_id))
+                {
+                    continue;
+                }
+                match self.surviving_context_server(server_id) {
+                    Some(extension) => {
+                        self.proxy
+                            .register_context_server(extension, server_id.clone(), cx);
+                    }
+                    None => self.proxy.unregister_context_server(server_id.clone(), cx),
+                }
+            }
         }
 
         if let Some(current) = &current {
@@ -426,6 +448,14 @@ impl HeadlessExtensionStore {
                     self.proxy
                         .register_debug_locator(wasm_extension.clone(), locator_name.clone());
                     log::info!("Loaded debug locator: {locator_name}");
+                }
+                for server_id in &current.context_servers {
+                    self.proxy.register_context_server(
+                        wasm_extension.clone(),
+                        server_id.clone(),
+                        cx,
+                    );
+                    log::info!("Loaded context server: {server_id}");
                 }
             }
         }
@@ -479,6 +509,17 @@ impl HeadlessExtensionStore {
                 .debug_locators
                 .iter()
                 .any(|name| name == locator_name)
+                .then_some(wasm_extension)
+        })
+    }
+
+    fn surviving_context_server(&self, server_id: &Arc<str>) -> Option<Arc<dyn Extension>> {
+        self.loaded_extensions.values().find_map(|extension| {
+            let wasm_extension = extension.wasm_extension.clone()?;
+            extension
+                .context_servers
+                .iter()
+                .any(|id| id == server_id)
                 .then_some(wasm_extension)
         })
     }

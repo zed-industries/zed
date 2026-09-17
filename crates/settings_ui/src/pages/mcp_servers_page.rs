@@ -725,6 +725,9 @@ pub(crate) struct McpServerForm {
     transport: McpTransport,
     /// `Some` when editing an existing server (used to remove the old entry on rename).
     original_id: Option<ContextServerId>,
+    /// Carried through from the existing settings entry. The form has no control
+    /// for it, so it is preserved rather than reset when the user saves.
+    remote: bool,
     name: Entity<Editor>,
     command: Entity<Editor>,
     args: Entity<Editor>,
@@ -752,6 +755,7 @@ impl McpServerForm {
         let mut url_initial = None;
         let mut timeout_initial = None;
         let mut oauth_initial = None;
+        let mut remote = false;
         let mut env = Vec::new();
         let mut headers = Vec::new();
 
@@ -759,6 +763,7 @@ impl McpServerForm {
         // the user typed directly into settings.json) still load into the form
         // for correction, rather than being dropped during resolution.
         if let Some(settings) = settings.as_ref() {
+            remote = settings.remote();
             match settings {
                 ContextServerSettings::Stdio { command, .. } => {
                     command_initial = Some(command.path.to_string_lossy().to_string());
@@ -793,6 +798,7 @@ impl McpServerForm {
         Self {
             transport,
             original_id,
+            remote,
             name: new_input("my-mcp-server", name_initial.as_deref(), window, cx),
             command: new_input("/path/to/server", command_initial.as_deref(), window, cx),
             args: new_input("--flag value", args_initial.as_deref(), window, cx),
@@ -1193,6 +1199,7 @@ fn save_mcp_server_form(
 struct McpServerFormValues {
     transport: McpTransport,
     original_id: Option<ContextServerId>,
+    remote: bool,
     name: String,
     command: String,
     args: String,
@@ -1217,6 +1224,7 @@ fn build_settings_from_form(
     let values = McpServerFormValues {
         transport: form.transport,
         original_id: form.original_id.clone(),
+        remote: form.remote,
         name: form.name.read(cx).text(cx),
         command: form.command.read(cx).text(cx),
         args: form.args.read(cx).text(cx),
@@ -1266,7 +1274,7 @@ fn build_settings_from_values(
             let env = collect_kv(&values.env, "environment variable")?;
             ContextServerSettingsContent::Stdio {
                 enabled: true,
-                remote: false,
+                remote: values.remote,
                 command: ContextServerCommand {
                     path: command.into(),
                     args,
@@ -1368,6 +1376,7 @@ mod tests {
         McpServerFormValues {
             transport,
             original_id: None,
+            remote: false,
             name: "my-server".into(),
             command: String::new(),
             args: String::new(),
@@ -1502,6 +1511,28 @@ mod tests {
                     args: vec!["--flag".into(), "value".into()],
                     env: Some(expected_env),
                     timeout: Some(30),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn preserves_remote_flag_for_stdio_server() {
+        let mut values = values(McpTransport::Stdio);
+        values.command = "/usr/bin/server".into();
+        values.remote = true;
+
+        let (_, _, content) = build_settings_from_values(&values).unwrap();
+        assert_eq!(
+            content,
+            ContextServerSettingsContent::Stdio {
+                enabled: true,
+                remote: true,
+                command: ContextServerCommand {
+                    path: "/usr/bin/server".into(),
+                    args: Vec::new(),
+                    env: None,
+                    timeout: None,
                 },
             }
         );

@@ -4401,17 +4401,27 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
                     command,
                     remote,
                     ..
-                } if is_local || *remote => Some(acp::McpServer::Stdio(
-                    acp::McpServerStdio::new(id.0.to_string(), &command.path)
-                        .args(command.args.clone())
-                        .env(if let Some(env) = command.env.as_ref() {
-                            env.iter()
-                                .map(|(name, value)| acp::EnvVariable::new(name, value))
-                                .collect()
-                        } else {
-                            vec![]
-                        }),
-                )),
+                } if is_local || *remote => {
+                    // The agent runs on the same host as a `remote` MCP server, so
+                    // it needs the command as that host runs it. `configuration`
+                    // holds the locally-spawned form, which is wrapped in the
+                    // transport launcher (`ssh ...`, `wsl.exe ...`).
+                    let command = context_server_store
+                        .remote_native_command_for_server(id)
+                        .filter(|_| !is_local)
+                        .unwrap_or(command);
+                    Some(acp::McpServer::Stdio(
+                        acp::McpServerStdio::new(id.0.to_string(), &command.path)
+                            .args(command.args.clone())
+                            .env(if let Some(env) = command.env.as_ref() {
+                                env.iter()
+                                    .map(|(name, value)| acp::EnvVariable::new(name, value))
+                                    .collect()
+                            } else {
+                                vec![]
+                            }),
+                    ))
+                }
                 project::context_server_store::ContextServerConfiguration::Http {
                     url,
                     headers,

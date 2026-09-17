@@ -89,6 +89,10 @@ impl HeadlessProject {
     pub fn init(cx: &mut App) {
         settings::init(cx);
         log_store::init(true, cx);
+        // Registers the proxy that turns extension-provided context servers into
+        // descriptors. Without it, `GetContextServerCommand` cannot resolve a
+        // command for any extension MCP server running on this host.
+        project::context_server_store::init(cx);
     }
 
     pub fn new(
