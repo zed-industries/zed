@@ -9147,9 +9147,9 @@ impl Repository {
         worktree_directory_setting: &str,
     ) -> Result<PathBuf> {
         let repository_anchor = self.linked_worktree_anchor_path();
-        let project_name = repository_anchor
-            .file_name()
-            .and_then(|name| name.to_str())
+        let project_name = self
+            .path_style
+            .file_name(repository_anchor)
             .ok_or_else(|| anyhow!("git repo must have a directory name"))?;
         let directory = worktrees_directory_for_repo(
             repository_anchor,
@@ -10707,66 +10707,33 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
     Some(repo_identity_path(&common_dir, PathStyle::local()).to_path_buf())
 }
 
-/// Validates that the resolved worktree directory is acceptable:
-/// - The setting must not be an absolute path.
-/// - The resolved path must be either a subdirectory of the working
-///   directory or a subdirectory of its parent (i.e., a sibling).
-///
-/// Returns `Ok(resolved_path)` or an error with a user-facing message.
 pub fn worktrees_directory_for_repo(
     repository_anchor_path: &Path,
     worktree_directory_setting: &str,
     path_style: PathStyle,
 ) -> Result<PathBuf> {
-    // Check the original setting before trimming, since a path like "///"
-    // is absolute but becomes "" after stripping trailing separators.
-    // Also check for leading `/` or `\` explicitly, because on Windows
-    // `Path::is_absolute()` requires a drive letter — so `/tmp/worktrees`
-    // would slip through even though it's clearly not a relative path.
-    if path_style.is_absolute(worktree_directory_setting)
-        || worktree_directory_setting.starts_with('\\')
-    {
-        anyhow::bail!(
-            "git.worktree_directory must be a relative path, got: {worktree_directory_setting:?}"
-        );
-    }
-
-    if worktree_directory_setting.is_empty() {
-        anyhow::bail!("git.worktree_directory must not be empty");
-    }
-
-    let trimmed = worktree_directory_setting.trim_end_matches(['/', '\\']);
-    if trimmed == ".." {
-        anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
-    }
-
-    let joined = path_style.join_path(repository_anchor_path, trimmed)?;
-    let resolved = if path_style.is_posix() {
-        joined
+    let worktree_directory = shellexpand::tilde(worktree_directory_setting);
+    let resolved = if path_style.is_absolute(&worktree_directory) {
+        PathBuf::from(path_style.normalize(&worktree_directory))
     } else {
-        path::normalize_path(&joined)
+        path_style.join_path(repository_anchor_path, worktree_directory.as_ref())?
     };
-    let resolved = if resolved.starts_with(repository_anchor_path) {
-        resolved
-    } else if let Some(repo_dir_name) = repository_anchor_path
-        .file_name()
-        .and_then(|name| name.to_str())
+    let resolved = if path_style
+        .strip_prefix(&resolved, repository_anchor_path)
+        .is_some()
     {
+        resolved
+    } else if let Some(repo_dir_name) = path_style.file_name(repository_anchor_path) {
         path_style.join_path(&resolved, repo_dir_name)?
     } else {
         resolved
     };
 
-    let parent = repository_anchor_path
-        .parent()
-        .unwrap_or(repository_anchor_path);
-
-    if !resolved.starts_with(parent) {
-        anyhow::bail!(
-            "git.worktree_directory resolved to {resolved:?}, which is outside \
-             the project root and its parent directory. It must resolve to a \
-             subdirectory of {repository_anchor_path:?} or a sibling of it."
-        );
+    if path_style
+        .strip_prefix(&resolved, repository_anchor_path)
+        .is_some_and(|relative_path| relative_path.is_empty())
+    {
+        anyhow::bail!("git.worktree_directory must not resolve to the repository directory");
     }
 
     Ok(resolved)

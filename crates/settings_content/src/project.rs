@@ -596,8 +596,8 @@ pub struct GitSettings {
     ///
     /// Default: true
     pub show_stage_restore_buttons: Option<bool>,
-    /// Directory where git worktrees are created, relative to the repository
-    /// working directory.
+    /// Base directory for new Git worktrees. Supports absolute paths, paths
+    /// relative to the repository working directory, and `~` for the home directory.
     ///
     /// When the resolved directory is outside the project root, the
     /// project's directory name is automatically appended so that
@@ -610,6 +610,7 @@ pub struct GitSettings {
     ///
     /// Examples:
     /// - `"../worktrees"` — `~/code/worktrees/<project>/` (default)
+    /// - `"/tmp/worktrees"` — `/tmp/worktrees/<project>/`
     /// - `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
     /// - `"my-worktrees"` — `<project>/my-worktrees/`
     ///
