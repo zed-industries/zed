@@ -213,9 +213,7 @@ pub struct AgentSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub flexible: bool,
-    pub sidebar_side: SidebarDockPosition,
-    pub threads_sidebar_default_width: Pixels,
-    pub threads_sidebar_auto_open: bool,
+    pub threads_sidebar: ThreadsSidebarSettings,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub max_content_width: Option<Pixels>,
@@ -253,6 +251,13 @@ pub struct AgentSettings {
     pub sandbox_permissions: SandboxPermissions,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ThreadsSidebarSettings {
+    pub auto_open: bool,
+    pub position: SidebarDockPosition,
+    pub default_width: Pixels,
+}
+
 impl AgentSettings {
     pub fn enabled(&self, cx: &App) -> bool {
         self.enabled && !DisableAiSettings::get_global(cx).disable_ai
@@ -277,7 +282,7 @@ impl AgentSettings {
     }
 
     pub fn sidebar_side(&self) -> SidebarSide {
-        match self.sidebar_side {
+        match self.threads_sidebar.position {
             SidebarDockPosition::Left => SidebarSide::Left,
             SidebarDockPosition::Right => SidebarSide::Right,
         }
@@ -763,19 +768,22 @@ pub fn normalize_path(raw: &str) -> String {
 impl Settings for AgentSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent = content.agent.clone().unwrap();
+        let threads_sidebar = agent.threads_sidebar.unwrap();
         Self {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
-            sidebar_side: agent.sidebar_side.unwrap(),
-            // Clamped once here so that every reader gets a width the sidebar can
-            // actually hold, rather than each call site having to remember to.
-            threads_sidebar_default_width: agent
-                .threads_sidebar_default_width
-                .unwrap()
-                .into_gpui()
-                .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH),
-            threads_sidebar_auto_open: agent.threads_sidebar_auto_open.unwrap(),
+            threads_sidebar: ThreadsSidebarSettings {
+                auto_open: threads_sidebar.auto_open.unwrap(),
+                position: threads_sidebar.position.unwrap(),
+                // Clamped once here so that every reader gets a width the sidebar can
+                // actually hold, rather than each call site having to remember to.
+                default_width: threads_sidebar
+                    .default_width
+                    .unwrap()
+                    .into_gpui()
+                    .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH),
+            },
             default_width: agent.default_width.unwrap().into_gpui(),
             default_height: agent.default_height.unwrap().into_gpui(),
             max_content_width: if agent.limit_content_width.unwrap() {
@@ -1108,53 +1116,88 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_threads_sidebar_default_width(cx: &mut gpui::App) {
+    fn test_threads_sidebar_settings(cx: &mut gpui::App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         project::DisableAiSettings::register(cx);
         AgentSettings::register(cx);
 
-        assert_eq!(
-            AgentSettings::get_global(cx).threads_sidebar_default_width,
-            px(300.),
-            "default.json supplies the Threads Sidebar width"
-        );
-
-        SettingsStore::update_global(cx, |store, cx| {
-            store
-                .set_user_settings(
-                    r#"{ "agent": { "threads_sidebar_default_width": 360 } }"#,
-                    cx,
-                )
-                .expect("user settings load");
-        });
-
-        let settings = AgentSettings::get_global(cx);
-        assert_eq!(settings.threads_sidebar_default_width, px(360.));
-        assert_eq!(
-            settings.default_width,
-            px(640.),
-            "setting the Threads Sidebar width leaves the agent panel width unchanged"
-        );
-        assert_eq!(
-            settings.sidebar_side,
-            SidebarDockPosition::Left,
-            "setting the Threads Sidebar width leaves its position unchanged"
-        );
-
-        for content in [
-            r#"{ "agent": { "threads_sidebar_default_width": null } }"#,
-            r#"{ "agent": {} }"#,
+        for (content, expected_position, expected_width) in [
+            (r#"{}"#, SidebarDockPosition::Left, px(300.)),
+            (
+                r#"{ "agent": { "threads_sidebar": { "position": "right", "default_width": 360 } } }"#,
+                SidebarDockPosition::Right,
+                px(360.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "position": "right" } } }"#,
+                SidebarDockPosition::Right,
+                px(300.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "default_width": 360 } } }"#,
+                SidebarDockPosition::Left,
+                px(360.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "position": null, "default_width": null } } }"#,
+                SidebarDockPosition::Left,
+                px(300.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": null } }"#,
+                SidebarDockPosition::Left,
+                px(300.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "default_width": 5 } } }"#,
+                SidebarDockPosition::Left,
+                THREADS_LIST_MIN_WIDTH,
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "default_width": 5000 } } }"#,
+                SidebarDockPosition::Left,
+                THREADS_LIST_MAX_WIDTH,
+            ),
         ] {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(content, cx)
                     .expect("user settings load");
             });
+            let settings = AgentSettings::get_global(cx);
             assert_eq!(
-                AgentSettings::get_global(cx).threads_sidebar_default_width,
-                px(300.),
-                "an unset width falls back to the default"
+                settings.threads_sidebar.position, expected_position,
+                "{content}"
+            );
+            assert_eq!(
+                settings.threads_sidebar.default_width, expected_width,
+                "{content}"
+            );
+            assert_eq!(
+                settings.sidebar_side(),
+                match expected_position {
+                    SidebarDockPosition::Left => SidebarSide::Left,
+                    SidebarDockPosition::Right => SidebarSide::Right,
+                },
+                "{content}"
+            );
+            assert_eq!(settings.default_width, px(640.), "{content}");
+            assert!(settings.threads_sidebar.auto_open, "{content}");
+        }
+
+        for (value, expected) in [("false", false), ("true", true), ("null", true)] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        &format!(r#"{{"agent":{{"threads_sidebar":{{"auto_open":{value}}}}}}}"#),
+                        cx,
+                    )
+                    .expect("user settings load");
+            });
+            assert_eq!(
+                AgentSettings::get_global(cx).threads_sidebar.auto_open,
+                expected
             );
         }
     }
