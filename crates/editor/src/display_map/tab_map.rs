@@ -174,21 +174,22 @@ impl TabMap {
             .collect();
         v.push(first_edit);
         debug_assert_eq!(v.as_ptr(), _old_alloc_ptr, "Fold edits were reallocated");
-        let tab_edits = v
-            .into_iter()
-            .map(|fold_edit| {
-                let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
-                let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
-                let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
-                let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
-                TabEdit {
-                    old: old_snapshot.fold_point_to_tab_point(old_start)
-                        ..old_snapshot.fold_point_to_tab_point(old_end),
-                    new: new_snapshot.fold_point_to_tab_point(new_start)
-                        ..new_snapshot.fold_point_to_tab_point(new_end),
-                }
-            })
-            .collect();
+        let tab_edits = {
+            let mut old_cursor = old_snapshot.tab_point_cursor();
+            let mut new_cursor = new_snapshot.tab_point_cursor();
+            v.into_iter()
+                .map(|fold_edit| {
+                    let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
+                    let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
+                    let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
+                    let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
+                    TabEdit {
+                        old: old_cursor.map(old_start)..old_cursor.map(old_end),
+                        new: new_cursor.map(new_start)..new_cursor.map(new_end),
+                    }
+                })
+                .collect()
+        };
         *old_snapshot = new_snapshot;
         (old_snapshot.clone(), tab_edits)
     }
