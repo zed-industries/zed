@@ -1304,11 +1304,17 @@ impl MacWindow {
             }
 
             if let Some(mut popup) = popup.take() {
-                // SAFETY: This is the live GPUIPanel initialized above, on the main thread.
-                let panel = &*native_window.cast::<Objc2NSWindow>();
-                if let Err(error) = popup.attach(panel, &window.0) {
+                if let Err(error) = popup.observe(&window.0) {
                     pool.drain();
                     return Err(error);
+                }
+                if show {
+                    // SAFETY: Both windows are live on the main thread. The parent predates
+                    // the popup, so this cannot form a cycle. Attaching also shows the child.
+                    popup.parent.addChildWindow_ordered(
+                        &*native_window.cast::<Objc2NSWindow>(),
+                        objc2_app_kit::NSWindowOrderingMode::Above,
+                    );
                 }
                 window.0.lock().popup = Some(popup);
             }
@@ -1812,11 +1818,26 @@ impl PlatformWindow for MacWindow {
     fn activate(&self) {
         let lock = self.0.lock();
         let window = lock.native_window;
+        let parent = lock.popup.as_ref().map(|popup| popup.parent.clone());
         let closed = lock.closed.clone();
         let executor = lock.foreground_executor.clone();
         executor
             .spawn(async move {
                 if !closed.load(Ordering::Acquire) {
+                    if let Some(parent) = parent {
+                        // SAFETY: The closed-state check guarantees a live NSWindow on the main thread.
+                        let panel = unsafe { &*window.cast::<Objc2NSWindow>() };
+                        if panel.parentWindow().is_none() {
+                            // SAFETY: This is the retained parent resolved when the popup was
+                            // created. Attaching a previously hidden popup cannot form a cycle.
+                            unsafe {
+                                parent.addChildWindow_ordered(
+                                    panel,
+                                    objc2_app_kit::NSWindowOrderingMode::Above,
+                                )
+                            };
+                        }
+                    }
                     unsafe {
                         let _: () = msg_send![window, makeKeyAndOrderFront: nil];
                     }
@@ -2681,10 +2702,8 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     };
 
     let run_callback = |event: PlatformInput| -> BOOL {
-        let keystroke = match &event {
-            PlatformInput::KeyDown(event) => Some(event.keystroke.clone()),
-            _ => None,
-        };
+        let is_escape = matches!(&event, PlatformInput::KeyDown(event)
+            if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified());
         let mut callback = window_state.as_ref().lock().event_callback.take();
         let handled: BOOL = if let Some(callback) = callback.as_mut() {
             !callback(event).propagate as BOOL
@@ -2692,11 +2711,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             NO
         };
         window_state.as_ref().lock().event_callback = callback;
-        if handled == NO
-            && keystroke
-                .as_ref()
-                .is_some_and(|keystroke| popup::dismiss_on_escape(&window_state, keystroke))
-        {
+        if handled == NO && is_escape && popup::dismiss_on_escape(&window_state) {
             YES
         } else {
             handled
@@ -3529,15 +3544,16 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     drop(lock);
 
     if let Some(keystroke) = keystroke {
+        let is_escape = keystroke.key == "escape" && !keystroke.modifiers.modified();
         let handled = event_callback.as_mut().is_some_and(|callback| {
             !callback(PlatformInput::KeyDown(KeyDownEvent {
-                keystroke: keystroke.clone(),
+                keystroke,
                 is_held: false,
                 prefer_character_input: false,
             }))
             .propagate
         });
-        let handled = handled || popup::dismiss_on_escape(&state, &keystroke);
+        let handled = handled || (is_escape && popup::dismiss_on_escape(&state));
         state.as_ref().lock().do_command_handled = Some(handled);
     }
 

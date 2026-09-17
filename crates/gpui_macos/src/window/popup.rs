@@ -1,12 +1,12 @@
 use super::{MacWindowState, get_window_state, is_gpui_window};
 use anyhow::{Context as _, Result};
 use block2::RcBlock;
-use gpui::{Along, Bounds, Keystroke, Modifiers, Pixels, Size, point, popup::*, px, size};
+use gpui::{Along, Bounds, Pixels, Size, point, popup::*, px, size};
 use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
 use objc2_app_kit::{
-    NSApplication, NSApplicationDidResignActiveNotification, NSEvent, NSEventMask, NSEventType,
-    NSView, NSWindow, NSWindowDidMoveNotification, NSWindowDidResizeNotification,
-    NSWindowOrderingMode,
+    NSApplication, NSApplicationDidResignActiveNotification, NSEvent, NSEventMask, NSView,
+    NSWindow, NSWindowDidMoveNotification, NSWindowDidResizeNotification,
+    NSWindowWillCloseNotification,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -20,7 +20,7 @@ use std::{
 pub(super) struct MacPopup {
     pub options: PopupOptions,
     pub size: Size<Pixels>,
-    parent: Retained<NSWindow>,
+    pub parent: Retained<NSWindow>,
     parent_view: Retained<NSView>,
     observers: Vec<Retained<objc2::runtime::ProtocolObject<dyn NSObjectProtocol>>>,
     mouse_monitor: Option<Retained<AnyObject>>,
@@ -33,18 +33,6 @@ impl MacPopup {
         marker: MainThreadMarker,
     ) -> Result<Self> {
         let application = NSApplication::sharedApplication(marker);
-        if options.grab {
-            anyhow::ensure!(
-                application.currentEvent().is_some_and(|event| matches!(
-                    event.r#type(),
-                    NSEventType::LeftMouseDown
-                        | NSEventType::RightMouseDown
-                        | NSEventType::OtherMouseDown
-                        | NSEventType::KeyDown
-                )),
-                "popup input grab requires an active press event"
-            );
-        }
         for parent in application.windows() {
             let pointer = Retained::as_ptr(&parent).cast_mut().cast();
             // SAFETY: NSApplication owns these live windows; only GPUI classes have our ivar.
@@ -113,14 +101,7 @@ impl MacPopup {
         ))
     }
 
-    pub fn attach(&mut self, window: &NSWindow, state: &Arc<Mutex<MacWindowState>>) -> Result<()> {
-        // SAFETY: Both windows are live and on the main thread. The parent was resolved from
-        // an existing handle before this window was created, so this cannot form a cycle.
-        unsafe {
-            self.parent
-                .addChildWindow_ordered(window, NSWindowOrderingMode::Above)
-        };
-
+    pub fn observe(&mut self, state: &Arc<Mutex<MacWindowState>>) -> Result<()> {
         let center = NSNotificationCenter::defaultCenter();
         // SAFETY: AppKit's notification names are immutable process-lifetime constants.
         let moved = unsafe { NSWindowDidMoveNotification };
@@ -141,6 +122,23 @@ impl MacPopup {
             };
             self.observers.push(observer);
         }
+
+        // Hidden popups aren't attached to the parent yet: adding a native child would show it.
+        let callback = RcBlock::new({
+            let state = Arc::downgrade(state);
+            move |_: NonNull<NSNotification>| dismiss(&state)
+        });
+        // SAFETY: AppKit posts this notification on the main thread. The observer is removed
+        // before popup teardown, and the callback holds only a weak state.
+        let observer = unsafe {
+            center.addObserverForName_object_queue_usingBlock(
+                Some(NSWindowWillCloseNotification),
+                Some(&self.parent),
+                None,
+                &callback,
+            )
+        };
+        self.observers.push(observer);
 
         if self.options.grab {
             let callback = RcBlock::new({
@@ -184,7 +182,7 @@ impl Drop for MacPopup {
         }
         let center = NSNotificationCenter::defaultCenter();
         for observer in self.observers.drain(..) {
-            // SAFETY: These are the observer tokens registered by attach, on the main thread.
+            // SAFETY: These are our observer tokens, removed on the main thread.
             unsafe { center.removeObserver((*observer).as_ref()) };
         }
     }
@@ -207,14 +205,12 @@ pub(super) fn dismiss(state: &Weak<Mutex<MacWindowState>>) {
         .detach();
 }
 
-pub(super) fn dismiss_on_escape(state: &Arc<Mutex<MacWindowState>>, keystroke: &Keystroke) -> bool {
-    if keystroke.key == "escape"
-        && keystroke.modifiers == Modifiers::default()
-        && state
-            .lock()
-            .popup
-            .as_ref()
-            .is_some_and(|popup| popup.options.grab)
+pub(super) fn dismiss_on_escape(state: &Arc<Mutex<MacWindowState>>) -> bool {
+    if state
+        .lock()
+        .popup
+        .as_ref()
+        .is_some_and(|popup| popup.options.grab)
     {
         dismiss(&Arc::downgrade(state));
         true
