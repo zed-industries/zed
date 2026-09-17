@@ -1,7 +1,7 @@
 id = "test-extension"
 name = "Test Extension"
 description = "An extension for use in tests."
-version = "0.1.0"
+version = "0.1.1"
 schema_version = 1
 authors = ["Marshall Bowers <elliott.codes@gmail.com>"]
 repository = "https://github.com/zed-industries/zed"
