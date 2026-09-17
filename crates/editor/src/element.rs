@@ -68,8 +68,8 @@ use project::{
     project_settings::{InlineBlameLocation, ProjectSettings},
 };
 use settings::{
-    GitGutterSetting, GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring,
-    Settings,
+    GitGutterSetting, GitHunkControlsPosition, GitHunkStyleSetting, IndentGuideBackgroundColoring,
+    IndentGuideColoring, Settings,
 };
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -4858,6 +4858,7 @@ impl EditorElement {
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
         let diff_hunk_renderer = editor.read(cx).diff_hunk_renderer();
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
+        let hunk_controls_position = ProjectSettings::get_global(cx).git.hunk_controls_position;
         let sticky_top = text_hitbox.bounds.top() + sticky_header_height;
 
         let mut controls = vec![];
@@ -4917,7 +4918,11 @@ impl EditorElement {
                         - scroll_pixel_position.y)
                         .into();
 
-                    let y: Pixels = if hunk_start_y >= sticky_top {
+                    let float_above_y = hunk_start_y - line_height;
+
+                    let y: Pixels = if float_above_y >= sticky_top {
+                        float_above_y
+                    } else if hunk_start_y >= sticky_top {
                         hunk_start_y
                     } else {
                         let hunk_end_y: Pixels = hunk_start_y
@@ -4941,11 +4946,18 @@ impl EditorElement {
                     let size =
                         element.layout_as_root(size(px(100.0), line_height).into(), window, cx);
 
-                    let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
-
-                    if x < text_hitbox.bounds.left() {
+                    let available_width =
+                        text_hitbox.bounds.right() - right_margin - text_hitbox.bounds.left();
+                    if size.width + px(10.) > available_width {
                         continue;
                     }
+
+                    let x = match hunk_controls_position {
+                        GitHunkControlsPosition::Right => {
+                            text_hitbox.bounds.right() - right_margin - px(10.) - size.width
+                        }
+                        GitHunkControlsPosition::Left => text_hitbox.bounds.left() + px(10.),
+                    };
 
                     let bounds = Bounds::new(gpui::Point::new(x, y), size);
                     control_bounds.push((display_row_range.start, bounds));

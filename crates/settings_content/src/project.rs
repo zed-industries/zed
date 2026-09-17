@@ -596,6 +596,11 @@ pub struct GitSettings {
     ///
     /// Default: true
     pub show_stage_restore_buttons: Option<bool>,
+    /// Which side of the line the diff hunk controls (stage/restore/next-hunk
+    /// toolbar) are shown on.
+    ///
+    /// Default: right
+    pub hunk_controls_position: Option<GitHunkControlsPosition>,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory.
     ///
@@ -814,6 +819,20 @@ pub enum GitPathStyle {
     FileNameFirst,
     /// Show full path first
     FilePathFirst,
+}
+
+#[with_fallible_options]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+    strum::VariantArray, strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHunkControlsPosition {
+    /// Show the diff hunk controls on the right side of the line.
+    #[default]
+    Right,
+    /// Show the diff hunk controls on the left side of the line.
+    Left,
 }
 
 #[with_fallible_options]
