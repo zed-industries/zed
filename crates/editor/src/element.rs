@@ -1,5 +1,8 @@
+mod cursor_layer;
 mod header;
 mod mouse;
+
+pub(crate) use cursor_layer::EditorContent;
 
 #[cfg(test)]
 pub(crate) use header::StickyHeader;
@@ -355,6 +358,15 @@ pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
     split_side: Option<SplitSide>,
+    paint_phase: EditorPaintPhase,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum EditorPaintPhase {
+    #[default]
+    All,
+    BeforeCursor,
+    AfterCursor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -371,6 +383,7 @@ impl EditorElement {
             editor: editor.clone(),
             style,
             split_side: None,
+            paint_phase: EditorPaintPhase::All,
         }
     }
 
@@ -1155,7 +1168,8 @@ impl EditorElement {
             let mut handled_animation_cursors = HashSet::default();
             let mut request_animation_frame = false;
 
-            let show_local_cursors = editor.show_local_cursors(window, cx);
+            let show_local_cursors =
+                self.paint_phase != EditorPaintPhase::All || editor.show_local_cursors(window, cx);
             let animation_settings = EditorSettings::get_global(cx).cursor_animation;
             let animation_enabled = animation_settings.enabled && !cx.reduce_motion();
             let animation_context = animation_enabled.then(|| {
@@ -1327,31 +1341,42 @@ impl EditorElement {
                         block_text,
                         cursor_name: None,
                         animated_corners: None,
+                        animation_target: None,
+                        name: None,
+                        is_local: selection.is_local,
                     };
                     let cursor_name = selection.user_name.clone().map(|name| CursorName {
                         string: name,
                         color: self.style.background,
                         is_top_row: cursor_position.row().0 == 0,
                     });
-                    cursor.layout(content_origin, cursor_name, window, cx);
+                    if self.paint_phase == EditorPaintPhase::All {
+                        cursor.layout(content_origin, cursor_name, window, cx);
+                    } else {
+                        cursor.name = cursor_name;
+                    }
                     if selection.is_local
                         && cursor_shape_supports_cursor_animation(selection.cursor_shape)
                     {
                         if let Some((cursor_viewport, animation_now)) = animation_context {
                             handled_animation_cursors.insert(selection.id);
-                            let target_bounds =
-                                window.pixel_snap_bounds(cursor.bounds(content_origin));
-                            cursor.animated_corners = editor.cursor_animations.update(
-                                selection.id,
-                                LogicalCursorPosition {
-                                    row: cursor_position.row().0,
-                                    column: cursor_position.column(),
-                                },
-                                target_bounds,
-                                cursor_viewport,
-                                animation_now,
-                            );
-                            request_animation_frame |= cursor.animated_corners.is_some();
+                            let logical_position = LogicalCursorPosition {
+                                row: cursor_position.row().0,
+                                column: cursor_position.column(),
+                            };
+                            if self.paint_phase == EditorPaintPhase::All {
+                                cursor.animated_corners = editor.cursor_animations.update(
+                                    selection.id,
+                                    logical_position,
+                                    window.pixel_snap_bounds(cursor.bounds(content_origin)),
+                                    cursor_viewport,
+                                    animation_now,
+                                );
+                                request_animation_frame |= cursor.animated_corners.is_some();
+                            } else {
+                                cursor.animation_target =
+                                    Some((selection.id, logical_position, cursor_viewport));
+                            }
                         }
                     } else if animation_enabled && selection.is_local {
                         editor.cursor_animations.remove(selection.id);
@@ -1365,7 +1390,7 @@ impl EditorElement {
                 editor
                     .cursor_animations
                     .retain(|selection_id| handled_animation_cursors.contains(&selection_id));
-                if request_animation_frame {
+                if request_animation_frame && self.paint_phase == EditorPaintPhase::All {
                     window.request_animation_frame();
                 }
             }
@@ -5905,6 +5930,10 @@ impl EditorElement {
                 bounds: layout.position_map.text_hitbox.bounds,
             }),
             |window| {
+                if self.paint_phase == EditorPaintPhase::AfterCursor {
+                    self.paint_text_foreground(layout, window, cx);
+                    return;
+                }
                 let editor = self.editor.read(cx);
                 if let SelectionDragState::ReadyToDrag {
                     mouse_down_time, ..
@@ -5960,18 +5989,29 @@ impl EditorElement {
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
                 self.paint_navigation_overlays(layout, window, cx);
-                self.paint_cursors(layout, window, cx);
-                self.paint_inline_diagnostics(layout, window, cx);
-                self.paint_inline_blame(layout, window, cx);
-                self.paint_inline_code_actions(layout, window, cx);
-                self.paint_diff_hunk_controls(layout, window, cx);
-                window.with_element_namespace("crease_trailers", |window| {
-                    for trailer in layout.crease_trailers.iter_mut().flatten() {
-                        trailer.element.paint(window, cx);
-                    }
-                });
+                if self.paint_phase == EditorPaintPhase::All {
+                    self.paint_cursors(layout, window, cx);
+                    self.paint_text_foreground(layout, window, cx);
+                }
             },
         )
+    }
+
+    fn paint_text_foreground(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.paint_inline_diagnostics(layout, window, cx);
+        self.paint_inline_blame(layout, window, cx);
+        self.paint_inline_code_actions(layout, window, cx);
+        self.paint_diff_hunk_controls(layout, window, cx);
+        window.with_element_namespace("crease_trailers", |window| {
+            for trailer in layout.crease_trailers.iter_mut().flatten() {
+                trailer.element.paint(window, cx);
+            }
+        });
     }
 
     fn paint_highlights(
@@ -8592,7 +8632,9 @@ impl Element for EditorElement {
 
         if !is_minimap {
             let focus_handle = self.editor.focus_handle(cx);
-            window.set_view_id(self.editor.entity_id());
+            if self.paint_phase == EditorPaintPhase::All {
+                window.set_view_id(self.editor.entity_id());
+            }
             window.set_focus_handle(&focus_handle, cx);
         }
 
@@ -10107,7 +10149,7 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if !layout.mode.is_minimap() {
+        if !layout.mode.is_minimap() && self.paint_phase != EditorPaintPhase::AfterCursor {
             let focus_handle = self.editor.focus_handle(cx);
             let key_context = self
                 .editor
@@ -10132,41 +10174,28 @@ impl Element for EditorElement {
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                    self.paint_mouse_listeners(layout, window, cx);
+                    if self.paint_phase != EditorPaintPhase::AfterCursor {
+                        self.paint_mouse_listeners(layout, window, cx);
+                    }
 
                     // Mask the editor behind sticky scroll headers. Important
                     // for transparent backgrounds.
-                    let below_sticky_headers_mask = layout
-                        .sticky_headers
-                        .as_ref()
-                        .and_then(|h| h.lines.last())
-                        .map(|last| ContentMask {
-                            bounds: Bounds {
-                                origin: point(
-                                    bounds.origin.x,
-                                    bounds.origin.y + last.offset + layout.position_map.line_height,
-                                ),
-                                size: size(
-                                    bounds.size.width,
-                                    (bounds.size.height
-                                        - last.offset
-                                        - layout.position_map.line_height)
-                                        .max(Pixels::ZERO),
-                                ),
-                            },
-                        });
+                    let below_sticky_headers_mask = layout.below_sticky_headers_mask(bounds);
 
                     window.with_content_mask(below_sticky_headers_mask, |window| {
-                        self.paint_background(layout, window, cx);
-
-                        self.paint_indent_guides(layout, window, cx);
-
-                        if layout.gutter_hitbox.size.width > Pixels::ZERO {
-                            self.paint_blamed_display_rows(layout, window, cx);
-                            self.paint_line_numbers(layout, window, cx);
+                        if self.paint_phase != EditorPaintPhase::AfterCursor {
+                            self.paint_background(layout, window, cx);
+                            self.paint_indent_guides(layout, window, cx);
+                            if layout.gutter_hitbox.size.width > Pixels::ZERO {
+                                self.paint_blamed_display_rows(layout, window, cx);
+                                self.paint_line_numbers(layout, window, cx);
+                            }
                         }
 
                         self.paint_text(layout, window, cx);
+                        if self.paint_phase == EditorPaintPhase::BeforeCursor {
+                            return;
+                        }
 
                         if !layout.spacer_blocks.is_empty() {
                             window.with_element_namespace("blocks", |window| {
@@ -10186,6 +10215,9 @@ impl Element for EditorElement {
                         }
                     });
 
+                    if self.paint_phase == EditorPaintPhase::BeforeCursor {
+                        return;
+                    }
                     window.with_element_namespace("blocks", |window| {
                         if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
                             sticky_header.paint(window, cx)
@@ -10315,6 +10347,25 @@ pub struct EditorLayout {
 }
 
 impl EditorLayout {
+    fn below_sticky_headers_mask(&self, bounds: Bounds<Pixels>) -> Option<ContentMask<Pixels>> {
+        self.sticky_headers
+            .as_ref()
+            .and_then(|headers| headers.lines.last())
+            .map(|last| ContentMask {
+                bounds: Bounds {
+                    origin: point(
+                        bounds.origin.x,
+                        bounds.origin.y + last.offset + self.position_map.line_height,
+                    ),
+                    size: size(
+                        bounds.size.width,
+                        (bounds.size.height - last.offset - self.position_map.line_height)
+                            .max(Pixels::ZERO),
+                    ),
+                },
+            })
+    }
+
     fn line_end_overshoot(&self) -> Pixels {
         0.15 * self.position_map.line_height
     }
@@ -10995,9 +11046,12 @@ pub struct CursorLayout {
     block_text: Option<ShapedLine>,
     cursor_name: Option<AnyElement>,
     animated_corners: Option<[gpui::Point<Pixels>; 4]>,
+    animation_target: Option<(usize, LogicalCursorPosition, CursorViewport)>,
+    name: Option<CursorName>,
+    is_local: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CursorName {
     string: SharedString,
     color: Hsla,
@@ -11022,6 +11076,9 @@ impl CursorLayout {
             block_text,
             cursor_name: None,
             animated_corners: None,
+            animation_target: None,
+            name: None,
+            is_local: false,
         }
     }
 
@@ -11093,9 +11150,12 @@ impl CursorLayout {
 
     pub fn paint(&mut self, origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
         if let Some(corners) = self.animated_corners {
-            let mut builder = gpui::PathBuilder::fill();
-            builder.add_polygon(&corners, true);
-            if let Ok(path) = builder.build() {
+            let path = convex_cursor_path(corners).or_else(|| {
+                let mut builder = gpui::PathBuilder::fill();
+                builder.add_polygon(&corners, true);
+                builder.build().ok()
+            });
+            if let Some(path) = path {
                 if let Some(name) = &mut self.cursor_name {
                     name.paint(window, cx);
                 }
@@ -11136,6 +11196,39 @@ impl CursorLayout {
     pub fn shape(&self) -> CursorShape {
         self.shape
     }
+}
+
+fn convex_cursor_path(corners: [gpui::Point<Pixels>; 4]) -> Option<gpui::Path<Pixels>> {
+    let positions = corners.map(|corner| {
+        (
+            f64::from(f32::from(corner.x)),
+            f64::from(f32::from(corner.y)),
+        )
+    });
+    let mut winding = 0.0_f64;
+    for index in 0..4 {
+        let (start, middle, end) = (
+            positions[index],
+            positions[(index + 1) % 4],
+            positions[(index + 2) % 4],
+        );
+        let left = (start.0 - end.0) * (middle.1 - end.1);
+        let right = (start.1 - end.1) * (middle.0 - end.0);
+        let cross = left - right;
+        if !cross.is_finite()
+            || cross.abs() <= 4.0 * f64::EPSILON * (left.abs() + right.abs())
+            || (winding != 0.0 && cross.is_sign_positive() != winding.is_sign_positive())
+        {
+            return None;
+        }
+        winding = cross;
+    }
+    let mut path = gpui::Path::new(corners[0]);
+    path.vertices.reserve_exact(6);
+    for corner in &corners[1..] {
+        path.line_to(*corner);
+    }
+    Some(path)
 }
 
 fn cursor_shape_supports_cursor_animation(shape: CursorShape) -> bool {
@@ -13797,6 +13890,65 @@ mod tests {
                     assert_eq!(underline.wavy, true.into());
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_convex_cursor_path() {
+        for (coordinates, area) in [
+            ([(0., 0.), (2., 0.), (2., 4.), (0., 4.)], 8.0_f64),
+            ([(0.25, 0.5), (2.25, 0.5), (6.25, 4.5), (0.25, 4.5)], 16.),
+        ] {
+            for scale in [2.0_f32.powi(-120), 0.5, 1., 2., 2.0_f32.powi(100)] {
+                for reversed in [false, true] {
+                    let mut corners = coordinates.map(|(x, y)| point(px(x * scale), px(y * scale)));
+                    if reversed {
+                        corners.reverse();
+                    }
+                    let path = convex_cursor_path(corners).expect("convex quadrilateral");
+                    assert_eq!(path.vertices.len(), 6);
+                    let painted_area = path
+                        .vertices
+                        .chunks_exact(3)
+                        .map(|triangle| {
+                            let [start, middle, end] =
+                                [0, 1, 2].map(|index| triangle[index].xy_position);
+                            let (first, second) = (middle - start, end - start);
+                            (f64::from(f32::from(first.x)) * f64::from(f32::from(second.y))
+                                - f64::from(f32::from(first.y)) * f64::from(f32::from(second.x)))
+                            .abs()
+                                / 2.
+                        })
+                        .sum::<f64>();
+                    assert_eq!(painted_area, area * f64::from(scale).powi(2));
+                    assert_eq!(
+                        path.vertices
+                            .iter()
+                            .map(|vertex| vertex.xy_position)
+                            .collect::<Vec<_>>(),
+                        [
+                            corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]
+                        ]
+                    );
+                }
+            }
+        }
+        for coordinates in [
+            [(0., 0.), (2., 4.), (2., 0.), (0., 4.)],
+            [(0., 0.), (2., 0.), (0.5, 1.), (0., 4.)],
+            [(0., 0.), (2., 0.), (2., 0.), (0., 4.)],
+            [(0., 0.), (1., 0.), (2., 0.), (3., 0.)],
+            [(f32::NAN, 0.), (2., 0.), (2., 4.), (0., 4.)],
+            [(0., 0.), (f32::INFINITY, 0.), (2., 4.), (0., 4.)],
+            [(0., 0.), (1., 1.), (2., 2.), (0., 4.)],
+            [
+                (0., 0.),
+                (1., 0.),
+                (1.0e20, 1.0e20),
+                (0., f32::MIN_POSITIVE),
+            ],
+        ] {
+            assert!(convex_cursor_path(coordinates.map(|(x, y)| point(px(x), px(y)))).is_none());
         }
     }
 

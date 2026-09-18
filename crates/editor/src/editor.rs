@@ -1008,6 +1008,7 @@ pub struct Editor {
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Entity<BlinkManager>,
     cursor_animations: CursorAnimationStates,
+    render_layers: Option<Entity<element::EditorContent>>,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
@@ -2383,6 +2384,7 @@ impl Editor {
             project,
             blink_manager: blink_manager.clone(),
             cursor_animations: CursorAnimationStates::default(),
+            render_layers: None,
             show_local_selections: true,
             show_scrollbars: ScrollbarAxes {
                 horizontal: full_mode,
@@ -2531,7 +2533,14 @@ impl Editor {
                         cx.observe(&multi_buffer, Self::on_buffer_changed),
                         cx.subscribe_in(&multi_buffer, window, Self::on_buffer_event),
                         cx.observe_in(&display_map, window, Self::on_display_map_changed),
-                        cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                        cx.observe(&blink_manager, |editor, _, cx| {
+                            if let Some(content) = &editor.render_layers {
+                                let cursor_layer_id = content.read(cx).cursor_layer_id();
+                                App::notify(cx, cursor_layer_id);
+                            } else {
+                                cx.notify();
+                            }
+                        }),
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
                         cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
@@ -12478,7 +12487,20 @@ impl Focusable for Editor {
 
 impl Render for Editor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        EditorElement::new(&cx.entity(), self.create_style(cx))
+        if matches!(self.mode, EditorMode::Full { sizing_behavior, .. }
+            if sizing_behavior != SizingBehavior::SizeByContent)
+            && EditorSettings::get_global(cx).cursor_animation.enabled
+            && !cx.reduce_motion()
+        {
+            let editor = cx.entity();
+            let layers = self
+                .render_layers
+                .get_or_insert_with(|| cx.new(|cx| element::EditorContent::new(&editor, cx)));
+            element::EditorContent::render_layers(layers, cx)
+        } else {
+            self.render_layers = None;
+            EditorElement::new(&cx.entity(), self.create_style(cx)).into_any_element()
+        }
     }
 }
 

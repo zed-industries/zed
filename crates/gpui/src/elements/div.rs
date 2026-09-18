@@ -2389,7 +2389,22 @@ impl Interactivity {
 
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
+                            let refreshing = window.refreshing;
+                            window.refreshing |= self
+                                .hover_style
+                                .iter()
+                                .chain(self.group_hover_style.iter().map(|style| &style.style))
+                                .any(|style| style.opacity.is_some())
+                                || cx.has_active_drag()
+                                    && (self
+                                        .group_drag_over_styles
+                                        .iter()
+                                        .any(|(_, style)| style.style.opacity.is_some())
+                                        || !self.drag_over_styles.is_empty());
+                            let result = window.with_element_opacity(style.opacity, |window| {
+                                f(&style, scroll_offset, hitbox, window, cx)
+                            });
+                            window.refreshing = refreshing;
                             (result, element_state)
                         },
                     )

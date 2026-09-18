@@ -967,6 +967,7 @@ pub(crate) struct DeferredDraw {
     parent_node: DispatchNodeId,
     element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: Vec<TextStyleRefinement>,
+    cache_ancestors: Vec<Rc<Cell<bool>>>,
     content_mask: Option<ContentMask<Pixels>>,
     rem_size: Pixels,
     element: Option<AnyElement>,
@@ -1224,6 +1225,8 @@ pub struct Window {
     long_press_timer: Option<Task<()>>,
     long_press_capture: Option<EntityId>,
     pub(crate) refreshing: bool,
+    pub(crate) cache_refreshing: bool,
+    pub(crate) cache_ancestors: Vec<Rc<Cell<bool>>>,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
@@ -2081,6 +2084,8 @@ impl Window {
             long_press_timer: None,
             long_press_capture: None,
             refreshing: false,
+            cache_refreshing: false,
+            cache_ancestors: Vec::new(),
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -2970,6 +2975,21 @@ impl Window {
         })
     }
 
+    /// Runs the callback with the given element's identifier path.
+    pub fn with_global_element_id<R>(
+        &mut self,
+        global_id: &GlobalElementId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous = mem::replace(
+            &mut self.element_id_stack,
+            global_id.0.iter().cloned().collect(),
+        );
+        let result = f(self);
+        self.element_id_stack = previous;
+        result
+    }
+
     /// Calls the provided closure with the element ID pushed on the stack.
     #[inline]
     pub fn with_id<R>(
@@ -3727,6 +3747,8 @@ impl Window {
                         .clone_from(&deferred_draw.element_id_stack);
                     self.text_style_stack
                         .clone_from(&deferred_draw.text_style_stack);
+                    self.cache_ancestors
+                        .clone_from(&deferred_draw.cache_ancestors);
                     (
                         deferred_draw.element.take(),
                         deferred_draw.parent_node,
@@ -3758,6 +3780,7 @@ impl Window {
 
             self.element_id_stack.clear();
             self.text_style_stack.clear();
+            self.cache_ancestors.clear();
             round_start = round_end;
         }
     }
@@ -3859,6 +3882,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    cache_ancestors: deferred_draw.cache_ancestors.clone(),
                     content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
@@ -4341,6 +4365,7 @@ impl Window {
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            cache_ancestors: self.cache_ancestors.clone(),
             content_mask,
             rem_size: self.rem_size(),
             priority,

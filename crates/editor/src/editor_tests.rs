@@ -20,8 +20,8 @@ use collections::{HashMap, HashSet};
 use fs::Fs as _;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
-    VisualTestContext, WindowBounds, WindowOptions, div,
+    BackgroundExecutor, DismissEvent, StyleRefinement, Task, TaskExt, TestAppContext, UpdateGlobal,
+    ViewElement, VisualTestContext, WindowBounds, WindowOptions, canvas, div,
 };
 use indoc::{formatdoc, indoc};
 use language::{
@@ -61,7 +61,13 @@ use std::{
     cmp::Ordering,
     sync::{Arc, atomic},
 };
-use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    future::Future,
+    rc::Rc,
+    sync::atomic::AtomicBool,
+    time::Instant,
+};
 use std::{iter, sync::atomic::AtomicUsize};
 use task::TaskVariables;
 use test::build_editor_with_project;
@@ -3926,6 +3932,324 @@ async fn test_cursor_animation_remains_active_during_keyboard_autoscroll(cx: &mu
         observed_autoscroll,
         "expected cursor movement to autoscroll"
     );
+}
+
+#[gpui::test]
+async fn test_cursor_animation_reuses_content_in_workspace_pane(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.cursor_animation.get_or_insert_default().enabled = Some(true);
+        settings.cursor_blink = Some(false);
+        settings.minimap.get_or_insert_default().show = Some(ShowMinimap::Always);
+    });
+    let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let mut visual_cx = VisualTestContext::from_window(*window, cx);
+    let editor = visual_cx.new_window_entity(|window, cx| {
+        let buffer = MultiBuffer::build_simple("hello\nworld\n\t界", cx);
+        let mut editor = build_editor(buffer, window, cx);
+        editor.set_cursor_shape(CursorShape::Block, cx);
+        editor
+    });
+    window
+        .update(&mut visual_cx, |multi_workspace, window, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            });
+        })
+        .expect("workspace window exists");
+    let mut cx = EditorTestContext::for_editor_in(editor, &mut visual_cx).await;
+    cx.run_until_parked();
+    cx.update(|window, cx| window.simulate_next_frame(cx));
+    cx.run_until_parked();
+    cx.dispatch_action(MoveDown);
+    cx.editor(|editor, _, _| assert!(editor.cursor_animations.has_active_animation()));
+    let initial = cursor_animation_render_state(&mut cx);
+    let minimap = cx.editor(|editor, _, _| editor.minimap().cloned().expect("visible minimap"));
+    let minimap_position_map = minimap.read_with(&cx.cx, |minimap, _| {
+        minimap.last_position_map.clone().expect("minimap rendered")
+    });
+    assert!(initial.counts.iter().all(|count| *count > 0));
+    let mut cursor_paint_count = initial.cursor_paint_count;
+
+    for frame in 0..=60 {
+        if frame == 0 {
+            assert!(cx.update(|window, cx| window.simulate_next_frame(cx)) > 0);
+        } else {
+            cx.update(|_, cx| cx.notify(initial.cursor_layer_id));
+        }
+        let current = cursor_animation_render_state(&mut cx);
+        assert_eq!(current.counts, initial.counts, "frame {frame}");
+        assert!(Rc::ptr_eq(&current.position_map, &initial.position_map));
+        assert_eq!(current.cursor_paint_count, cursor_paint_count + 1);
+        cursor_paint_count = current.cursor_paint_count;
+    }
+
+    minimap.read_with(&cx.cx, |minimap, _| {
+        assert!(Rc::ptr_eq(
+            minimap
+                .last_position_map
+                .as_ref()
+                .expect("minimap rendered"),
+            &minimap_position_map,
+        ));
+    });
+    cx.assert_editor_state("hello\nˇworld\n\t界");
+    cx.dispatch_action(MoveRight);
+    cx.simulate_input("X");
+    cx.assert_editor_state("hello\nwXˇorld\n\t界");
+    let current = cursor_animation_render_state(&mut cx);
+    for (current, previous) in current.counts.into_iter().zip(initial.counts) {
+        assert!(current > previous);
+    }
+    assert_eq!(
+        current.position_map.snapshot.buffer_snapshot().text(),
+        "hello\nwXorld\n\t界"
+    );
+    minimap.read_with(&cx.cx, |minimap, _| {
+        assert_eq!(
+            minimap
+                .last_position_map
+                .as_ref()
+                .expect("minimap rendered")
+                .snapshot
+                .buffer_snapshot()
+                .text(),
+            "hello\nwXorld\n\t界"
+        );
+    });
+    cx.update(|_, cx| cx.set_reduce_motion(true));
+    cx.editor(|editor, _, _| assert!(editor.render_layers.is_none()));
+    cx.update(|_, cx| cx.set_reduce_motion(false));
+    cx.editor(|editor, _, _| assert!(editor.render_layers.is_some()));
+
+    cx.executor().advance_clock(CURSORS_VISIBLE_FOR);
+    cx.run_until_parked();
+    update_test_editor_settings(&mut cx, &|settings| settings.cursor_blink = Some(true));
+    for (shape, read_only, following) in [
+        (CursorShape::Bar, false, false),
+        (CursorShape::Block, false, false),
+        (CursorShape::Underline, false, false),
+        (CursorShape::Hollow, false, false),
+        (CursorShape::Block, true, false),
+        (CursorShape::Bar, false, true),
+    ] {
+        cx.update_editor(|editor, _, cx| {
+            editor.set_read_only(read_only);
+            editor.leader_id = following.then_some(CollaboratorId::Agent);
+            editor.set_cursor_shape(shape, cx);
+        });
+        cx.run_until_parked();
+        let initial = cursor_animation_render_state(&mut cx);
+        assert_eq!(initial.cursor_bounds.len(), 1);
+        for visible in [false, true] {
+            cx.executor().advance_clock(CURSOR_BLINK_INTERVAL);
+            cx.run_until_parked();
+            let current = cursor_animation_render_state(&mut cx);
+            assert_eq!(current.counts, initial.counts);
+            assert_eq!(
+                current.cursor_bounds,
+                if visible || read_only || following {
+                    initial.cursor_bounds.clone()
+                } else {
+                    Vec::new()
+                },
+                "{shape:?}, read_only={read_only}, following={following}"
+            );
+        }
+    }
+    cx.update_editor(|editor, _, cx| {
+        editor.leader_id = None;
+        cx.notify();
+    });
+    let cursor_bounds = cursor_animation_render_state(&mut cx).cursor_bounds;
+    cx.update(|window, cx| window.blur(cx));
+    assert_eq!(
+        cursor_animation_render_state(&mut cx).cursor_bounds,
+        Vec::new()
+    );
+    cx.update_editor(|editor, window, cx| window.focus(&editor.focus_handle, cx));
+    assert_eq!(
+        cursor_animation_render_state(&mut cx).cursor_bounds,
+        cursor_bounds
+    );
+    for cursor_count in [1, 2, 100] {
+        cx.set_state(&"ˇx".repeat(cursor_count));
+        assert_eq!(
+            cursor_animation_render_state(&mut cx).cursor_bounds.len(),
+            cursor_count
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_cursor_animation_invalidates_content_on_coalesced_child_notification(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.cursor_animation.get_or_insert_default().enabled = Some(true);
+        settings.cursor_blink = Some(false);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇhello\nworld");
+    cx.run_until_parked();
+    let painted_revisions = Rc::new(RefCell::new(Vec::new()));
+    let children = (0..16)
+        .map(|revision| {
+            cx.new(|_| CursorAnimationBlockChild {
+                revision,
+                painted_revisions: painted_revisions.clone(),
+                action_handler: None,
+            })
+        })
+        .collect::<Vec<_>>();
+    cx.update_editor(|editor, _, cx| {
+        let children = children.clone();
+        editor.insert_blocks(
+            [BlockProperties {
+                placement: BlockPlacement::Below(Anchor::Min),
+                height: Some(16),
+                style: BlockStyle::Fixed,
+                render: Arc::new(move |_| div().children(children.clone()).into_any_element()),
+                priority: 0,
+            }],
+            None,
+            cx,
+        );
+    });
+    let cursor_layer_id = cursor_animation_render_state(&mut cx).cursor_layer_id;
+    let mut expected = (0..16).collect::<Vec<_>>();
+    assert_eq!(*painted_revisions.borrow(), expected);
+
+    for (index, child) in children.iter().enumerate() {
+        for cursor_first in [true, false] {
+            painted_revisions.borrow_mut().clear();
+            cx.update(|_, cx| cx.notify(cursor_layer_id));
+            assert_eq!(*painted_revisions.borrow(), Vec::<usize>::new());
+            expected[index] += 16;
+            cx.update(|_, cx| {
+                if cursor_first {
+                    cx.notify(cursor_layer_id);
+                }
+                child.update(cx, |child, cx| {
+                    child.revision = expected[index];
+                    cx.notify();
+                });
+                if !cursor_first {
+                    cx.notify(cursor_layer_id);
+                }
+            });
+            assert_eq!(*painted_revisions.borrow(), expected, "child {index}");
+        }
+    }
+    cx.assert_editor_state("ˇhello\nworld");
+}
+
+#[gpui::test]
+async fn test_cursor_animation_preserves_independent_block_actions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.cursor_animation.get_or_insert_default().enabled = Some(true);
+        settings.cursor_blink = Some(false);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇhello\nworld");
+    cx.run_until_parked();
+    let painted_revisions = Rc::new(RefCell::new(Vec::new()));
+    let action_count = Rc::new(Cell::new(0));
+    let focus_handle = cx.update(|_, cx| cx.focus_handle());
+    let child = cx.new(|_| CursorAnimationBlockChild {
+        revision: 0,
+        painted_revisions: painted_revisions.clone(),
+        action_handler: Some((focus_handle.clone(), action_count.clone())),
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_blocks(
+            [BlockProperties {
+                placement: BlockPlacement::Below(Anchor::Min),
+                height: Some(1),
+                style: BlockStyle::Fixed,
+                render: Arc::new(move |_| {
+                    ViewElement::new(child.clone())
+                        .cached_independently(StyleRefinement::default().w_full().h(px(20.)))
+                        .into_any_element()
+                }),
+                priority: 0,
+            }],
+            None,
+            cx,
+        );
+        window.focus(&focus_handle, cx);
+    });
+    cx.run_until_parked();
+    let mut previous = cursor_animation_render_state(&mut cx);
+    cx.dispatch_action(SelectAll);
+    assert_eq!(action_count.get(), 1);
+    assert_eq!(*painted_revisions.borrow(), vec![0]);
+
+    for frame in 1..=3 {
+        cx.update(|_, cx| cx.notify(previous.cursor_layer_id));
+        let current = cursor_animation_render_state(&mut cx);
+        cx.dispatch_action(SelectAll);
+        assert_eq!(action_count.get(), frame + 1, "frame {frame}");
+        assert_eq!(*painted_revisions.borrow(), vec![0], "frame {frame}");
+        assert_eq!(
+            current.counts,
+            [
+                previous.counts[0] + 2,
+                previous.counts[1] + 1,
+                previous.counts[2] + 2
+            ]
+        );
+        assert_eq!(current.cursor_paint_count, previous.cursor_paint_count + 1);
+        previous = current;
+    }
+    cx.assert_editor_state("ˇhello\nworld");
+}
+
+#[gpui::test]
+async fn test_cursor_animation_paints_underline_move_in_first_frame(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.cursor_animation.get_or_insert_default().enabled = Some(true);
+        settings.cursor_blink = Some(false);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇmmmm\nmmmm");
+    cx.update_editor(|editor, _, cx| editor.set_cursor_shape(CursorShape::Underline, cx));
+    cx.run_until_parked();
+    let (origin, line_height, character_width) = cx.editor(|editor, _, _| {
+        let map = editor.last_position_map.as_ref().expect("position map");
+        (
+            map.text_hitbox.origin + point(editor.gutter_dimensions.margin, px(0.)),
+            map.line_height,
+            map.line_layouts.first().expect("first line").x_for_index(1),
+        )
+    });
+    let mut previous = cursor_animation_render_state(&mut cx);
+
+    for row in 0..2 {
+        cx.update_editor(|editor, window, cx| {
+            if row == 0 {
+                editor.move_right(&MoveRight, window, cx);
+            } else {
+                editor.move_down(&MoveDown, window, cx);
+            }
+        });
+        let current = cursor_animation_render_state(&mut cx);
+        let expected = cx.update(|window, _| {
+            window.pixel_snap_bounds(Bounds::new(
+                origin + point(character_width, (row + 1) as f32 * line_height - px(2.)),
+                size(character_width, px(2.)),
+            ))
+        });
+        assert_eq!(current.cursor_bounds, vec![expected]);
+        assert_eq!(current.cursor_paint_count, previous.cursor_paint_count + 1);
+        cx.editor(|editor, _, _| assert!(!editor.cursor_animations.has_active_animation()));
+        previous = current;
+    }
+    cx.assert_editor_state("mmmm\nmˇmmm");
 }
 
 #[gpui::test]
@@ -49530,4 +49854,58 @@ fn multiline_add_selection_history_states() -> [(bool, &'static str, &'static st
             "a«bcdˇ»ef\nu«vwxˇ»yz\nd«efgˇ»hi\na«bcˇ»",
         ),
     ]
+}
+
+struct CursorAnimationBlockChild {
+    revision: usize,
+    painted_revisions: Rc<RefCell<Vec<usize>>>,
+    action_handler: Option<(FocusHandle, Rc<Cell<usize>>)>,
+}
+
+impl Render for CursorAnimationBlockChild {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let revision = self.revision;
+        let painted_revisions = self.painted_revisions.clone();
+        div()
+            .id("cursor-animation-block-child")
+            .when_some(self.action_handler.clone(), |element, (focus, actions)| {
+                element
+                    .track_focus(&focus)
+                    .on_action(move |_: &SelectAll, _, _| actions.set(actions.get() + 1))
+            })
+            .w(px(100.))
+            .h(px(20.))
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, _, _| painted_revisions.borrow_mut().push(revision),
+                )
+                .size_full(),
+            )
+    }
+}
+
+struct CursorAnimationRenderState {
+    counts: [usize; 3],
+    position_map: Rc<element::PositionMap>,
+    cursor_paint_count: usize,
+    cursor_layer_id: gpui::EntityId,
+    cursor_bounds: Vec<Bounds<Pixels>>,
+}
+
+fn cursor_animation_render_state(cx: &mut EditorTestContext) -> CursorAnimationRenderState {
+    cx.editor(|editor, _, cx| {
+        let content = editor
+            .render_layers
+            .as_ref()
+            .expect("render layers")
+            .read(cx);
+        CursorAnimationRenderState {
+            counts: content.render_counts,
+            position_map: editor.last_position_map.clone().expect("position map"),
+            cursor_paint_count: content.cursor_paint_count(cx),
+            cursor_layer_id: content.cursor_layer_id(),
+            cursor_bounds: content.cursor_bounds(cx),
+        }
+    })
 }
