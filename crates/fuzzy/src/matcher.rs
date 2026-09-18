@@ -322,7 +322,7 @@ impl<'a> Matcher<'a> {
 
 #[cfg(test)]
 mod tests {
-    use util::rel_path::{RelPath, rel_path};
+    use path::rel_path::{RelPath, rel_path};
 
     use crate::{PathMatch, PathMatchCandidate};
 
@@ -605,7 +605,7 @@ mod tests {
                 worktree_id: 0,
                 positions: positions.clone(),
                 path: candidate.path.into(),
-                path_prefix: RelPath::empty().into(),
+                path_prefix: RelPath::empty_arc(),
                 distance_to_relative_ancestor: usize::MAX,
                 is_dir: false,
             },

@@ -1,0 +1,29 @@
+[package]
+name = "lints"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Dylint lints for catching bad Zed specific patterns."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "86390a3c03438b660c5efc64d4e18ae65982f5c0" }
+dylint_linting = "6.0"
+
+[dev-dependencies]
+# `deny_warnings` restores `-D warnings` for the UI fixtures (off by default
+# since dylint 3.0), so toolchain drift surfaces as a failing test.
+dylint_testing = { version = "6.0", features = ["deny_warnings"] }
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+# Keep this crate out of the zed workspace. It pins its own nightly toolchain
+# (see `rust-toolchain.toml`) to match `clippy_utils`.
+[workspace]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ["cfg(dylint_lib, values(any()))"]

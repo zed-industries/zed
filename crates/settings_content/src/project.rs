@@ -14,7 +14,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, fallible_options,
+    RootUserSettings, SaturatingBool, SplicingVec, fallible_options,
 };
 
 #[with_fallible_options]
@@ -40,7 +40,7 @@ impl RootUserSettings for ProjectSettingsContent {
 }
 
 #[with_fallible_options]
-#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, JsonSchema, MergeFrom)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
     pub all_languages: AllLanguageSettingsContent,
@@ -87,6 +87,38 @@ pub struct ProjectSettingsContent {
     pub disable_ai: Option<SaturatingBool>,
 }
 
+crate::fallible_options::flattened_deserialize!(ProjectSettingsContent {
+    sections: { all_languages, worktree },
+    options: {
+        terminal, context_server_timeout, load_direnv, git_hosting_providers, disable_ai,
+    },
+    defaults: { lsp, dap, context_servers },
+});
+
+/// When to scan content of linked directories.
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanSymlinksSetting {
+    /// Always scan symlinked directories
+    Always,
+    /// Only scan symlinked directories when they've been expanded in the workspace
+    #[default]
+    Expanded,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
@@ -99,6 +131,10 @@ pub struct WorktreeSettingsContent {
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
     ///
+    /// A `"..."` entry expands to the value being overridden, so
+    /// `["**/node_modules", "..."]` adds to the inherited globs instead of
+    /// replacing them. Leave `"..."` out to replace them.
+    ///
     /// Default: [
     ///   "**/.git",
     ///   "**/.svn",
@@ -110,15 +146,33 @@ pub struct WorktreeSettingsContent {
     ///   "**/.classpath",
     ///   "**/.settings"
     /// ]
-    pub file_scan_exclusions: Option<Vec<String>>,
+    pub file_scan_exclusions: Option<SplicingVec>,
 
-    /// Always include files that match these globs when scanning for files, even if they're
-    /// ignored by git. This setting is overridden by `file_scan_exclusions`.
-    /// Default: [
-    ///  ".env*",
-    ///  "docker-compose.*.yml",
-    /// ]
-    pub file_scan_inclusions: Option<Vec<String>>,
+    /// Always include files that match these globs when scanning for files, even
+    /// if they’re ignored by Git. This setting is overridden by
+    /// `file_scan_exclusions`.
+    ///
+    /// A "..." entry expands to the value being overridden. Leave "..." out to
+    /// replace the inherited globs, or use an empty list to clear them.
+    ///
+    /// Default: [".env*"]
+    pub file_scan_inclusions: Option<SplicingVec>,
+
+    /// When to scan content of linked directories.
+    ///
+    /// Default: expanded
+    pub scan_symlinks: Option<ScanSymlinksSetting>,
+
+    /// Maximum directory depth to eagerly index outside of git repositories;
+    /// contents of directories at this depth or deeper are indexed on demand.
+    /// Repositories rooted shallower than this depth are always indexed fully.
+    /// In projects that are not rooted at a git repository, repositories directly
+    /// inside a root folder activate their git features immediately; deeper ones
+    /// activate on first use.
+    /// `0` means no limit and activates all git repositories immediately.
+    ///
+    /// Default: 5
+    pub file_scan_depth: Option<u32>,
 
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
@@ -131,8 +185,12 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as read-only. These files can be opened and viewed,
     /// but cannot be edited. This is useful for generated files, build outputs, or files from
     /// external dependencies that should not be modified directly.
+    ///
+    /// A "..." entry expands to the value being overridden. Leave "..." out
+    /// to replace the inherited globs, or use an empty list to clear them.
+    ///
     /// Default: []
-    pub read_only_files: Option<Vec<String>>,
+    pub read_only_files: Option<SplicingVec>,
 }
 
 #[with_fallible_options]
@@ -205,6 +263,11 @@ pub struct GlobalLspSettingsContent {
     ///
     /// Default: `120`
     pub request_timeout: Option<u64>,
+    /// The maximum line length a buffer may contain before language server features are disabled for the entire buffer.
+    ///
+    /// Default: `20000`
+    #[schemars(range(min = 1))]
+    pub max_buffer_line_length: Option<u32>,
     /// Settings for language server notifications
     pub notifications: Option<LspNotificationSettingsContent>,
     /// Rules for rendering LSP semantic tokens.
@@ -232,19 +295,24 @@ impl SemanticTokenRules {
     pub const FILE_NAME: &'static str = "semantic_token_rules.json";
 
     pub fn load(file_path: &Path) -> anyhow::Result<Self> {
-        let rules_content = std::fs::read(file_path).with_context(|| {
+        let rules_content = std::fs::read_to_string(file_path).with_context(|| {
             anyhow::anyhow!(
                 "Could not read semantic token rules from {}",
                 file_path.display()
             )
         })?;
 
-        serde_json_lenient::from_slice::<SemanticTokenRules>(&rules_content).with_context(|| {
+        Self::parse(&rules_content).with_context(|| {
             anyhow::anyhow!(
                 "Failed to parse semantic token rules from {}",
                 file_path.display()
             )
         })
+    }
+
+    pub fn parse(file_content: &str) -> anyhow::Result<Self> {
+        serde_json_lenient::from_str::<SemanticTokenRules>(file_content)
+            .context("failed to parse semantic token rules")
     }
 }
 
@@ -388,6 +456,10 @@ pub enum ContextServerSettingsContent {
         headers: HashMap<String, String>,
         /// Timeout for tool calls in seconds. Defaults to global context_server_timeout if not specified.
         timeout: Option<u64>,
+        /// Pre-registered OAuth client credentials for authorization servers that
+        /// require out-of-band client registration.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth: Option<OAuthClientSettings>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -404,6 +476,7 @@ pub enum ContextServerSettingsContent {
         ///
         /// Consult the documentation for the context server to see what settings
         /// are supported.
+        #[serde(default)]
         settings: serde_json::Value,
     },
 }
@@ -429,11 +502,26 @@ impl ContextServerSettingsContent {
     }
 }
 
+/// Pre-registered OAuth client credentials for MCP servers that don't support
+/// Dynamic Client Registration.
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
+pub struct OAuthClientSettings {
+    /// The OAuth client ID obtained from out-of-band registration with the
+    /// authorization server.
+    pub client_id: String,
+    /// The OAuth client secret, if this is a confidential client. For security,
+    /// prefer providing this interactively; we will prompt and store it in
+    /// the system keychain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+}
+
 #[with_fallible_options]
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom)]
 pub struct ContextServerCommand {
     #[serde(rename = "command")]
     pub path: PathBuf,
+    #[serde(default)]
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
     /// Timeout for tool calls in seconds. Defaults to 60 if not specified.
@@ -492,14 +580,24 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: Option<BranchPickerSettingsContent>,
+    /// File diff settings.
+    pub file_diff: Option<FileDiffSettingsContent>,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
+    /// Which base git features (gutter, file colors, git::Diff) diff against.
+    ///
+    /// Default: head
+    pub diff_base: Option<GitDiffBaseSetting>,
     /// How file paths are displayed in the git gutter.
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// Whether to show the stage and restore buttons on diff hunks.
+    ///
+    /// Default: true
+    pub show_stage_restore_buttons: Option<bool>,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory.
     ///
@@ -564,6 +662,28 @@ pub enum GitGutterSetting {
     Hide,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineBlameLocation {
+    /// Show git blame inline at the current line.
+    #[default]
+    Inline,
+    /// Show git blame in the status bar at the bottom of the window.
+    StatusBar,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
@@ -578,6 +698,10 @@ pub struct InlineBlameSettings {
     ///
     /// Default: 0
     pub delay_ms: Option<DelayMs>,
+    /// Where to render the blame information when enabled.
+    ///
+    /// Default: inline
+    pub location: Option<InlineBlameLocation>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
@@ -613,6 +737,16 @@ pub struct BranchPickerSettingsContent {
     pub show_author_name: Option<bool>,
 }
 
+#[with_fallible_options]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct FileDiffSettingsContent {
+    /// Whether newly opened file diffs show the full file instead of changes only.
+    ///
+    /// Default: true
+    pub show_full_file: Option<bool>,
+}
+
 #[derive(
     Clone,
     Copy,
@@ -633,6 +767,32 @@ pub enum GitHunkStyleSetting {
     StagedHollow,
     /// Show unstaged hunks hollow and staged hunks with a filled background.
     UnstagedHollow,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitDiffBaseSetting {
+    /// Diff against HEAD: show working (uncommitted) changes.
+    #[default]
+    Head,
+    /// Diff against the merge base between HEAD and the repository's
+    /// default branch: show all changes on the branch.
+    ///
+    /// Repositories where no default branch can be resolved fall back
+    /// to `head` behavior.
+    DefaultBranch,
 }
 
 #[with_fallible_options]
@@ -776,7 +936,7 @@ pub enum DiagnosticSeverityContent {
 pub struct GitHostingProviderConfig {
     /// The type of the provider.
     ///
-    /// Must be one of `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, or `source_hut`.
+    /// Must be one of `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, `sourcehut`, or `tangled`.
     pub provider: GitHostingProviderKind,
 
     /// The base URL for the provider (e.g., "https://code.corp.big.com").
@@ -795,4 +955,249 @@ pub enum GitHostingProviderKind {
     Gitea,
     Forgejo,
     SourceHut,
+    Tangled,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::merge_from::MergeFrom;
+
+    fn exclusions(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            file_scan_exclusions: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_file_scan_exclusions_splice_rest_of_list() {
+        let defaults = exclusions(&["**/.git", "**/.DS_Store"]);
+
+        let mut extended = defaults.clone();
+        extended.merge_from(&exclusions(&["**/node_modules", SplicingVec::REST]));
+        assert_eq!(
+            extended.file_scan_exclusions.unwrap().0,
+            vec!["**/node_modules", "**/.git", "**/.DS_Store"]
+        );
+
+        let mut replaced = defaults;
+        replaced.merge_from(&exclusions(&["**/node_modules"]));
+        assert_eq!(
+            replaced.file_scan_exclusions.unwrap().0,
+            vec!["**/node_modules"]
+        );
+    }
+
+    #[test]
+    fn test_file_scan_exclusions_splice_each_layer() {
+        let mut settings = exclusions(&["**/.git"]);
+        settings.merge_from(&exclusions(&[SplicingVec::REST, "**/target"]));
+        settings.merge_from(&exclusions(&[SplicingVec::REST, "**/dist"]));
+
+        assert_eq!(
+            settings.file_scan_exclusions.unwrap().0,
+            vec!["**/.git", "**/target", "**/dist"]
+        );
+    }
+
+    #[test]
+    fn test_file_scan_exclusions_splice_edge_cases() {
+        let mut repeated = exclusions(&["**/.git"]);
+        repeated.merge_from(&exclusions(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(repeated.file_scan_exclusions.unwrap().0, vec!["**/.git"]);
+
+        let mut relisted = exclusions(&["**/.git", "**/.DS_Store"]);
+        relisted.merge_from(&exclusions(&["**/.git", SplicingVec::REST]));
+        assert_eq!(
+            relisted.file_scan_exclusions.unwrap().0,
+            vec!["**/.git", "**/.DS_Store"]
+        );
+
+        let mut cleared = exclusions(&["**/.git"]);
+        cleared.merge_from(&exclusions(&[]));
+        assert!(cleared.file_scan_exclusions.unwrap().0.is_empty());
+
+        let mut unchanged = exclusions(&["**/.git", "**/.DS_Store"]);
+        unchanged.merge_from(&exclusions(&[SplicingVec::REST]));
+        assert_eq!(
+            unchanged.file_scan_exclusions.unwrap().0,
+            vec!["**/.git", "**/.DS_Store"]
+        );
+    }
+
+    #[test]
+    fn test_file_scan_exclusions_splice_without_a_base_layer() {
+        let mut settings = WorktreeSettingsContent::default();
+        settings.merge_from(&exclusions(&[SplicingVec::REST, "**/target"]));
+
+        // `Option::merge_from` replaces a `None` base outright rather than
+        // splicing, so the sentinel survives here. `assets/settings/default.json`
+        // always populates this field, and `WorktreeSettings::from_settings`
+        // unwraps it, so no glob is ever compiled from this state.
+        assert_eq!(
+            settings.file_scan_exclusions.unwrap().0,
+            vec![SplicingVec::REST, "**/target"]
+        );
+    }
+
+    fn inclusions(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            file_scan_inclusions: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_each_layer() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.user"]));
+        assert_eq!(settings, inclusions(&[".env*", "**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project", SplicingVec::REST]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.project", ".env*", "**/*.user"])
+        );
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_replace_and_clear() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&["**/*.user"]));
+        assert_eq!(settings, inclusions(&["**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project"]));
+
+        settings.merge_from(&inclusions(&[]));
+        assert_eq!(settings, inclusions(&[]));
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.next"]));
+        assert_eq!(settings, inclusions(&["**/*.next"]));
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_preserves_first_occurrence() {
+        let inherited = inclusions(&[".env*", "**/*.user"]);
+        let mut settings = inherited.clone();
+        settings.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[
+            "**/*.user",
+            SplicingVec::REST,
+            ".env*",
+            "**/*.project",
+            SplicingVec::REST,
+            "**/*.project",
+        ]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.user", ".env*", "**/*.project"])
+        );
+
+        settings.merge_from(&inclusions(&["**/*.project", "**/*.user", "**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project", "**/*.user"]));
+    }
+
+    fn read_only_files(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            read_only_files: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_read_only_files_splice_rest_of_list() {
+        let inherited = read_only_files(&["**/*.lock"]);
+        let mut extended = inherited.clone();
+        extended.merge_from(&read_only_files(&["**/generated/**", SplicingVec::REST]));
+        assert_eq!(extended, read_only_files(&["**/generated/**", "**/*.lock"]));
+
+        let mut replaced = inherited;
+        replaced.merge_from(&read_only_files(&["**/generated/**"]));
+        assert_eq!(replaced, read_only_files(&["**/generated/**"]));
+    }
+
+    #[test]
+    fn test_read_only_files_splice_each_layer() {
+        let mut settings = read_only_files(&[]);
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/*.lock"]));
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/generated/**"]));
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/vendor/**"]));
+        assert_eq!(
+            settings,
+            read_only_files(&["**/*.lock", "**/generated/**", "**/vendor/**"])
+        );
+    }
+
+    #[test]
+    fn test_read_only_files_splice_edge_cases() {
+        let inherited = read_only_files(&["**/*.gen.rs", "**/*.lock"]);
+        let mut repeated = inherited.clone();
+        repeated.merge_from(&read_only_files(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(repeated, inherited);
+
+        let mut relisted = inherited.clone();
+        relisted.merge_from(&read_only_files(&["**/*.lock", SplicingVec::REST]));
+        assert_eq!(relisted, read_only_files(&["**/*.lock", "**/*.gen.rs"]));
+
+        let mut cleared = inherited.clone();
+        cleared.merge_from(&read_only_files(&[]));
+        assert_eq!(cleared, read_only_files(&[]));
+
+        let mut unchanged = inherited.clone();
+        unchanged.merge_from(&read_only_files(&[SplicingVec::REST]));
+        assert_eq!(unchanged, inherited);
+        unchanged.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(unchanged, inherited);
+    }
+
+    #[test]
+    fn test_read_only_files_splice_without_a_base_layer() {
+        let mut settings = WorktreeSettingsContent::default();
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/generated/**"]));
+        assert_eq!(
+            settings,
+            read_only_files(&[SplicingVec::REST, "**/generated/**"])
+        );
+    }
+
+    #[test]
+    fn test_stdio_context_server_without_args() {
+        let settings: ContextServerSettingsContent =
+            serde_json::from_str(r#"{ "command": "echo" }"#)
+                .expect("stdio context server without `args` should parse");
+        let ContextServerSettingsContent::Stdio { command, .. } = settings else {
+            panic!("expected Stdio variant, got {settings:?}");
+        };
+        assert_eq!(command.path, PathBuf::from("echo"));
+        assert!(command.args.is_empty());
+
+        let settings: ContextServerSettingsContent =
+            serde_json::from_str(r#"{ "command": "echo", "args": ["hello"] }"#).unwrap();
+        let ContextServerSettingsContent::Stdio { command, .. } = settings else {
+            panic!("expected Stdio variant, got {settings:?}");
+        };
+        assert_eq!(command.args, vec!["hello".to_string()]);
+    }
 }

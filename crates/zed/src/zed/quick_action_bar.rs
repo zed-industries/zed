@@ -15,9 +15,12 @@ use gpui::{
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
     WeakEntity, Window, anchored, deferred, point,
 };
-use project::{DisableAiSettings, project_settings::DiagnosticSeverity};
+use project::{
+    DisableAiSettings,
+    project_settings::{DiagnosticSeverity, ProjectSettings},
+};
 use search::{BufferSearchBar, buffer_search};
-use settings::{Settings, SettingsStore};
+use settings::{GitDiffBaseSetting, Settings, SettingsStore, update_settings_file};
 use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
@@ -324,12 +327,17 @@ impl Render for QuickActionBar {
         let editor_settings_dropdown = {
             let vim_mode_enabled = VimModeSetting::get_global(cx).0;
             let helix_mode_enabled = HelixModeSetting::get_global(cx).0;
+            let diff_against_default_branch =
+                ProjectSettings::get_global(cx).git.diff_base == GitDiffBaseSetting::DefaultBranch;
+            let fs = self
+                .workspace
+                .upgrade()
+                .map(|workspace| workspace.read(cx).app_state().fs.clone());
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
-                    IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
+                    IconButton::new("toggle_editor_settings_icon", IconName::Filter)
                         .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_settings_handle.is_deployed()),
                     Tooltip::text("Editor Controls"),
                 )
@@ -635,6 +643,28 @@ impl Render for QuickActionBar {
                                 },
                             );
 
+                            if let Some(fs) = fs.clone() {
+                                menu = menu.toggleable_entry(
+                                    "Diff Against Default Branch",
+                                    diff_against_default_branch,
+                                    IconPosition::Start,
+                                    None,
+                                    {
+                                        move |_window, cx| {
+                                            let diff_base = if diff_against_default_branch {
+                                                GitDiffBaseSetting::Head
+                                            } else {
+                                                GitDiffBaseSetting::DefaultBranch
+                                            };
+                                            update_settings_file(fs.clone(), cx, move |settings, _| {
+                                                settings.git.get_or_insert_default().diff_base =
+                                                    Some(diff_base);
+                                            });
+                                        }
+                                    },
+                                );
+                            }
+
                             menu = menu.separator();
 
                             menu = menu.toggleable_entry(
@@ -677,7 +707,7 @@ impl Render for QuickActionBar {
             .id("quick action bar")
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
-            .children(self.render_preview_button(self.workspace.clone(), cx))
+            .children(self.render_preview_button(cx))
             .children(search_button)
             .when(
                 AgentSettings::get_global(cx).enabled(cx) && AgentSettings::get_global(cx).button,

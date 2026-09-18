@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity, Window,
+    Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use picker::{
     Picker, PickerDelegate,
@@ -13,11 +12,10 @@ use picker::{
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use ui::{ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
-use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    MultiWorkspace, OpenMode, OpenOptions, PathList, ProjectGroupKey, SerializedWorkspaceLocation,
-    Workspace, WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
+    MultiWorkspace, OpenMode, OpenOptions, ProjectGroupKey, RecentWorkspace,
+    SerializedWorkspaceLocation, Workspace, WorkspaceDb, notifications::DetachAndPromptErr,
 };
 
 use zed_actions::OpenRemote;
@@ -56,6 +54,8 @@ impl SidebarRecentProjects {
                 Picker::list(delegate, window, cx)
                     .list_measure_all()
                     .show_scrollbar(true)
+                    .initial_width(rems(18.))
+                    .popover()
             });
 
             let picker_focus_handle = picker.focus_handle(cx);
@@ -74,8 +74,6 @@ impl SidebarRecentProjects {
                     .await
                     .log_err()
                     .unwrap_or_default();
-                let workspaces =
-                    workspace::resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
                 this.update_in(cx, move |this, window, cx| {
                     this.picker.update(cx, move |picker, cx| {
                         picker.delegate.set_workspaces(workspaces);
@@ -116,12 +114,7 @@ impl Render for SidebarRecentProjects {
 pub struct SidebarRecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
     window_project_groups: Vec<ProjectGroupKey>,
-    workspaces: Vec<(
-        WorkspaceId,
-        SerializedWorkspaceLocation,
-        PathList,
-        DateTime<Utc>,
-    )>,
+    workspaces: Vec<RecentWorkspace>,
     filtered_workspaces: Vec<StringMatch>,
     selected_index: usize,
     has_any_non_local_projects: bool,
@@ -129,18 +122,10 @@ pub struct SidebarRecentProjectsDelegate {
 }
 
 impl SidebarRecentProjectsDelegate {
-    pub fn set_workspaces(
-        &mut self,
-        workspaces: Vec<(
-            WorkspaceId,
-            SerializedWorkspaceLocation,
-            PathList,
-            DateTime<Utc>,
-        )>,
-    ) {
+    pub fn set_workspaces(&mut self, workspaces: Vec<RecentWorkspace>) {
         self.has_any_non_local_projects = workspaces
             .iter()
-            .any(|(_, location, _, _)| !matches!(location, SerializedWorkspaceLocation::Local));
+            .any(|workspace| !matches!(workspace.location, SerializedWorkspaceLocation::Local));
         self.workspaces = workspaces;
     }
 }
@@ -150,24 +135,12 @@ impl EventEmitter<DismissEvent> for SidebarRecentProjectsDelegate {}
 impl PickerDelegate for SidebarRecentProjectsDelegate {
     type ListItem = AnyElement;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search recent projects…".into()
+    fn name() -> &'static str {
+        "sidebar recent projects"
     }
 
-    fn render_editor(
-        &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        h_flex()
-            .flex_none()
-            .h_9()
-            .px_2p5()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(editor.render(window, cx))
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Search projects…".into()
     }
 
     fn match_count(&self) -> usize {
@@ -206,19 +179,20 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, paths, _))| {
-                Some(*id) != current_workspace_id
+            .filter(|(_, workspace)| {
+                Some(workspace.workspace_id) != current_workspace_id
                     && !self
                         .window_project_groups
                         .iter()
-                        .any(|key| key.path_list() == paths)
+                        .any(|key| key.matches(&workspace.project_group_key()))
             })
-            .map(|(id, (_, _, paths, _))| {
-                let combined_string = paths
+            .map(|(id, workspace)| {
+                let combined_string = workspace
+                    .identity_paths
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -251,9 +225,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         let Some(hit) = self.filtered_workspaces.get(self.selected_index) else {
             return;
         };
-        let Some((_, location, candidate_workspace_paths, _)) =
-            self.workspaces.get(hit.candidate_id)
-        else {
+        let Some(recent_workspace) = self.workspaces.get(hit.candidate_id) else {
             return;
         };
 
@@ -261,10 +233,10 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             return;
         };
 
-        match location {
+        match &recent_workspace.location {
             SerializedWorkspaceLocation::Local => {
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
-                    let paths = candidate_workspace_paths.paths().to_vec();
+                    let paths = recent_workspace.paths.paths().to_vec();
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
@@ -290,7 +262,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         crate::RemoteSettings::get_global(cx)
                             .fill_connection_options_from_settings(connection);
                     };
-                    let paths = candidate_workspace_paths.paths().to_vec();
+                    let paths = recent_workspace.paths.paths().to_vec();
                     cx.spawn_in(window, async move |_, cx| {
                         open_remote_project(connection.clone(), paths, app_state, open_options, cx)
                             .await
@@ -326,14 +298,15 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = self.filtered_workspaces.get(ix)?;
-        let (_, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
+        let workspace = self.workspaces.get(hit.candidate_id)?;
 
-        let ordered_paths: Vec<_> = paths
+        let ordered_paths: Vec<_> = workspace
+            .identity_paths
             .ordered_paths()
             .map(|p| p.compact().to_string_lossy().to_string())
             .collect();
 
-        let tooltip_path: SharedString = match &location {
+        let tooltip_path: SharedString = match &workspace.location {
             SerializedWorkspaceLocation::Remote(options) => {
                 let host = options.display_name();
                 if ordered_paths.len() == 1 {
@@ -346,7 +319,8 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         };
 
         let mut path_start_offset = 0;
-        let match_labels: Vec<_> = paths
+        let match_labels: Vec<_> = workspace
+            .identity_paths
             .ordered_paths()
             .map(|p| p.compact())
             .map(|path| {
@@ -357,7 +331,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             })
             .collect();
 
-        let prefix = match &location {
+        let prefix = match &workspace.location {
             SerializedWorkspaceLocation::Remote(options) => {
                 Some(SharedString::from(options.display_name()))
             }
@@ -371,7 +345,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             active: false,
         };
 
-        let icon = icon_for_remote_connection(match location {
+        let icon = icon_for_remote_connection(match &workspace.location {
             SerializedWorkspaceLocation::Local => None,
             SerializedWorkspaceLocation::Remote(options) => Some(options),
         });
@@ -383,8 +357,10 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .child(
                     h_flex()
+                        .w_full()
+                        .min_w_0()
                         .gap_3()
-                        .flex_grow()
+                        .flex_grow_1()
                         .when(self.has_any_non_local_projects, |this| {
                             this.child(Icon::new(icon).color(Color::Muted))
                         })
@@ -414,7 +390,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child({
                     let open_action = workspace::Open {
-                        create_new_window: false,
+                        create_new_window: Some(false),
                     };
 
                     ButtonLike::new("open_local_folder")
@@ -423,7 +399,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .w_full()
                                 .gap_1()
                                 .justify_between()
-                                .child(Label::new("Add Local Folders"))
+                                .child(Label::new("Open Local Folders"))
                                 .child(KeyBinding::for_action_in(&open_action, &focus_handle, cx)),
                         )
                         .on_click(cx.listener(move |_, _, window, cx| {
@@ -438,11 +414,11 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .w_full()
                                 .gap_1()
                                 .justify_between()
-                                .child(Label::new("Add Remote Folder"))
+                                .child(Label::new("Open Remote Folder"))
                                 .child(KeyBinding::for_action(
                                     &OpenRemote {
                                         from_existing_connection: false,
-                                        create_new_window: false,
+                                        create_new_window: Some(false),
                                     },
                                     cx,
                                 )),
@@ -451,7 +427,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                             window.dispatch_action(
                                 OpenRemote {
                                     from_existing_connection: false,
-                                    create_new_window: false,
+                                    create_new_window: Some(false),
                                 }
                                 .boxed_clone(),
                                 cx,

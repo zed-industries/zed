@@ -48,6 +48,13 @@ pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
         .ok()
 }
 
+/// Recognizes OpenAI-style context window overflow errors, which arrive either
+/// with the `context_length_exceeded` error code or a "Your input exceeds the
+/// context window of this model" message.
+pub fn is_context_window_exceeded_message(message: &str) -> bool {
+    message.contains("context_length_exceeded") || message.contains("exceeds the context window")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

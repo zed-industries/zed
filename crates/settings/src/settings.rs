@@ -2,6 +2,7 @@ mod base_keymap_setting;
 mod content_into_gpui;
 mod editable_setting_control;
 mod editorconfig_store;
+mod granted_write_path;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
@@ -25,7 +26,6 @@ pub mod private {
 
 use gpui::{App, Global};
 
-use rust_embed::RustEmbed;
 use std::env;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
@@ -37,6 +37,7 @@ pub use editable_setting_control::*;
 pub use editorconfig_store::{
     Editorconfig, EditorconfigEvent, EditorconfigProperties, EditorconfigStore,
 };
+pub use granted_write_path::GrantedWritePath;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -115,12 +116,15 @@ impl fmt::Display for WorktreeId {
     }
 }
 
-#[derive(RustEmbed)]
-#[folder = "../../assets"]
-#[include = "settings/*"]
-#[include = "keymaps/*"]
-#[exclude = "*.DS_Store"]
-pub struct SettingsAssets;
+// Dev builds read the checkout's files at runtime instead of embedding them;
+// see the `assets` crate for the rationale.
+util::fs_embed! {
+    pub struct SettingsAssets,
+    crate_relative = "../../assets",
+    root_relative = "assets",
+    include = ["settings/*", "keymaps/*"],
+    exclude = ["*.DS_Store"],
+}
 
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());
@@ -155,6 +159,17 @@ pub fn vim_keymap() -> Cow<'static, str> {
     asset_str::<SettingsAssets>(VIM_KEYMAP_PATH)
 }
 
+/// Specific keybinding overrides. Loaded after the base keymap so they win over
+/// conflicting base-keymap (and default `Editor`) bindings for the same chords,
+/// while still allowing user keymaps (loaded last) to override them. Shared
+/// across features - prefer adding a context block here over creating another
+/// override keymap file.
+#[cfg(target_os = "macos")]
+pub const SPECIFIC_OVERRIDES_KEYMAP_PATH: &str = "keymaps/specific-overrides-macos.json";
+
+#[cfg(not(target_os = "macos"))]
+pub const SPECIFIC_OVERRIDES_KEYMAP_PATH: &str = "keymaps/specific-overrides.json";
+
 pub fn initial_user_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_user_settings.json")
 }
@@ -173,6 +188,10 @@ pub fn initial_keymap_content() -> Cow<'static, str> {
 
 pub fn initial_tasks_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_tasks.json")
+}
+
+pub fn initial_worktree_setup_tasks_content() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/initial_worktree_setup_tasks.json")
 }
 
 pub fn initial_debug_tasks_content() -> Cow<'static, str> {

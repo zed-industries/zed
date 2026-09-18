@@ -1,7 +1,7 @@
 use gpui::{Action, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
 // and the actions won't initialize. So we just provide an empty initialization function
@@ -17,7 +17,7 @@ pub fn init() {}
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenBrowser {
-    pub url: String,
+    pub url: Arc<str>,
 }
 
 /// Opens a zed:// URL within the application.
@@ -25,7 +25,7 @@ pub struct OpenBrowser {
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
-    pub url: String,
+    pub url: Arc<str>,
 }
 
 /// Opens the keymap to either add a keybinding or change an existing one
@@ -47,6 +47,10 @@ actions!(
         /// Opens project-specific settings.
         #[action(deprecated_aliases = ["zed_actions::OpenProjectSettings"])]
         OpenProjectSettings,
+        /// Opens the project tasks configuration.
+        OpenProjectTasks,
+        /// Opens the project tasks configuration with worktree setup guidance.
+        OpenWorktreeSetupTasks,
         /// Opens the default keymap file.
         OpenDefaultKeymap,
         /// Opens the user keymap file.
@@ -67,6 +71,10 @@ actions!(
         OpenDocs,
         /// Views open source licenses.
         OpenLicenses,
+        /// Opens the Zed status page.
+        OpenStatusPage,
+        /// Opens the Zed merch store.
+        GetMerch,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.
@@ -87,7 +95,6 @@ pub enum ExtensionCategoryFilter {
     Grammars,
     LanguageServers,
     ContextServers,
-    AgentServers,
     Snippets,
     DebugAdapters,
 }
@@ -142,6 +149,36 @@ pub struct IncreaseBufferFontSize {
 pub struct OpenSettingsAt {
     /// A path to a specific setting (e.g. `theme.mode`)
     pub path: String,
+    /// The settings file to select before opening `path`. When omitted, the
+    /// existing settings file selection is preserved.
+    #[serde(default)]
+    pub target: Option<OpenSettingsAtTarget>,
+}
+
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct OpenSettingsPage {
+    /// A settings page title (e.g. `AI`).
+    pub page: String,
+    /// The settings file to select before opening `page`. When omitted, the
+    /// existing settings file selection is preserved.
+    #[serde(default)]
+    pub target: Option<OpenSettingsAtTarget>,
+}
+
+/// `OpenSettingsAt` path of the agent skills page in the settings UI.
+pub const AGENT_SKILLS_SETTINGS_PATH: &str = "agent.skills";
+
+/// `OpenSettingsAt` path of the agent sandbox permissions page in the settings
+/// UI.
+pub const AGENT_SANDBOX_SETTINGS_PATH: &str = "agent.sandbox_permissions";
+
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenSettingsAtTarget {
+    User,
+    Project { worktree_id: usize },
 }
 
 /// Resets the buffer font size to the default value.
@@ -211,7 +248,15 @@ pub mod dev {
         dev,
         [
             /// Toggles the developer inspector for debugging UI elements.
-            ToggleInspector
+            ToggleInspector,
+            /// Cycles the debug frame-time overlay between hidden, current
+            /// frame-time, and detailed frame-time statistics.
+            ToggleFpsOverlay,
+            /// Resets the debug frame-time overlay's statistics, except for the
+            /// total frame count.
+            ResetFrameOverlayStats,
+            /// Opens the key context view for debugging keybindings.
+            OpenKeyContextView
         ]
     );
 }
@@ -263,6 +308,11 @@ pub enum NewWorktreeBranchTarget {
     CurrentBranch,
     /// Create a detached worktree at the tip of an existing branch.
     ExistingBranch { name: String },
+    /// Create a detached worktree at the tip of a remote-tracking branch.
+    RemoteBranch {
+        remote_name: String,
+        branch_name: String,
+    },
 }
 
 /// Creates a new git worktree and switches the workspace to it.
@@ -314,6 +364,12 @@ pub mod git {
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,
+            /// Shows uncommitted changes across the project.
+            ViewUncommittedChanges,
+            /// Shows unstaged changes across the project.
+            ViewUnstagedChanges,
+            /// Shows staged changes across the project.
+            ViewStagedChanges,
             /// Opens the git stash selector.
             ViewStash,
             /// Opens the git worktree selector.
@@ -343,6 +399,18 @@ pub mod command_palette {
         command_palette,
         [
             /// Toggles the command palette.
+            Toggle,
+        ]
+    );
+}
+
+pub mod text_finder {
+    use gpui::actions;
+
+    actions!(
+        text_finder,
+        [
+            /// Opens the Project Search Picker.
             Toggle,
         ]
     );
@@ -414,10 +482,30 @@ pub mod icon_theme_selector {
 }
 
 pub mod search {
-    use gpui::actions;
+    use gpui::{Action, actions};
+
+    /// Opens a new project search filtered down to the given directory.
+    ///
+    /// An internal forwarding action: the user-facing, keybindable entry
+    /// point is `project_panel::NewSearchInDirectory`, which resolves the
+    /// selected directory and dispatches this action with it.
+    #[derive(Clone, Debug, Default, PartialEq, Action)]
+    #[action(namespace = search, no_json, no_register)]
+    pub struct NewSearchInDirectory {
+        pub directory: String,
+    }
+
     actions!(
         search,
         [
+            /// Focuses on the search input field.
+            FocusSearch,
+            /// Selects the next search match.
+            SelectNextMatch,
+            /// Selects the previous search match.
+            SelectPreviousMatch,
+            /// Toggles case-sensitive search.
+            ToggleCaseSensitive,
             /// Toggles searching in ignored files.
             ToggleIncludeIgnored
         ]
@@ -468,7 +556,7 @@ pub mod buffer_search {
             Dismiss,
             /// Focuses back on the editor.
             FocusEditor,
-            /// Sets the search query to the current selection without opening the search bar or running a search.
+            /// Sets the search query from the selection or word under cursor.
             UseSelectionForFind,
         ]
     );
@@ -491,7 +579,7 @@ pub mod agent {
     actions!(
         agent,
         [
-            /// Opens the agent settings panel.
+            /// Opens the agent settings UI.
             #[action(deprecated_aliases = ["agent::OpenConfiguration"])]
             OpenSettings,
             /// Opens the agent onboarding modal.
@@ -505,6 +593,8 @@ pub mod agent {
             ToggleModelSelector,
             /// Triggers re-authentication on Gemini
             ReauthenticateAgent,
+            /// Logs out of the current external agent
+            LogoutAgent,
             /// Add the current selection as context for threads in the agent panel.
             #[action(deprecated_aliases = ["assistant::QuoteSelection", "agent::QuoteSelection"])]
             AddSelectionToThread,
@@ -514,6 +604,17 @@ pub mod agent {
             PasteRaw,
         ]
     );
+
+    /// Selects the agent used for new threads in the agent panel, without
+    /// opening the panel. The selected agent is launched the next time the
+    /// panel is opened.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct SelectAgent {
+        /// The id of the agent to select.
+        pub agent: String,
+    }
 
     /// Opens a new agent thread with the provided branch diff for review.
     #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -558,7 +659,6 @@ pub mod assistant {
     use gpui::{Action, actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
-    use uuid::Uuid;
 
     actions!(
         agent,
@@ -568,17 +668,21 @@ pub mod assistant {
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus,
             FocusAgent,
+            /// Opens the skill creator window for creating a new skill.
+            OpenSkillCreator,
+            /// Opens the skill creator window to import a skill from a GitHub URL.
+            CreateSkillFromUrl,
+            /// Opens the user-global AGENTS.md rules file.
+            #[action(name = "OpenGlobalAGENTS.mdRules")]
+            OpenGlobalAgentsMdRules,
+            /// Opens the project AGENTS.md rules file.
+            #[action(name = "OpenProjectAGENTS.mdRules")]
+            OpenProjectAgentsMdRules,
+            /// Opens the skills manager in the settings window.
+            #[action(deprecated_aliases = ["agent::OpenRulesLibrary", "assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
+            ManageSkills,
         ]
     );
-
-    /// Opens the rules library for managing agent rules and prompts.
-    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
-    #[action(namespace = agent, deprecated_aliases = ["assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
-    #[serde(deny_unknown_fields)]
-    pub struct OpenRulesLibrary {
-        #[serde(skip)]
-        pub prompt_to_select: Option<Uuid>,
-    }
 
     /// Deploys the assistant interface with the specified configuration.
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema, Action)]
@@ -595,7 +699,7 @@ pub mod assistant {
 #[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
-    pub create_new_window: bool,
+    pub create_new_window: Option<bool>,
 }
 
 /// Creates a project from a selected template.
@@ -606,7 +710,7 @@ pub struct OpenRemote {
     #[serde(default)]
     pub from_existing_connection: bool,
     #[serde(default)]
-    pub create_new_window: bool,
+    pub create_new_window: Option<bool>,
 }
 
 /// Opens the dev container connection modal.
@@ -714,6 +818,10 @@ actions!(
         OpenGitIntegrationOnboarding
     ]
 );
+actions!(
+    call_hierarchy,
+    [ShowIncomingCalls, ShowOutgoingCalls, ToggleDirection]
+);
 
 pub mod debug_panel {
     use gpui::actions;
@@ -758,7 +866,8 @@ pub struct WslConnectionOptions {
     pub user: Option<String>,
 }
 
-#[cfg(target_os = "windows")]
+// `debug_assertions` makes the actions visible for the docs preprocessor
+#[cfg(any(debug_assertions, target_os = "windows"))]
 pub mod wsl_actions {
     use gpui::Action;
     use schemars::JsonSchema;
@@ -770,7 +879,7 @@ pub mod wsl_actions {
     #[serde(deny_unknown_fields)]
     pub struct OpenFolderInWsl {
         #[serde(default)]
-        pub create_new_window: bool,
+        pub create_new_window: Option<bool>,
     }
 
     /// Open a wsl distro.
@@ -779,7 +888,7 @@ pub mod wsl_actions {
     #[serde(deny_unknown_fields)]
     pub struct OpenWsl {
         #[serde(default)]
-        pub create_new_window: bool,
+        pub create_new_window: Option<bool>,
     }
 }
 
@@ -860,6 +969,8 @@ pub mod notebook {
             AddMarkdownBlock,
             /// Adds a new code cell.
             AddCodeBlock,
+            /// Deletes the current cell.
+            DeleteCell,
             /// Restarts the kernel.
             RestartKernel,
             /// Interrupts the current execution.
@@ -872,6 +983,18 @@ pub mod notebook {
             EnterEditMode,
             /// Exits the cell editor and returns to cell command mode.
             EnterCommandMode,
+        ]
+    );
+}
+
+pub mod git_panel {
+    use gpui::actions;
+
+    actions!(
+        git_panel,
+        [
+            /// Toggles focus on the git panel.
+            ToggleFocus,
         ]
     );
 }

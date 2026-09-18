@@ -1,10 +1,11 @@
 use gpui::{
-    App, Entity, EventEmitter, FocusHandle, Focusable, PromptButton, PromptHandle, PromptLevel,
-    PromptResponse, RenderablePromptHandle, SharedString, TextStyleRefinement, Window, div,
-    prelude::*,
+    App, Decorations, Entity, EventEmitter, FocusHandle, Focusable, PromptButton, PromptHandle,
+    PromptLevel, PromptResponse, RenderablePromptHandle, SharedString, TextStyleRefinement, Window,
+    div, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
+use theme::ClientDecorationsExt;
 use theme_settings::ThemeSettings;
 use ui::{FluentBuilder, TintColor, prelude::*};
 use workspace::WorkspaceSettings;
@@ -154,20 +155,28 @@ impl Render for ZedPromptRenderer {
                     })),
             );
 
-        div()
-            .size_full()
-            .occlude()
-            .bg(gpui::black().opacity(0.2))
-            .child(
-                v_flex()
-                    .size_full()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .items_center()
-                    .justify_center()
-                    .child(dialog),
-            )
+        let decorations = window.window_decorations();
+        let inset = window.client_inset().unwrap_or(Pixels::ZERO);
+
+        div().size_full().child(
+            v_flex()
+                .occlude()
+                .absolute()
+                .inset_0()
+                .bg(gpui::black().opacity(0.2))
+                .map(|this| match decorations {
+                    Decorations::Server => this,
+                    Decorations::Client { tiling } => this
+                        .when(!tiling.top, |this| this.top(inset))
+                        .when(!tiling.bottom, |this| this.bottom(inset))
+                        .when(!tiling.left, |this| this.left(inset))
+                        .when(!tiling.right, |this| this.right(inset))
+                        .rounded_client_corners(tiling),
+                })
+                .items_center()
+                .justify_center()
+                .child(dialog),
+        )
     }
 }
 

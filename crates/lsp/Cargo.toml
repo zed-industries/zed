@@ -13,25 +13,26 @@ path = "src/lsp.rs"
 doctest = false
 
 [features]
-test-support = ["async-pipe", "gpui_util"]
+test-support = ["async-pipe"]
 
 [dependencies]
 anyhow.workspace = true
+async-channel.workspace = true
 async-pipe = { workspace = true, optional = true }
 collections.workspace = true
-gpui_util = { workspace = true, optional = true }
+futures-lite.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_util.workspace = true
 log.workspace = true
 lsp-types.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
+release_channel.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-schemars.workspace = true
-smol.workspace = true
 util.workspace = true
-release_channel.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true

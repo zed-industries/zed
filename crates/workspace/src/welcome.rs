@@ -1,22 +1,21 @@
 use crate::{
-    NewFile, Open, OpenMode, PathList, SerializedWorkspaceLocation, ToggleWorkspaceSidebar,
-    Workspace, WorkspaceId,
+    NewFile, Open, OpenMode, PathList, RecentWorkspace, SerializedWorkspaceLocation,
+    ToggleWorkspaceSidebar, Workspace, WorkspaceSettings,
     item::{Item, ItemEvent},
     persistence::WorkspaceDb,
 };
 use agent_settings::AgentSettings;
-use chrono::{DateTime, Utc};
 use git::Clone as GitClone;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    ParentElement, Render, Styled, Task, Window, actions,
+    ParentElement, Render, Styled, Task, TaskExt, Window, actions,
 };
 use gpui::{WeakEntity, linear_color_stop, linear_gradient};
 use menu::{SelectNext, SelectPrevious};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{DefaultOpenBehavior, Settings};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
 use zed_actions::{
@@ -119,7 +118,7 @@ impl RenderOnce for SectionButton {
                     )
                     .child(
                         KeyBinding::for_action_in(action_ref, &self.focus_handle, cx)
-                            .size(rems_from_px(12.)),
+                            .size(rems_from_px(12_f32)),
                     ),
             )
             .on_click(move |_, window, cx| {
@@ -242,14 +241,7 @@ pub struct WelcomePage {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
-    recent_workspaces: Option<
-        Vec<(
-            WorkspaceId,
-            SerializedWorkspaceLocation,
-            PathList,
-            DateTime<Utc>,
-        )>,
-    >,
+    recent_workspaces: Option<Vec<RecentWorkspace>>,
 }
 
 impl WelcomePage {
@@ -310,18 +302,19 @@ impl WelcomePage {
         cx: &mut Context<Self>,
     ) {
         if let Some(recent_workspaces) = &self.recent_workspaces {
-            if let Some((_workspace_id, location, paths, _timestamp)) =
-                recent_workspaces.get(action.index)
-            {
-                let is_local = matches!(location, SerializedWorkspaceLocation::Local);
+            if let Some(workspace) = recent_workspaces.get(action.index) {
+                let is_local = matches!(workspace.location, SerializedWorkspaceLocation::Local);
 
                 if is_local {
-                    let paths = paths.clone();
-                    let paths = paths.paths().to_vec();
+                    let paths = workspace.paths.paths().to_vec();
+                    let open_mode = match WorkspaceSettings::get_global(cx).default_open_behavior {
+                        DefaultOpenBehavior::ExistingWindow => OpenMode::Activate,
+                        DefaultOpenBehavior::NewWindow => OpenMode::NewWindow,
+                    };
                     self.workspace
                         .update(cx, |workspace, cx| {
                             workspace
-                                .open_workspace_for_paths(OpenMode::Activate, paths, window, cx)
+                                .open_workspace_for_paths(open_mode, paths, window, cx)
                                 .detach_and_log_err(cx);
                         })
                         .log_err();
@@ -373,7 +366,7 @@ impl WelcomePage {
                     .style(ButtonStyle::Outlined)
                     .key_binding(
                         KeyBinding::for_action_in(&ToggleFocus, &self.focus_handle, cx)
-                            .size(rems_from_px(12.)),
+                            .size(rems_from_px(12_f32)),
                     )
                     .on_click(move |_, window, cx| {
                         focus.dispatch_action(&ToggleWorkspaceSidebar, window, cx);
@@ -433,8 +426,13 @@ impl Render for WelcomePage {
             .flatten()
             .take(5)
             .enumerate()
-            .map(|(index, (_, loc, paths, _))| {
-                self.render_recent_project(index, first_section_entries + index, loc, paths)
+            .map(|(index, workspace)| {
+                self.render_recent_project(
+                    index,
+                    first_section_entries + index,
+                    &workspace.location,
+                    &workspace.identity_paths,
+                )
             })
             .collect::<Vec<_>>();
 
@@ -479,7 +477,7 @@ impl Render for WelcomePage {
                             .justify_center()
                             .mb_4()
                             .gap_4()
-                            .child(Vector::square(VectorName::ZedLogo, rems_from_px(45.)))
+                            .child(Vector::square(VectorName::ZedLogo, rems_from_px(45_f32)))
                             .child(
                                 v_flex().child(Headline::new(welcome_label)).child(
                                     Label::new("The editor for what's next")
@@ -587,7 +585,6 @@ impl crate::SerializableItem for WelcomePage {
         workspace: &mut Workspace,
         item_id: crate::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;

@@ -32,13 +32,14 @@ menu.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
 regex.workspace = true
-task.workspace = true
 schemars.workspace = true
+task.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
+shlex.workspace = true
 terminal.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
@@ -57,6 +58,3 @@ rpc = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 terminal = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
-
-[package.metadata.cargo-machete]
-ignored = ["log"]

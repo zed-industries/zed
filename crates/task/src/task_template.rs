@@ -452,7 +452,10 @@ fn substitute_all_template_variables_in_vec(
             variable_names,
             substituted_variables,
         )?;
-        expanded.push(new_value);
+
+        if !new_value.is_empty() || variable.is_empty() {
+            expanded.push(new_value);
+        }
     }
 
     Some(expanded)
@@ -511,7 +514,10 @@ fn substitute_all_template_variables_in_map(
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, path::Path};
+    use std::{
+        borrow::Cow,
+        path::{Path, PathBuf},
+    };
 
     use crate::{TaskVariables, VariableName};
 
@@ -1101,5 +1107,93 @@ mod tests {
             ..TaskTemplate::default()
         };
         assert!(task.unknown_variables().is_empty());
+    }
+
+    #[test]
+    fn test_git_variables_resolution() {
+        let task = TaskTemplate {
+            label: "Show $ZED_GIT_SHA_SHORT in $ZED_GIT_REPOSITORY_NAME".to_string(),
+            command: "git".to_string(),
+            args: vec!["show".to_string(), "$ZED_GIT_SHA".to_string()],
+            cwd: Some("$ZED_GIT_REPOSITORY_PATH".to_string()),
+            env: HashMap::from_iter([("COMMIT".to_string(), "$ZED_GIT_SHA".to_string())]),
+            ..TaskTemplate::default()
+        };
+        let sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
+        let sha_short = "0123456".to_string();
+        let repo_name = "zed".to_string();
+        let repo_path = format!("/Users/example/{repo_name}");
+
+        let context = TaskContext {
+            task_variables: TaskVariables::from_iter([
+                (VariableName::GitSha, sha.clone()),
+                (VariableName::GitShaShort, sha_short.clone()),
+                (VariableName::GitRepositoryName, repo_name.clone()),
+                (VariableName::GitRepositoryPath, repo_path.clone()),
+            ]),
+            ..TaskContext::default()
+        };
+
+        let task = task.resolve_task(TEST_ID_BASE, &context).unwrap();
+        assert_eq!(
+            task.resolved_label,
+            format!("Show {sha_short} in {repo_name}")
+        );
+        assert_eq!(task.resolved.command, Some("git".to_string()));
+        assert_eq!(task.resolved.args, vec!["show".to_string(), sha.clone()]);
+        assert_eq!(task.resolved.cwd, Some(PathBuf::from(repo_path)));
+        assert_eq!(task.resolved.env.get("COMMIT"), Some(&sha));
+
+        assert_substituted_variables(
+            &task,
+            vec![
+                VariableName::GitSha,
+                VariableName::GitShaShort,
+                VariableName::GitRepositoryName,
+                VariableName::GitRepositoryPath,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_args_produced_by_empty_variables_are_omitted() {
+        let features_flag = VariableName::Custom(Cow::Borrowed("features_flag"));
+        let features = VariableName::Custom(Cow::Borrowed("features"));
+        let bin_name = VariableName::Custom(Cow::Borrowed("bin_name"));
+
+        let task = TaskTemplate {
+            label: "cargo run".to_string(),
+            command: "cargo".to_string(),
+            args: vec![
+                "run".to_string(),
+                "--bin".to_string(),
+                bin_name.template_value(),
+                features_flag.template_value(),
+                features.template_value(),
+                String::new(),
+                format!("--config={}", features.template_value()),
+            ],
+            ..TaskTemplate::default()
+        };
+
+        let context = TaskContext {
+            task_variables: TaskVariables::from_iter([
+                (features_flag, String::new()),
+                (features, String::new()),
+                (bin_name, "test_bin".to_string()),
+            ]),
+            ..TaskContext::default()
+        };
+
+        let resolved = task
+            .resolve_task(TEST_ID_BASE, &context)
+            .unwrap_or_else(|| panic!("failed to resolve task {task:?}"))
+            .resolved;
+        assert_eq!(
+            resolved.args,
+            vec!["run", "--bin", "test_bin", "", "--config="],
+            "args that consist entirely of variables resolved to empty strings should be omitted, \
+            while literal empty args and partially substituted args should be preserved"
+        );
     }
 }

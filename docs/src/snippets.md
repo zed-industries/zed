@@ -7,7 +7,7 @@ description: Create and use code snippets in Zed with tab stops, placeholders, v
 
 Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit an existing snippets file for a specified [scope](#scopes).
 
-The snippets are located in `~/.config/zed/snippets` directory to which you can navigate to with the {#action snippets::OpenFolder} action.
+The snippets are located in `~/.config/zed/snippets` directory to which you can navigate with the {#action snippets::OpenFolder} action.
 
 ## Example configuration
 
@@ -38,6 +38,8 @@ The scope is determined by the language name in lowercase e.g. `python.json` for
 | Plain Text | plaintext.json  |
 
 To create JSX snippets you have to use `javascript.json` snippets file, instead of `jsx.json`, but this does not apply to TSX and TypeScript which follow the above rule.
+
+Path separators (`/` and `\`) are removed from the file name, so a language named `PL/X` uses `plx.json`.
 
 ## Known Limitations
 

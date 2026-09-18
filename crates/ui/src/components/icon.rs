@@ -69,11 +69,11 @@ pub enum IconSize {
 impl IconSize {
     pub fn rems(self) -> Rems {
         match self {
-            IconSize::Indicator => rems_from_px(10.),
-            IconSize::XSmall => rems_from_px(12.),
-            IconSize::Small => rems_from_px(14.),
-            IconSize::Medium => rems_from_px(16.),
-            IconSize::XLarge => rems_from_px(48.),
+            IconSize::Indicator => rems_from_px(10_f32),
+            IconSize::XSmall => rems_from_px(12_f32),
+            IconSize::Small => rems_from_px(14_f32),
+            IconSize::Medium => rems_from_px(16_f32),
+            IconSize::XLarge => rems_from_px(48_f32),
             IconSize::Custom(size) => size,
         }
     }
@@ -109,6 +109,20 @@ impl IconSize {
 impl From<IconName> for Icon {
     fn from(icon: IconName) -> Self {
         Icon::new(icon)
+    }
+}
+
+pub fn git_hosting_provider_icon(provider_name: &str) -> IconName {
+    match provider_name {
+        "Bitbucket" => IconName::Bitbucket,
+        "Chromium" => IconName::Gerrit,
+        "Codeberg" => IconName::Codeberg,
+        "Forgejo Self-Hosted" => IconName::Forgejo,
+        "GitHub" => IconName::Github,
+        "GitLab" => IconName::Gitlab,
+        "Gitea" => IconName::Gitea,
+        "SourceHut" => IconName::Sourcehut,
+        _ => IconName::Link,
     }
 }
 
@@ -288,57 +302,54 @@ impl Component for Icon {
         ComponentScope::Images
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A versatile icon component that supports SVG and image-based icons with customizable size, color, and transformations.",
-        )
+    fn description() -> &'static str {
+        "A versatile icon component that supports SVG and image-based icons \
+        with customizable size, color, and transformations."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Sizes",
-                        vec![single_example(
-                            "XSmall, Small, Default, Large",
-                            h_flex()
-                                .gap_1()
-                                .child(Icon::new(IconName::Star).size(IconSize::XSmall))
-                                .child(Icon::new(IconName::Star).size(IconSize::Small))
-                                .child(Icon::new(IconName::Star))
-                                .child(Icon::new(IconName::Star).size(IconSize::XLarge))
-                                .into_any_element(),
-                        )],
-                    ),
-                    example_group(vec![single_example(
-                        "All Icons",
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Sizes",
+                    vec![single_example(
+                        "XSmall, Small, Default, Large",
                         h_flex()
-                            .image_cache(gpui::retain_all("all icons"))
-                            .flex_wrap()
-                            .gap_2()
-                            .children(<IconName as strum::IntoEnumIterator>::iter().map(
-                                |icon_name: IconName| {
-                                    let name: SharedString = format!("{icon_name:?}").into();
-                                    v_flex()
-                                        .min_w_0()
-                                        .w_24()
-                                        .p_1p5()
-                                        .gap_2()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border_variant)
-                                        .bg(cx.theme().colors().element_disabled)
-                                        .rounded_sm()
-                                        .items_center()
-                                        .child(Icon::new(icon_name))
-                                        .child(Label::new(name).size(LabelSize::XSmall).truncate())
-                                },
-                            ))
+                            .gap_1()
+                            .child(Icon::new(IconName::Star).size(IconSize::XSmall))
+                            .child(Icon::new(IconName::Star).size(IconSize::Small))
+                            .child(Icon::new(IconName::Star))
+                            .child(Icon::new(IconName::Star).size(IconSize::XLarge))
                             .into_any_element(),
-                    )]),
-                ])
-                .into_any_element(),
-        )
+                    )],
+                ),
+                example_group(vec![single_example(
+                    "All Icons",
+                    h_flex()
+                        .image_cache(gpui::retain_all("all icons"))
+                        .flex_wrap()
+                        .gap_2()
+                        .children(<IconName as strum::IntoEnumIterator>::iter().map(
+                            |icon_name: IconName| {
+                                let name: SharedString = format!("{icon_name:?}").into();
+                                v_flex()
+                                    .min_w_0()
+                                    .w_24()
+                                    .p_1p5()
+                                    .gap_2()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .bg(cx.theme().colors().element_disabled)
+                                    .rounded_sm()
+                                    .items_center()
+                                    .child(Icon::new(icon_name))
+                                    .child(Label::new(name).size(LabelSize::XSmall).truncate())
+                            },
+                        ))
+                        .into_any_element(),
+                )]),
+            ])
+            .into_any_element()
     }
 }
