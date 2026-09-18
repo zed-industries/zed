@@ -41,7 +41,7 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
-use crate::{CodeActionSource, EditorSettings};
+use crate::{CodeActionSource, CompletionMenuItemKindSymbols, EditorSettings};
 use collections::{HashSet, VecDeque};
 use settings::{CompletionDetailAlignment, CompletionMenuItemKind, Settings, SnippetSortOrder};
 
@@ -920,6 +920,7 @@ impl CompletionsMenu {
         let editor_settings = EditorSettings::get_global(cx);
         let completion_detail_alignment = editor_settings.completion_detail_alignment;
         let completion_menu_item_kind = editor_settings.completion_menu_item_kind;
+        let completion_menu_item_kind_symbols = editor_settings.completion_menu_item_kind_symbols;
         let widest_completion_ix = if self.display_options.dynamic_width {
             let completions = self.completions.borrow();
             let widest_completion_ix = self
@@ -1129,24 +1130,25 @@ impl CompletionsMenu {
                                 })
                             });
 
-                        let kind_letter_slot = match completion_menu_item_kind {
+                        let kind_symbol_slot = match completion_menu_item_kind {
                             CompletionMenuItemKind::Off => None,
-                            CompletionMenuItemKind::Symbol => Some(render_completion_kind_letter(
+                            CompletionMenuItemKind::Symbol => Some(render_completion_kind_symbol(
                                 completion.kind(),
                                 item_ix,
                                 &style,
+                                &completion_menu_item_kind_symbols,
                             )),
                         };
 
-                        let start_slot = match (kind_letter_slot, icon_or_color_slot) {
-                            (Some(letter), Some(icon_or_color)) => Some(
+                        let start_slot = match (kind_symbol_slot, icon_or_color_slot) {
+                            (Some(kind_symbol), Some(icon_or_color)) => Some(
                                 h_flex()
                                     .gap_0p5()
-                                    .child(letter)
+                                    .child(kind_symbol)
                                     .child(icon_or_color)
                                     .into_any_element(),
                             ),
-                            (Some(letter), None) => Some(letter),
+                            (Some(kind_symbol), None) => Some(kind_symbol),
                             (None, slot) => slot,
                         };
 
@@ -1653,10 +1655,11 @@ impl CompletionsMenu {
     }
 }
 
-fn render_completion_kind_letter(
+fn render_completion_kind_symbol(
     kind: Option<CompletionItemKind>,
     item_ix: usize,
     style: &EditorStyle,
+    render_completion_kind_symbols: &CompletionMenuItemKindSymbols,
 ) -> AnyElement {
     let badge = div()
         .flex_none()
@@ -1668,7 +1671,7 @@ fn render_completion_kind_letter(
     let Some(kind) = kind else {
         return badge.into_any_element();
     };
-    let Some(letter) = completion_kind_letter(kind) else {
+    let Some(symbol) = completion_kind_symbol(kind, render_completion_kind_symbols) else {
         return badge.into_any_element();
     };
 
@@ -1684,7 +1687,7 @@ fn render_completion_kind_letter(
     badge
         .id(("completion-kind", item_ix))
         .tooltip(Tooltip::text(completion_kind_name(kind)))
-        .child(letter)
+        .child(SharedString::from(symbol))
         .when_some(color, |element, color| element.text_color(color))
         .into_any_element()
 }
@@ -1720,35 +1723,38 @@ fn completion_kind_name(kind: CompletionItemKind) -> &'static str {
     }
 }
 
-fn completion_kind_letter(kind: CompletionItemKind) -> Option<&'static str> {
-    Some(match kind {
-        CompletionItemKind::TEXT => "t",
-        CompletionItemKind::METHOD => "m",
-        CompletionItemKind::FUNCTION => "f",
-        CompletionItemKind::CONSTRUCTOR => "C",
-        CompletionItemKind::FIELD => "f",
-        CompletionItemKind::VARIABLE => "v",
-        CompletionItemKind::CLASS => "c",
-        CompletionItemKind::INTERFACE => "i",
-        CompletionItemKind::MODULE => "M",
-        CompletionItemKind::PROPERTY => "p",
-        CompletionItemKind::UNIT => "u",
-        CompletionItemKind::VALUE => "v",
-        CompletionItemKind::ENUM => "e",
-        CompletionItemKind::KEYWORD => "k",
-        CompletionItemKind::SNIPPET => "s",
-        CompletionItemKind::COLOR => "c",
-        CompletionItemKind::FILE => "F",
-        CompletionItemKind::REFERENCE => "r",
-        CompletionItemKind::FOLDER => "D",
-        CompletionItemKind::ENUM_MEMBER => "e",
-        CompletionItemKind::CONSTANT => "c",
-        CompletionItemKind::STRUCT => "S",
-        CompletionItemKind::EVENT => "E",
-        CompletionItemKind::OPERATOR => "o",
-        CompletionItemKind::TYPE_PARAMETER => "T",
-        _ => return None,
-    })
+fn completion_kind_symbol(
+    kind: CompletionItemKind,
+    symbols: &CompletionMenuItemKindSymbols,
+) -> Option<char> {
+    match kind {
+        CompletionItemKind::TEXT => Some(symbols.text),
+        CompletionItemKind::METHOD => Some(symbols.method),
+        CompletionItemKind::FUNCTION => Some(symbols.function),
+        CompletionItemKind::CONSTRUCTOR => Some(symbols.constructor),
+        CompletionItemKind::FIELD => Some(symbols.field),
+        CompletionItemKind::VARIABLE => Some(symbols.variable),
+        CompletionItemKind::CLASS => Some(symbols.class),
+        CompletionItemKind::INTERFACE => Some(symbols.interface),
+        CompletionItemKind::MODULE => Some(symbols.module),
+        CompletionItemKind::PROPERTY => Some(symbols.property),
+        CompletionItemKind::UNIT => Some(symbols.unit),
+        CompletionItemKind::VALUE => Some(symbols.value),
+        CompletionItemKind::ENUM => Some(symbols.r#enum),
+        CompletionItemKind::KEYWORD => Some(symbols.keyword),
+        CompletionItemKind::SNIPPET => Some(symbols.snippet),
+        CompletionItemKind::COLOR => Some(symbols.color),
+        CompletionItemKind::FILE => Some(symbols.file),
+        CompletionItemKind::REFERENCE => Some(symbols.reference),
+        CompletionItemKind::FOLDER => Some(symbols.folder),
+        CompletionItemKind::ENUM_MEMBER => Some(symbols.enum_member),
+        CompletionItemKind::CONSTANT => Some(symbols.constant),
+        CompletionItemKind::STRUCT => Some(symbols.r#struct),
+        CompletionItemKind::EVENT => Some(symbols.event),
+        CompletionItemKind::OPERATOR => Some(symbols.operator),
+        CompletionItemKind::TYPE_PARAMETER => Some(symbols.type_parameter),
+        _ => None,
+    }
 }
 
 fn completion_kind_highlight_name(kind: CompletionItemKind) -> Option<&'static str> {
