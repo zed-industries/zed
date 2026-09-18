@@ -2036,7 +2036,7 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 - `cursor_position_button`: Whether to show the cursor position button (clicking it opens the go-to-line/column input)
 - `line_endings_button`: Whether to show the active line endings button (clicking it opens the line-ending selector)
 - `active_encoding_button`: When to show the active encoding button: `"enabled"`, `"disabled"`, or `"non_utf8"` (only for encodings other than UTF-8 without BOM)
-- `pending_keystrokes_indicator`: Whether to show an indicator with a countdown while timed multi-stroke input is pending. Hovering the indicator pauses the timeout. Its binding preview popover is disabled when the which-key popup is enabled (see [key bindings](../key-bindings.md#precedence))
+- `pending_keystrokes_indicator`: Whether to show an indicator while multi-stroke input is pending. If the input has a timeout, a countdown is shown and hovering the indicator pauses it. Its binding preview popover is disabled when the which-key popup is enabled (see [key bindings](../key-bindings.md#precedence))
 
 There is an experimental setting that completely hides the status bar. This causes major usability problems (you will be unable to use many of Zed's features), but is provided for those who value screen real-estate above all else.
 
@@ -2929,6 +2929,31 @@ Example:
 **Options**
 
 `boolean` values
+
+## Hidden Files {#hidden-files}
+
+- Description: Glob patterns that mark files and folders as hidden in the Project Panel.
+- Setting: `hidden_files`
+- Default: `["**/.*"]`
+
+**Options**
+
+List of `string` glob patterns.
+
+The default matches files and folders whose names start with a dot. Files inside matching folders are also considered hidden.
+
+The [Project Panel](../project-panel.md#hiding-files) shows hidden entries by default. To hide them, enable **Hide Hidden** under **Panels > Project Panel** in the Settings Editor, or set `project_panel.hide_hidden` to `true`.
+
+Customizing `hidden_files` replaces the default patterns. To hide `*.log` files while keeping dotfiles and dotfolders hidden, add this to your `settings.json`:
+
+```json [settings]
+{
+  "hidden_files": ["**/*.log", "**/.*"],
+  "project_panel": {
+    "hide_hidden": true
+  }
+}
+```
 
 ## Indent Guides
 
