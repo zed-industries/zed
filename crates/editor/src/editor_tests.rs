@@ -23255,14 +23255,46 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions::default()),
-            ..lsp::ServerCapabilities::default()
+    let mut cx = EditorTestContext::new(cx).await;
+    let language_registry = cx.language_registry();
+    let language = rust_lang();
+    let completion_item = Arc::new(Mutex::new(None::<lsp::CompletionItem>));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        language.name(),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let completion_item = completion_item.clone();
+                move |server| {
+                    let completion_item = completion_item.clone();
+                    server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+                        let completion_item = completion_item
+                            .lock()
+                            .clone()
+                            .expect("completion item should be set before requesting completions");
+                        async move {
+                            Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                                is_incomplete: true,
+                                items: vec![completion_item],
+                                item_defaults: None,
+                            })))
+                        }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
         },
-        cx,
-    )
-    .await;
+    );
+    language_registry.add(language.clone());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    let _language_server = fake_servers
+        .next()
+        .await
+        .expect("language server should start");
+    cx.executor().run_until_parked();
 
     for (initial_state, completion_text, filter_text, expected_states) in [
         (
@@ -23395,27 +23427,17 @@ async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
                     "{initial_state:?}, {lsp_insert_mode:?}, {insert_text:?}, {detail:?}, {description:?}, {use_filter_text:?}"
                 );
                 cx.set_state(initial_state);
-                cx.set_request_handler::<lsp::request::Completion, _, _>(
-                    move |_, _, _| async move {
-                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                            is_incomplete: true,
-                            items: vec![lsp::CompletionItem {
-                                label: completion_text.to_string(),
-                                filter_text: use_filter_text.then(|| filter_text.to_string()),
-                                insert_text: insert_text.map(str::to_string),
-                                detail: detail.map(str::to_string),
-                                label_details: description.map(|description| {
-                                    lsp::CompletionItemLabelDetails {
-                                        detail: None,
-                                        description: Some(description.to_string()),
-                                    }
-                                }),
-                                ..lsp::CompletionItem::default()
-                            }],
-                            item_defaults: None,
-                        })))
-                    },
-                );
+                *completion_item.lock() = Some(lsp::CompletionItem {
+                    label: completion_text.to_string(),
+                    filter_text: use_filter_text.then(|| filter_text.to_string()),
+                    insert_text: insert_text.map(str::to_string),
+                    detail: detail.map(str::to_string),
+                    label_details: description.map(|description| lsp::CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some(description.to_string()),
+                    }),
+                    ..lsp::CompletionItem::default()
+                });
                 cx.update_editor(|editor, window, cx| {
                     editor.show_completions(&ShowCompletions, window, cx);
                 });
