@@ -2032,8 +2032,8 @@ impl Editor {
             .selections
             .all::<MultiBufferOffset>(&self.display_snapshot(cx));
         let buffer = self.buffer.read(cx).read(cx);
-        let new_selections = self
-            .selections_with_autoclose_regions(selections, &buffer)
+        let new_selections: Vec<_> = self
+            .selections_with_autoclose_regions(selections.clone(), &buffer)
             .map(|(mut selection, region)| {
                 if !selection.is_empty() {
                     return selection;
@@ -2089,9 +2089,13 @@ impl Editor {
             .collect();
 
         drop(buffer);
-        self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-            selections.select(new_selections)
-        });
+        // Every caller changes the selections right after this, so an unchanged
+        // set does not need its own selection update.
+        if new_selections != selections {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select(new_selections)
+            });
+        }
     }
 
     /// Remove any autoclose regions that no longer contain their selection or have invalid anchors in ranges.
