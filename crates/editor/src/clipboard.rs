@@ -41,7 +41,19 @@ impl ClipboardSelection {
         let line_range = if file_path.is_some() {
             buffer
                 .range_to_buffer_range(range)
-                .map(|(_, buffer_range)| buffer_range.start.row..=buffer_range.end.row)
+                .map(|(_, buffer_range)| {
+                    // Whole-line copies extend to the start of the following line so that
+                    // the trailing newline is included, but that line contributes no text
+                    // and must not be reported as part of the range.
+                    let end_row = if buffer_range.end.column == 0
+                        && buffer_range.end.row > buffer_range.start.row
+                    {
+                        buffer_range.end.row - 1
+                    } else {
+                        buffer_range.end.row
+                    };
+                    buffer_range.start.row..=end_row
+                })
         } else {
             None
         };
