@@ -2649,22 +2649,48 @@ impl Editor {
                         .unwrap_or(false);
                     if !vim_mode {
                         let display_map = editor.display_snapshot(cx);
-                        let selections = editor.selections.all_adjusted_display(&display_map);
-                        let pop_state = editor
-                            .change_list
-                            .last()
-                            .map(|previous| {
-                                previous.len() == selections.len()
-                                    && previous.iter().enumerate().all(|(ix, p)| {
-                                        p.to_display_point(&display_map).row()
-                                            == selections[ix].head().row()
-                                    })
-                            })
-                            .unwrap_or(false);
-                        let new_positions = selections
-                            .into_iter()
-                            .map(|s| display_map.display_point_to_anchor(s.head(), Bias::Left))
-                            .collect();
+                        let (pop_state, new_positions) = if display_map
+                            .buffer_rows_match_display_rows()
+                        {
+                            // Skip the per-selection display round trip; it would
+                            // be the identity here, and with many cursors it is
+                            // the bulk of the edit's cost.
+                            let buffer = display_map.buffer_snapshot();
+                            let selections = editor.selections.all_adjusted(&display_map);
+                            let pop_state = editor
+                                .change_list
+                                .last()
+                                .map(|previous| {
+                                    previous.len() == selections.len()
+                                        && previous.iter().enumerate().all(|(ix, p)| {
+                                            p.to_point(buffer).row == selections[ix].head().row
+                                        })
+                                })
+                                .unwrap_or(false);
+                            let new_positions = selections
+                                .into_iter()
+                                .map(|s| buffer.anchor_before(s.head()))
+                                .collect();
+                            (pop_state, new_positions)
+                        } else {
+                            let selections = editor.selections.all_adjusted_display(&display_map);
+                            let pop_state = editor
+                                .change_list
+                                .last()
+                                .map(|previous| {
+                                    previous.len() == selections.len()
+                                        && previous.iter().enumerate().all(|(ix, p)| {
+                                            p.to_display_point(&display_map).row()
+                                                == selections[ix].head().row()
+                                        })
+                                })
+                                .unwrap_or(false);
+                            let new_positions = selections
+                                .into_iter()
+                                .map(|s| display_map.display_point_to_anchor(s.head(), Bias::Left))
+                                .collect();
+                            (pop_state, new_positions)
+                        };
                         editor
                             .change_list
                             .push_to_change_list(pop_state, new_positions);
