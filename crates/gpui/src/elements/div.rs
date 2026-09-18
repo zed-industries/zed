@@ -3300,18 +3300,17 @@ impl Interactivity {
                 let check_is_hovered_during_prepaint = Rc::new({
                     let pending_mouse_down = pending_mouse_down.clone();
                     let tooltip_owner_id = tooltip_owner_id.clone();
-                    move |window: &mut Window, cx: &mut App| {
+                    move |window: &Window| {
                         !window.last_input_was_keyboard()
                             && pending_mouse_down.borrow().is_none()
-                            && window
-                                .is_topmost_tooltip_owner_during_prepaint(&tooltip_owner_id, cx)
+                            && window.is_topmost_tooltip_owner_during_prepaint(&tooltip_owner_id)
                     }
                 });
                 let check_is_hovered = Rc::new({
-                    move |window: &mut Window, cx: &mut App| {
+                    move |window: &Window| {
                         !window.last_input_was_keyboard()
                             && pending_mouse_down.borrow().is_none()
-                            && window.is_topmost_tooltip_owner(&tooltip_owner_id, cx)
+                            && window.is_topmost_tooltip_owner(&tooltip_owner_id)
                     }
                 });
                 register_tooltip_mouse_handlers(
@@ -3810,8 +3809,8 @@ pub(crate) fn register_tooltip_mouse_handlers(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     tooltip_id: Option<TooltipId>,
     build_tooltip: Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
-    check_is_hovered: Rc<dyn Fn(&mut Window, &mut App) -> bool>,
-    check_is_hovered_during_prepaint: Rc<dyn Fn(&mut Window, &mut App) -> bool>,
+    check_is_hovered: Rc<dyn Fn(&Window) -> bool>,
+    check_is_hovered_during_prepaint: Rc<dyn Fn(&Window) -> bool>,
     long_press_tooltip_active: Rc<Cell<bool>>,
     show_delay: Option<Duration>,
     window: &mut Window,
@@ -3859,9 +3858,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
             }
 
             match event.phase {
-                TouchPhase::Started
-                    if !window.default_prevented() && check_is_hovered(window, cx) =>
-                {
+                TouchPhase::Started if !window.default_prevented() && check_is_hovered(window) => {
                     if show_tooltip(
                         &active_tooltip,
                         &build_tooltip,
@@ -3908,8 +3905,8 @@ pub(crate) fn register_tooltip_mouse_handlers(
 fn handle_tooltip_mouse_move(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     build_tooltip: &Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
-    check_is_hovered: &Rc<dyn Fn(&mut Window, &mut App) -> bool>,
-    check_is_hovered_during_prepaint: &Rc<dyn Fn(&mut Window, &mut App) -> bool>,
+    check_is_hovered: &Rc<dyn Fn(&Window) -> bool>,
+    check_is_hovered_during_prepaint: &Rc<dyn Fn(&Window) -> bool>,
     tooltip_id: Option<TooltipId>,
     current_view: EntityId,
     phase: DispatchPhase,
@@ -3928,7 +3925,7 @@ fn handle_tooltip_mouse_move(
 
     let action = match active_tooltip.borrow().as_ref() {
         None => {
-            let is_hovered = check_is_hovered(window, cx);
+            let is_hovered = check_is_hovered(window);
             if is_hovered && phase.bubble() {
                 Action::ScheduleShow
             } else {
@@ -3936,7 +3933,7 @@ fn handle_tooltip_mouse_move(
             }
         }
         Some(ActiveTooltip::WaitingForShow { .. }) => {
-            let is_hovered = check_is_hovered(window, cx);
+            let is_hovered = check_is_hovered(window);
             if is_hovered {
                 Action::None
             } else {
@@ -3945,7 +3942,7 @@ fn handle_tooltip_mouse_move(
         }
         Some(ActiveTooltip::Visible { is_hoverable, .. }) => {
             if phase.capture()
-                && !check_is_hovered(window, cx)
+                && !check_is_hovered(window)
                 && (!*is_hoverable
                     || !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)))
             {
@@ -3956,7 +3953,7 @@ fn handle_tooltip_mouse_move(
         }
         Some(ActiveTooltip::WaitingForHide { .. }) => {
             if phase.capture()
-                && (check_is_hovered(window, cx)
+                && (check_is_hovered(window)
                     || tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)))
             {
                 Action::CheckVisible
@@ -4008,7 +4005,7 @@ fn handle_tooltip_mouse_move(
 fn show_tooltip(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     build_tooltip: &Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
-    check_is_hovered_during_prepaint: &Rc<dyn Fn(&mut Window, &mut App) -> bool>,
+    check_is_hovered_during_prepaint: &Rc<dyn Fn(&Window) -> bool>,
     long_press_tooltip_active: Option<Rc<Cell<bool>>>,
     window: &mut Window,
     cx: &mut App,
@@ -4055,7 +4052,7 @@ fn show_tooltip(
 fn handle_tooltip_check_visible_and_update(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     tooltip_is_hoverable: bool,
-    check_is_hovered: &Rc<dyn Fn(&mut Window, &mut App) -> bool>,
+    check_is_hovered: &Rc<dyn Fn(&Window) -> bool>,
     tooltip_bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
@@ -4069,7 +4066,7 @@ fn handle_tooltip_check_visible_and_update(
         CancelHide(AnyTooltip),
     }
 
-    let is_hovered = check_is_hovered(window, cx)
+    let is_hovered = check_is_hovered(window)
         || (tooltip_is_hoverable && tooltip_bounds.contains(&window.mouse_position()));
     let action = match active_tooltip.borrow().as_ref() {
         Some(ActiveTooltip::Visible { tooltip, .. }) => {

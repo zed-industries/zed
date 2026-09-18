@@ -1267,20 +1267,20 @@ impl Element for InteractiveText {
                     let check_is_hovered_during_prepaint = Rc::new({
                         let pending_mouse_down = interactive_state.mouse_down_index.clone();
                         let tooltip_owner_id = tooltip_owner_id.clone();
-                        move |window: &mut Window, cx: &mut App| {
+                        move |window: &Window| {
                             !window.last_input_was_keyboard()
                                 && pending_mouse_down.get().is_none()
                                 && window
-                                    .is_topmost_tooltip_owner_during_prepaint(&tooltip_owner_id, cx)
+                                    .is_topmost_tooltip_owner_during_prepaint(&tooltip_owner_id)
                         }
                     });
 
                     let check_is_hovered = Rc::new({
                         let pending_mouse_down = interactive_state.mouse_down_index.clone();
-                        move |window: &mut Window, cx: &mut App| {
+                        move |window: &Window| {
                             !window.last_input_was_keyboard()
                                 && pending_mouse_down.get().is_none()
-                                && window.is_topmost_tooltip_owner(&tooltip_owner_id, cx)
+                                && window.is_topmost_tooltip_owner(&tooltip_owner_id)
                         }
                     });
 

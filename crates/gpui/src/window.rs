@@ -1029,6 +1029,7 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) tooltip_owners: Vec<TooltipOwner>,
+    hovered_tooltip_owner: Option<GlobalElementId>,
     tooltip_owner_candidates: Vec<TooltipOwnerCandidate>,
     tooltip_visibility: Vec<TooltipVisibility>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
@@ -1081,6 +1082,7 @@ impl Frame {
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             tooltip_owners: Vec::new(),
+            hovered_tooltip_owner: None,
             tooltip_owner_candidates: Vec::new(),
             tooltip_visibility: Vec::new(),
             cursor_styles: Vec::new(),
@@ -1106,6 +1108,7 @@ impl Frame {
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.tooltip_owners.clear();
+        self.hovered_tooltip_owner = None;
         self.tooltip_owner_candidates.clear();
         self.tooltip_visibility.clear();
         self.cursor_styles.clear();
@@ -3665,6 +3668,10 @@ impl Window {
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
+        if self.next_frame.tooltip_requests.is_empty() {
+            return None;
+        }
+        self.next_frame.hovered_tooltip_owner = self.topmost_tooltip_owner_during_prepaint(cx);
         let mut visible_tooltip = None;
 
         // Even when a topmost tooltip wins rendering, other active tooltip owners need
@@ -4125,11 +4132,19 @@ impl Window {
         });
     }
 
-    pub(crate) fn is_topmost_tooltip_owner(
-        &mut self,
+    pub(crate) fn is_topmost_tooltip_owner(&self, owner_id: &GlobalElementId) -> bool {
+        self.rendered_frame.hovered_tooltip_owner.as_ref() == Some(owner_id)
+    }
+
+    pub(crate) fn is_topmost_tooltip_owner_during_prepaint(
+        &self,
         owner_id: &GlobalElementId,
-        cx: &mut App,
     ) -> bool {
+        self.invalidator.debug_assert_prepaint();
+        self.next_frame.hovered_tooltip_owner.as_ref() == Some(owner_id)
+    }
+
+    fn topmost_tooltip_owner(&mut self, cx: &mut App) -> Option<GlobalElementId> {
         let hitbox_ids = self.mouse_hit_test.ids.clone();
         for hitbox_id in hitbox_ids
             .iter()
@@ -4138,24 +4153,20 @@ impl Window {
             for index in (0..self.rendered_frame.tooltip_owners.len()).rev() {
                 let Some(owner) = self.rendered_frame.tooltip_owners.get(index) else {
                     log::error!("Unexpectedly absent TooltipOwner");
-                    return false;
+                    return None;
                 };
                 if owner.hitbox_id == *hitbox_id {
                     let owner = owner.clone();
                     if (owner.owns_mouse_position)(self, cx) {
-                        return owner.owner_id == *owner_id;
+                        return Some(owner.owner_id);
                     }
                 }
             }
         }
-        false
+        None
     }
 
-    pub(crate) fn is_topmost_tooltip_owner_during_prepaint(
-        &mut self,
-        owner_id: &GlobalElementId,
-        cx: &mut App,
-    ) -> bool {
+    fn topmost_tooltip_owner_during_prepaint(&mut self, cx: &mut App) -> Option<GlobalElementId> {
         self.invalidator.debug_assert_prepaint();
         let hit_test = self.next_frame.hit_test(self.mouse_position);
         let is_hovered = |hitbox_id: HitboxId| {
@@ -4191,7 +4202,7 @@ impl Window {
             for index in (0..self.next_frame.tooltip_owner_candidates.len()).rev() {
                 let Some(candidate) = self.next_frame.tooltip_owner_candidates.get(index) else {
                     log::error!("Unexpectedly absent TooltipOwnerCandidate");
-                    return false;
+                    return None;
                 };
                 if candidate.owner.hitbox_id == *hitbox_id
                     && candidate.visibility_index.is_none_or(|index| {
@@ -4200,12 +4211,12 @@ impl Window {
                 {
                     let owner = candidate.owner.clone();
                     if (owner.owns_mouse_position)(self, cx) {
-                        return owner.owner_id == *owner_id;
+                        return Some(owner.owner_id);
                     }
                 }
             }
         }
-        false
+        None
     }
 
     /// Invoke the given function with the given content mask after intersecting it
@@ -6004,6 +6015,7 @@ impl Window {
             return;
         }
 
+        self.rendered_frame.hovered_tooltip_owner = self.topmost_tooltip_owner(cx);
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
