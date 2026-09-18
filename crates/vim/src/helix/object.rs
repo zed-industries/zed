@@ -186,6 +186,35 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_select_subword_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let vim = cx.update_editor(|editor, _, _| {
+            editor.addon::<crate::VimAddon>().unwrap().entity.clone()
+        });
+
+        let subword = crate::object::Object::Subword {
+            ignore_punctuation: false,
+        };
+
+        cx.set_state("abc dˇef ghi", Mode::HelixNormal);
+        cx.update(|window, cx| {
+            vim.update(cx, |vim, cx| {
+                vim.select_current_object(subword, false, window, cx)
+            })
+        });
+        cx.assert_state("abc «defˇ» ghi", Mode::HelixNormal);
+
+        cx.set_state("abc dˇef ghi", Mode::HelixNormal);
+        cx.update(|window, cx| {
+            vim.update(cx, |vim, cx| {
+                vim.select_current_object(subword, true, window, cx)
+            })
+        });
+        cx.assert_state("abc «def ˇ»ghi", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
     async fn test_select_any_pair_object(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
