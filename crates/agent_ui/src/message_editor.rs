@@ -2092,7 +2092,7 @@ fn build_chunks_from_creases(
         if crease_range.start.0 > ix {
             chunks.push(text[ix..crease_range.start.0].into());
         }
-        chunks.push(mention_to_content_block(
+        chunks.extend(mention_to_content_blocks(
             &uri,
             mention.as_ref(),
             supports_embedded_context,
@@ -2135,12 +2135,12 @@ fn image_preview_task_for_mention(
     )
 }
 
-fn mention_to_content_block(
+fn mention_to_content_blocks(
     uri: &MentionUri,
     mention: Option<&Mention>,
     supports_embedded_context: bool,
     tracked_buffers: &mut Vec<Entity<Buffer>>,
-) -> acp::ContentBlock {
+) -> Vec<acp::ContentBlock> {
     match mention {
         Some(Mention::Text {
             content,
@@ -2148,20 +2148,29 @@ fn mention_to_content_block(
         }) => {
             tracked_buffers.extend(mention_tracked_buffers.iter().cloned());
             if supports_embedded_context {
-                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                    acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents::new(content.clone(), uri.to_uri().to_string()),
+                vec![acp::ContentBlock::Resource(
+                    acp::EmbeddedResource::new(
+                        acp::EmbeddedResourceResource::TextResourceContents(
+                            acp::TextResourceContents::new(
+                                content.clone(),
+                                uri.to_uri().to_string(),
+                            ),
+                        ),
                     ),
-                ))
+                )]
             } else {
-                acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                vec![acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
                     uri.name(),
                     uri.to_uri().to_string(),
-                ))
+                ))]
             }
         }
-        Some(Mention::Image(mention_image)) => acp::ContentBlock::Image(
-            acp::ImageContent::new(mention_image.data.clone(), mention_image.format.mime_type())
+        Some(Mention::Image(mention_image)) => {
+            let image_block = acp::ContentBlock::Image(
+                acp::ImageContent::new(
+                    mention_image.data.clone(),
+                    mention_image.format.mime_type(),
+                )
                 .uri(match uri {
                     MentionUri::File { .. } | MentionUri::PastedImage { .. } => {
                         Some(uri.to_uri().to_string())
@@ -2171,11 +2180,21 @@ fn mention_to_content_block(
                         None
                     }
                 }),
-        ),
-        _ => acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+            );
+
+            let mut blocks = Vec::with_capacity(2);
+            if let Some(metadata) = &mention_image.metadata {
+                blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+                    metadata.to_string(),
+                )));
+            }
+            blocks.push(image_block);
+            blocks
+        }
+        _ => vec![acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
             uri.name(),
             uri.to_uri().to_string(),
-        )),
+        ))],
     }
 }
 
