@@ -861,11 +861,11 @@ fn update_selection(
                 *marked = visible[range].iter().cloned().collect();
                 *anchor = Some(anchor_id.clone());
             } else {
-                *marked = HashSet::from([target.clone()]);
+                *marked = HashSet::from_iter([target.clone()]);
                 *anchor = Some(target.clone());
             }
         } else {
-            *marked = HashSet::from([target.clone()]);
+            *marked = HashSet::from_iter([target.clone()]);
             *anchor = Some(target.clone());
         }
     } else if toggle {
@@ -874,7 +874,7 @@ fn update_selection(
         }
         *anchor = Some(target.clone());
     } else {
-        *marked = HashSet::from([target.clone()]);
+        *marked = HashSet::from_iter([target.clone()]);
         *anchor = Some(target.clone());
     }
 
