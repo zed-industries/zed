@@ -2188,6 +2188,10 @@ fn mention_to_content_blocks(
 }
 
 fn image_metadata_text(uri: &MentionUri, image: &MentionImage) -> Option<String> {
+    if let Some(metadata) = &image.metadata {
+        return Some(metadata.to_string());
+    }
+
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(image.data.as_bytes())
         .ok()?;
