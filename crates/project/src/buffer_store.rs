@@ -808,6 +808,18 @@ impl LocalBufferStore {
         cx.spawn(async move |_, cx| {
             let mut project_transaction = ProjectTransaction::default();
             for buffer in buffers {
+                // `Buffer::reload` records the file's mtime as the worktree knows it, so the
+                // worktree has to have scanned writes that happened just before the reload was
+                // requested. Otherwise the buffer keeps a stale mtime and is reported as
+                // conflicting with the file once the worktree catches up.
+                let refresh = buffer.update(cx, |buffer, cx| {
+                    let file = File::from_dyn(buffer.file())?;
+                    let worktree = file.worktree.read(cx).as_local()?;
+                    Some(worktree.refresh_entries_for_paths(vec![file.path.clone()]))
+                });
+                if let Some(mut refresh) = refresh {
+                    refresh.next().await;
+                }
                 let transaction = buffer.update(cx, |buffer, cx| buffer.reload(cx)).await?;
                 buffer.update(cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
