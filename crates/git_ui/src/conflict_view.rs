@@ -271,7 +271,7 @@ fn conflicts_updated(
             })
         }
     }
-    let new_block_ids = editor.insert_blocks(blocks, None, cx);
+    let new_block_ids = editor.insert_above_blocks(blocks, None, cx);
 
     let Some(conflict_addon) = editor.addon_mut::<ConflictAddon>() else {
         return;
