@@ -1,4 +1,6 @@
-use gpui::{AnyElement, ScrollHandle};
+use std::rc::Rc;
+
+use gpui::{AnyElement, Bounds, Pixels, ScrollHandle, canvas};
 use smallvec::SmallVec;
 
 use crate::Tab;
@@ -11,6 +13,12 @@ pub struct TabBar {
     children: SmallVec<[AnyElement; 2]>,
     end_children: SmallVec<[AnyElement; 2]>,
     scroll_handle: Option<ScrollHandle>,
+    wrap: bool,
+    /// Whether the wrap-mode actions container paints its chrome; it stays
+    /// laid out (and measured) either way.
+    paint_actions: bool,
+    report_bounds: Option<Rc<dyn Fn(Bounds<Pixels>)>>,
+    report_actions_bounds: Option<Rc<dyn Fn(Bounds<Pixels>)>>,
 }
 
 impl TabBar {
@@ -21,11 +29,35 @@ impl TabBar {
             children: SmallVec::new(),
             end_children: SmallVec::new(),
             scroll_handle: None,
+            wrap: false,
+            paint_actions: true,
+            report_bounds: None,
+            report_actions_bounds: None,
         }
     }
 
     pub fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
         self.scroll_handle = Some(scroll_handle.clone());
+        self
+    }
+
+    pub fn wrap(mut self, wrap: bool) -> Self {
+        self.wrap = wrap;
+        self
+    }
+
+    pub fn report_bounds(mut self, report: Rc<dyn Fn(Bounds<Pixels>)>) -> Self {
+        self.report_bounds = Some(report);
+        self
+    }
+
+    pub fn paint_actions(mut self, paint: bool) -> Self {
+        self.paint_actions = paint;
+        self
+    }
+
+    pub fn report_actions_bounds(mut self, report: Rc<dyn Fn(Bounds<Pixels>)>) -> Self {
+        self.report_actions_bounds = Some(report);
         self
     }
 
@@ -91,13 +123,87 @@ impl ParentElement for TabBar {
 
 impl RenderOnce for TabBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
+        let container_height = Tab::container_height(cx);
+
+        if self.wrap {
+            return v_flex()
+                .id(self.id)
+                .group("tab_bar")
+                .relative()
+                .overflow_hidden()
+                .flex_none()
+                .w_full()
+                .bg(cx.theme().colors().tab_bar_background)
+                .child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .size_full()
+                        .border_b_1()
+                        .border_color(border_color),
+                )
+                .when_some(self.report_bounds, |this, report| {
+                    this.child(
+                        canvas(
+                            move |bounds: Bounds<Pixels>, _: &mut Window, _: &mut App| {
+                                report(bounds)
+                            },
+                            |_: Bounds<Pixels>, _: (), _: &mut Window, _: &mut App| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                    )
+                })
+                .children(self.children)
+                .when(!self.end_children.is_empty(), |this| {
+                    this.child(
+                        h_flex()
+                            .id("wrap_bar_actions")
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .h(container_height)
+                            .gap(DynamicSpacing::Base04.rems(cx))
+                            .px(DynamicSpacing::Base06.rems(cx))
+                            .when(self.paint_actions, |this| {
+                                this.border_l_1()
+                                    .border_b_1()
+                                    .bg(cx.theme().colors().tab_bar_background)
+                                    .border_color(border_color)
+                            })
+                            .children(self.end_children)
+                            .when_some(self.report_actions_bounds, |this, report| {
+                                this.child(
+                                    canvas(
+                                        move |bounds: Bounds<Pixels>,
+                                              _: &mut Window,
+                                              _: &mut App| {
+                                            report(bounds)
+                                        },
+                                        |_: Bounds<Pixels>, _: (), _: &mut Window, _: &mut App| {},
+                                    )
+                                    .absolute()
+                                    .top_0()
+                                    .left_0()
+                                    .size_full(),
+                                )
+                            }),
+                    )
+                })
+                .into_any_element();
+        }
+
         div()
             .id(self.id)
             .group("tab_bar")
             .flex()
             .flex_none()
             .w_full()
-            .h(Tab::container_height(cx))
+            .h(container_height)
             .bg(cx.theme().colors().tab_bar_background)
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
@@ -107,7 +213,7 @@ impl RenderOnce for TabBar {
                         .px(DynamicSpacing::Base06.rems(cx))
                         .border_b_1()
                         .border_r_1()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(border_color)
                         .children(self.start_children),
                 )
             })
@@ -124,7 +230,7 @@ impl RenderOnce for TabBar {
                             .left_0()
                             .size_full()
                             .border_b_1()
-                            .border_color(cx.theme().colors().border),
+                            .border_color(border_color),
                     )
                     .child(
                         h_flex()
@@ -143,12 +249,13 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
-                        .border_color(cx.theme().colors().border)
+                        .border_color(border_color)
                         .border_b_1()
                         .border_l_1()
                         .children(self.end_children),
                 )
             })
+            .into_any_element()
     }
 }
 

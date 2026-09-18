@@ -135,95 +135,114 @@ impl TerminalPanel {
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
                     .is_some_and(|view| view.read(cx).rename_editor_is_focused(window, cx));
-                if !pane.has_focus(window, cx)
-                    && !pane.context_menu_focused(window, cx)
-                    && !has_focused_rename_editor
-                {
-                    return (None, None);
-                }
-                let focus_handle = pane.focus_handle(cx);
-                let right_children = h_flex()
-                    .gap(DynamicSpacing::Base02.rems(cx))
-                    .child(
-                        PopoverMenu::new("terminal-tab-bar-popover-menu")
-                            .trigger_with_tooltip(
-                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
-                                Tooltip::text("New…"),
-                            )
-                            .anchor(Anchor::TopRight)
-                            .with_handle(pane.new_item_context_menu_handle.clone())
-                            .menu(move |window, cx| {
-                                let focus_handle = focus_handle.clone();
-                                let menu = ContextMenu::build(window, cx, |menu, _, _| {
-                                    menu.context(focus_handle.clone())
-                                        .action(
-                                            "New Terminal",
-                                            workspace::NewTerminal::default().boxed_clone(),
-                                        )
-                                        // We want the focus to go back to terminal panel once task modal is dismissed,
-                                        // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                        // context menu will be gone the moment we spawn the modal.
-                                        .action(
-                                            "Spawn Task",
-                                            zed_actions::Spawn::modal().boxed_clone(),
-                                        )
-                                });
-
-                                Some(menu)
-                            }),
+                let pane_visible =
+                    pane.has_focus(window, cx) || pane.context_menu_focused(window, cx);
+                let (left, right) = if pane_visible || has_focused_rename_editor {
+                    Self::build_terminal_tab_bar_buttons(pane, assistant_enabled, split_context, cx)
+                } else if workspace::TabBarSettings::get_global(cx).wrap_tabs {
+                    let (left, right) = Self::build_terminal_tab_bar_buttons(
+                        pane,
+                        assistant_enabled,
+                        split_context,
+                        cx,
+                    );
+                    (
+                        left,
+                        right.map(|children| {
+                            gpui::div().invisible().child(children).into_any_element()
+                        }),
                     )
-                    .when(assistant_enabled, |this| {
-                        this.when_some(split_context.clone(), |this, focus_handle| {
-                            this.child(InlineAssistTabBarButton { focus_handle })
-                        })
-                    })
-                    .child(
-                        PopoverMenu::new("terminal-pane-tab-bar-split")
-                            .trigger_with_tooltip(
-                                IconButton::new("terminal-pane-split", IconName::Split)
-                                    .icon_size(IconSize::Small),
-                                Tooltip::text("Split Pane"),
-                            )
-                            .anchor(Anchor::TopRight)
-                            .with_handle(pane.split_item_context_menu_handle.clone())
-                            .menu({
-                                move |window, cx| {
-                                    ContextMenu::build(window, cx, |menu, _, _| {
-                                        menu.when_some(
-                                            split_context.clone(),
-                                            |menu, split_context| menu.context(split_context),
-                                        )
-                                        .action("Split Right", SplitRight::default().boxed_clone())
-                                        .action("Split Left", SplitLeft::default().boxed_clone())
-                                        .action("Split Up", SplitUp::default().boxed_clone())
-                                        .action("Split Down", SplitDown::default().boxed_clone())
-                                    })
-                                    .into()
-                                }
-                            }),
-                    )
-                    .child({
-                        let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", IconName::Maximize)
-                            .icon_size(IconSize::Small)
-                            .toggle_state(zoomed)
-                            .selected_icon(IconName::Minimize)
-                            .on_click(cx.listener(|pane, _, window, cx| {
-                                pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
-                            }))
-                            .tooltip(move |_window, cx| {
-                                Tooltip::for_action(
-                                    if zoomed { "Zoom Out" } else { "Zoom In" },
-                                    &ToggleZoom,
-                                    cx,
-                                )
-                            })
-                    })
-                    .into_any_element()
-                    .into();
-                (None, right_children)
+                } else {
+                    (None, None)
+                };
+                (left, right)
             });
         });
+    }
+
+    fn build_terminal_tab_bar_buttons(
+        pane: &mut Pane,
+        assistant_enabled: bool,
+        split_context: Option<gpui::FocusHandle>,
+        cx: &mut Context<Pane>,
+    ) -> (Option<AnyElement>, Option<AnyElement>) {
+        let focus_handle = pane.focus_handle(cx);
+        let right_children = h_flex()
+            .gap(DynamicSpacing::Base02.rems(cx))
+            .child(
+                PopoverMenu::new("terminal-tab-bar-popover-menu")
+                    .trigger_with_tooltip(
+                        IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                        Tooltip::text("New…"),
+                    )
+                    .anchor(Anchor::TopRight)
+                    .with_handle(pane.new_item_context_menu_handle.clone())
+                    .menu(move |window, cx| {
+                        let focus_handle = focus_handle.clone();
+                        let menu = ContextMenu::build(window, cx, |menu, _, _| {
+                            menu.context(focus_handle.clone())
+                                .action(
+                                    "New Terminal",
+                                    workspace::NewTerminal::default().boxed_clone(),
+                                )
+                                // We want the focus to go back to terminal panel once task modal is dismissed,
+                                // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                // context menu will be gone the moment we spawn the modal.
+                                .action("Spawn Task", zed_actions::Spawn::modal().boxed_clone())
+                        });
+
+                        Some(menu)
+                    }),
+            )
+            .when(assistant_enabled, |this| {
+                this.when_some(split_context.clone(), |this, focus_handle| {
+                    this.child(InlineAssistTabBarButton { focus_handle })
+                })
+            })
+            .child(
+                PopoverMenu::new("terminal-pane-tab-bar-split")
+                    .trigger_with_tooltip(
+                        IconButton::new("terminal-pane-split", IconName::Split)
+                            .icon_size(IconSize::Small),
+                        Tooltip::text("Split Pane"),
+                    )
+                    .anchor(Anchor::TopRight)
+                    .with_handle(pane.split_item_context_menu_handle.clone())
+                    .menu({
+                        move |window, cx| {
+                            ContextMenu::build(window, cx, |menu, _, _| {
+                                menu.when_some(split_context.clone(), |menu, split_context| {
+                                    menu.context(split_context)
+                                })
+                                .action("Split Right", SplitRight::default().boxed_clone())
+                                .action("Split Left", SplitLeft::default().boxed_clone())
+                                .action("Split Up", SplitUp::default().boxed_clone())
+                                .action("Split Down", SplitDown::default().boxed_clone())
+                            })
+                            .into()
+                        }
+                    }),
+            )
+            .child({
+                let zoomed = pane.is_zoomed();
+                IconButton::new("toggle_zoom", IconName::Maximize)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(zoomed)
+                    .selected_icon(IconName::Minimize)
+                    .on_click(cx.listener(|pane, _, window, cx| {
+                        pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
+                    }))
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action(
+                            if zoomed { "Zoom Out" } else { "Zoom In" },
+                            &ToggleZoom,
+                            cx,
+                        )
+                    })
+            })
+            .into_any_element()
+            .into();
+        (None, right_children)
     }
 
     fn serialization_key(workspace: &Workspace) -> Option<String> {
