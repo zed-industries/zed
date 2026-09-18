@@ -1559,6 +1559,17 @@ impl DisplaySnapshot {
         self.fold_snapshot().has_folds() || self.block_snapshot.has_replacement_blocks()
     }
 
+    /// Whether two buffer points are on the same display row exactly when they
+    /// are on the same buffer row, and buffer points round-trip through display
+    /// points unchanged. This holds when nothing folds, wraps, or inserts text
+    /// into buffer rows.
+    #[inline(always)]
+    pub fn buffer_rows_match_display_rows(&self) -> bool {
+        !self.has_collapsed_content()
+            && !self.inlay_snapshot().has_inlays()
+            && !self.wrap_snapshot().has_wraps()
+    }
+
     pub fn inlay_snapshot(&self) -> &InlaySnapshot {
         &self
             .block_snapshot
