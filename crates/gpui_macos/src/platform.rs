@@ -590,6 +590,13 @@ impl Platform for MacPlatform {
             .unwrap_or_else(|| std::env::current_exe().unwrap());
 
         // Wait until this process has exited and then re-open this path.
+        //
+        // `-n` is required: `kill -0` observes the kernel process table, which drops the
+        // old process immediately, while `open` consults the LaunchServices registry,
+        // which is updated asynchronously and can still list us as running. Without
+        // `-n`, `open` treats the launch as a re-activation of that stale entry, sends a
+        // reopen event to a process that no longer exists, and launches nothing at all --
+        // on that path there is also no new process for `--args` to reach.
         let script = r#"
             while kill -0 $0 2> /dev/null; do
                 sleep 0.1
@@ -597,9 +604,9 @@ impl Platform for MacPlatform {
             app_path="$1"
             shift
             if (($# > 0)); then
-                open "$app_path" --args "$@"
+                open -n "$app_path" --args "$@"
             else
-                open "$app_path"
+                open -n "$app_path"
             fi
         "#;
 
