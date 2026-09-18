@@ -10402,8 +10402,6 @@ impl Repository {
         let repository_state = self.repository_state.clone();
         let blob_read_limiter = self.blob_read_limiter.clone();
         cx.background_spawn(async move {
-            // Held for the whole read and dropped on cancellation, so no caller can start
-            // more than the limit's worth of reads at once.
             let _permit = blob_read_limiter.acquire_arc().await;
             match repository_state.await.map_err(|err| anyhow::anyhow!(err))? {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
@@ -11973,10 +11971,13 @@ mod tests {
         cx.run_until_parked();
         assert!(!gate.is_waiting(blocked_oid));
 
-        // Cancelling one holder frees its permit; the blocked read then proceeds.
+        let cancelled_oid = oids[0];
         drop(holding.remove(0));
         cx.run_until_parked();
         assert!(gate.is_waiting(blocked_oid));
+        assert!(!gate.is_waiting(cancelled_oid));
+        assert_eq!(gate.waiting(), MAX_CONCURRENT_BLOB_READS);
+        assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_BLOB_READS);
 
         gate.open();
         cx.run_until_parked();

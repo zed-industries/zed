@@ -122,20 +122,36 @@ pub struct FakeBlobReadGate(Arc<Mutex<BlobReadGateState>>);
 struct BlobReadGateState {
     open: bool,
     peak: usize,
-    waiters: Vec<(Oid, oneshot::Sender<()>)>,
+    next_id: u64,
+    waiters: Vec<Waiter>,
+}
+
+#[derive(Debug)]
+struct Waiter {
+    id: u64,
+    oid: Oid,
+    sender: oneshot::Sender<()>,
 }
 
 impl FakeBlobReadGate {
     async fn wait(&self, oid: Oid) {
-        let receiver = {
+        let (_guard, receiver) = {
             let mut inner = self.0.lock();
             if inner.open {
                 return;
             }
+            let id = inner.next_id;
+            inner.next_id += 1;
             let (sender, receiver) = oneshot::channel();
-            inner.waiters.push((oid, sender));
+            inner.waiters.push(Waiter { id, oid, sender });
             inner.peak = inner.peak.max(inner.waiters.len());
-            receiver
+            (
+                WaiterGuard {
+                    state: self.0.clone(),
+                    id,
+                },
+                receiver,
+            )
         };
         receiver.await.ok();
     }
@@ -149,25 +165,17 @@ impl FakeBlobReadGate {
     }
 
     pub fn is_waiting(&self, oid: Oid) -> bool {
-        self.0
-            .lock()
-            .waiters
-            .iter()
-            .any(|(waiting, _)| *waiting == oid)
+        self.0.lock().waiters.iter().any(|waiter| waiter.oid == oid)
     }
 
     pub fn release(&self, oid: Oid) -> bool {
         let mut inner = self.0.lock();
-        let Some(position) = inner
-            .waiters
-            .iter()
-            .position(|(waiting, _)| *waiting == oid)
-        else {
+        let Some(position) = inner.waiters.iter().position(|waiter| waiter.oid == oid) else {
             return false;
         };
-        let (_, sender) = inner.waiters.remove(position);
+        let waiter = inner.waiters.remove(position);
         drop(inner);
-        sender.send(()).ok();
+        waiter.sender.send(()).ok();
         true
     }
 
@@ -177,9 +185,23 @@ impl FakeBlobReadGate {
             inner.open = true;
             std::mem::take(&mut inner.waiters)
         };
-        for (_, sender) in waiters {
-            sender.send(()).ok();
+        for waiter in waiters {
+            waiter.sender.send(()).ok();
         }
+    }
+}
+
+struct WaiterGuard {
+    state: Arc<Mutex<BlobReadGateState>>,
+    id: u64,
+}
+
+impl Drop for WaiterGuard {
+    fn drop(&mut self) {
+        self.state
+            .lock()
+            .waiters
+            .retain(|waiter| waiter.id != self.id);
     }
 }
 

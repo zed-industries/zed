@@ -1665,12 +1665,10 @@ mod tests {
 
         assert!(shown(cx).is_empty());
 
-        // Release only the first file's read: its excerpt appears while the rest stay blocked.
         assert!(gate.release(oids[0]));
         cx.run_until_parked();
         assert_eq!(shown(cx), vec!["new-00".to_owned()]);
 
-        // Let the rest through: all excerpts appear, ordered by path, not by finish order.
         gate.open();
         cx.run_until_parked();
         let expected = (0..FILE_COUNT)
