@@ -2366,7 +2366,7 @@ Inherited patterns are inserted at `"..."`, and duplicates keep their first occu
 ## File Scan Inclusions
 
 - Setting: `file_scan_inclusions`
-- Description: Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes precedence over these inclusions.
+- Description: Include files matching these glob patterns when scanning, even if ignored by Git. Note that broad patterns can slow file scanning. `file_scan_exclusions` takes precedence.
 - Default:
 
 ```json [settings]
@@ -2375,17 +2375,15 @@ Inherited patterns are inserted at `"..."`, and duplicates keep their first occu
 }
 ```
 
-Use `"..."` to extend the inherited list instead of replacing it. In your user settings, it expands to Zed’s defaults. In a project’s `.zed/settings.json`, it expands to the resolved list from your user settings, including any defaults you kept.
-
-For example, add this to your settings.json to include generated files without repeating inherited patterns:
+Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
-  "file_scan_inclusions": ["...", "generated/**"]
+  "file_scan_inclusions": ["**/build/**", "..."]
 }
 ```
 
-With the default user settings, this keeps `.env*` and adds `generated/**`. Omit `"..."` to replace the inherited list, or use `[]` to clear it. Duplicate patterns keep their first occurrence, even if `"..."` appears more than once. `file_scan_exclusions` still takes precedence.
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## File Scan Depth
 
