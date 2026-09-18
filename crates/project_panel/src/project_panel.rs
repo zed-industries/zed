@@ -140,6 +140,10 @@ struct State {
     temporarily_unfolded_pending_state: Option<TemporaryUnfoldedPendingState>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+    /// Nesting parents the `expand` default has already been applied to, as
+    /// `(worktree, entry)` pairs. Parents the user expanded or collapsed
+    /// afterwards are left alone; only newly seen parents follow the setting.
+    nesting_seen_parents: HashSet<(WorktreeId, ProjectEntryId)>,
 }
 
 impl State {
@@ -160,6 +164,7 @@ impl State {
             temporarily_unfolded_pending_state: None,
             unfolded_dir_ids: old.unfolded_dir_ids.clone(),
             expanded_dir_ids: old.expanded_dir_ids.clone(),
+            nesting_seen_parents: old.nesting_seen_parents.clone(),
         }
     }
 }
@@ -183,6 +188,7 @@ pub struct ProjectPanel {
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakEntity<Workspace>,
     file_nesting_patterns: Option<Arc<FileNestingPatterns>>,
+    file_nesting_expand: bool,
     diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
     diagnostic_counts: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticCount>,
     diagnostic_summary_update: Task<()>,
@@ -883,8 +889,31 @@ impl ProjectPanel {
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let new_file_nesting_settings = FileNestingSettings::get_global(cx).clone();
                 if file_nesting_settings != new_file_nesting_settings {
+                    if file_nesting_settings.expand != new_file_nesting_settings.expand {
+                        // The default changed: re-apply it to every known
+                        // nesting parent. Parents toggled afterwards are
+                        // preserved until the setting changes again.
+                        let expand = new_file_nesting_settings.expand;
+                        for visible in &this.state.visible_entries {
+                            let Some(expanded) =
+                                this.state.expanded_dir_ids.get_mut(&visible.worktree_id)
+                            else {
+                                continue;
+                            };
+                            for parent_id in &visible.nesting.parents {
+                                if expand {
+                                    if let Err(ix) = expanded.binary_search(parent_id) {
+                                        expanded.insert(ix, *parent_id);
+                                    }
+                                } else if let Ok(ix) = expanded.binary_search(parent_id) {
+                                    expanded.remove(ix);
+                                }
+                            }
+                        }
+                    }
                     file_nesting_settings = new_file_nesting_settings;
                     this.file_nesting_patterns = build_file_nesting_patterns(cx);
+                    this.file_nesting_expand = FileNestingSettings::get_global(cx).expand;
                     this.update_visible_entries(None, false, false, window, cx);
                     cx.notify();
                 }
@@ -933,6 +962,7 @@ impl ProjectPanel {
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
                 file_nesting_patterns: build_file_nesting_patterns(cx),
+                file_nesting_expand: FileNestingSettings::get_global(cx).expand,
                 diagnostics: Default::default(),
                 diagnostic_counts: Default::default(),
                 diagnostic_summary_update: Task::ready(()),
@@ -951,6 +981,7 @@ impl ProjectPanel {
                     ancestors: Default::default(),
                     expanded_dir_ids: Default::default(),
                     unfolded_dir_ids: Default::default(),
+                    nesting_seen_parents: Default::default(),
                 },
                 update_visible_entries_task: Default::default(),
                 undo_manager: UndoManager::new(
@@ -1769,15 +1800,15 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         let project = self.project.read(cx);
-        let Some((worktree, expanded_dir_ids)) = project
-            .worktree_for_id(worktree_id, cx)
-            .zip(self.state.expanded_dir_ids.get_mut(&worktree_id))
-        else {
+        let Some(worktree) = project.worktree_for_id(worktree_id, cx) else {
             return;
         };
-
         let worktree = worktree.read(cx);
         let Some(entry) = worktree.entry_for_id(entry_id) else {
+            return;
+        };
+        let nested_parents = self.nesting_parents_under_entry(worktree_id, entry_id, cx);
+        let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) else {
             return;
         };
         let include_ignored_dirs = !entry.is_ignored;
@@ -1804,6 +1835,11 @@ impl ProjectPanel {
                     expanded_dir_ids.insert(ix, child.id);
                 }
                 self.state.unfolded_dir_ids.insert(child.id);
+            }
+        }
+        for parent_id in nested_parents {
+            if let Err(ix) = expanded_dir_ids.binary_search(&parent_id) {
+                expanded_dir_ids.insert(ix, parent_id);
             }
         }
     }
@@ -1891,6 +1927,27 @@ impl ProjectPanel {
                         }
                     }
                 }
+
+                // A nested file stays hidden unless its nesting parent expands
+                // too. Only this one file is resolved, so this stays cheap.
+                if let Some(patterns) = &self.file_nesting_patterns
+                    && let Some(entry) = worktree.entry_for_id(entry_id)
+                    && entry.is_file()
+                    && let Some(dir_path) = entry.path.parent()
+                {
+                    let settings = ProjectPanelSettings::get_global(cx);
+                    if let Some(parent_id) = dir_nesting_parent_of(
+                        patterns,
+                        &worktree.snapshot(),
+                        dir_path,
+                        entry_id,
+                        settings.hide_gitignore,
+                        settings.hide_hidden,
+                    ) && let Err(ix) = expanded_dir_ids.binary_search(&parent_id)
+                    {
+                        expanded_dir_ids.insert(ix, parent_id);
+                    }
+                }
             }
         });
     }
@@ -1901,6 +1958,9 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         cx: &mut Context<Self>,
     ) {
+        // Nesting parents at or under the entry collapse too. The last
+        // computed mapping is reused so nothing is recomputed here.
+        let nested_parents = self.nesting_parents_under_entry(worktree_id, entry_id, cx);
         self.project.update(cx, |project, cx| {
             if let Some((worktree, expanded_dir_ids)) = project
                 .worktree_for_id(worktree_id, cx)
@@ -1925,8 +1985,54 @@ impl ProjectPanel {
                         }
                     }
                 }
+                for parent_id in &nested_parents {
+                    if let Ok(ix) = expanded_dir_ids.binary_search(parent_id) {
+                        expanded_dir_ids.remove(ix);
+                    }
+                }
             }
         });
+    }
+
+    /// Nesting parents from the last computed visible entries at or under the
+    /// given entry's path. Used by expand/collapse-all so they stay consistent
+    /// with nesting without recomputing mappings on the UI thread.
+    fn nesting_parents_under_entry(
+        &self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &App,
+    ) -> Vec<ProjectEntryId> {
+        let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) else {
+            return Vec::new();
+        };
+        let worktree = worktree.read(cx);
+        let Some(entry) = worktree.entry_for_id(entry_id) else {
+            return Vec::new();
+        };
+        let root_path = entry.path.clone();
+        let Some(visible) = self
+            .state
+            .visible_entries
+            .iter()
+            .find(|visible| visible.worktree_id == worktree_id)
+        else {
+            return Vec::new();
+        };
+        // Look paths up in the snapshot: collapsed parents are absent from
+        // the visible entries, but the nesting map still covers them.
+        visible
+            .nesting
+            .parents
+            .iter()
+            .filter_map(|parent_id| {
+                let parent = worktree.entry_for_id(*parent_id)?;
+                parent
+                    .path
+                    .starts_with(root_path.as_ref())
+                    .then_some(*parent_id)
+            })
+            .collect()
     }
 
     fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
@@ -4610,6 +4716,7 @@ impl ProjectPanel {
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
         let file_nesting_patterns = self.file_nesting_patterns.clone();
+        let file_nesting_expand = self.file_nesting_expand;
 
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
@@ -4636,7 +4743,57 @@ impl ProjectPanel {
                             GitTraversal::new(&repo_snapshots, worktree_snapshot.entries(true, 0));
                         let mut auto_folded_ancestors = vec![];
                         let mut nesting = FileNesting::default();
-                        let mut nesting_computed_dirs = HashSet::<Arc<RelPath>>::new();
+                        if let Some(patterns) = &file_nesting_patterns {
+                            // Compute nesting for every directory up front: the
+                            // traversal below skips collapsed subtrees, but the
+                            // nesting map must still cover them so that
+                            // collapse/expand-all, reveal, and depth computation
+                            // keep working while collapsed.
+                            let mut nested_dirs = HashSet::<Arc<RelPath>>::default();
+                            for snapshot_entry in worktree_snapshot.entries(true, 0) {
+                                if snapshot_entry.is_file()
+                                    && let Some(dir_path) = snapshot_entry.path.parent()
+                                {
+                                    nested_dirs.insert(dir_path.into());
+                                }
+                            }
+                            for dir_path in &nested_dirs {
+                                for (child_id, parent_id) in dir_nesting_pairs(
+                                    patterns,
+                                    &worktree_snapshot,
+                                    dir_path,
+                                    hide_gitignore,
+                                    hide_hidden,
+                                ) {
+                                    nesting.child_to_parent.insert(child_id, parent_id);
+                                    nesting.parents.insert(parent_id);
+                                }
+                            }
+                            // Apply the `expand` default to newly seen parents
+                            // before entries are filtered below, so it takes
+                            // effect in this same update.
+                            let expanded = new_state
+                                .expanded_dir_ids
+                                .entry(worktree_id)
+                                .or_insert_with(|| {
+                                    // The first time a worktree's root entry becomes
+                                    // available, mark that root entry as expanded.
+                                    worktree_snapshot
+                                        .root_entry()
+                                        .map(|entry| vec![entry.id])
+                                        .unwrap_or_default()
+                                });
+                            for parent_id in &nesting.parents {
+                                if new_state
+                                    .nesting_seen_parents
+                                    .insert((worktree_id, *parent_id))
+                                    && file_nesting_expand
+                                    && let Err(ix) = expanded.binary_search(parent_id)
+                                {
+                                    expanded.insert(ix, *parent_id);
+                                }
+                            }
+                        }
                         let worktree_abs_path = worktree_snapshot.abs_path();
                         while let Some(entry) = entry_iter.entry() {
                             if hide_root && Some(entry.entry) == worktree_snapshot.root_entry() {
@@ -4708,23 +4865,6 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if let Some(patterns) = &file_nesting_patterns
-                                && entry.is_file()
-                                && let Some(dir_path) = entry.path.parent()
-                                && !nesting_computed_dirs.contains(dir_path)
-                            {
-                                for (child_id, parent_id) in dir_nesting_pairs(
-                                    patterns,
-                                    &worktree_snapshot,
-                                    dir_path,
-                                    hide_gitignore,
-                                    hide_hidden,
-                                ) {
-                                    nesting.child_to_parent.insert(child_id, parent_id);
-                                    nesting.parents.insert(parent_id);
-                                }
-                                nesting_computed_dirs.insert(dir_path.into());
-                            }
                             if (!hide_gitignore || !entry.is_ignored)
                                 && (!hide_hidden || !entry.is_hidden)
                             {
@@ -4874,6 +5014,19 @@ impl ProjectPanel {
                             nesting,
                         })
                     }
+                    // Drop remembered parents that no longer exist so the
+                    // `expand` default applies again if they come back.
+                    {
+                        let mut current: HashSet<(WorktreeId, ProjectEntryId)> = HashSet::default();
+                        for visible in &new_state.visible_entries {
+                            for parent_id in &visible.nesting.parents {
+                                current.insert((visible.worktree_id, *parent_id));
+                            }
+                        }
+                        new_state
+                            .nesting_seen_parents
+                            .retain(|key| current.contains(key));
+                    }
                     if let Some((project_entry_id, worktree_id, _)) = max_width_item {
                         let mut visited_worktrees_length = 0;
                         let index = new_state
@@ -4956,24 +5109,24 @@ impl ProjectPanel {
                 let worktree = worktree.read(cx);
 
                 if let Some(mut entry) = worktree.entry_for_id(entry_id) {
+                    // Only the parent of this one file is resolved, using the
+                    // current snapshot. Mapping the whole directory here would
+                    // block the UI thread in large directories; that full
+                    // computation already happens on a background thread in
+                    // `update_visible_entries`.
                     if let Some(patterns) = &self.file_nesting_patterns
                         && entry.is_file()
                         && let Some(dir_path) = entry.path.parent()
                     {
                         let settings = ProjectPanelSettings::get_global(cx);
-                        let nesting_parent = dir_nesting_pairs(
+                        if let Some(parent_id) = dir_nesting_parent_of(
                             patterns,
                             &worktree.snapshot(),
                             dir_path,
+                            entry_id,
                             settings.hide_gitignore,
                             settings.hide_hidden,
-                        )
-                        .into_iter()
-                        .find_map(|(child_id, parent_id)| {
-                            (child_id == entry_id).then_some(parent_id)
-                        });
-                        if let Some(parent_id) = nesting_parent
-                            && let Err(ix) = expanded_dir_ids.binary_search(&parent_id)
+                        ) && let Err(ix) = expanded_dir_ids.binary_search(&parent_id)
                         {
                             expanded_dir_ids.insert(ix, parent_id);
                         }
@@ -8316,6 +8469,36 @@ fn build_file_nesting_patterns(cx: &App) -> Option<Arc<FileNestingPatterns>> {
     }
     let patterns = FileNestingPatterns::new(&settings.patterns);
     (!patterns.is_empty()).then(|| Arc::new(patterns))
+}
+
+/// Finds the nesting parent of one file within its directory, resolving
+/// transitively to the root ancestor. Only the file's ancestors are explored,
+/// so this stays cheap enough for the UI thread (unlike [`dir_nesting_pairs`],
+/// which maps the whole directory on a background thread).
+fn dir_nesting_parent_of(
+    patterns: &FileNestingPatterns,
+    snapshot: &WorktreeSnapshot,
+    dir_path: &RelPath,
+    entry_id: ProjectEntryId,
+    hide_gitignore: bool,
+    hide_hidden: bool,
+) -> Option<ProjectEntryId> {
+    let files: Vec<(ProjectEntryId, &str)> = snapshot
+        .child_entries(dir_path)
+        .filter(|entry| {
+            entry.is_file()
+                && (!hide_gitignore || !entry.is_ignored)
+                && (!hide_hidden || !entry.is_hidden)
+        })
+        .filter_map(|entry| Some((entry.id, entry.path.file_name()?)))
+        .collect();
+    let names: Vec<&str> = files.iter().map(|(_, name)| *name).collect();
+    let file_index = files.iter().position(|(id, _)| *id == entry_id)?;
+    let dirname = dir_path
+        .file_name()
+        .unwrap_or_else(|| snapshot.root_name_str());
+    let parent_index = patterns.nesting_parent_of(&names, file_index, dirname)?;
+    Some(files.get(parent_index)?.0)
 }
 
 /// Computes the file nesting assignment among the files of one directory,

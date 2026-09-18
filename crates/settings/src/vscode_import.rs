@@ -893,11 +893,16 @@ impl VsCodeSettings {
             git_status_indicator: None,
             file_nesting: {
                 let enabled = self.read_bool("explorer.fileNesting.enabled");
+                let expand = self.read_bool("explorer.fileNesting.expand");
                 let patterns = self
                     .read_value("explorer.fileNesting.patterns")
                     .and_then(|value| serde_json::from_value(value.clone()).ok());
-                if enabled.is_some() || patterns.is_some() {
-                    Some(FileNestingSettingsContent { enabled, patterns })
+                if enabled.is_some() || expand.is_some() || patterns.is_some() {
+                    Some(FileNestingSettingsContent {
+                        enabled,
+                        expand,
+                        patterns,
+                    })
                 } else {
                     None
                 }

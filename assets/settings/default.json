@@ -983,6 +983,10 @@
       // Whether to nest related files under an expandable parent file
       // in the project panel, according to `patterns`.
       "enabled": false,
+      // Whether nested files are expanded by default. Applies when a nesting
+      // parent is first seen; collapsing or expanding it afterwards is
+      // preserved.
+      "expand": true,
       // The map of file patterns used to nest files.
       // The key is a parent file pattern that can contain one `*` wildcard.
       // The value is a comma-separated list of child file patterns, where

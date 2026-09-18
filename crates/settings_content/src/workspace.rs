@@ -925,6 +925,12 @@ pub struct FileNestingSettingsContent {
     ///
     /// Default: false
     pub enabled: Option<bool>,
+    /// Whether nested files are expanded by default. Applies when a nesting
+    /// parent is first seen; collapsing or expanding it afterwards is
+    /// preserved.
+    ///
+    /// Default: true
+    pub expand: Option<bool>,
     /// The map of file patterns used to nest files.
     /// The key is a parent file pattern that can contain one `*` wildcard.
     /// The value is a comma-separated list of child file patterns, where

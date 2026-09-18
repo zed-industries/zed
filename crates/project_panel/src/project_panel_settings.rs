@@ -46,6 +46,7 @@ pub struct ProjectPanelSettings {
 #[derive(Clone, Debug, Deserialize, PartialEq, RegisterSetting)]
 pub struct FileNestingSettings {
     pub enabled: bool,
+    pub expand: bool,
     pub patterns: HashMap<String, String>,
 }
 
@@ -54,6 +55,7 @@ impl Settings for FileNestingSettings {
         let file_nesting = content.project_panel.clone().unwrap().file_nesting.unwrap();
         Self {
             enabled: file_nesting.enabled.unwrap(),
+            expand: file_nesting.expand.unwrap(),
             patterns: file_nesting.patterns.unwrap(),
         }
     }
