@@ -34,7 +34,7 @@ use font_kit::{
     sources::mem::MemSource,
 };
 use gpui::{
-    Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
+    Bounds, DevicePixels, Edges, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
     FontStyle, FontWeight, GlyphId, Hsla, LineLayout, Pixels, PlatformTextSystem,
     RenderGlyphParams, Result, Rgba, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString,
     Size, TextRenderingMode, point, px, size, swap_rgba_pa_to_bgra,
@@ -429,8 +429,21 @@ impl MacTextSystemState {
             font_kit::canvas::RasterizationOptions::GrayscaleAa,
         )?);
 
-        // Expand the bounds by 1 pixel on each side to give CG room for anti-aliasing.
-        Ok(bounds.dilate(DevicePixels(1)))
+        // font-kit scales typographic bounds from the base font, while CoreGraphics renders a
+        // size-specific font whose ink can extend farther left. Scale that margin in device space,
+        // capped to limit extra glyph-atlas area.
+        let left_padding = DevicePixels(
+            (params.font_size.as_f32() * 0.03 * params.scale_factor)
+                .ceil()
+                .clamp(1., 5.) as i32,
+        );
+        // One device pixel accommodates antialiasing and glyph dilation on the other sides.
+        Ok(bounds.extend(Edges {
+            top: DevicePixels(1),
+            right: DevicePixels(1),
+            bottom: DevicePixels(1),
+            left: left_padding,
+        }))
     }
 
     fn rasterize_glyph(
@@ -767,7 +780,200 @@ mod lenient_font_attributes {
 #[cfg(test)]
 mod tests {
     use crate::MacTextSystem;
-    use gpui::{FontRun, GlyphId, PlatformTextSystem, font, px};
+    use core_foundation::base::TCFType;
+    use gpui::{
+        Bounds, DevicePixels, FontFeatures, FontRun, GlyphId, PlatformTextSystem,
+        RenderGlyphParams, Size, font, point, px,
+    };
+    use objc2::{AnyThread, runtime::AnyObject};
+    use objc2_app_kit::{
+        NSBitmapImageRep, NSColor, NSDeviceRGBColorSpace, NSFont, NSFontAttributeName,
+        NSForegroundColorAttributeName, NSGraphicsContext, NSStringDrawing,
+    };
+    use objc2_foundation::{NSDictionary, NSPoint, NSSize, NSString};
+    use std::{ptr, slice, sync::Arc};
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct InkMask {
+        width: usize,
+        height: usize,
+        pixels: Vec<u8>,
+    }
+
+    fn system_zero_params(fonts: &MacTextSystem, font_size: f32) -> RenderGlyphParams {
+        let mut font = font(".SystemUIFont").bold();
+        font.features = FontFeatures(Arc::new(vec![("tnum".into(), 1)]));
+        let font_id = fonts.font_id(&font).unwrap();
+        let layout = fonts.layout_line("0", px(font_size), &[FontRun { font_id, len: 1 }]);
+        let glyph_id = layout.runs[0].glyphs[0].id;
+
+        RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size: px(font_size),
+            subpixel_variant: point(0, 0),
+            scale_factor: 2.,
+            is_emoji: false,
+            subpixel_rendering: false,
+            dilation: 0,
+        }
+    }
+
+    fn assert_same_ink(
+        fonts: &MacTextSystem,
+        params: &RenderGlyphParams,
+        bounds: Bounds<DevicePixels>,
+        reference_bounds: Bounds<DevicePixels>,
+    ) {
+        let (Size { width, .. }, pixels) = fonts.rasterize_glyph(params, bounds).unwrap();
+        let (reference_size, reference) = fonts.rasterize_glyph(params, reference_bounds).unwrap();
+        let offset = bounds.origin - reference_bounds.origin;
+
+        for y in 0..reference_size.height.0 {
+            for x in 0..reference_size.width.0 {
+                let candidate_x = x - offset.x.0;
+                let candidate_y = y - offset.y.0;
+                let candidate = if candidate_x >= 0
+                    && candidate_x < bounds.size.width.0
+                    && candidate_y >= 0
+                    && candidate_y < bounds.size.height.0
+                {
+                    pixels[(candidate_y * width.0 + candidate_x) as usize]
+                } else {
+                    0
+                };
+                assert_eq!(
+                    candidate,
+                    reference[(y * reference_size.width.0 + x) as usize],
+                    "glyph ink differs at ({x}, {y}) for {}px",
+                    params.font_size,
+                );
+            }
+        }
+    }
+
+    fn crop_ink(
+        pixels: &[u8],
+        width: usize,
+        height: usize,
+        bytes_per_row: usize,
+        bytes_per_pixel: usize,
+        coverage_channel: usize,
+    ) -> InkMask {
+        let mut min = (width, height);
+        let mut max = (0, 0);
+        for y in 0..height {
+            for x in 0..width {
+                if pixels[y * bytes_per_row + x * bytes_per_pixel + coverage_channel] > 0 {
+                    min = (min.0.min(x), min.1.min(y));
+                    max = (max.0.max(x), max.1.max(y));
+                }
+            }
+        }
+        assert!(min.0 <= max.0 && min.1 <= max.1, "glyph contains no ink");
+        let width = max.0 - min.0 + 1;
+        let height = max.1 - min.1 + 1;
+        let mut cropped = Vec::with_capacity(width * height);
+        for y in min.1..=max.1 {
+            for x in min.0..=max.0 {
+                cropped.push(pixels[y * bytes_per_row + x * bytes_per_pixel + coverage_channel]);
+            }
+        }
+        InkMask {
+            width,
+            height,
+            pixels: cropped,
+        }
+    }
+
+    fn appkit_zero_ink(fonts: &MacTextSystem, params: &RenderGlyphParams) -> (String, InkMask) {
+        let native_font = fonts.0.read().fonts[params.font_id.0]
+            .native_font()
+            .clone_with_font_size(params.font_size.as_f32() as f64);
+        // NSFont and CTFont are toll-free bridged on macOS.
+        let native_font = unsafe { &*native_font.as_concrete_TypeRef().cast::<NSFont>() };
+        let logical_size = 88.;
+        let width = (logical_size * params.scale_factor as f64) as usize;
+        let height = width;
+        // A null planes pointer asks AppKit to allocate storage; the dimensions and pixel format
+        // describe the buffer read below.
+        let bitmap = unsafe {
+            NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+                NSBitmapImageRep::alloc(),
+                ptr::null_mut(),
+                width as isize,
+                height as isize,
+                8,
+                4,
+                true,
+                false,
+                NSDeviceRGBColorSpace,
+                0,
+                0,
+            )
+            .unwrap()
+        };
+        bitmap.setSize(NSSize::new(logical_size, logical_size));
+        let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&bitmap).unwrap();
+        let black = NSColor::blackColor();
+        // These immutable AppKit attribute-name globals have process lifetime.
+        let names = unsafe { [NSFontAttributeName, NSForegroundColorAttributeName] };
+        let attributes: objc2::rc::Retained<NSDictionary<_, AnyObject>> = NSDictionary::from_slices(
+            &names,
+            &[
+                native_font.as_ref() as &AnyObject,
+                black.as_ref() as &AnyObject,
+            ],
+        );
+
+        NSGraphicsContext::saveGraphicsState_class();
+        NSGraphicsContext::setCurrentContext(Some(&context));
+        // The attribute keys are paired with values of their required NSFont and NSColor types.
+        unsafe {
+            NSString::from_str("0")
+                .drawAtPoint_withAttributes(NSPoint::new(8., 8.), Some(attributes.as_ref()));
+        }
+        NSGraphicsContext::restoreGraphicsState_class();
+
+        let bytes_per_row = bitmap.bytesPerRow() as usize;
+        // AppKit owns bitmapData, which remains valid for the retained bitmap and spans every row.
+        let pixels = unsafe { slice::from_raw_parts(bitmap.bitmapData(), bytes_per_row * height) };
+        (
+            native_font.fontName().to_string(),
+            crop_ink(pixels, width, height, bytes_per_row, 4, 3),
+        )
+    }
+
+    #[test]
+    fn test_system_zero_raster_bounds_do_not_clip() {
+        let fonts = MacTextSystem::new();
+        let params = system_zero_params(&fonts, 48.);
+        let bounds = fonts.glyph_raster_bounds(&params).unwrap();
+        let reference_bounds = bounds.dilate(DevicePixels(8));
+        assert_same_ink(&fonts, &params, bounds, reference_bounds);
+    }
+
+    #[test]
+    fn test_system_zero_matches_appkit() {
+        let fonts = MacTextSystem::new();
+        let params = system_zero_params(&fonts, 48.);
+        let bounds = fonts.glyph_raster_bounds(&params).unwrap();
+        let (Size { width, height }, pixels) = fonts.rasterize_glyph(&params, bounds).unwrap();
+        let gpui = crop_ink(
+            &pixels,
+            width.0 as usize,
+            height.0 as usize,
+            width.0 as usize,
+            1,
+            0,
+        );
+        let gpui_font_name = fonts.0.read().postscript_names_by_font_id[&params.font_id].clone();
+        let (appkit_font_name, appkit) = appkit_zero_ink(&fonts, &params);
+
+        assert_eq!(gpui_font_name, appkit_font_name);
+        assert_eq!((gpui.width, gpui.height), (appkit.width, appkit.height));
+        assert_eq!(gpui.pixels, appkit.pixels);
+    }
 
     #[test]
     fn test_layout_line_bom_char() {
