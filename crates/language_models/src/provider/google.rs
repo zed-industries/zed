@@ -354,6 +354,11 @@ impl LanguageModel for GoogleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let mut request = request;
+        if request.max_output_tokens.is_some() {
+            request.max_output_tokens =
+                request.effective_max_output_tokens(self.max_output_tokens());
+        }
         let request = match into_google(
             request,
             self.model.request_id().to_string(),
