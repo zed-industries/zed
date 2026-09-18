@@ -19,6 +19,7 @@ test-support = ["sqlite"]
 
 [lib]
 test = false
+doctest = false
 
 [[test]]
 name = "collab_tests"
