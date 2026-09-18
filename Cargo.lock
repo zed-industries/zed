@@ -9743,7 +9743,6 @@ dependencies = [
  "ai_onboarding",
  "anthropic",
  "anyhow",
- "async-lock",
  "aws-config",
  "aws-credential-types",
  "aws-sigv4",
