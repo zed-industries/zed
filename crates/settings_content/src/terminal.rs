@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use collections::HashMap;
+use collections::{HashMap, IndexMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -13,6 +13,25 @@ pub struct ProjectTerminalSettingsContent {
     ///
     /// Default: system
     pub shell: Option<Shell>,
+    /// Named terminal profiles that can be selected via the
+    /// `workspace::NewTerminal` action (e.g. from a keybinding) or from
+    /// the terminal panel's "+" menu. Each profile describes
+    /// the program to launch and optional arguments.
+    ///
+    /// Profile entries merge key-wise across settings layers (user, project,
+    /// etc.), so a project can override individual keys of a user-level
+    /// profile without redefining the whole map.
+    ///
+    /// Default: {}
+    pub profiles: Option<IndexMap<String, TerminalProfile>>,
+    /// Name of the profile to use when no explicit profile is selected
+    /// (e.g. when pressing the default "open terminal" keybinding). The
+    /// name must match a key in `profiles`; if it does not, a warning is
+    /// emitted and Zed falls back to `terminal.shell` (not the system
+    /// shell).
+    ///
+    /// Default: none
+    pub default_profile: Option<String>,
     /// What working directory to use when launching the terminal
     ///
     /// Default: current_project_directory
@@ -237,6 +256,23 @@ pub enum Shell {
         /// An optional string to override the title of the terminal tab
         title_override: Option<String>,
     },
+}
+
+/// A named terminal profile: a program plus optional arguments and an
+/// optional title override. When selected (via `terminal.default_profile`
+/// or the `workspace::NewTerminal` action's `profile` field), the profile
+/// is converted into a `task::Shell` for spawning. If `title_override` is
+/// unset, the profile's name is used as the tab title.
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct TerminalProfile {
+    /// Program to launch (e.g. `/bin/zsh`, `pwsh`, `wsl.exe`).
+    pub program: String,
+    /// Arguments passed to `program`. Omit to launch with no arguments.
+    pub args: Option<Vec<String>>,
+    /// Tab title to use for this profile. If unset, the profile name is
+    /// used.
+    pub title_override: Option<String>,
 }
 
 #[derive(
@@ -547,7 +583,7 @@ pub enum ActivateScript {
 mod test {
     use serde_json::json;
 
-    use crate::{ProjectSettingsContent, Shell};
+    use crate::{ProjectSettingsContent, Shell, TerminalProfile};
 
     #[test]
     #[ignore]
@@ -564,6 +600,112 @@ mod test {
         assert_eq!(
             project_settings.terminal.unwrap().shell,
             Some(Shell::Program("/bin/project".to_owned()))
+        );
+    }
+
+    fn profile(program: &str, args: &[&str]) -> TerminalProfile {
+        TerminalProfile {
+            program: program.to_string(),
+            args: Some(args.iter().map(|a| a.to_string()).collect()),
+            title_override: None,
+        }
+    }
+
+    #[test]
+    fn terminal_profiles_deserialize() {
+        let content = json!({
+            "terminal": {
+                "profiles": {
+                    "Zsh": { "program": "/bin/zsh", "args": ["-l"] },
+                    "Fish": { "program": "fish" }
+                },
+                "default_profile": "Zsh"
+            }
+        });
+        let parsed: ProjectSettingsContent =
+            serde_json::from_value(content).expect("parsed ProjectSettingsContent");
+        let terminal = parsed.terminal.expect("terminal section present");
+        let profiles = terminal
+            .profiles
+            .expect("profiles field should deserialize");
+        assert_eq!(profiles.len(), 2);
+        assert_eq!(profiles.get("Zsh"), Some(&profile("/bin/zsh", &["-l"])));
+        assert_eq!(
+            profiles.get("Fish").map(|p| p.program.clone()),
+            Some("fish".to_string())
+        );
+        assert_eq!(terminal.default_profile, Some("Zsh".to_string()));
+    }
+
+    #[test]
+    fn terminal_profiles_merge_key_wise() {
+        use crate::ProjectTerminalSettingsContent;
+        use crate::merge_from::MergeFrom;
+        let mut base: ProjectTerminalSettingsContent = serde_json::from_value(json!({
+            "profiles": {
+                "Zsh": { "program": "/bin/zsh", "args": ["-l"] },
+                "Fish": { "program": "fish" }
+            },
+            "default_profile": "Zsh"
+        }))
+        .expect("base deserialized");
+
+        let overlay: ProjectTerminalSettingsContent = serde_json::from_value(json!({
+            "profiles": {
+                "Zsh": { "program": "/opt/homebrew/bin/zsh" },
+                "Bash": { "program": "/bin/bash" }
+            },
+            "default_profile": "Bash"
+        }))
+        .expect("overlay deserialized");
+
+        base.merge_from(&overlay);
+
+        let profiles = base.profiles.as_ref().expect("profiles present post-merge");
+        let zsh = profiles.get("Zsh").expect("Zsh merged");
+        assert_eq!(zsh.program, "/opt/homebrew/bin/zsh");
+        assert_eq!(
+            zsh.args.as_ref().map(|a| a.len()),
+            Some(1),
+            "args should be inherited from base on per-key merge"
+        );
+        assert!(profiles.contains_key("Fish"));
+        assert!(profiles.contains_key("Bash"));
+        assert_eq!(base.default_profile, Some("Bash".to_string()));
+    }
+
+    #[test]
+    fn terminal_profiles_backwards_compatible_when_absent() {
+        let content = json!({ "terminal": { "shell": "system" } });
+        let parsed: ProjectSettingsContent =
+            serde_json::from_value(content).expect("backwards compatible");
+        let terminal = parsed.terminal.expect("terminal present");
+        assert!(terminal.profiles.is_none());
+        assert!(terminal.default_profile.is_none());
+    }
+
+    #[test]
+    fn indexmap_preserves_profile_order() {
+        let content = json!({
+            "terminal": {
+                "profiles": {
+                    "Charity": { "program": "p1" },
+                    "Hope": { "program": "p2" },
+                    "Faith": { "program": "p3" }
+                }
+            }
+        });
+        let parsed: ProjectSettingsContent =
+            serde_json::from_value(content).expect("ordered parse");
+        let profiles = parsed
+            .terminal
+            .and_then(|t| t.profiles)
+            .expect("profiles present");
+        let keys: Vec<&String> = profiles.keys().collect();
+        assert_eq!(
+            keys,
+            vec!["Charity", "Hope", "Faith"],
+            "IndexMap must preserve insertion order"
         );
     }
 }
