@@ -67,9 +67,12 @@ use settings::Settings;
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
-        MimeType::DataTable(_) => 7,
-        MimeType::Html(_) => 6,
-        MimeType::Json(_) => 5,
+        MimeType::DataTable(_) => 8,
+        MimeType::Html(_) => 7,
+        MimeType::Json(_) => 6,
+        // Rank SVG above raster images so a kernel that offers both is shown
+        // as the scalable version.
+        MimeType::Svg(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
         MimeType::Markdown(_) => 2,
@@ -422,6 +425,10 @@ impl Output {
                     display_id,
                 },
                 Err(error) => Output::Message(format!("Failed to load image: {}", error)),
+            },
+            Some(MimeType::Svg(data)) => Output::Image {
+                content: cx.new(|cx| ImageView::from_svg(data, cx)),
+                display_id,
             },
             Some(MimeType::DataTable(data)) => Output::Table {
                 content: cx.new(|cx| TableView::new(data, window, cx)),
@@ -859,14 +866,16 @@ mod tests {
         let data_table = MimeType::DataTable(Box::default());
         let html = MimeType::Html(String::new());
         let json = MimeType::Json(serde_json::json!({}));
+        let svg = MimeType::Svg(String::new());
         let png = MimeType::Png(String::new());
         let jpeg = MimeType::Jpeg(String::new());
         let markdown = MimeType::Markdown(String::new());
         let plain = MimeType::Plain(String::new());
 
-        assert_eq!(rank_mime_type(&data_table), 7);
-        assert_eq!(rank_mime_type(&html), 6);
-        assert_eq!(rank_mime_type(&json), 5);
+        assert_eq!(rank_mime_type(&data_table), 8);
+        assert_eq!(rank_mime_type(&html), 7);
+        assert_eq!(rank_mime_type(&json), 6);
+        assert_eq!(rank_mime_type(&svg), 5);
         assert_eq!(rank_mime_type(&png), 4);
         assert_eq!(rank_mime_type(&jpeg), 3);
         assert_eq!(rank_mime_type(&markdown), 2);
@@ -874,7 +883,8 @@ mod tests {
 
         assert!(rank_mime_type(&data_table) > rank_mime_type(&html));
         assert!(rank_mime_type(&html) > rank_mime_type(&json));
-        assert!(rank_mime_type(&json) > rank_mime_type(&png));
+        assert!(rank_mime_type(&json) > rank_mime_type(&svg));
+        assert!(rank_mime_type(&svg) > rank_mime_type(&png));
         assert!(rank_mime_type(&png) > rank_mime_type(&jpeg));
         assert!(rank_mime_type(&jpeg) > rank_mime_type(&markdown));
         assert!(rank_mime_type(&markdown) > rank_mime_type(&plain));
@@ -882,10 +892,8 @@ mod tests {
 
     #[test]
     fn test_rank_mime_type_unsupported_returns_zero() {
-        let svg = MimeType::Svg(String::new());
         let latex = MimeType::Latex(String::new());
 
-        assert_eq!(rank_mime_type(&svg), 0);
         assert_eq!(rank_mime_type(&latex), 0);
     }
 
