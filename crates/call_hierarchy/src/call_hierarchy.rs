@@ -1109,7 +1109,7 @@ fn compute_call_display(call: &Call, cx: &App) -> CallDisplay {
 
     let detail = extract_call_detail(call).map(SharedString::from);
     let full_signature = SharedString::from(match &detail {
-        Some(detail) => format!("{}{detail}", call.item.name),
+        Some(detail) => format!("{} {detail}", call.item.name),
         None => call.item.name.clone(),
     });
     let label_text = call
@@ -1202,7 +1202,10 @@ fn render_item(
         call_item.display.detail.clone().map(|detail| {
             let mut detail_style = base_text_style.clone();
             detail_style.color = cx.theme().colors().text_muted;
-            StyledText::new(detail).with_default_highlights(&detail_style, std::iter::empty())
+            // The detail is a suffix of the signature, so it needs its own
+            // leading separator; the label path already includes one.
+            StyledText::new(SharedString::from(format!(" {detail}")))
+                .with_default_highlights(&detail_style, std::iter::empty())
         })
     };
 
@@ -1340,6 +1343,33 @@ mod tests {
         assert_eq!(display.name, "helper");
         assert_eq!(display.detail.as_deref(), Some("() -> i32"));
         assert_eq!(display.path.as_deref(), Some(expected_path));
+    }
+
+    #[gpui::test]
+    async fn test_call_display_separates_name_and_detail(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({"src": {"lib.rs": source()}}))
+            .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let call = make_call(
+            "handleInfoMessage",
+            path!("/test/src/lib.rs").as_ref(),
+            5,
+            Some("git.xxx.com/...".to_string()),
+            &project,
+            cx,
+        )
+        .await;
+        let display = cx.update(|cx| compute_call_display(&call, cx));
+
+        assert_eq!(display.detail.as_deref(), Some("git.xxx.com/..."));
+        assert_eq!(
+            display.full_signature.as_ref(),
+            "handleInfoMessage git.xxx.com/..."
+        );
     }
 
     #[gpui::test]
