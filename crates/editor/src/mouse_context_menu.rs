@@ -220,6 +220,7 @@ pub fn deploy_context_menu(
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
         let format_selections = window.is_action_available(&FormatSelections, cx);
+        let selection_history = window.is_action_available(&git::FileHistoryForSelection, cx);
         let disable_ai = DisableAiSettings::is_ai_disabled_for_buffer(
             editor.buffer.read(cx).as_singleton().as_ref(),
             cx,
@@ -325,6 +326,11 @@ pub fn deploy_context_menu(
                     !has_git_repo,
                     "View File History",
                     Box::new(git::FileHistory),
+                )
+                .action_disabled_when(
+                    !has_git_repo || !selection_history,
+                    "View History for Selection",
+                    Box::new(git::FileHistoryForSelection),
                 );
             match focus {
                 Some(focus) => builder.context(focus),
