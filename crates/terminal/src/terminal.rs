@@ -1019,7 +1019,7 @@ impl TerminalBuilder {
             completion_tx: None,
             term,
             term_config: config,
-            output_processor: Processor::<StdSyncHandler>::new(),
+            output_processor: None,
             title_override: None,
             events: VecDeque::with_capacity(10),
             last_content: Content {
@@ -1306,7 +1306,7 @@ impl TerminalBuilder {
                 completion_tx,
                 term,
                 term_config: config,
-                output_processor: Processor::<StdSyncHandler>::new(),
+                output_processor: None,
                 title_override: terminal_title_override,
                 events: VecDeque::with_capacity(10), //Should never get this high.
                 last_content: Default::default(),
@@ -1506,7 +1506,7 @@ pub struct Terminal {
     completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<AlacrittyTermLock>,
     term_config: AlacrittyTermConfig,
-    output_processor: Processor<StdSyncHandler>,
+    output_processor: Option<Processor<StdSyncHandler>>,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(Point, SelectionSide)>,
@@ -1965,7 +1965,9 @@ impl Terminal {
         let converted = convert_lf_to_crlf(bytes, &mut previous_byte_was_cr);
 
         let mut term = self.term.lock();
-        self.output_processor.advance(&mut *term, &converted);
+        self.output_processor
+            .get_or_insert_with(Processor::<StdSyncHandler>::new)
+            .advance(&mut *term, &converted);
         drop(term);
         self.detect_init_command_startup_marker();
         cx.emit(Event::Wakeup);
@@ -3051,7 +3053,9 @@ impl Terminal {
         )
     }
 
-    /// Releases live PTY resources while retaining process metadata and buffered output.
+    /// Releases live PTY resources, including the parse buffer used by
+    /// [`Terminal::write_output`], while retaining process metadata and buffered
+    /// output.
     ///
     /// Calling this method after the resources have already been released is a no-op.
     pub fn release_pty_resources(&mut self) {
@@ -3063,6 +3067,10 @@ impl Terminal {
             return;
         };
         let info = info.clone();
+
+        // The terminal is retained past the command, so drop the parse buffer's
+        // reservation; `write_output` builds a new one if it is called again.
+        self.output_processor = None;
 
         pty_tx.shutdown();
         info.terminate_child_process();
@@ -5676,6 +5684,49 @@ mod tests {
             content.contains("done"),
             "Output should still be present after no-op kill, got: {content}"
         );
+    }
+
+    /// The parse buffer `write_output` needs is only built for injected bytes and
+    /// must not outlive the command, even though the terminal does.
+    #[gpui::test]
+    async fn test_release_pty_resources_drops_an_allocated_parse_buffer(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let terminal = build_test_terminal(cx, "echo", &["captured_output"]).await;
+
+        assert!(
+            terminal.read_with(cx, |terminal, _| terminal.output_processor.is_none()),
+            "a terminal that received no injected output should not hold a parse buffer"
+        );
+
+        let exit_status =
+            terminal.read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx));
+        assert_eq!(exit_status.await, Some(ExitStatus::default()));
+        assert_content_eventually(&terminal, "captured_output", cx).await;
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"injected_before_release\n", cx);
+        });
+        assert!(
+            terminal.read_with(cx, |terminal, _| terminal.output_processor.is_some()),
+            "injecting output should build the parse buffer"
+        );
+
+        terminal.update(cx, |terminal, _| terminal.release_pty_resources());
+        assert!(
+            terminal.read_with(cx, |terminal, _| terminal.output_processor.is_none()),
+            "releasing the PTY should drop the parse buffer"
+        );
+
+        assert_content_eventually(&terminal, "captured_output", cx).await;
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"injected_after_release\n", cx);
+        });
+        assert!(
+            terminal.read_with(cx, |terminal, _| terminal.output_processor.is_some()),
+            "injecting output after a release should build a new parse buffer"
+        );
+        assert_content_eventually(&terminal, "injected_after_release", cx).await;
     }
 
     mod perf {
