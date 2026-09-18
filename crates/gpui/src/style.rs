@@ -494,7 +494,10 @@ impl std::hash::Hash for TextStyle {
         }
         fn absolute<H: std::hash::Hasher>(length: &AbsoluteLength, state: &mut H) {
             match length {
-                AbsoluteLength::Pixels(pixels) => (0u8, pixels).hash(state),
+                AbsoluteLength::Pixels(pixels) => {
+                    0u8.hash(state);
+                    float(pixels.0, state);
+                }
                 AbsoluteLength::Rems(rems) => {
                     1u8.hash(state);
                     float(rems.0, state);
@@ -522,7 +525,7 @@ impl std::hash::Hash for TextStyle {
         }
         self.underline.is_some().hash(state);
         if let Some(underline) = &self.underline {
-            underline.thickness.hash(state);
+            float(underline.thickness.0, state);
             underline.wavy.hash(state);
             underline.color.is_some().hash(state);
             if let Some(color) = &underline.color {
@@ -531,7 +534,7 @@ impl std::hash::Hash for TextStyle {
         }
         self.strikethrough.is_some().hash(state);
         if let Some(strikethrough) = &self.strikethrough {
-            strikethrough.thickness.hash(state);
+            float(strikethrough.thickness.0, state);
             strikethrough.color.is_some().hash(state);
             if let Some(color) = &strikethrough.color {
                 hsla(color, state);
@@ -1587,5 +1590,42 @@ mod tests {
             Some(FontWeight::SEMIBOLD),
             style.text_style().unwrap().font_weight
         );
+    }
+
+    #[test]
+    fn text_style_hash_canonicalizes_signed_zero() {
+        let mut positive = TextStyle::default();
+        positive.font_size = AbsoluteLength::Pixels(px(0.0));
+        positive.line_height = DefiniteLength::Fraction(0.0);
+        positive.font_weight = FontWeight(0.0);
+        positive.underline = Some(UnderlineStyle {
+            thickness: px(0.0),
+            ..Default::default()
+        });
+        positive.strikethrough = Some(StrikethroughStyle {
+            thickness: px(0.0),
+            ..Default::default()
+        });
+
+        let mut negative = positive.clone();
+        negative.font_size = AbsoluteLength::Pixels(px(-0.0));
+        negative.line_height = DefiniteLength::Fraction(-0.0);
+        negative.font_weight = FontWeight(-0.0);
+        negative.underline = negative.underline.map(|mut underline| {
+            underline.thickness = px(-0.0);
+            underline
+        });
+        negative.strikethrough = negative.strikethrough.map(|mut strikethrough| {
+            strikethrough.thickness = px(-0.0);
+            strikethrough
+        });
+
+        assert_eq!(positive, negative);
+        let hash = |style: &TextStyle| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            style.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&positive), hash(&negative));
     }
 }

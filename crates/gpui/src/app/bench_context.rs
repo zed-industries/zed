@@ -294,6 +294,17 @@ impl BenchReport {
                 frame_snapshot.invalidations_per_frame.max()
             );
         }
+        let written_during_draw: Vec<String> = crate::profiler::global_writes()
+            .into_iter()
+            .filter(|(_, writes)| writes.during_draw > 0)
+            .map(|(name, writes)| format!("{name} ×{}", writes.during_draw))
+            .collect();
+        if !written_during_draw.is_empty() {
+            eprintln!(
+                "  globals written during draw: {}",
+                written_during_draw.join(", ")
+            );
+        }
         self.print_foreground_work(&frame_snapshot.foreground_work);
         if let Some(memory) = resident_memory {
             eprintln!("  process resident memory (sampled with profiler tracing off):");
