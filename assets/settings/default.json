@@ -1834,6 +1834,10 @@
     "path_style": "file_name_first",
     // Whether to show the stage and restore buttons on diff hunks.
     "show_stage_restore_buttons": true,
+    // Which side of the line the diff hunk controls (stage/restore/next-hunk
+    // toolbar) are shown on.
+    // "hunk_controls_position": "right" or "left"
+    "hunk_controls_position": "right",
     // Directory where git worktrees are created, relative to the repository
     // working directory.
     //

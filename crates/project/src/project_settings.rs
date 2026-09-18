@@ -496,6 +496,10 @@ pub struct GitSettings {
     ///
     /// Default: true
     pub show_stage_restore_buttons: bool,
+    /// Which side of the line the diff hunk controls are shown on.
+    ///
+    /// Default: right
+    pub hunk_controls_position: settings::GitHunkControlsPosition,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory. When the resolved directory is outside the project
     /// root, the project's directory name is automatically appended so that
@@ -715,6 +719,7 @@ impl Settings for ProjectSettings {
             diff_base: git.diff_base.unwrap_or_default(),
             path_style: git.path_style.unwrap().into(),
             show_stage_restore_buttons: git.show_stage_restore_buttons.unwrap_or(true),
+            hunk_controls_position: git.hunk_controls_position.unwrap_or_default(),
             worktree_directory: git
                 .worktree_directory
                 .clone()
