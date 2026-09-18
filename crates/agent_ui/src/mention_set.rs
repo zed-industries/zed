@@ -16,6 +16,7 @@ use gpui::{
     SharedString, Task, WeakEntity,
 };
 use http_client::{AsyncBody, HttpClientWithUrl};
+use image::GenericImageView as _;
 use itertools::Either;
 use language::Buffer;
 use language_model::{LanguageModelImage, LanguageModelImageExt};
@@ -956,6 +957,7 @@ pub(crate) async fn insert_images_as_context(
                     Ok(Mention::Image(MentionImage {
                         data: image.source,
                         format: LanguageModelImage::FORMAT,
+                        metadata: None,
                     }))
                 } else {
                     Err("Failed to convert image".into())
