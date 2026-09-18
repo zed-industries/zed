@@ -1277,3 +1277,15 @@ float4 fill_color(Background background,
 
   return color;
 }
+
+// Single-plane BGRA surfaces, e.g. an IOSurface an offscreen renderer drew into.
+// The texture is BGRA8Unorm, so sampling already yields RGBA-ordered floats, and
+// the pipeline's blend state (source_rgb = SourceAlpha) expects straight, not
+// premultiplied, alpha. Nearest, not linear: a surface is presented at its
+// native device-pixel size, so filtering can only blur it.
+fragment float4 surface_fragment_bgra(SurfaceFragmentInput input [[stage_in]],
+                                      texture2d<float> bgra_texture
+                                      [[texture(SurfaceInputIndex_YTexture)]]) {
+  constexpr sampler texture_sampler(mag_filter::nearest, min_filter::nearest);
+  return bgra_texture.sample(texture_sampler, input.texture_position);
+}
