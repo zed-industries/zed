@@ -1,7 +1,10 @@
 use fs::{FakeFs, Fs};
+use git::repository::repo_path;
+use git::status::{StatusCode, UnmergedStatus, UnmergedStatusCode};
 use gpui::{BackgroundExecutor, TestAppContext};
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use util::path;
 
 #[gpui::test]
@@ -193,4 +196,129 @@ async fn test_checkpoints(executor: BackgroundExecutor) {
         .unwrap();
     assert!(diff.contains("b"), "diff should mention changed file 'b'");
     assert!(diff.contains("c"), "diff should mention added file 'c'");
+}
+
+#[gpui::test]
+async fn test_checkout_refuses_dangling_symlink_parent(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ ".git": {}, "src": {} }))
+        .await;
+    fs.insert_symlink(path!("/root/src/generated"), PathBuf::from("../missing"))
+        .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("src/generated/file.txt", "tracked contents".into())],
+    );
+
+    let repository = fs.open_repo(path!("/root/.git").as_ref(), None).unwrap();
+    let error = repository
+        .checkout_files(
+            "HEAD".to_string(),
+            vec![repo_path("src/generated/file.txt")],
+            Arc::new(Default::default()),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("would be removed"),
+        "unexpected error: {error:#}"
+    );
+    assert_eq!(
+        fs.read_link(path!("/root/src/generated").as_ref())
+            .await
+            .unwrap(),
+        PathBuf::from("../missing")
+    );
+}
+
+#[gpui::test]
+async fn test_checkout_resolves_conflicts(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({ ".git": {}, "file.txt": "conflicted contents" }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("file.txt", "original contents".into())],
+    );
+    fs.set_unmerged_paths_for_repo(
+        path!("/root/.git").as_ref(),
+        &[(
+            repo_path("file.txt"),
+            UnmergedStatus {
+                first_head: UnmergedStatusCode::Updated,
+                second_head: UnmergedStatusCode::Updated,
+            },
+        )],
+    );
+
+    let repository = fs.open_repo(path!("/root/.git").as_ref(), None).unwrap();
+    repository
+        .checkout_files(
+            "HEAD".to_string(),
+            vec![repo_path("file.txt")],
+            Arc::new(Default::default()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fs.load(path!("/root/file.txt").as_ref()).await.unwrap(),
+        "original contents"
+    );
+    let status = repository.status(&[repo_path("")]).await.unwrap();
+    assert!(
+        status.entries.is_empty(),
+        "expected clean status after checkout, got {:?}",
+        status.entries
+    );
+}
+
+#[gpui::test]
+async fn test_staging_and_unstaging_resolve_conflicts(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({ ".git": {}, "file.txt": "resolved contents" }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("file.txt", "original contents".into())],
+    );
+    let conflicted = || {
+        (
+            repo_path("file.txt"),
+            UnmergedStatus {
+                first_head: UnmergedStatusCode::Updated,
+                second_head: UnmergedStatusCode::Updated,
+            },
+        )
+    };
+    fs.set_unmerged_paths_for_repo(path!("/root/.git").as_ref(), &[conflicted()]);
+
+    let repository = fs.open_repo(path!("/root/.git").as_ref(), None).unwrap();
+    repository
+        .stage_paths(vec![repo_path("file.txt")], Arc::new(Default::default()))
+        .await
+        .unwrap();
+    let status = repository.status(&[repo_path("")]).await.unwrap();
+    assert_eq!(
+        status.entries.as_ref(),
+        [(repo_path("file.txt"), StatusCode::Modified.index())]
+    );
+
+    fs.set_unmerged_paths_for_repo(path!("/root/.git").as_ref(), &[conflicted()]);
+    repository
+        .unstage_paths(vec![repo_path("file.txt")], Arc::new(Default::default()))
+        .await
+        .unwrap();
+    let status = repository.status(&[repo_path("")]).await.unwrap();
+    assert_eq!(
+        status.entries.as_ref(),
+        [(repo_path("file.txt"), StatusCode::Modified.worktree())]
+    );
 }

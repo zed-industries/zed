@@ -2750,9 +2750,9 @@ impl ProjectPanel {
                     return anyhow::Ok(());
                 }
 
-                let reloads = panel.update(cx, |panel, cx| {
+                let reload = panel.update(cx, |panel, cx| {
                     panel.project.update(cx, |project, cx| {
-                        let mut reloads = Vec::new();
+                        let mut buffers = HashSet::default();
                         for project_path in &restored_project_paths {
                             let buffer_id = project
                                 .buffer_store()
@@ -2762,13 +2762,15 @@ impl ProjectPanel {
                             if let Some(buffer_id) = buffer_id
                                 && let Some(buffer) = project.buffer_for_id(buffer_id, cx)
                             {
-                                reloads.push(buffer.update(cx, |buffer, cx| buffer.reload(cx)));
+                                buffers.insert(buffer);
                             }
                         }
-                        reloads
+                        (!buffers.is_empty()).then(|| project.reload_buffers(buffers, true, cx))
                     })
                 })?;
-                futures::future::join_all(reloads).await;
+                if let Some(reload) = reload {
+                    reload.await.log_err();
+                }
 
                 anyhow::Ok(())
             })

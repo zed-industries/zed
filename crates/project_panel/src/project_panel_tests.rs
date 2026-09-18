@@ -21,7 +21,10 @@ use project::{FakeFs, ProjectPath};
 use serde_json::json;
 use settings::{FolderIndicator, ProjectPanelAutoOpenSettings, SettingsStore, SplicingVec};
 use smallvec::smallvec;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
@@ -13574,9 +13577,12 @@ async fn test_restore_folder_replaces_symlink_and_empty_directory_targets(
     .await;
     fs.insert_symlink("/root/src/link", PathBuf::from("../target"))
         .await;
+    fs.insert_symlink("/root/src/dangling", PathBuf::from("../missing"))
+        .await;
     fs.set_head_and_index_for_repo(
         path!("/root/.git").as_ref(),
         &[
+            ("src/dangling", "tracked dangling contents".into()),
             ("src/link", "tracked link contents".into()),
             ("src/generated", "tracked generated contents".into()),
         ],
@@ -13611,7 +13617,15 @@ async fn test_restore_folder_replaces_symlink_and_empty_directory_targets(
     checkout_paths.sort();
     assert_eq!(
         checkout_paths,
-        vec![repo_path("src/generated"), repo_path("src/link")]
+        vec![
+            repo_path("src/dangling"),
+            repo_path("src/generated"),
+            repo_path("src/link"),
+        ]
+    );
+    assert_eq!(
+        fs.load(path!("/root/src/dangling").as_ref()).await.unwrap(),
+        "tracked dangling contents"
     );
     assert_eq!(
         fs.load(path!("/root/src/link").as_ref()).await.unwrap(),
@@ -13629,6 +13643,135 @@ async fn test_restore_folder_replaces_symlink_and_empty_directory_targets(
             .unwrap(),
         "kept"
     );
+    assert!(fs.load(path!("/root/missing").as_ref()).await.is_err());
+}
+
+#[gpui::test]
+async fn test_restore_folder_reloads_dirty_buffer_on_remote_project(
+    cx: &mut gpui::TestAppContext,
+    server_cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "src": {
+                    "tracked.txt": "modified contents",
+                },
+            }),
+        )
+        .await;
+    server_fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("src/tracked.txt", "original contents".into())],
+    );
+
+    let (connection_options, server_session, _) = remote::RemoteClient::fake_server(cx, server_cx);
+    server_cx.update(remote_server::HeadlessProject::init);
+    let server_executor = server_cx.executor();
+    let _headless_project = server_cx.new(|cx| {
+        remote_server::HeadlessProject::new(
+            remote_server::HeadlessAppState {
+                session: server_session,
+                fs: server_fs.clone(),
+                http_client: Arc::new(http_client::BlockedHttpClient),
+                node_runtime: node_runtime::NodeRuntime::unavailable(),
+                languages: Arc::new(language::LanguageRegistry::test(server_executor.clone())),
+                extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let remote_client = remote::RemoteClient::connect_mock(connection_options, cx).await;
+    let client = cx.update(|cx| {
+        client::Client::new(
+            Arc::new(clock::FakeSystemClock::new()),
+            http_client::FakeHttpClient::with_404_response(),
+            cx,
+        )
+    });
+    cx.update(|cx| Project::init(&client, cx));
+    let project = cx.update(|cx| {
+        let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
+        Project::remote(
+            remote_client,
+            client.clone(),
+            node_runtime::NodeRuntime::unavailable(),
+            user_store,
+            Arc::new(language::LanguageRegistry::test(
+                cx.background_executor().clone(),
+            )),
+            FakeFs::new(cx.background_executor().clone()),
+            false,
+            cx,
+        )
+    });
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/root"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktree_for_root_name("root", cx)
+            .expect("remote worktree should exist")
+            .read(cx)
+            .id()
+    });
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path("src/tracked.txt").into(),
+                },
+                cx,
+            )
+        })
+        .await
+        .expect("remote buffer should open");
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..buffer.len(), "unsaved contents")], None, cx)
+    });
+    assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/src", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: true }, window, cx)
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        server_fs
+            .load(path!("/root/src/tracked.txt").as_ref())
+            .await
+            .unwrap(),
+        "original contents"
+    );
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "original contents");
+        assert!(!buffer.is_dirty());
+    });
 }
 
 #[test]

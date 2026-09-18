@@ -144,6 +144,12 @@ impl FakeGitRepository {
         })
     }
 
+    /// `FakeFs::metadata` resolves symlinks and reports a dangling one as a missing path,
+    /// so symlinks are detected separately, like `symlink_metadata` on a real filesystem.
+    async fn is_symlink(&self, path: &Path) -> bool {
+        self.fs.read_link(path).await.is_ok()
+    }
+
     async fn checkout_filesystem_obstruction(
         &self,
         work_dir: &Path,
@@ -198,18 +204,24 @@ impl FakeGitRepository {
             if !is_target && checked_directories.contains(&path) {
                 continue;
             }
+            if self.is_symlink(&path).await {
+                if !is_target {
+                    return Ok(Some(path));
+                }
+                continue;
+            }
             let Some(metadata) = self.fs.metadata(&path).await? else {
                 continue;
             };
 
             if is_target {
-                if metadata.is_dir && !metadata.is_symlink && head_paths.contains(repo_path) {
+                if metadata.is_dir && head_paths.contains(repo_path) {
                     let mut entries = self.fs.read_dir(&path).await?;
                     if entries.next().await.transpose()?.is_some() {
                         return Ok(Some(path));
                     }
                 }
-            } else if metadata.is_symlink || !metadata.is_dir {
+            } else if !metadata.is_dir {
                 return Ok(Some(path));
             } else {
                 checked_directories.insert(path.clone());
@@ -492,34 +504,35 @@ impl GitRepository for FakeGitRepository {
 
             for (path, content) in &contents {
                 let worktree_path = work_dir.join(path.as_std_path());
-                if let Some(metadata) = self.fs.metadata(&worktree_path).await? {
-                    if metadata.is_symlink {
-                        self.fs
-                            .remove_file(
-                                &worktree_path,
-                                RemoveOptions {
-                                    recursive: false,
-                                    ignore_if_not_exists: true,
-                                },
-                            )
-                            .await?;
-                    } else if metadata.is_dir {
-                        self.fs
-                            .remove_dir(
-                                &worktree_path,
-                                RemoveOptions {
-                                    recursive: false,
-                                    ignore_if_not_exists: true,
-                                },
-                            )
-                            .await?;
-                    }
+                if self.is_symlink(&worktree_path).await {
+                    self.fs
+                        .remove_file(
+                            &worktree_path,
+                            RemoveOptions {
+                                recursive: false,
+                                ignore_if_not_exists: true,
+                            },
+                        )
+                        .await?;
+                } else if let Some(metadata) = self.fs.metadata(&worktree_path).await?
+                    && metadata.is_dir
+                {
+                    self.fs
+                        .remove_dir(
+                            &worktree_path,
+                            RemoveOptions {
+                                recursive: false,
+                                ignore_if_not_exists: true,
+                            },
+                        )
+                        .await?;
                 }
                 self.fs.write(&worktree_path, content).await?;
             }
 
             self.with_state_async(true, move |state| {
                 for (path, content) in contents {
+                    state.unmerged_paths.remove(&path);
                     state.index_contents.insert(path, content);
                 }
                 Ok(())
@@ -1191,6 +1204,7 @@ impl GitRepository for FakeGitRepository {
             let contents = join_all(contents).await;
             self.with_state_async(true, move |state| {
                 for (path, content) in contents {
+                    state.unmerged_paths.remove(&path);
                     if let Some(content) = content {
                         state.index_contents.insert(path, content);
                     } else {
@@ -1210,6 +1224,7 @@ impl GitRepository for FakeGitRepository {
     ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             for path in paths {
+                state.unmerged_paths.remove(&path);
                 match state.head_contents.get(&path) {
                     Some(content) => state.index_contents.insert(path, content.clone()),
                     None => state.index_contents.remove(&path),
