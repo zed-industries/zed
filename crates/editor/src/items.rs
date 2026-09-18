@@ -2128,6 +2128,14 @@ impl SearchableItem for Editor {
     ) {
         self.select_next_is_case_sensitive = case_sensitive;
     }
+
+    fn set_search_whole_word(&mut self, whole_word: Option<bool>, _cx: &mut Context<Self>) {
+        if self.select_next_whole_word != whole_word {
+            self.select_next_whole_word = whole_word;
+            self.select_next_state = None;
+            self.select_prev_state = None;
+        }
+    }
 }
 
 pub fn active_match_index(
