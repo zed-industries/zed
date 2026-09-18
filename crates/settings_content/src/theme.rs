@@ -823,6 +823,30 @@ pub struct ThemeColorsContent {
     #[serde(rename = "scrollbar.track.border")]
     pub scrollbar_track_border: Option<ThemeColor>,
 
+    /// The color of the terminal scrollbar thumb.
+    #[serde(rename = "terminal.scrollbar.thumb.background")]
+    pub terminal_scrollbar_thumb_background: Option<ThemeColor>,
+
+    /// The color of the terminal scrollbar thumb when hovered over.
+    #[serde(rename = "terminal.scrollbar.thumb.hover_background")]
+    pub terminal_scrollbar_thumb_hover_background: Option<ThemeColor>,
+
+    /// The color of the terminal scrollbar thumb whilst being actively dragged.
+    #[serde(rename = "terminal.scrollbar.thumb.active_background")]
+    pub terminal_scrollbar_thumb_active_background: Option<ThemeColor>,
+
+    /// The border color of the terminal scrollbar thumb.
+    #[serde(rename = "terminal.scrollbar.thumb.border")]
+    pub terminal_scrollbar_thumb_border: Option<ThemeColor>,
+
+    /// The background color of the terminal scrollbar track.
+    #[serde(rename = "terminal.scrollbar.track.background")]
+    pub terminal_scrollbar_track_background: Option<ThemeColor>,
+
+    /// The border color of the terminal scrollbar track.
+    #[serde(rename = "terminal.scrollbar.track.border")]
+    pub terminal_scrollbar_track_border: Option<ThemeColor>,
+
     /// The color of the minimap thumb.
     #[serde(rename = "minimap.thumb.background")]
     pub minimap_thumb_background: Option<ThemeColor>,

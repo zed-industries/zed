@@ -517,6 +517,30 @@ pub fn theme_colors_refinement(
             .scrollbar_track_border
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        terminal_scrollbar_thumb_background: this
+            .terminal_scrollbar_thumb_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        terminal_scrollbar_thumb_hover_background: this
+            .terminal_scrollbar_thumb_hover_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        terminal_scrollbar_thumb_active_background: this
+            .terminal_scrollbar_thumb_active_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        terminal_scrollbar_thumb_border: this
+            .terminal_scrollbar_thumb_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        terminal_scrollbar_track_background: this
+            .terminal_scrollbar_track_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        terminal_scrollbar_track_border: this
+            .terminal_scrollbar_track_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         minimap_thumb_background: this
             .minimap_thumb_background
             .as_ref()
@@ -919,6 +943,56 @@ mod tests {
         StatusColorsContent, ThemeColorsContent, status_colors_refinement, theme_colors_refinement,
         try_parse_color,
     };
+
+    #[test]
+    fn terminal_scrollbar_colors_parse_as_optional_overrides() {
+        let keys = [
+            "terminal.scrollbar.thumb.background",
+            "terminal.scrollbar.thumb.hover_background",
+            "terminal.scrollbar.thumb.active_background",
+            "terminal.scrollbar.thumb.border",
+            "terminal.scrollbar.track.background",
+            "terminal.scrollbar.track.border",
+        ];
+        for value in [None, Some("invalid"), Some("#12345678"), Some("#00000000")] {
+            for key in keys {
+                let mut content = serde_json::json!({
+                    "scrollbar.thumb.background": "#112233",
+                    "scrollbar.thumb.hover_background": "#223344",
+                    "scrollbar.thumb.active_background": "#334455",
+                    "scrollbar.thumb.border": "#445566",
+                    "scrollbar.track.background": "#556677",
+                    "scrollbar.track.border": "#667788",
+                    "border.variant": "#778899"
+                });
+                if let Some(value) = value {
+                    content[key] = serde_json::json!(value);
+                }
+                let content: ThemeColorsContent =
+                    serde_json::from_value(content).expect("deserialize theme colors");
+                let refinement =
+                    theme_colors_refinement(&content, &StatusColorsRefinement::default(), false);
+                for (parsed_key, parsed_color) in keys.into_iter().zip([
+                    refinement.terminal_scrollbar_thumb_background,
+                    refinement.terminal_scrollbar_thumb_hover_background,
+                    refinement.terminal_scrollbar_thumb_active_background,
+                    refinement.terminal_scrollbar_thumb_border,
+                    refinement.terminal_scrollbar_track_background,
+                    refinement.terminal_scrollbar_track_border,
+                ]) {
+                    let expected = if parsed_key == key {
+                        value.and_then(|value| try_parse_color(value).ok())
+                    } else {
+                        None
+                    };
+                    assert_eq!(
+                        parsed_color, expected,
+                        "{parsed_key}, input {key}={value:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn explicit_diff_hunk_colors_take_precedence_over_fallbacks() {

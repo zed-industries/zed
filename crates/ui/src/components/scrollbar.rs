@@ -78,6 +78,7 @@ where
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
     let has_border = config.border;
+    let colors = config.colors;
     let reveal_policy = config.reveal_policy;
 
     let state = window.use_keyed_state(element_id, cx, |_, cx| {
@@ -87,7 +88,7 @@ where
 
     state.update(cx, |state, cx| {
         state.0.update(cx, |state, _cx| {
-            state.update_colors(track_color, has_border);
+            state.update_colors(track_color, has_border, colors);
             state.reveal_policy = reveal_policy;
         })
     });
@@ -378,6 +379,15 @@ impl ScrollbarStyle {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollbarColors {
+    pub thumb_background: Hsla,
+    pub thumb_hover_background: Hsla,
+    pub thumb_active_background: Hsla,
+    pub thumb_border: Hsla,
+    pub track_border: Hsla,
+}
+
 #[derive(Clone)]
 pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     id: Option<ElementId>,
@@ -389,6 +399,7 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     reveal_policy: ScrollbarRevealPolicy,
     track_color: Option<Hsla>,
     border: bool,
+    colors: Option<ScrollbarColors>,
 }
 
 impl Scrollbars {
@@ -417,6 +428,7 @@ impl Scrollbars {
             reveal_policy: ScrollbarRevealPolicy::default(),
             track_color: None,
             border: false,
+            colors: None,
         }
     }
 }
@@ -457,6 +469,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             get_visibility,
             track_color,
             border,
+            colors,
             style,
             reveal_policy,
             ..
@@ -469,6 +482,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             visibility,
             track_color,
             border,
+            colors,
             get_visibility,
             style,
             reveal_policy,
@@ -482,6 +496,11 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
 
     pub fn style(mut self, style: ScrollbarStyle) -> Self {
         self.style = Some(style);
+        self
+    }
+
+    pub fn colors(mut self, colors: ScrollbarColors) -> Self {
+        self.colors = Some(colors);
         self
     }
 
@@ -649,6 +668,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     get_visibility: fn(&App) -> ShowScrollbar,
     visibility: Point<ReservedSpace>,
     track_color: Option<TrackColors>,
+    colors: Option<ScrollbarColors>,
     reveal_policy: ScrollbarRevealPolicy,
     show_state: VisibilityState,
     style: ScrollbarStyle,
@@ -675,6 +695,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
                 background: color,
                 has_border: config.border,
             }),
+            colors: config.colors,
             show_behavior,
             get_visibility: config.get_visibility,
             style: config.style.unwrap_or_default(),
@@ -846,11 +867,17 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
-    fn update_colors(&mut self, track_color: Option<Hsla>, has_border: bool) {
+    fn update_colors(
+        &mut self,
+        track_color: Option<Hsla>,
+        has_border: bool,
+        colors: Option<ScrollbarColors>,
+    ) {
         self.track_color = track_color.map(|color| TrackColors {
             background: color,
             has_border,
         });
+        self.colors = colors;
     }
 
     fn parent_hovered(&self, window: &Window) -> bool {
@@ -1421,6 +1448,13 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 let state = self.state.read(cx);
                 let thumb_state = &state.thumb_state;
                 let style = state.style;
+                let scrollbar_colors = state.colors.unwrap_or(ScrollbarColors {
+                    thumb_background: colors.scrollbar_thumb_background,
+                    thumb_hover_background: colors.scrollbar_thumb_hover_background,
+                    thumb_active_background: colors.scrollbar_thumb_active_background,
+                    thumb_border: Hsla::transparent_black(),
+                    track_border: colors.border_variant.opacity(0.6),
+                });
 
                 if thumb_state.is_dragging() {
                     capture_phase = DispatchPhase::Capture;
@@ -1440,12 +1474,12 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     const MAXIMUM_OPACITY: f32 = 0.7;
                     let (thumb_base_color, hovered) = match thumb_state {
                         ThumbState::Dragging(dragged_axis, _) if dragged_axis == axis => {
-                            (colors.scrollbar_thumb_active_background, false)
+                            (scrollbar_colors.thumb_active_background, false)
                         }
                         ThumbState::Hover(hovered_axis) if hovered_axis == axis => {
-                            (colors.scrollbar_thumb_hover_background, true)
+                            (scrollbar_colors.thumb_hover_background, true)
                         }
-                        _ => (colors.scrollbar_thumb_background, false),
+                        _ => (scrollbar_colors.thumb_background, false),
                     };
 
                     let blend_color = track_config
@@ -1460,9 +1494,11 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     };
 
                     let mut thumb_color = blending_color.blend(thumb_base_color);
+                    let mut thumb_border_color = scrollbar_colors.thumb_border;
 
                     if !hovered && let Some(fade) = autohide_fade {
                         thumb_color.fade_out(fade);
+                        thumb_border_color.fade_out(fade);
                     }
 
                     if let Some((track_bounds, colors)) = track_config {
@@ -1489,7 +1525,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             .unwrap_or_default();
 
                         let border_color = if has_border {
-                            cx.theme().colors().border_variant.opacity(0.6)
+                            scrollbar_colors.track_border
                         } else {
                             Hsla::transparent_black()
                         };
@@ -1512,8 +1548,12 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             ScrollbarStyle::Editor => Corners::default(),
                         },
                         thumb_color,
-                        Edges::default(),
-                        Hsla::transparent_black(),
+                        if thumb_border_color.a > 0. {
+                            Edges::all(BORDER_WIDTH)
+                        } else {
+                            Edges::default()
+                        },
+                        thumb_border_color,
                         BorderStyle::default(),
                     ));
 
@@ -1671,6 +1711,51 @@ impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
 mod tests {
     use super::*;
     use gpui::point;
+
+    #[gpui::test]
+    fn custom_scrollbar_colors_survive_tracking_and_update(cx: &mut App) {
+        let colors = ScrollbarColors {
+            thumb_background: gpui::rgb(0x112233).into(),
+            thumb_hover_background: gpui::rgb(0x445566).into(),
+            thumb_active_background: gpui::rgb(0x778899).into(),
+            thumb_border: gpui::rgb(0xaabbcc).into(),
+            track_border: gpui::rgb(0xddeeff).into(),
+        };
+        let track_background = gpui::rgb(0x123456).into();
+        let config = Scrollbars::always_visible(ScrollAxes::Vertical)
+            .with_stable_track_along(ScrollAxes::Vertical, track_background)
+            .colors(colors)
+            .tracked_scroll_handle(&ScrollHandle::new());
+        assert_eq!(config.colors, Some(colors));
+
+        let state = cx.new(|cx| ScrollbarState::new_from_config(config, cx.entity_id(), cx));
+        assert_eq!(state.read(cx).colors, Some(colors));
+        assert_eq!(
+            state
+                .read(cx)
+                .track_color
+                .as_ref()
+                .map(|track| (track.background, track.has_border)),
+            Some((track_background, true))
+        );
+
+        let updated_colors = ScrollbarColors {
+            thumb_background: gpui::rgb(0xfedcba).into(),
+            track_border: Hsla::transparent_black(),
+            ..colors
+        };
+        state.update(cx, |state, _cx| {
+            state.update_colors(Some(track_background), true, Some(updated_colors));
+        });
+        assert_eq!(state.read(cx).colors, Some(updated_colors));
+
+        state.update(cx, |state, _cx| {
+            state.update_colors(None, false, None);
+        });
+        assert_eq!(state.read(cx).colors, None);
+        assert!(state.read(cx).track_color.is_none());
+        assert_eq!(Scrollbars::new(ScrollAxes::Vertical).colors, None);
+    }
 
     #[test]
     fn default_reveal_policy_reveals_for_content_changes() {
