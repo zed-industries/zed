@@ -1681,6 +1681,15 @@ impl PlatformInputHandler {
         Self { cx, handler }
     }
 
+    fn with_handler<R>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+        callback: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
+    ) -> R {
+        callback(self.handler.as_mut(), window, cx)
+    }
+
     pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
         self.cx
             .update(|window, cx| {
@@ -1771,7 +1780,9 @@ impl PlatformInputHandler {
     }
 
     pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
-        self.handler.replace_text_in_range(None, input, window, cx);
+        self.with_handler(window, cx, |handler, window, cx| {
+            handler.replace_text_in_range(None, input, window, cx)
+        });
     }
 
     pub fn compute_ime_candidate_bounds(
@@ -1810,10 +1821,12 @@ impl PlatformInputHandler {
     }
 
     pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
-        let marked_range = self.handler.marked_text_range(window, cx);
-        let selection = self.handler.selected_text_range(true, window, cx)?;
-        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
-            self.handler.bounds_for_range(range, window, cx)
+        self.with_handler(window, cx, |handler, window, cx| {
+            let marked_range = handler.marked_text_range(window, cx);
+            let selection = handler.selected_text_range(true, window, cx)?;
+            Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+                handler.bounds_for_range(range, window, cx)
+            })
         })
     }
 
@@ -1861,7 +1874,9 @@ impl PlatformInputHandler {
 
     #[allow(dead_code)]
     pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
-        self.handler.accepts_text_input(window, cx)
+        self.with_handler(window, cx, |handler, window, cx| {
+            handler.accepts_text_input(window, cx)
+        })
     }
 
     #[allow(dead_code)]
@@ -1892,7 +1907,9 @@ impl PlatformInputHandler {
         window: &mut Window,
         cx: &mut App,
     ) -> TextInputConfiguration {
-        self.handler.text_input_configuration(window, cx)
+        self.with_handler(window, cx, |handler, window, cx| {
+            handler.text_input_configuration(window, cx)
+        })
     }
 
     /// See [`InputHandler::text_input_editable_range`].
