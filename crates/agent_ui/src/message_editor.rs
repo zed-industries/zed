@@ -2487,7 +2487,7 @@ mod tests {
                     && text.text.contains("dimensions: 800x600")
                     && text.text.contains("format: image/png")
         ));
-        assert!(matches!(blocks[1], acp::ContentBlock::Image(_)));
+        assert!(matches!(&blocks[1], acp::ContentBlock::Image(_)));
     }
 
     #[test]
