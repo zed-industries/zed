@@ -132,12 +132,15 @@ pub(crate) fn run_tests() -> Workflow {
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
         .map(|mut workflow| {
-            for job in jobs {
+            for mut job in jobs {
+                if !matches!(job.name.as_str(), "orchestrate" | "check_style") {
+                    job.job = job.job.add_need("check_style");
+                }
                 workflow = workflow.add_job(job.name, job.job)
             }
             workflow
         })
-        .add_job(ext_tests.name, ext_tests.job)
+        .add_job(ext_tests.name, ext_tests.job.add_need("check_style"))
         .add_job(tests_pass.name, tests_pass.job)
 }
 
