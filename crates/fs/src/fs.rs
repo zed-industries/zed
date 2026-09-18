@@ -57,6 +57,8 @@ use collections::{BTreeMap, btree_map};
 #[cfg(feature = "test-support")]
 use fake_git_repo::{FakeCommitDataEntry, FakeGitRepositoryState};
 #[cfg(feature = "test-support")]
+pub use fake_git_repo::FakeBlobReadGate;
+#[cfg(feature = "test-support")]
 use git::{
     repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
@@ -2440,24 +2442,37 @@ impl FakeFs {
         .unwrap();
     }
 
+    /// OIDs are assigned deterministically by position and stay distinct for any count.
     pub fn set_merge_base_content_for_repo(
         &self,
         dot_git: &Path,
         contents_by_path: &[(&str, String)],
-    ) {
+    ) -> Vec<git::Oid> {
         self.with_git_state(dot_git, true, |state| {
             use git::Oid;
 
             state.merge_base_contents.clear();
-            let oids = (1..)
-                .map(|n| n.to_string())
-                .map(|n| Oid::from_bytes(n.repeat(20).as_bytes()).unwrap());
-            for ((path, content), oid) in contents_by_path.iter().zip(oids) {
+            let mut assigned = Vec::with_capacity(contents_by_path.len());
+            for (index, (path, content)) in contents_by_path.iter().enumerate() {
+                let mut bytes = [0u8; 20];
+                bytes[..4].copy_from_slice(&((index as u32) + 1).to_be_bytes());
+                let oid = Oid::from_bytes(&bytes).unwrap();
                 state.merge_base_contents.insert(repo_path(path), oid);
                 state.oids.insert(oid, content.as_bytes().to_vec());
+                assigned.push(oid);
             }
+            assigned
+        })
+        .unwrap()
+    }
+
+    pub fn install_blob_read_gate_for_repo(&self, dot_git: &Path) -> FakeBlobReadGate {
+        let gate = FakeBlobReadGate::default();
+        self.with_git_state(dot_git, false, |state| {
+            state.blob_read_gate = Some(gate.clone());
         })
         .unwrap();
+        gate
     }
 
     pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(RepoPath, git::blame::Blame)>) {

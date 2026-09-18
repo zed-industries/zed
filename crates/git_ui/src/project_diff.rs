@@ -996,9 +996,9 @@ mod tests {
     use buffer_diff::DiffHunkSecondaryStatus;
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use multi_buffer::PathKey;
-    use project::FakeFs;
+    use project::{FakeFs, git_store::MAX_CONCURRENT_BLOB_READS};
     use serde_json::json;
     use settings::{DiffViewStyle, GitPanelGroupBy, GitPanelSortBy, SettingsStore};
     use std::path::Path;
@@ -1031,6 +1031,7 @@ mod tests {
 
     use zed_actions::git as git_actions;
 
+    use crate::branch_diff::BranchDiff;
     use crate::project_diff::{self, ProjectDiff};
 
     #[test]
@@ -1598,6 +1599,84 @@ mod tests {
             .map(|index| format!("new-{index:02}"))
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);
+    }
+
+    #[gpui::test]
+    async fn test_merge_base_loading_is_incremental(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        const FILE_COUNT: usize = MAX_CONCURRENT_BLOB_READS + 4;
+
+        let names = (0..FILE_COUNT)
+            .map(|index| format!("f{index:02}.txt"))
+            .collect::<Vec<_>>();
+
+        let project_root = Path::new(path!("/project"));
+        let dot_git = project_root.join(".git");
+
+        let fs = FakeFs::new(cx.executor());
+        let mut tree = serde_json::Map::new();
+        tree.insert(".git".to_owned(), json!({}));
+        for (index, name) in names.iter().enumerate() {
+            tree.insert(name.clone(), json!(format!("new-{index:02}\n")));
+        }
+        fs.insert_tree(project_root, serde_json::Value::Object(tree))
+            .await;
+
+        // Merge-base (old) content differs from the worktree, so every file is Modified.
+        let merge_base = names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (name.as_str(), format!("old-{index:02}\n")))
+            .collect::<Vec<_>>();
+        let oids = fs.set_merge_base_content_for_repo(&dot_git, &merge_base);
+        let gate = fs.install_blob_read_gate_for_repo(&dot_git);
+
+        let project = Project::test(fs, [project_root], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let branch_diff = cx
+            .update(|window, cx| {
+                BranchDiff::new_with_default_branch(project.clone(), workspace, window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert!(gate.waiting() > 0 && gate.waiting() < FILE_COUNT);
+
+        let editor =
+            branch_diff.read_with(cx, |diff, cx| diff.editor(cx).read(cx).rhs_editor().clone());
+        let shown = |cx: &mut VisualTestContext| {
+            editor
+                .update(cx, |editor, cx| {
+                    editor.buffer().read(cx).snapshot(cx).text()
+                })
+                .lines()
+                .filter(|line| line.starts_with("new-"))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+
+        assert!(shown(cx).is_empty());
+
+        // Release only the first file's read: its excerpt appears while the rest stay blocked.
+        assert!(gate.release(oids[0]));
+        cx.run_until_parked();
+        assert_eq!(shown(cx), vec!["new-00".to_owned()]);
+
+        // Let the rest through: all excerpts appear, ordered by path, not by finish order.
+        gate.open();
+        cx.run_until_parked();
+        let expected = (0..FILE_COUNT)
+            .map(|index| format!("new-{index:02}"))
+            .collect::<Vec<_>>();
+        assert_eq!(shown(cx), expected);
     }
 
     #[gpui::test]

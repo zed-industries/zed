@@ -5,6 +5,7 @@ use anyhow::{Context as _, Result, bail};
 use async_channel::Sender;
 use collections::{HashMap, HashSet};
 use futures::FutureExt as _;
+use futures::channel::oneshot;
 use futures::future::{self, BoxFuture, join_all};
 use git::repository::GitCommitTemplate;
 use git::{
@@ -81,12 +82,14 @@ pub struct FakeGitRepositoryState {
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
     pub commit_template: Option<GitCommitTemplate>,
+    pub blob_read_gate: Option<FakeBlobReadGate>,
 }
 
 impl FakeGitRepositoryState {
     pub fn new(event_emitter: async_channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
             event_emitter,
+            blob_read_gate: None,
             head_contents: Default::default(),
             index_contents: Default::default(),
             unmerged_paths: Default::default(),
@@ -108,6 +111,74 @@ impl FakeGitRepositoryState {
             commit_history: Vec::new(),
             stash_entries: Default::default(),
             commit_template: None,
+        }
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct FakeBlobReadGate(Arc<Mutex<BlobReadGateState>>);
+
+#[derive(Default, Debug)]
+struct BlobReadGateState {
+    open: bool,
+    peak: usize,
+    waiters: Vec<(Oid, oneshot::Sender<()>)>,
+}
+
+impl FakeBlobReadGate {
+    async fn wait(&self, oid: Oid) {
+        let receiver = {
+            let mut inner = self.0.lock();
+            if inner.open {
+                return;
+            }
+            let (sender, receiver) = oneshot::channel();
+            inner.waiters.push((oid, sender));
+            inner.peak = inner.peak.max(inner.waiters.len());
+            receiver
+        };
+        receiver.await.ok();
+    }
+
+    pub fn peak_concurrent(&self) -> usize {
+        self.0.lock().peak
+    }
+
+    pub fn waiting(&self) -> usize {
+        self.0.lock().waiters.len()
+    }
+
+    pub fn is_waiting(&self, oid: Oid) -> bool {
+        self.0
+            .lock()
+            .waiters
+            .iter()
+            .any(|(waiting, _)| *waiting == oid)
+    }
+
+    pub fn release(&self, oid: Oid) -> bool {
+        let mut inner = self.0.lock();
+        let Some(position) = inner
+            .waiters
+            .iter()
+            .position(|(waiting, _)| *waiting == oid)
+        else {
+            return false;
+        };
+        let (_, sender) = inner.waiters.remove(position);
+        drop(inner);
+        sender.send(()).ok();
+        true
+    }
+
+    pub fn open(&self) {
+        let waiters = {
+            let mut inner = self.0.lock();
+            inner.open = true;
+            std::mem::take(&mut inner.waiters)
+        };
+        for (_, sender) in waiters {
+            sender.send(()).ok();
         }
     }
 }
@@ -171,9 +242,16 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<Vec<u8>>> {
-        self.with_state_async(false, move |state| {
-            state.oids.get(&oid).cloned().context("oid does not exist")
-        })
+        let content_and_gate = self.with_state_async(false, move |state| {
+            Ok((state.oids.get(&oid).cloned(), state.blob_read_gate.clone()))
+        });
+        async move {
+            let (content, gate) = content_and_gate.await?;
+            if let Some(gate) = gate {
+                gate.wait(oid).await;
+            }
+            content.context("oid does not exist")
+        }
         .boxed()
     }
 
