@@ -3257,7 +3257,10 @@ impl Window {
         #[cfg(feature = "profiler")]
         let frame_dirty = self.invalidator.take_frame_dirty();
         #[cfg(feature = "profiler")]
-        self.window_profiler.begin_draw();
+        {
+            self.window_profiler.begin_draw();
+            cx.set_drawing_window(true);
+        }
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -3396,6 +3399,7 @@ impl Window {
 
         #[cfg(feature = "profiler")]
         {
+            cx.set_drawing_window(false);
             let draw_duration = self
                 .window_profiler
                 .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);

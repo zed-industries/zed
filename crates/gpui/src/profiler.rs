@@ -782,6 +782,42 @@ fn clear_trace_buffers() {
     }
 }
 
+#[cfg(feature = "profiler")]
+static GLOBAL_WRITES: spin::Mutex<std::collections::BTreeMap<&'static str, GlobalWrites>> =
+    spin::Mutex::new(std::collections::BTreeMap::new());
+
+/// How often a global was written, in total and while a frame was drawing.
+#[cfg(feature = "profiler")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GlobalWrites {
+    /// Writes since tracing began.
+    pub total: u64,
+    /// Of those, writes made while a window frame was drawing.
+    pub during_draw: u64,
+}
+
+#[cfg(feature = "profiler")]
+pub(crate) fn note_global_write(type_name: &'static str, during_draw: bool) {
+    let mut writes = GLOBAL_WRITES.lock();
+    let entry = writes.entry(type_name).or_default();
+    entry.total += 1;
+    if during_draw {
+        entry.during_draw += 1;
+    }
+}
+
+/// Every global written since tracing began, most written first.
+#[cfg(feature = "profiler")]
+pub fn global_writes() -> Vec<(&'static str, GlobalWrites)> {
+    let mut writes: Vec<_> = GLOBAL_WRITES
+        .lock()
+        .iter()
+        .map(|(name, writes)| (*name, *writes))
+        .collect();
+    writes.sort_by_key(|(_, writes)| std::cmp::Reverse(writes.total));
+    writes
+}
+
 /// Timing for a single drawn window frame.
 #[cfg(feature = "profiler")]
 #[derive(Debug, Copy, Clone)]
