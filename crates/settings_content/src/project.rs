@@ -215,14 +215,30 @@ pub struct WorktreeSettingsContent {
     /// Default: ["**/.*"]
     pub hidden_files: Option<Vec<String>>,
 
-    /// Treat the files matching these globs as read-only. These files can be opened and viewed,
-    /// but cannot be edited. This is useful for generated files, build outputs, or files from
-    /// external dependencies that should not be modified directly.
+    /// Treat files matching these glob patterns as read-only when opened. You can
+    /// view but not edit them, which is useful for build outputs, external
+    /// dependencies, or generated files.
     ///
-    /// A "..." entry expands to the value being overridden. Leave "..." out
-    /// to replace the inherited globs, or use an empty list to clear them.
+    /// Default:
     ///
-    /// Default: []
+    /// ```json
+    /// {
+    ///   "read_only_files": []
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "read_only_files": ["**/build/**", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub read_only_files: Option<SplicingVec>,
 }
 
