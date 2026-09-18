@@ -361,16 +361,17 @@ TBD: Centered layout related settings
     // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
     // Defaults to "non_utf8".
     "active_encoding_button": "non_utf8",
-    // Show/hide an indicator with a countdown while timed multi-stroke
-    // input is pending. Hovering it pauses the timeout. Unless the which-key
-    // menu is enabled, hovering also lists the bindings that could still match.
+    // Show/hide an indicator while multi-stroke input is pending.
+    // If the input has a timeout, a countdown is shown and hovering pauses it.
+    // Unless the which-key menu is enabled, hovering also lists the bindings
+    // that could still match.
     // Defaults to true.
     "pending_keystrokes_indicator": true
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.
     // Activity from the LSP is still shown.
-    // Button is not shown if "enable_language_server" if false.
+    // Button is not shown if "enable_language_server" is false.
     "button": true
   },
 ```
