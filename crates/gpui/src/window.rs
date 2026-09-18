@@ -973,9 +973,15 @@ pub(crate) struct DeferredDraw {
     absolute_offset: Point<Pixels>,
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
+    /// How far the recorded ranges must move when this draw is reused from
+    /// the previous frame; zero once they have been replayed in this one.
+    reuse_offset: Point<Pixels>,
 }
 
 pub(crate) struct Frame {
+    /// Which draw this frame is: one more each time the frames are swapped,
+    /// so a record of where something lies in a frame can say which frame.
+    pub(crate) id: usize,
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
@@ -1022,6 +1028,7 @@ pub(crate) struct PaintIndex {
 impl Frame {
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
+            id: 0,
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
@@ -3341,6 +3348,7 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        self.next_frame.id = self.rendered_frame.id + 1;
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
         let mut focus_before_listeners = self.focus;
@@ -3708,7 +3716,15 @@ impl Window {
             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
-                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
+                let (
+                    element,
+                    parent_node,
+                    current_view,
+                    rem_size,
+                    absolute_offset,
+                    prepaint_range,
+                    reuse_offset,
+                ) = {
                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                     self.element_id_stack
                         .clone_from(&deferred_draw.element_id_stack);
@@ -3721,6 +3737,7 @@ impl Window {
                         deferred_draw.rem_size,
                         deferred_draw.absolute_offset,
                         deferred_draw.prepaint_range.clone(),
+                        deferred_draw.reuse_offset,
                     )
                 };
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
@@ -3736,7 +3753,7 @@ impl Window {
                     });
                     self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
                 } else {
-                    self.reuse_prepaint(prepaint_range);
+                    self.reuse_prepaint_at(prepaint_range, reuse_offset);
                 }
                 let prepaint_end = self.prepaint_index();
                 self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
@@ -3779,10 +3796,15 @@ impl Window {
                     })
                 })
             } else {
-                self.reuse_paint(deferred_draw.paint_range.clone());
+                self.reuse_paint_at(
+                    deferred_draw.paint_range.clone(),
+                    deferred_draw.reuse_offset,
+                );
             }
             let paint_end = self.paint_index();
             deferred_draw.paint_range = paint_start..paint_end;
+            // The records now live in this frame at their new position.
+            deferred_draw.reuse_offset = Point::default();
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
@@ -3806,11 +3828,46 @@ impl Window {
         }
     }
 
-    pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+    /// Reuses the records in `range` of the rendered frame that laying an
+    /// element out leaves behind — element state accesses and text layouts —
+    /// as [`Self::reuse_prepaint_at`] does for the prepaint records. A cached
+    /// view measured from its content lays the content out before its own
+    /// prepaint, so those records fall outside its prepaint range.
+    pub(crate) fn reuse_layout_records(&mut self, range: Range<PrepaintStateIndex>) {
+        self.next_frame.accessed_element_states.extend(
+            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .map(|(id, type_id)| (id.clone(), *type_id)),
+        );
+        self.text_system
+            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+    }
+
+    /// Reuses the prepaint records in `range` of the rendered frame, moved by
+    /// `offset`. Everything positioned — hitboxes, deferred draws — moves,
+    /// and their content masks, which include whatever clipped them at the
+    /// old position, move with them and are then cut down to the mask in
+    /// effect here. The mask is cut down even for a zero offset: the records
+    /// may be reused in place under a mask that has since changed.
+    pub(crate) fn reuse_prepaint_at(
+        &mut self,
+        range: Range<PrepaintStateIndex>,
+        offset: Point<Pixels>,
+    ) {
+        let clip = self.content_mask();
+        let moved_mask = |mask: ContentMask<Pixels>| ContentMask {
+            bounds: (mask.bounds + offset).intersect(&clip.bounds),
+        };
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
-                .cloned(),
+                .map(|hitbox| Hitbox {
+                    id: hitbox.id,
+                    bounds: hitbox.bounds + offset,
+                    content_mask: moved_mask(hitbox.content_mask),
+                    behavior: hitbox.behavior,
+                }),
         );
         self.next_frame.tooltip_requests.extend(
             self.rendered_frame.tooltip_requests
@@ -3846,13 +3903,14 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
-                    content_mask: deferred_draw.content_mask,
+                    content_mask: deferred_draw.content_mask.map(moved_mask),
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
-                    absolute_offset: deferred_draw.absolute_offset,
+                    absolute_offset: deferred_draw.absolute_offset + offset,
                     prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
+                    reuse_offset: deferred_draw.reuse_offset + offset,
                 }),
         );
     }
@@ -3869,7 +3927,9 @@ impl Window {
         }
     }
 
-    pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+    /// Reuses the paint records in `range` of the rendered frame, with the
+    /// scene primitives moved by `offset`; see [`Self::reuse_prepaint_at`].
+    pub(crate) fn reuse_paint_at(&mut self, range: Range<PaintIndex>, offset: Point<Pixels>) {
         self.next_frame.cursor_styles.extend(
             self.rendered_frame.cursor_styles
                 [range.start.cursor_styles_index..range.end.cursor_styles_index]
@@ -3901,9 +3961,13 @@ impl Window {
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-        self.next_frame.scene.replay(
+        let scale_factor = self.scale_factor();
+        let clip = self.content_mask().scale(scale_factor);
+        self.next_frame.scene.replay_at(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
+            offset.scale(scale_factor),
+            &clip,
         );
     }
 
@@ -4333,6 +4397,7 @@ impl Window {
             absolute_offset,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
+            reuse_offset: Point::default(),
         });
     }
 
@@ -5032,6 +5097,24 @@ impl Window {
             scale_factor,
             &cx.layout_id_buffer,
         )
+    }
+
+    /// Runs `f` with `engine` as the window's layout tree (a new tree if
+    /// `None`), then hands it back. Content laid out this way lives in a tree
+    /// of its own, so it can be laid out while the window's tree is being
+    /// computed — its engine is away in [`Self::compute_layout`] then, and a
+    /// measure callback can add nothing to it — and prepainted from that tree
+    /// later.
+    pub(crate) fn with_layout_engine<R>(
+        &mut self,
+        engine: &mut Option<TaffyLayoutEngine>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let engine_in_use = engine.take().unwrap_or_else(TaffyLayoutEngine::new);
+        let outer = mem::replace(&mut self.layout_engine, Some(engine_in_use));
+        let result = f(self);
+        *engine = mem::replace(&mut self.layout_engine, outer);
+        result
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
