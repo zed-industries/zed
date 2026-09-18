@@ -36,8 +36,10 @@ pub(crate) fn run_tests() -> Workflow {
         "run_action_checks",
         r"^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/",
     );
-    let should_check_licences =
-        PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
+    let should_check_licences = PathCondition::new(
+        "run_licenses",
+        r"^(Cargo\.lock$|script/.*licenses|(?:.*/)?LICENSE[^/]*$)",
+    );
 
     let orchestrate = orchestrate(&[
         &should_check_scripts,
@@ -130,12 +132,15 @@ pub(crate) fn run_tests() -> Workflow {
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
         .map(|mut workflow| {
-            for job in jobs {
+            for mut job in jobs {
+                if !matches!(job.name.as_str(), "orchestrate" | "check_style") {
+                    job.job = job.job.add_need("check_style");
+                }
                 workflow = workflow.add_job(job.name, job.job)
             }
             workflow
         })
-        .add_job(ext_tests.name, ext_tests.job)
+        .add_job(ext_tests.name, ext_tests.job.add_need("check_style"))
         .add_job(tests_pass.name, tests_pass.job)
 }
 
@@ -464,7 +469,7 @@ fn check_dependencies() -> NamedJob {
     }
 
     fn run_cargo_shear() -> Step<Run> {
-        named::bash("cargo shear --locked --deny-warnings")
+        named::bash("cargo shear --locked --deny-warnings --check-test-targets")
     }
 
     fn check_cargo_lock() -> Step<Run> {
@@ -782,7 +787,7 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_LARGE)
+            .runs_on(runners::LINUX_MEDIUM)
             .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
             .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
@@ -816,7 +821,7 @@ fn miri_scheduler() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_DEFAULT)
+            .runs_on(runners::LINUX_MEDIUM)
             .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
