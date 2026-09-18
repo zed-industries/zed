@@ -296,7 +296,7 @@ pub struct UserMessage {
     pub protocol_id: Option<acp::MessageId>,
     pub client_id: Option<ClientUserMessageId>,
     pub is_optimistic: bool,
-    pub content: ContentBlock,
+    pub content: MessageContent,
     pub chunks: Vec<acp::ContentBlock>,
     pub checkpoint: Option<Checkpoint>,
     pub indented: bool,
@@ -350,11 +350,11 @@ impl AssistantMessage {
 pub enum AssistantMessageChunk {
     Message {
         id: Option<acp::MessageId>,
-        block: ContentBlock,
+        block: MessageContent,
     },
     Thought {
         id: Option<acp::MessageId>,
-        block: ContentBlock,
+        block: MessageContent,
     },
 }
 
@@ -367,13 +367,13 @@ impl AssistantMessageChunk {
     ) -> Self {
         Self::Message {
             id: None,
-            block: ContentBlock::new(chunk.into(), language_registry, path_style, cx),
+            block: MessageContent::new(chunk.into(), language_registry, path_style, cx),
         }
     }
 
     fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::Message { block, .. } => block.to_markdown(cx).to_string(),
+            Self::Message { block, .. } => block.to_markdown(cx),
             Self::Thought { block, .. } => {
                 format!("<thinking>\n{}\n</thinking>", block.to_markdown(cx))
             }
@@ -1496,9 +1496,112 @@ fn elicitation_status_for_response(response: &acp::CreateElicitationResponse) ->
     }
 }
 
+#[derive(Debug, Default, PartialEq)]
+pub struct MessageContent {
+    blocks: Vec<ContentBlock>,
+}
+
+impl MessageContent {
+    pub fn new(
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) -> Self {
+        let mut content = Self::default();
+        content.append(block, language_registry, path_style, cx);
+        content
+    }
+
+    pub fn blocks(&self) -> &[ContentBlock] {
+        &self.blocks
+    }
+
+    pub fn markdowns(&self) -> impl Iterator<Item = &Entity<Markdown>> {
+        self.blocks.iter().filter_map(ContentBlock::markdown)
+    }
+
+    pub fn visible_content(&self, cx: &App) -> bool {
+        self.blocks.iter().any(|block| block.visible_content(cx))
+    }
+
+    pub fn to_markdown(&self, cx: &App) -> String {
+        self.blocks
+            .iter()
+            .map(|block| block.to_markdown(cx))
+            .filter(|text| !text.is_empty())
+            .join("\n\n")
+    }
+
+    fn trailing_text(&self) -> Option<&Entity<Markdown>> {
+        match self.blocks.last()? {
+            ContentBlock::Markdown { markdown } => Some(markdown),
+            _ => None,
+        }
+    }
+
+    pub fn append(
+        &mut self,
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        let block = match block {
+            acp::ContentBlock::ResourceLink(resource) => {
+                let mut text = ContentBlock::resource_link_md(&resource.uri, path_style);
+                if self.blocks.is_empty() {
+                    // Legacy leading links separated the next chunk. Include that separator
+                    // now because streamed text can append directly to the Markdown entity.
+                    text.push('\n');
+                }
+                text.into()
+            }
+            block => block,
+        };
+        if let acp::ContentBlock::Text(text) = &block {
+            if text.text.is_empty() {
+                return;
+            }
+            if let Some(markdown) = self.trailing_text() {
+                markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
+                return;
+            }
+        }
+        self.blocks.push(ContentBlock::new_output(
+            block,
+            language_registry,
+            path_style,
+            cx,
+        ));
+    }
+
+    fn append_prompt(
+        &mut self,
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        // Prompt text resources are mentions, not output previews. Keep their text
+        // inline while retaining the original payloads in UserMessage::chunks.
+        let block = match block {
+            acp::ContentBlock::Resource(resource)
+                if matches!(
+                    resource.resource,
+                    acp::EmbeddedResourceResource::TextResourceContents(_)
+                ) =>
+            {
+                ContentBlock::embedded_resource_string_contents(&resource, path_style).into()
+            }
+            block => block,
+        };
+        self.append(block, language_registry, path_style, cx);
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum ContentBlock {
-    Empty,
     Markdown {
         markdown: Entity<Markdown>,
     },
@@ -1520,37 +1623,17 @@ pub enum ContentBlock {
 }
 
 impl ContentBlock {
-    pub fn new(
-        block: acp::ContentBlock,
-        language_registry: &Arc<LanguageRegistry>,
-        path_style: PathStyle,
-        cx: &mut App,
-    ) -> Self {
-        let mut this = Self::Empty;
-        this.append(block, language_registry, path_style, cx);
-        this
-    }
-
-    pub fn new_combined(
-        blocks: impl IntoIterator<Item = acp::ContentBlock>,
-        language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
-        cx: &mut App,
-    ) -> Self {
-        let mut this = Self::Empty;
-        for block in blocks {
-            this.append(block, &language_registry, path_style, cx);
-        }
-        this
-    }
-
     pub fn new_output(
         block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
-        path_style: PathStyle,
+        _path_style: PathStyle,
         cx: &mut App,
     ) -> Self {
         match block {
+            acp::ContentBlock::Text(text) => {
+                Self::create_markdown_block(text.text, language_registry, cx)
+            }
+            acp::ContentBlock::ResourceLink(resource_link) => Self::ResourceLink { resource_link },
             acp::ContentBlock::Resource(resource)
                 if matches!(
                     &resource.resource,
@@ -1580,9 +1663,6 @@ impl ContentBlock {
                     }
                 }
             }
-            block @ (acp::ContentBlock::Text(_) | acp::ContentBlock::ResourceLink(_)) => {
-                Self::new(block, language_registry, path_style, cx)
-            }
             content => {
                 let description = if matches!(&content, acp::ContentBlock::Audio(_)) {
                     "Audio content is not supported."
@@ -1593,61 +1673,6 @@ impl ContentBlock {
                     content,
                     markdown: Self::create_markdown(description.into(), language_registry, cx),
                 }
-            }
-        }
-    }
-
-    pub fn append(
-        &mut self,
-        block: acp::ContentBlock,
-        language_registry: &Arc<LanguageRegistry>,
-        path_style: PathStyle,
-        cx: &mut App,
-    ) {
-        match (&mut *self, &block) {
-            (ContentBlock::Empty, acp::ContentBlock::ResourceLink(resource_link)) => {
-                *self = ContentBlock::ResourceLink {
-                    resource_link: resource_link.clone(),
-                };
-            }
-            (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
-                if let Some((image, dimensions)) = Self::decode_image(image_content) {
-                    *self = ContentBlock::Image { image, dimensions };
-                } else {
-                    let new_content = Self::image_md(image_content);
-                    *self = Self::create_markdown_block(new_content, language_registry, cx);
-                }
-            }
-            (ContentBlock::Empty, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                *self = Self::create_markdown_block(new_content, language_registry, cx);
-            }
-            (ContentBlock::Markdown { markdown }, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
-            }
-            (ContentBlock::ResourceLink { resource_link }, _) => {
-                let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("{}\n{}", existing_content, new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
-            }
-            (ContentBlock::EmbeddedResource { resource, .. }, _) => {
-                let existing_content =
-                    Self::embedded_resource_string_contents(resource, path_style);
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("{}\n{}", existing_content, new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
-            }
-            (ContentBlock::Image { .. }, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("`Image`\n{}", new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
-            }
-            (ContentBlock::Unsupported { markdown, .. }, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("{}\n{}", markdown.read(cx).source(), new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
             }
         }
     }
@@ -1791,9 +1816,7 @@ impl ContentBlock {
                 acp::EmbeddedResourceResource::BlobResourceContents(_) => None,
                 _ => None,
             },
-            ContentBlock::Empty
-            | ContentBlock::ResourceLink { .. }
-            | ContentBlock::Image { .. } => None,
+            ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => None,
         }
     }
 
@@ -1864,7 +1887,6 @@ impl ContentBlock {
 
     pub fn visible_content(&self, cx: &App) -> bool {
         match self {
-            ContentBlock::Empty => false,
             ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
                 !markdown.read(cx).source().trim().is_empty()
             }
@@ -1876,25 +1898,6 @@ impl ContentBlock {
         }
     }
 
-    fn block_string_contents(block: &acp::ContentBlock, path_style: PathStyle) -> String {
-        match block {
-            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
-            acp::ContentBlock::ResourceLink(resource_link) => {
-                Self::resource_link_md(&resource_link.uri, path_style)
-            }
-            acp::ContentBlock::Resource(acp::EmbeddedResource {
-                resource:
-                    acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
-                        uri,
-                        ..
-                    }),
-                ..
-            }) => Self::resource_link_md(uri, path_style),
-            acp::ContentBlock::Image(image) => Self::image_md(image),
-            _ => String::new(),
-        }
-    }
-
     fn resource_link_md(uri: &str, path_style: PathStyle) -> String {
         if let Some(uri) = MentionUri::parse(uri, path_style).log_err() {
             uri.as_link().to_string()
@@ -1903,13 +1906,8 @@ impl ContentBlock {
         }
     }
 
-    fn image_md(_image: &acp::ImageContent) -> String {
-        "`Image`".into()
-    }
-
     pub fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
         match self {
-            ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
                 markdown.read(cx).source()
             }
@@ -1927,7 +1925,6 @@ impl ContentBlock {
 
     pub fn markdown(&self) -> Option<&Entity<Markdown>> {
         match self {
-            ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
                 Some(markdown)
             }
@@ -2659,7 +2656,7 @@ impl AcpThread {
                     AssistantMessageChunk::Message { block, .. } => block,
                     AssistantMessageChunk::Thought { block, .. } => block,
                 };
-                if let Some(markdown) = block.markdown() {
+                for markdown in block.markdowns() {
                     markdown.update(cx, |markdown, cx| {
                         markdown.invalidate_mermaid_cache(cx);
                     });
@@ -2978,12 +2975,13 @@ impl AcpThread {
             if existing_protocol_id.is_none() {
                 *existing_protocol_id = protocol_id;
             }
-            content.append(chunk.clone(), &language_registry, path_style, cx);
+            content.append_prompt(chunk.clone(), &language_registry, path_style, cx);
             chunks.push(chunk);
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
-            let content = ContentBlock::new(chunk.clone(), &language_registry, path_style, cx);
+            let mut content = MessageContent::default();
+            content.append_prompt(chunk.clone(), &language_registry, path_style, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
                     protocol_id,
@@ -3075,7 +3073,7 @@ impl AcpThread {
                     block.append(chunk, &language_registry, path_style, cx)
                 }
                 _ => {
-                    let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
+                    let block = MessageContent::new(chunk, &language_registry, path_style, cx);
                     if is_thought {
                         chunks.push(AssistantMessageChunk::Thought {
                             id: message_id,
@@ -3090,7 +3088,7 @@ impl AcpThread {
                 }
             }
         } else {
-            let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
+            let block = MessageContent::new(chunk, &language_registry, path_style, cx);
             let chunk = if is_thought {
                 AssistantMessageChunk::Thought {
                     id: message_id,
@@ -3133,17 +3131,18 @@ impl AcpThread {
                 (
                     AssistantMessageChunk::Message {
                         id: existing_id,
-                        block: ContentBlock::Markdown { markdown },
+                        block,
                     },
                     false,
                 )
                 | (
                     AssistantMessageChunk::Thought {
                         id: existing_id,
-                        block: ContentBlock::Markdown { markdown },
+                        block,
                     },
                     true,
                 ) if can_merge_message_chunks(existing_id.as_ref(), message_id) => {
+                    let markdown = block.trailing_text()?;
                     if existing_id.is_none() {
                         *existing_id = message_id.cloned();
                     }
@@ -3437,10 +3436,10 @@ impl AcpThread {
                     label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
                     title: Some("Tool call not found".into()),
                     kind: acp::ToolKind::Fetch,
-                    content: vec![ToolCallContent::ContentBlock(ContentBlock::new(
+                    content: vec![ToolCallContent::ContentBlock(ContentBlock::new_output(
                         "Tool call not found".into(),
                         &languages,
-                        path_style,
+                        PathStyle::local(),
                         cx,
                     ))],
                     status: ToolCallStatus::Failed,
@@ -3560,7 +3559,7 @@ impl AcpThread {
                 update.try_into()?,
                 status,
                 language_registry,
-                self.project.read(cx).path_style(cx),
+                path_style,
                 &self.terminals,
                 cx,
             )?;
@@ -3967,12 +3966,12 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
-        let block = ContentBlock::new_combined(
-            message.clone(),
-            self.project.read(cx).languages().clone(),
-            self.project.read(cx).path_style(cx),
-            cx,
-        );
+        let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        let mut block = MessageContent::default();
+        for chunk in &message {
+            block.append_prompt(chunk.clone(), &language_registry, path_style, cx);
+        }
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
 
@@ -5211,6 +5210,378 @@ mod tests {
                         .insert(AcpBetaFeatureFlag::NAME.to_string(), value.to_string());
                 });
             });
+        });
+    }
+
+    fn message_test_image() -> acp::ContentBlock {
+        acp::ContentBlock::Image(acp::ImageContent::new(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+            "image/png",
+        ))
+    }
+
+    #[gpui::test]
+    fn test_message_content_preserves_mixed_order(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            for (chunks, expected_kinds, expected_export) in [
+                (
+                    vec!["before".into(), message_test_image()],
+                    vec!["text", "image"],
+                    "before\n\n`Image`",
+                ),
+                (
+                    vec![message_test_image(), "after".into()],
+                    vec!["image", "text"],
+                    "`Image`\n\nafter",
+                ),
+                (
+                    vec![message_test_image(), message_test_image()],
+                    vec!["image", "image"],
+                    "`Image`\n\n`Image`",
+                ),
+                (
+                    vec!["".into(), message_test_image()],
+                    vec!["image"],
+                    "`Image`",
+                ),
+            ] {
+                let mut content = MessageContent::default();
+                for chunk in chunks {
+                    content.append(chunk, &language_registry, PathStyle::local(), cx);
+                }
+                assert_eq!(
+                    content
+                        .blocks()
+                        .iter()
+                        .map(|block| match block {
+                            ContentBlock::Markdown { .. } => "text",
+                            ContentBlock::Image { .. } => "image",
+                            other => panic!("unexpected block {other:?}"),
+                        })
+                        .collect::<Vec<_>>(),
+                    expected_kinds,
+                );
+                assert_eq!(content.to_markdown(cx), expected_export);
+                assert!(content.visible_content(cx));
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_resources_and_fallbacks(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let mut content = MessageContent::default();
+            for chunk in [
+                "before".into(),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new("resource text", "tool://preview"),
+                    ),
+                )),
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                    "link",
+                    "https://example.com/resource",
+                )),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::BlobResourceContents(
+                        acp::BlobResourceContents::new("private-blob-data", "tool://archive.bin"),
+                    ),
+                )),
+                acp::ContentBlock::Image(acp::ImageContent::new("not-base64", "image/png")),
+                acp::ContentBlock::Audio(acp::AudioContent::new("private-audio-data", "audio/wav")),
+                "after".into(),
+            ] {
+                content.append(chunk, &language_registry, PathStyle::local(), cx);
+            }
+            assert!(matches!(
+                content.blocks(),
+                [
+                    ContentBlock::Markdown { .. },
+                    ContentBlock::EmbeddedResource { .. },
+                    ContentBlock::Markdown { .. },
+                    ContentBlock::EmbeddedResource { markdown: None, .. },
+                    ContentBlock::Unsupported { .. },
+                    ContentBlock::Unsupported { .. },
+                    ContentBlock::Markdown { .. },
+                ]
+            ));
+            assert_eq!(
+                content.to_markdown(cx),
+                concat!(
+                    "before\n\n```\nresource text\n```\n\n",
+                    "[@https://example.com/resource](https://example.com/resource)\n\n",
+                    "tool://archive.bin\n\n",
+                    "Image content could not be displayed.\n\n",
+                    "Audio content is not supported.\n\nafter",
+                )
+            );
+            assert_eq!(
+                content
+                    .markdowns()
+                    .map(|markdown| markdown.read(cx).source())
+                    .collect::<Vec<_>>(),
+                [
+                    "before",
+                    "```\nresource text\n```",
+                    "[@https://example.com/resource](https://example.com/resource)",
+                    "Image content could not be displayed.",
+                    "Audio content is not supported.",
+                    "after",
+                ]
+            );
+            assert!(!content.to_markdown(cx).contains("private-audio-data"));
+            assert!(!content.to_markdown(cx).contains("private-blob-data"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_message_content_preserves_streaming_entities(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+
+        let (before, after, image) = thread.update(cx, |thread, cx| {
+            thread.push_assistant_content_block("before".into(), false, cx);
+            let before = thread
+                .streaming_markdown_target(None, false, false)
+                .expect("text should have a streaming target");
+            thread.push_assistant_content_block(" image".into(), false, cx);
+            assert!(thread.streaming_text_buffer.is_some());
+            thread.push_assistant_content_block(message_test_image(), false, cx);
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(before.read(cx).source(), "before image");
+            assert!(
+                thread
+                    .streaming_markdown_target(None, false, false)
+                    .is_none()
+            );
+
+            thread.push_assistant_content_block("after".into(), false, cx);
+            let after = thread
+                .streaming_markdown_target(None, false, false)
+                .expect("text after an image should have its own streaming target");
+            assert_ne!(before.entity_id(), after.entity_id());
+            thread.push_assistant_content_block(" image".into(), false, cx);
+            assert_eq!(
+                thread
+                    .streaming_text_buffer
+                    .as_ref()
+                    .expect("streaming text")
+                    .target,
+                after,
+            );
+
+            let [AgentThreadEntry::AssistantMessage(message)] = thread.entries() else {
+                panic!("expected one assistant message");
+            };
+            let [AssistantMessageChunk::Message { block, .. }] = message.chunks.as_slice() else {
+                panic!("expected one message chunk");
+            };
+            let [_, ContentBlock::Image { image, .. }, _] = block.blocks() else {
+                panic!("expected text, image, text");
+            };
+            (before, after, image.clone())
+        });
+
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(after.read(cx).source(), "after image");
+            let [AgentThreadEntry::AssistantMessage(message)] = thread.entries() else {
+                panic!("expected one assistant message");
+            };
+            let [AssistantMessageChunk::Message { block, .. }] = message.chunks.as_slice() else {
+                panic!("expected one message chunk");
+            };
+            let [
+                ContentBlock::Markdown { markdown: first },
+                ContentBlock::Image {
+                    image: current_image,
+                    ..
+                },
+                ContentBlock::Markdown { markdown: last },
+            ] = block.blocks()
+            else {
+                panic!("expected text, image, text");
+            };
+            assert_eq!(first, &before);
+            assert_eq!(last, &after);
+            assert!(Arc::ptr_eq(&image, current_image));
+        });
+
+        let whole = cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let mut content = MessageContent::default();
+            for chunk in [
+                "before image".into(),
+                message_test_image(),
+                "after image".into(),
+            ] {
+                content.append(chunk, &language_registry, PathStyle::local(), cx);
+            }
+            content.to_markdown(cx)
+        });
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                format!("## Assistant\n\n{whole}\n\n")
+            );
+        });
+
+        for (content, preview) in [
+            (
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new("Resource preview", "tool://preview")
+                            .mime_type("text/markdown".to_string()),
+                    ),
+                )),
+                "Resource preview",
+            ),
+            (
+                acp::ContentBlock::Audio(acp::AudioContent::new("private-audio-data", "audio/wav")),
+                "Audio content is not supported.",
+            ),
+        ] {
+            thread.update(cx, |thread, cx| {
+                thread.push_assistant_content_block(content, false, cx);
+                assert!(
+                    thread
+                        .streaming_markdown_target(None, false, false)
+                        .is_none()
+                );
+                let Some(AgentThreadEntry::AssistantMessage(message)) = thread.entries().last()
+                else {
+                    panic!("expected assistant output");
+                };
+                let Some(AssistantMessageChunk::Message { block, .. }) = message.chunks.last()
+                else {
+                    panic!("expected message content");
+                };
+                let preview_markdown = block
+                    .blocks()
+                    .last()
+                    .and_then(ContentBlock::markdown)
+                    .expect("Markdown-backed non-text content")
+                    .clone();
+                thread.push_assistant_content_block("Following".into(), false, cx);
+                let target = thread
+                    .streaming_markdown_target(None, false, false)
+                    .expect("new text target");
+                assert_ne!(target, preview_markdown);
+                thread.push_assistant_content_block(" text".into(), false, cx);
+                AcpThread::flush_streaming_text(&mut thread.streaming_text_buffer, cx);
+                assert_eq!(target.read(cx).source(), "Following text");
+                assert_eq!(preview_markdown.read(cx).source(), preview);
+            });
+        }
+
+        let (streamed, expected) = thread.update(cx, |thread, cx| {
+            let path_style = thread.project.read(cx).path_style(cx);
+            let languages = thread.project.read(cx).languages().clone();
+            let uri = "file:///project/report.md";
+            let link = acp::ContentBlock::ResourceLink(acp::ResourceLink::new("report", uri));
+            let expected = format!(
+                "{}\n## Details\n",
+                ContentBlock::resource_link_md(uri, path_style),
+            );
+            let mut direct = MessageContent::new(link.clone(), &languages, path_style, cx);
+            direct.append("## Details\n".into(), &languages, path_style, cx);
+            assert_eq!(direct.to_markdown(cx), expected);
+
+            thread.push_user_content_block(None, "Next response".into(), cx);
+            thread.push_assistant_content_block(link, false, cx);
+            let target = thread
+                .streaming_markdown_target(None, false, false)
+                .expect("leading link should retain its Markdown entity");
+            thread.push_assistant_content_block("## Det".into(), false, cx);
+            thread.push_assistant_content_block("ails\n".into(), false, cx);
+            assert_eq!(
+                thread
+                    .streaming_text_buffer
+                    .as_ref()
+                    .expect("buffered text")
+                    .target,
+                target,
+            );
+            (target, expected)
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        streamed.read_with(cx, |markdown, _| assert_eq!(markdown.source(), &expected));
+    }
+
+    #[gpui::test]
+    async fn test_message_content_preserves_prompt_mentions_and_raw_chunks(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+        let chunks = vec![
+            "read ".into(),
+            acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new(
+                        "attached file contents",
+                        "https://example.com/file",
+                    ),
+                ),
+            )),
+            " and ".into(),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "link",
+                "https://example.com/link",
+            )),
+            message_test_image(),
+        ];
+
+        thread.update(cx, |thread, cx| {
+            for chunk in &chunks {
+                thread.push_user_content_block(None, chunk.clone(), cx);
+            }
+            let [AgentThreadEntry::UserMessage(message)] = thread.entries() else {
+                panic!("expected one user message");
+            };
+            assert_eq!(message.chunks, chunks);
+            assert!(matches!(
+                message.content.blocks(),
+                [ContentBlock::Markdown { .. }, ContentBlock::Image { .. }]
+            ));
+            let expected = format!(
+                "read {} and {}\n\n`Image`",
+                ContentBlock::resource_link_md("https://example.com/file", PathStyle::local()),
+                ContentBlock::resource_link_md("https://example.com/link", PathStyle::local()),
+            );
+            assert_eq!(message.content.to_markdown(cx), expected);
+            assert!(
+                !message
+                    .content
+                    .to_markdown(cx)
+                    .contains("attached file contents")
+            );
         });
     }
 
@@ -10073,7 +10444,6 @@ mod tests {
                             let markdown_text = markdown.read(cx).source();
                             assert!(markdown_text.contains("Tool call not found"));
                         }
-                        ContentBlock::Empty => panic!("Expected markdown content, got empty"),
                         ContentBlock::ResourceLink { .. } => {
                             panic!("Expected markdown content, got resource link")
                         }
@@ -10445,7 +10815,7 @@ mod tests {
                     protocol_id: None,
                     client_id: Some(ClientUserMessageId::new()),
                     is_optimistic: true,
-                    content: ContentBlock::Empty,
+                    content: MessageContent::default(),
                     chunks: vec!["Injected message (no checkpoint)".into()],
                     checkpoint: None,
                     indented: false,
