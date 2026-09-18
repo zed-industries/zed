@@ -70,14 +70,9 @@ impl<'a, T: 'static> Context<'a, T> {
         T: 'static,
         W: 'static,
     {
-        let this = self.weak_entity();
-        self.app.observe_internal(entity, move |e, cx| {
-            if let Some(this) = this.upgrade() {
-                this.update(cx, |this, cx| on_notify(this, e, cx));
-                true
-            } else {
-                false
-            }
+        let observer = self.weak_entity();
+        self.app.observe_internal(entity, move |entity, cx| {
+            invoke_observer(&observer, entity, cx, &mut on_notify)
         })
     }
 
@@ -106,15 +101,11 @@ impl<'a, T: 'static> Context<'a, T> {
         T2: 'static + EventEmitter<Evt>,
         Evt: 'static,
     {
-        let this = self.weak_entity();
-        self.app.subscribe_internal(entity, move |e, event, cx| {
-            if let Some(this) = this.upgrade() {
-                this.update(cx, |this, cx| on_event(this, e, event, cx));
-                true
-            } else {
-                false
-            }
-        })
+        let subscriber = self.weak_entity();
+        self.app
+            .subscribe_internal(entity, move |entity, event, cx| {
+                invoke_subscriber(&subscriber, entity, event, cx, &mut on_event)
+            })
     }
 
     /// Subscribe to an event type from ourself
@@ -235,6 +226,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// The function is provided a weak handle to the entity owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
     #[track_caller]
+    #[inline(always)]
     pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
         T: 'static,
@@ -250,13 +242,16 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut App)`,
     /// but it's often useful to be able to access view state in these
     /// callbacks. This method provides a convenient way to do so.
+    #[inline(always)]
     pub fn listener<E: ?Sized>(
         &self,
-        f: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
+        listener: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         let view = self.entity().downgrade();
-        move |e: &E, window: &mut Window, cx: &mut App| {
-            view.update(cx, |view, cx| f(view, e, window, cx)).ok();
+        move |event: &E, window: &mut Window, cx: &mut App| {
+            invoke_listener(&view, window, cx, &|view, window, cx| {
+                listener(view, event, window, cx);
+            });
         }
     }
 
@@ -336,17 +331,7 @@ impl<'a, T: 'static> Context<'a, T> {
         self.ensure_window(observer_id, window.handle.id);
         self.new_observer(
             observed_id,
-            Box::new(move |cx| {
-                let Some((observer, observed)) = observer.upgrade().zip(observed.upgrade()) else {
-                    return false;
-                };
-                cx.with_window(observer_id, |window, cx| {
-                    observer.update(cx, |observer, cx| {
-                        on_notify(observer, observed, window, cx);
-                    });
-                });
-                true
-            }),
+            Box::new(move |cx| invoke_observer_in(&observer, &observed, cx, &mut on_notify)),
         )
     }
 
@@ -372,17 +357,7 @@ impl<'a, T: 'static> Context<'a, T> {
             (
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
-                    let Some((subscriber, emitter)) = subscriber.upgrade().zip(emitter.upgrade())
-                    else {
-                        return false;
-                    };
-                    let event = event.downcast_ref().expect("invalid event type");
-                    cx.with_window(subscriber_id, |window, cx| {
-                        subscriber.update(cx, |subscriber, cx| {
-                            on_event(subscriber, &emitter, event, window, cx);
-                        });
-                    });
-                    true
+                    invoke_subscriber_in(&subscriber, &emitter, event, cx, &mut on_event)
                 }),
             ),
         )
@@ -693,6 +668,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the entity across await points.
     /// The returned future will be polled on the main thread.
     #[track_caller]
+    #[inline(always)]
     pub fn spawn_in<AsyncFn, R>(&self, window: &Window, f: AsyncFn) -> Task<R>
     where
         R: 'static,
@@ -707,6 +683,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the entity across await points.
     /// The returned future will be polled on the main thread.
     #[track_caller]
+    #[inline(always)]
     pub fn spawn_in_with_priority<AsyncFn, R>(
         &self,
         priority: Priority,
@@ -900,4 +877,85 @@ impl<T> BorrowMut<App> for Context<'_, T> {
     fn borrow_mut(&mut self) -> &mut App {
         self.app
     }
+}
+
+#[inline(never)]
+fn invoke_observer<T: 'static, W: 'static>(
+    observer: &WeakEntity<T>,
+    observed: Entity<W>,
+    cx: &mut App,
+    on_notify: &mut dyn FnMut(&mut T, Entity<W>, &mut Context<T>),
+) -> bool {
+    if let Some(observer) = observer.upgrade() {
+        observer.update(cx, |observer, cx| on_notify(observer, observed, cx));
+        true
+    } else {
+        false
+    }
+}
+
+#[inline(never)]
+fn invoke_subscriber<T: 'static, Emitter: 'static, Event: 'static>(
+    subscriber: &WeakEntity<T>,
+    emitter: Entity<Emitter>,
+    event: &Event,
+    cx: &mut App,
+    on_event: &mut dyn FnMut(&mut T, Entity<Emitter>, &Event, &mut Context<T>),
+) -> bool {
+    if let Some(subscriber) = subscriber.upgrade() {
+        subscriber.update(cx, |subscriber, cx| {
+            on_event(subscriber, emitter, event, cx)
+        });
+        true
+    } else {
+        false
+    }
+}
+
+#[inline(never)]
+fn invoke_observer_in<T: 'static, W: 'static>(
+    observer: &WeakEntity<T>,
+    observed: &WeakEntity<W>,
+    cx: &mut App,
+    on_notify: &mut dyn FnMut(&mut T, Entity<W>, &mut Window, &mut Context<T>),
+) -> bool {
+    let Some((observer, observed)) = observer.upgrade().zip(observed.upgrade()) else {
+        return false;
+    };
+    cx.with_window(observer.entity_id(), |window, cx| {
+        observer.update(cx, |observer, cx| {
+            on_notify(observer, observed, window, cx);
+        });
+    });
+    true
+}
+
+#[inline(never)]
+fn invoke_subscriber_in<T: 'static, Emitter: 'static, Event: 'static>(
+    subscriber: &WeakEntity<T>,
+    emitter: &WeakEntity<Emitter>,
+    event: &dyn Any,
+    cx: &mut App,
+    on_event: &mut dyn FnMut(&mut T, &Entity<Emitter>, &Event, &mut Window, &mut Context<T>),
+) -> bool {
+    let Some((subscriber, emitter)) = subscriber.upgrade().zip(emitter.upgrade()) else {
+        return false;
+    };
+    let event = event.downcast_ref().expect("invalid event type");
+    cx.with_window(subscriber.entity_id(), |window, cx| {
+        subscriber.update(cx, |subscriber, cx| {
+            on_event(subscriber, &emitter, event, window, cx);
+        });
+    });
+    true
+}
+
+#[inline(never)]
+fn invoke_listener<T: 'static>(
+    view: &WeakEntity<T>,
+    window: &mut Window,
+    cx: &mut App,
+    listener: &dyn Fn(&mut T, &mut Window, &mut Context<T>),
+) {
+    view.update(cx, |view, cx| listener(view, window, cx)).ok();
 }
