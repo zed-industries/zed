@@ -189,6 +189,7 @@ jobs:
   clippy_windows:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: self-32vcpu-windows-2022
     steps:
@@ -219,6 +220,7 @@ jobs:
   clippy_linux:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
@@ -261,6 +263,7 @@ jobs:
   clippy_mac:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
@@ -292,6 +295,7 @@ jobs:
   clippy_mac_x86_64:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
@@ -325,6 +329,7 @@ jobs:
   run_tests_windows:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: self-32vcpu-windows-2022
     steps:
@@ -369,6 +374,7 @@ jobs:
   run_tests_linux:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
@@ -435,6 +441,7 @@ jobs:
   run_tests_mac:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
@@ -484,6 +491,7 @@ jobs:
   miri_scheduler:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
@@ -518,6 +526,7 @@ jobs:
   doctests:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
@@ -566,6 +575,7 @@ jobs:
   check_workspace_binaries:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-8x16-ubuntu-2204
     env:
@@ -614,6 +624,7 @@ jobs:
   build_visual_tests_binary:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
@@ -639,6 +650,7 @@ jobs:
   check_wasm:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
@@ -683,6 +695,7 @@ jobs:
   check_dependencies:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
     env:
@@ -721,6 +734,7 @@ jobs:
   check_docs:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_docs == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
@@ -779,6 +793,7 @@ jobs:
   check_licenses:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_licenses == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
@@ -802,6 +817,7 @@ jobs:
   check_scripts:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_action_checks == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
@@ -845,6 +861,7 @@ jobs:
   check_remote_server_linux_x86_64:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
     env:
@@ -885,6 +902,7 @@ jobs:
   check_remote_server_mac_aarch64:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-mac-large
     steps:
@@ -914,6 +932,7 @@ jobs:
   check_remote_server_windows_x86_64:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: self-32vcpu-windows-2022
     steps:
@@ -951,6 +970,7 @@ jobs:
   check_postgres_and_protobuf_migrations:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-4x8-ubuntu-2204
     env:
@@ -996,6 +1016,7 @@ jobs:
   extension_tests:
     needs:
     - orchestrate
+    - check_style
     if: needs.orchestrate.outputs.changed_extensions != '[]'
     permissions:
       contents: read
