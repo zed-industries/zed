@@ -118,6 +118,42 @@ async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_multi_workspace_notifies_when_agent_is_enabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.enabled = false;
+        AgentSettings::override_global(settings, cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    let notification_count = Rc::new(Cell::new(0));
+    let _subscription = cx.update(|_, cx| {
+        cx.observe(&multi_workspace, {
+            let notification_count = notification_count.clone();
+            move |_, _| notification_count.set(notification_count.get() + 1)
+        })
+    });
+
+    cx.update(|_, cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.enabled = true;
+        AgentSettings::override_global(settings, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        notification_count.get(),
+        1,
+        "enabling the agent should rerender MultiWorkspace so its actions are registered"
+    );
+}
+
+#[gpui::test]
 async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
