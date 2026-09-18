@@ -3253,6 +3253,9 @@ impl Window {
         cx: &mut App,
         callback: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
     ) -> Option<R> {
+        if self.rendered_frame.focus != self.focus {
+            return None;
+        }
         let index = self
             .rendered_frame
             .input_handlers
@@ -9006,6 +9009,7 @@ mod tests {
     fn paint_test_underlines(window: &mut Window, paint: impl FnOnce(&mut Window)) -> &[Underline] {
         window.next_frame.scene.clear();
         paint(window);
+        window.next_frame.scene.finish();
         &window.next_frame.scene.underlines
     }
 
