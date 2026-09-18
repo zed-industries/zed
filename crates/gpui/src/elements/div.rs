@@ -5583,12 +5583,6 @@ mod tests {
             })
             .unwrap();
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear(cx);
-            })
-            .unwrap();
-
         assert!(parent_active_tooltip.borrow().is_none());
         assert!(matches!(
             child_active_tooltip.borrow().as_ref(),
@@ -5617,12 +5611,6 @@ mod tests {
                     .to_platform_input(),
                     cx,
                 );
-            })
-            .unwrap();
-
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear(cx);
             })
             .unwrap();
 
@@ -5688,11 +5676,6 @@ mod tests {
             }
         });
 
-        cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
-        })
-        .unwrap();
-
         for (index, parent_visible) in [(0, true), (4, false), (0, true)] {
             let position = window
                 .read_with(cx, |view, _| {
@@ -5706,8 +5689,7 @@ mod tests {
             cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
             cx.run_until_parked();
 
-            cx.update_window(window.into(), |_, window, cx| {
-                window.draw(cx).clear(cx);
+            cx.update_window(window.into(), |_, window, _| {
                 assert!(
                     window.tooltip_bounds.is_some(),
                     "hovering character {index} should show a tooltip"
@@ -5767,7 +5749,6 @@ mod tests {
         });
 
         cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
             window.dispatch_event(
                 MouseMoveEvent {
                     position: point(px(10.0), px(10.0)),
@@ -5783,8 +5764,7 @@ mod tests {
         cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
         cx.run_until_parked();
 
-        cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
+        cx.update_window(window.into(), |_, window, _| {
             assert!(window.tooltip_bounds.is_some());
         })
         .unwrap();
@@ -5841,7 +5821,6 @@ mod tests {
         });
 
         cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
             window.dispatch_event(
                 MouseMoveEvent {
                     position: point(px(10.0), px(10.0)),
@@ -5857,8 +5836,7 @@ mod tests {
         cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
         cx.run_until_parked();
 
-        cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
+        cx.update_window(window.into(), |_, window, _| {
             assert!(window.tooltip_bounds.is_some());
         })
         .unwrap();
@@ -5954,15 +5932,13 @@ mod tests {
         });
 
         cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
             window.simulate_mouse_move(point(px(10.0), px(10.0)), cx);
         })
         .unwrap();
         cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
         cx.run_until_parked();
 
-        cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
+        cx.update_window(window.into(), |_, window, _| {
             assert!(window.tooltip_bounds.is_some());
         })
         .unwrap();
@@ -5978,8 +5954,7 @@ mod tests {
         let previous_render_count = child_render_count.get();
 
         window.update(cx, |_, _, cx| cx.notify()).unwrap();
-        cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
+        cx.update_window(window.into(), |_, window, _| {
             assert!(window.tooltip_bounds.is_some());
         })
         .unwrap();
@@ -6001,8 +5976,7 @@ mod tests {
             .as_ref()
             .and_then(Weak::upgrade)
             .unwrap();
-        cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
+        cx.update_window(window.into(), |_, window, _| {
             assert!(window.tooltip_bounds.is_some());
         })
         .unwrap();
@@ -6019,7 +5993,6 @@ mod tests {
             })
             .unwrap();
         cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
             window.simulate_mouse_move(point(px(10.0), px(10.0)), cx);
             window.draw(cx).clear(cx);
             assert!(window.tooltip_bounds.is_some());
