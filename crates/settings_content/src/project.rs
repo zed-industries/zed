@@ -128,24 +128,41 @@ pub struct WorktreeSettingsContent {
     #[serde(default)]
     pub prevent_sharing_in_public_channels: bool,
 
-    /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
-    /// `file_scan_inclusions`.
+    /// Exclude files matching these glob patterns from file scans, file searches,
+    /// and the project file tree. Takes precedence over `file_scan_inclusions`.
     ///
-    /// A `"..."` entry expands to the value being overridden, so
-    /// `["**/node_modules", "..."]` adds to the inherited globs instead of
-    /// replacing them. Leave `"..."` out to replace them.
+    /// Default:
     ///
-    /// Default: [
-    ///   "**/.git",
-    ///   "**/.svn",
-    ///   "**/.hg",
-    ///   "**/.jj",
-    ///   "**/CVS",
-    ///   "**/.DS_Store",
-    ///   "**/Thumbs.db",
-    ///   "**/.classpath",
-    ///   "**/.settings"
-    /// ]
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": [
+    ///     "**/.git",
+    ///     "**/.svn",
+    ///     "**/.hg",
+    ///     "**/.jj",
+    ///     "**/.sl",
+    ///     "**/.repo",
+    ///     "**/CVS",
+    ///     "**/.DS_Store",
+    ///     "**/Thumbs.db",
+    ///     "**/.classpath",
+    ///     "**/.settings"
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": ["**/node_modules", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub file_scan_exclusions: Option<SplicingVec>,
 
     /// Always include files that match these globs when scanning for files, even

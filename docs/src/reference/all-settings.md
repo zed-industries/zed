@@ -2332,7 +2332,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Scan Exclusions
 
 - Setting: `file_scan_exclusions`
-- Description: Files or globs of files that will be excluded by Zed entirely. They will be skipped during file scans, file searches, and not be displayed in the project file tree. Overrides `file_scan_inclusions`.
+- Description: Exclude files matching these glob patterns from file scans, file searches, and the project file tree. Takes precedence over `file_scan_inclusions`.
 - Default:
 
 ```json [settings]
@@ -2353,7 +2353,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 }
 ```
 
-Note that specifying `file_scan_exclusions` in `settings.json` will override the defaults (listed above). Use `"..."` to keep them:
+Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
@@ -2361,15 +2361,7 @@ Note that specifying `file_scan_exclusions` in `settings.json` will override the
 }
 ```
 
-The `"..."` entry expands to the list you are overriding, so the example above excludes `node_modules` in addition to every default. Entries you list by name keep their position, and `"..."` fills in the inherited ones at that point in the list. If you want full control over what is excluded, omit `"..."` — only the entries you list by name will be used.
-
-| Configuration                | Result                               |
-| ---------------------------- | ------------------------------------ |
-| `["..."]`                    | The defaults, unchanged              |
-| `["**/node_modules", "..."]` | `**/node_modules`, then the defaults |
-| `["**/node_modules"]`        | `**/node_modules` only               |
-
-> Note: `"..."` resolves one settings layer at a time. In a project’s `.zed/settings.json` it expands to whatever your user settings resolved to, rather than to Zed’s defaults.
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## File Scan Inclusions
 
