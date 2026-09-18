@@ -21,6 +21,7 @@ use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use std::{
+    cmp::Ordering,
     iter::Peekable,
     ops::{Deref, Range},
     path::{Path, PathBuf},
@@ -65,6 +66,14 @@ pub struct GoToLine {
 #[action(namespace = vim, no_json, no_register)]
 pub struct YankCommand {
     range: CommandRange,
+}
+
+// Copies a range of lines to after a specified address.
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
+pub struct VimCopy {
+    pub address: String,
+    pub range: Option<CommandRange>,
 }
 
 /// Executes a command with the specified range.
@@ -909,6 +918,85 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         });
     });
 
+    Vim::action(editor, cx, |vim, action: &VimCopy, window, cx| {
+        if action.address.is_empty() {
+            return;
+        }
+
+        vim.update_editor(cx, |vim, editor, cx| {
+            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+
+            let mut chars = action.address.chars().peekable();
+            let Some(dest_position) = VimCommand::parse_position(&mut chars) else {
+                return;
+            };
+            let Ok(dest_row) = dest_position.buffer_row(vim, editor, window, cx) else {
+                return;
+            };
+
+            let (source_start, source_end) = if let Some(range) = &action.range {
+                let Ok(range) = range.buffer_range(vim, editor, window, cx) else {
+                    return;
+                };
+
+                (range.start.0, range.end.0)
+            } else {
+                let cursor_row = editor
+                    .selections
+                    .newest_anchor()
+                    .head()
+                    .to_point(&buffer_snapshot)
+                    .row;
+
+                (cursor_row, cursor_row)
+            };
+
+            let mut source_text = buffer_snapshot
+                .text_for_range(Point::new(source_start, 0)..Point::new(source_end + 1, 0))
+                .collect::<String>();
+            if !source_text.ends_with('\n') {
+                source_text.push('\n');
+            }
+
+            let is_last_line = dest_row.0 == buffer_snapshot.max_row().0;
+            if is_last_line {
+                source_text.pop();
+                source_text.insert(0, '\n');
+            }
+
+            let insert_row = dest_row.0 + 1;
+            let cursor_column = if vim.mode.is_visual() {
+                0
+            } else {
+                editor
+                    .selections
+                    .newest_anchor()
+                    .head()
+                    .to_point(&buffer_snapshot)
+                    .column
+            };
+
+            editor.transact(window, cx, |editor, _window, cx| {
+                editor.edit(
+                    [(
+                        Point::new(insert_row, 0)..Point::new(insert_row, 0),
+                        source_text,
+                    )],
+                    cx,
+                );
+            });
+
+            let cursor_row = insert_row + source_end.saturating_sub(source_start);
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let cursor_column = cursor_column.min(snapshot.line_len(MultiBufferRow(cursor_row)));
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([
+                    Point::new(cursor_row, cursor_column)..Point::new(cursor_row, cursor_column)
+                ]);
+            });
+        });
+    });
+
     Vim::action(editor, cx, |_, action: &WithCount, window, cx| {
         for _ in 0..action.count {
             window.dispatch_action(action.action.boxed_clone(), cx)
@@ -997,6 +1085,10 @@ struct VimCommand {
     >,
     has_count: bool,
     has_filename: bool,
+
+    /// When `true` arguments can follow the command without a space separator
+    /// (ex. `:t.` instead of `:t .`)
+    allow_adjacent_args: bool,
 }
 
 struct ParsedQuery {
@@ -1047,6 +1139,13 @@ impl VimCommand {
     ) -> Self {
         self.args = Some(Box::new(f));
         self.has_filename = true;
+        self
+    }
+
+    /// Set argument handler. Spaces in the trailing argument will be trimmed.
+    /// (ex. `:t.` instead of `:t .`)
+    fn adjacent_args(mut self) -> Self {
+        self.allow_adjacent_args = true;
         self
     }
 
@@ -1155,6 +1254,8 @@ impl VimCommand {
             rest.strip_prefix('!')?.trim_start().to_string()
         } else if rest.is_empty() {
             "".into()
+        } else if self.allow_adjacent_args && !rest.starts_with(' ') {
+            rest
         } else {
             rest.strip_prefix(' ')?.trim_start().to_string()
         };
@@ -1371,13 +1472,19 @@ impl Position {
                 .max_row()
                 .0
                 .saturating_add_signed(*offset),
-            Position::CurrentLine { offset } => editor
-                .selections
-                .newest_anchor()
-                .head()
-                .to_point(&snapshot.buffer_snapshot())
-                .row
-                .saturating_add_signed(*offset),
+            Position::CurrentLine { offset } => {
+                // This cmp is important to make sure position is always calculated from
+                // lower number row and NOT the first/last anchor row. Matches vim behavior.
+                let anchor = editor.selections.newest_anchor();
+                let a = anchor.head();
+                let b = anchor.tail();
+
+                let cmp = a.cmp(&b, &snapshot);
+                if Ordering::is_le(cmp) { a } else { b }
+                    .to_point(&snapshot.buffer_snapshot())
+                    .row
+                    .saturating_add_signed(*offset)
+            }
         };
 
         Ok(MultiBufferRow(target).min(snapshot.buffer_snapshot().max_row()))
@@ -1751,6 +1858,63 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 }
                 .boxed_clone(),
             )
+        }),
+        // NOTE: keep in sync with `:t`
+        VimCommand::new(
+            ("co", "py"),
+            VimCopy {
+                address: String::new(),
+                range: None,
+            },
+        )
+        .adjacent_args()
+        .args(|_, address| {
+            Some(
+                VimCopy {
+                    address,
+                    range: None,
+                }
+                .boxed_clone(),
+            )
+        })
+        .range(|action, range| {
+            let mut action: VimCopy = action
+                .as_any()
+                .downcast_ref::<VimCopy>()
+                .expect("correct action")
+                .clone();
+            action.range = Some(range.clone());
+
+            Some(Box::new(action))
+        }),
+        // Synonym for `:copy` (from ex-mode)
+        // NOTE: must be kept in sync with it
+        VimCommand::new(
+            ("t", ""),
+            VimCopy {
+                address: String::new(),
+                range: None,
+            },
+        )
+        .adjacent_args()
+        .args(|_, address| {
+            Some(
+                VimCopy {
+                    address,
+                    range: None,
+                }
+                .boxed_clone(),
+            )
+        })
+        .range(|action, range| {
+            let mut action: VimCopy = action
+                .as_any()
+                .downcast_ref::<VimCopy>()
+                .expect("correct action")
+                .clone();
+            action.range = Some(range.clone());
+
+            Some(Box::new(action))
         }),
         VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("di", "splay"), ToggleRegistersView).bang(ToggleRegistersView),
@@ -3620,6 +3784,435 @@ mod test {
                 ˇ0123 4567 0123 4567
             "},
             Mode::VisualLine,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_basic(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c
+                        d
+                        e
+                        f"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": t 5 enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                        ˇa
+                        f"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_with_space(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c
+                        d
+                        e
+                        f"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": t space 5 enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                        ˇa
+                        f"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_with_range(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c
+                        d
+                        e
+                        f"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": 3 t 5 enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                        ˇc
+                        f"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_range_of_lines(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c
+                        d
+                        e
+                        f"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": 1 , 3 t 5 enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                        a
+                        b
+                        ˇc
+                        f"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_to_end(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": t $ enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        b
+                        c
+                        ˇa"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_duplicate_current_line(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        a
+                        ˇb
+                        c
+                        d"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": t . enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        b
+                        ˇb
+                        c
+                        d"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_relative(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c
+                        d
+                        e"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": t + 2 enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        b
+                        c
+                        ˇa
+                        d
+                        e"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_entire_buffer(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": % t $ enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        b
+                        c
+                        a
+                        b
+                        ˇc"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_destination_before_source(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        a
+                        b
+                        ˇc
+                        d
+                        e"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": 3 , 5 t 1 enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        c
+                        d
+                        ˇe
+                        b
+                        c
+                        d
+                        e"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_long_form(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c
+                        d
+                        e
+                        f"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": 3 c o p y 5 enter");
+        cx.assert_state(
+            indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                        ˇc
+                        f"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_visual_mode(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇhi
+                        ciao"},
+            Mode::VisualLine,
+        );
+
+        cx.simulate_keystrokes("j : t . enter");
+        cx.assert_state(
+            indoc! {"
+                        hi
+                        hi
+                        ˇciao
+                        ciao"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_visual_mode_inverse(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        hi
+                        ˇciao"},
+            Mode::VisualLine,
+        );
+
+        cx.simulate_keystrokes("k : t . enter");
+        cx.assert_state(
+            indoc! {"
+                        hi
+                        hi
+                        ˇciao
+                        ciao"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_visual_mode_two_lines(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇhi
+                        ciao"},
+            Mode::VisualLine,
+        );
+
+        cx.simulate_keystrokes("j : t 1 enter");
+        cx.assert_state(
+            indoc! {"
+                        hi
+                        hi
+                        ˇciao
+                        ciao"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_visual_mode_entire_buffer(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇhi
+                        ciao"},
+            Mode::VisualLine,
+        );
+
+        cx.simulate_keystrokes("j : t $ enter");
+        cx.assert_state(
+            indoc! {"
+                        hi
+                        ciao
+                        hi
+                        ˇciao"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_normal_mode_preserves_column(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        hello ˇworld
+                        goodbye"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": t . enter");
+        cx.assert_state(
+            indoc! {"
+                        hello world
+                        hello ˇworld
+                        goodbye"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_visual_mode_goes_to_column_zero(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        hello ˇworld
+                        goodbye"},
+            Mode::Visual,
+        );
+
+        cx.simulate_keystrokes("j : t . enter");
+        cx.assert_state(
+            indoc! {"
+                        hello world
+                        hello world
+                        ˇgoodbye
+                        goodbye"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_copy_without_args_does_nothing(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": c o p y enter");
+        cx.assert_state(
+            indoc! {"
+                        ˇa
+                        b
+                        c"},
+            Mode::Normal,
         );
     }
 }
