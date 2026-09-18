@@ -63,6 +63,76 @@ pub struct GroupStyle {
     pub style: Box<StyleRefinement>,
 }
 
+#[derive(Default)]
+struct InteractiveStyle {
+    style: Style,
+    visibility: HoverVisibility,
+}
+
+impl InteractiveStyle {
+    fn refine(&mut self, refinement: &StyleRefinement) {
+        self.style.refine(refinement);
+        if let Some(visibility) = refinement.visibility {
+            self.visibility = HoverVisibility {
+                base: visibility,
+                ..Default::default()
+            };
+        }
+    }
+
+    fn refine_hover(&mut self, refinement: &StyleRefinement, hovered: bool) {
+        if hovered {
+            self.style.refine(refinement);
+        }
+        if let Some(visibility) = refinement.visibility {
+            self.visibility.hover = Some(visibility);
+        }
+    }
+
+    fn refine_group_hover(&mut self, refinement: &StyleRefinement, hovered: bool) {
+        if hovered {
+            self.style.refine(refinement);
+        }
+        if let Some(visibility) = refinement.visibility {
+            self.visibility.group_hover = Some(visibility);
+        }
+    }
+}
+
+// Later hitboxes can change which elements are hovered.
+// Preserve visibility overrides in style order until hover can be resolved.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct HoverVisibility {
+    base: Visibility,
+    hover: Option<Visibility>,
+    group_hover: Option<Visibility>,
+}
+
+impl HoverVisibility {
+    pub(crate) fn is_always_visible(&self) -> bool {
+        self.base == Visibility::Visible
+            && self
+                .hover
+                .is_none_or(|visibility| visibility == Visibility::Visible)
+            && self
+                .group_hover
+                .is_none_or(|visibility| visibility == Visibility::Visible)
+    }
+
+    pub(crate) fn resolve(&self, hovered: bool, group_hovered: bool) -> Visibility {
+        let mut visibility = self.base;
+
+        if group_hovered && let Some(value) = self.group_hover {
+            visibility = value;
+        }
+        if hovered && let Some(value) = self.hover {
+            visibility = value;
+        }
+
+        visibility
+    }
+}
+
 /// An event for when a drag is moving over this element, with the given state type.
 pub struct DragMoveEvent<T> {
     /// The mouse move event that triggered this drag move event.
@@ -2286,7 +2356,8 @@ impl Interactivity {
                     );
                 }
 
-                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
+                let InteractiveStyle { style, .. } =
+                    self.compute_style_internal(None, element_state.as_mut(), window, cx);
                 let layout_id = f(style, window, cx);
                 (layout_id, element_state)
             },
@@ -2351,7 +2422,8 @@ impl Interactivity {
             |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
-                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
+                let InteractiveStyle { style, visibility } =
+                    self.compute_style_internal(None, element_state.as_mut(), window, cx);
 
                 if let Some(element_state) = element_state.as_mut() {
                     if let Some(clicked_state) = element_state.clicked_state.as_ref() {
@@ -2387,15 +2459,31 @@ impl Interactivity {
                             } else {
                                 None
                             };
-                            if let (Some(global_id), Some(hitbox)) = (global_id, hitbox.as_ref())
-                                && self.tooltip_builder.is_some()
-                            {
-                                window.register_tooltip_owner(global_id, hitbox, Rc::new(|_| true));
-                            }
-
+                            let hover_state = element_state
+                                .as_ref()
+                                .and_then(|state| state.hover_state.as_ref());
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
+                            let result = window.with_tooltip_visibility(
+                                visibility,
+                                hitbox.as_ref().map(|hitbox| hitbox.id),
+                                self.group.as_ref(),
+                                self.group_hover_style.as_ref().map(|style| &style.group),
+                                hover_state,
+                                |window| {
+                                    if let (Some(global_id), Some(hitbox)) =
+                                        (global_id, hitbox.as_ref())
+                                        && self.tooltip_builder.is_some()
+                                    {
+                                        window.register_tooltip_owner_candidate(
+                                            global_id,
+                                            hitbox,
+                                            Rc::new(|_| true),
+                                        );
+                                    }
+                                    f(&style, scroll_offset, hitbox, window, cx)
+                                },
+                            );
                             (result, element_state)
                         },
                     )
@@ -2521,7 +2609,8 @@ impl Interactivity {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
-                let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
+                let InteractiveStyle { style, .. } =
+                    self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
 
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
@@ -3190,6 +3279,7 @@ impl Interactivity {
             if let (Some(tooltip_builder), Some(tooltip_owner_id)) =
                 (self.tooltip_builder.take(), global_id.cloned())
             {
+                window.register_tooltip_owner(&tooltip_owner_id, hitbox, Rc::new(|_| true));
                 let active_tooltip = element_state
                     .active_tooltip
                     .get_or_insert_with(Default::default)
@@ -3402,7 +3492,8 @@ impl Interactivity {
         window.with_optional_element_state(global_id, |element_state, window| {
             let mut element_state =
                 element_state.map(|element_state| element_state.unwrap_or_default());
-            let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
+            let InteractiveStyle { style, .. } =
+                self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
             (style, element_state)
         })
     }
@@ -3414,28 +3505,28 @@ impl Interactivity {
         element_state: Option<&mut InteractiveElementState>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Style {
-        let mut style = Style::default();
-        style.refine(&self.base_style);
+    ) -> InteractiveStyle {
+        let mut interactive_style = InteractiveStyle::default();
+        interactive_style.refine(&self.base_style);
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             if let Some(in_focus_style) = self.in_focus_style.as_ref()
                 && focus_handle.within_focused(window, cx)
             {
-                style.refine(in_focus_style);
+                interactive_style.refine(in_focus_style);
             }
 
             if let Some(focus_style) = self.focus_style.as_ref()
                 && focus_handle.is_focused(window)
             {
-                style.refine(focus_style);
+                interactive_style.refine(focus_style);
             }
 
             if let Some(focus_visible_style) = self.focus_visible_style.as_ref()
                 && focus_handle.is_focused(window)
                 && window.last_input_was_keyboard()
             {
-                style.refine(focus_visible_style);
+                interactive_style.refine(focus_visible_style);
             }
         }
 
@@ -3455,9 +3546,7 @@ impl Interactivity {
                         false
                     };
 
-                if is_group_hovered {
-                    style.refine(&group_hover.style);
-                }
+                interactive_style.refine_group_hover(&group_hover.style, is_group_hovered);
             }
 
             if let Some(hover_style) = self.hover_style.as_ref() {
@@ -3474,9 +3563,7 @@ impl Interactivity {
                     false
                 };
 
-                if is_hovered {
-                    style.refine(hover_style);
-                }
+                interactive_style.refine_hover(hover_style, is_hovered);
             }
         }
 
@@ -3494,19 +3581,23 @@ impl Interactivity {
                             && *state_type == drag.value.as_ref().type_id()
                             && group_hitbox_id.is_hovered(window)
                         {
-                            style.refine(&group_drag_style.style);
+                            interactive_style.refine(&group_drag_style.style);
                         }
                     }
 
                     for (state_type, build_drag_over_style) in &self.drag_over_styles {
                         if *state_type == drag.value.as_ref().type_id() && hitbox.is_hovered(window)
                         {
-                            style.refine(&build_drag_over_style(drag.value.as_ref(), window, cx));
+                            interactive_style.refine(&build_drag_over_style(
+                                drag.value.as_ref(),
+                                window,
+                                cx,
+                            ));
                         }
                     }
                 }
 
-                style.mouse_cursor = drag.cursor_style;
+                interactive_style.style.mouse_cursor = drag.cursor_style;
                 cx.active_drag = Some(drag);
             }
         }
@@ -3519,17 +3610,17 @@ impl Interactivity {
             if clicked_state.group
                 && let Some(group) = self.group_active_style.as_ref()
             {
-                style.refine(&group.style)
+                interactive_style.refine(&group.style)
             }
 
             if let Some(active_style) = self.active_style.as_ref()
                 && clicked_state.element
             {
-                style.refine(active_style)
+                interactive_style.refine(active_style)
             }
         }
 
-        style
+        interactive_style
     }
 
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
@@ -5400,6 +5491,12 @@ mod tests {
         cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
         cx.run_until_parked();
 
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+
         let parent_active_tooltip = captured_parent_active_tooltip
             .borrow()
             .as_ref()
@@ -5468,6 +5565,12 @@ mod tests {
         cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
         cx.run_until_parked();
 
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+
         let parent_active_tooltip = captured_parent_active_tooltip
             .borrow()
             .as_ref()
@@ -5480,6 +5583,161 @@ mod tests {
             ),
             "hovering the hidden child's bounds should show the parent's tooltip"
         );
+    }
+
+    #[gpui::test]
+    fn test_parent_tooltip_when_cached_child_container_becomes_invisible(cx: &mut TestAppContext) {
+        struct CachedChild {
+            render_count: Rc<Cell<usize>>,
+            captured_active_tooltip: CapturedActiveTooltip,
+        }
+
+        impl Render for CachedChild {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.render_count.set(self.render_count.get() + 1);
+                TooltipCaptureElement {
+                    child: div()
+                        .id("child")
+                        .group("cached-child")
+                        .size(px(50.0))
+                        .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                        .into_any_element(),
+                    tooltip_owner_id: "child".into(),
+                    tooltip_owner_capture: self.captured_active_tooltip.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        struct TestView {
+            child: Entity<CachedChild>,
+            hide_child: bool,
+            captured_parent_active_tooltip: CapturedActiveTooltip,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                TooltipCaptureElement {
+                    child: div()
+                        .size_full()
+                        .child(
+                            div()
+                                .id("parent")
+                                .size(px(100.0))
+                                .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                                .child(
+                                    div()
+                                        .size(px(50.0))
+                                        .when(self.hide_child, |this| this.invisible())
+                                        .child(
+                                            self.child
+                                                .clone()
+                                                .cached(StyleRefinement::default().size(px(50.0))),
+                                        ),
+                                ),
+                        )
+                        .into_any_element(),
+                    tooltip_owner_id: "parent".into(),
+                    tooltip_owner_capture: self.captured_parent_active_tooltip.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        let captured_parent_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let captured_child_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let child_render_count = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let captured_parent_active_tooltip = captured_parent_active_tooltip.clone();
+            let captured_child_active_tooltip = captured_child_active_tooltip.clone();
+            let child_render_count = child_render_count.clone();
+            move |_, cx| TestView {
+                child: cx.new(|_| CachedChild {
+                    render_count: child_render_count,
+                    captured_active_tooltip: captured_child_active_tooltip,
+                }),
+                hide_child: false,
+                captured_parent_active_tooltip,
+            }
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(point(px(10.0), px(10.0)), cx);
+        })
+        .unwrap();
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        let child_active_tooltip = captured_child_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        assert!(matches!(
+            child_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+        let previous_render_count = child_render_count.get();
+
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert_eq!(child_render_count.get(), previous_render_count);
+        assert!(matches!(
+            child_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(point(px(75.0), px(75.0)), cx);
+        })
+        .unwrap();
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        let parent_active_tooltip = captured_parent_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert!(matches!(
+            parent_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+        let previous_render_count = child_render_count.get();
+
+        window
+            .update(cx, |view, _, cx| {
+                view.hide_child = true;
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(point(px(10.0), px(10.0)), cx);
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert!(matches!(
+            parent_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+        assert_eq!(child_render_count.get(), previous_render_count);
     }
 
     struct MouseDownOutOwner {

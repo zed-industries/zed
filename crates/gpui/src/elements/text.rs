@@ -1120,7 +1120,7 @@ impl Element for InteractiveText {
                     && self.tooltip_builder.is_some()
                 {
                     let text_layout = self.text.layout().clone();
-                    window.register_tooltip_owner(
+                    window.register_tooltip_owner_candidate(
                         global_id,
                         &hitbox,
                         Rc::new(move |window| {
@@ -1226,6 +1226,14 @@ impl Element for InteractiveText {
 
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
                     let tooltip_owner_id = global_id.unwrap().clone();
+                    window.register_tooltip_owner(&tooltip_owner_id, hitbox, {
+                        let text_layout = text_layout.clone();
+                        Rc::new(move |window| {
+                            text_layout
+                                .index_for_position(window.mouse_position())
+                                .is_ok()
+                        })
+                    });
                     let active_tooltip = interactive_state.active_tooltip.clone();
                     let build_tooltip = Rc::new({
                         let tooltip_is_hoverable = false;

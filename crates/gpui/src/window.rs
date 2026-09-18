@@ -8,21 +8,22 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
+    ElementHoverState, Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global,
+    GlobalElementId, GlyphId, GpuSpecs, HoverVisibility, Hsla, InputHandler, IsZero, KeyBinding,
+    KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex,
+    Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+    TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode,
+    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    Visibility, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -778,7 +779,7 @@ impl HitboxId {
         if window.last_input_was_keyboard() {
             return false;
         }
-        self.hit_test(window)
+        self.hit_test(&window.mouse_hit_test)
     }
 
     /// Checks if the hitbox with this ID is currently hovered, regardless of the last
@@ -790,11 +791,10 @@ impl HitboxId {
         if window.captured_hitbox == Some(self) {
             return true;
         }
-        self.hit_test(window)
+        self.hit_test(&window.mouse_hit_test)
     }
 
-    fn hit_test(self, window: &Window) -> bool {
-        let hit_test = &window.mouse_hit_test;
+    fn hit_test(self, hit_test: &HitTest) -> bool {
         for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
             if self == *id {
                 return true;
@@ -968,6 +968,39 @@ pub(crate) struct TooltipOwner {
     owns_mouse_position: Rc<dyn Fn(&Window) -> bool>,
 }
 
+#[derive(Clone)]
+struct TooltipOwnerCandidate {
+    owner: TooltipOwner,
+    visibility_index: Option<usize>,
+}
+
+#[derive(Clone)]
+struct TooltipVisibility {
+    parent_index: Option<usize>,
+    visibility: HoverVisibility,
+    hitbox_id: Option<HitboxId>,
+    group: Option<SharedString>,
+    hover_group: Option<SharedString>,
+    hover_state: Option<Rc<RefCell<ElementHoverState>>>,
+}
+
+impl TooltipVisibility {
+    fn group_hitbox(&self, visibility_records: &[Self]) -> Option<HitboxId> {
+        let group = self.hover_group.as_ref()?;
+        let mut parent_index = self.parent_index;
+        while let Some(index) = parent_index {
+            let parent = visibility_records.get(index)?;
+            if parent.group.as_ref() == Some(group)
+                && let Some(hitbox_id) = parent.hitbox_id
+            {
+                return Some(hitbox_id);
+            }
+            parent_index = parent.parent_index;
+        }
+        None
+    }
+}
+
 pub(crate) struct DeferredDraw {
     current_view: EntityId,
     priority: usize,
@@ -996,6 +1029,8 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) tooltip_owners: Vec<TooltipOwner>,
+    tooltip_owner_candidates: Vec<TooltipOwnerCandidate>,
+    tooltip_visibility: Vec<TooltipVisibility>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
@@ -1010,7 +1045,8 @@ pub(crate) struct Frame {
 pub(crate) struct PrepaintStateIndex {
     hitboxes_index: usize,
     tooltips_index: usize,
-    tooltip_owners_index: usize,
+    tooltip_owner_candidates_index: usize,
+    tooltip_visibility_index: usize,
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
     accessed_element_states_index: usize,
@@ -1020,6 +1056,7 @@ pub(crate) struct PrepaintStateIndex {
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     scene_index: usize,
+    tooltip_owners_index: usize,
     mouse_listeners_index: usize,
     input_handlers_index: usize,
     cursor_styles_index: usize,
@@ -1044,6 +1081,8 @@ impl Frame {
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             tooltip_owners: Vec::new(),
+            tooltip_owner_candidates: Vec::new(),
+            tooltip_visibility: Vec::new(),
             cursor_styles: Vec::new(),
 
             #[cfg(any(test, feature = "test-support"))]
@@ -1067,6 +1106,8 @@ impl Frame {
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.tooltip_owners.clear();
+        self.tooltip_owner_candidates.clear();
+        self.tooltip_visibility.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
@@ -1142,6 +1183,59 @@ impl Frame {
         None
     }
 
+    fn topmost_tooltip_owner_during_prepaint(
+        &self,
+        hit_test: &HitTest,
+        window: &Window,
+    ) -> Option<&GlobalElementId> {
+        let is_hovered = |hitbox_id: HitboxId| {
+            window.captured_hitbox == Some(hitbox_id)
+                || (!window.last_input_was_keyboard() && hitbox_id.hit_test(hit_test))
+        };
+        let mut resolved_visibility = Vec::with_capacity(self.tooltip_visibility.len());
+        for tooltip_visibility in &self.tooltip_visibility {
+            let parent_visible = tooltip_visibility
+                .parent_index
+                .is_none_or(|index| resolved_visibility.get(index).copied().unwrap_or(false));
+            let visible = parent_visible && {
+                let hover_state = tooltip_visibility
+                    .hover_state
+                    .as_ref()
+                    .map(|state| *state.borrow())
+                    .unwrap_or_default();
+                let hovered = !window.last_input_was_touch()
+                    && tooltip_visibility.hitbox_id.is_some_and(is_hovered);
+                let group_hovered = !window.last_input_was_touch()
+                    && tooltip_visibility
+                        .group_hitbox(&self.tooltip_visibility)
+                        .map_or(hover_state.group, is_hovered);
+                tooltip_visibility
+                    .visibility
+                    .resolve(hovered, group_hovered)
+                    == Visibility::Visible
+            };
+            resolved_visibility.push(visible);
+        }
+
+        for hitbox_id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
+            if let Some(candidate) = self
+                .tooltip_owner_candidates
+                .iter()
+                .rev()
+                .find(|candidate| {
+                    candidate.owner.hitbox_id == *hitbox_id
+                        && candidate.visibility_index.is_none_or(|index| {
+                            resolved_visibility.get(index).copied().unwrap_or(false)
+                        })
+                        && (candidate.owner.owns_mouse_position)(window)
+                })
+            {
+                return Some(&candidate.owner.owner_id);
+            }
+        }
+        None
+    }
+
     pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
         self.focus
             .map(|focus_id| self.dispatch_tree.focus_path(focus_id))
@@ -1207,6 +1301,7 @@ pub struct Window {
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
+    tooltip_visibility_index: Option<usize>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
@@ -2064,6 +2159,7 @@ impl Window {
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
+            tooltip_visibility_index: None,
             dirty_views: FxHashSet::default(),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
@@ -3838,7 +3934,8 @@ impl Window {
         PrepaintStateIndex {
             hitboxes_index: self.next_frame.hitboxes.len(),
             tooltips_index: self.next_frame.tooltip_requests.len(),
-            tooltip_owners_index: self.next_frame.tooltip_owners.len(),
+            tooltip_owner_candidates_index: self.next_frame.tooltip_owner_candidates.len(),
+            tooltip_visibility_index: self.next_frame.tooltip_visibility.len(),
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
@@ -3847,6 +3944,37 @@ impl Window {
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+        // Copying cached records changes their indices. Update references within the
+        // subtree and use the current ancestor for references outside it.
+        let visibility_start = range.start.tooltip_visibility_index;
+        let new_visibility_start = self.next_frame.tooltip_visibility.len();
+        let inherited_visibility = self.tooltip_visibility_index;
+        let remap_visibility = |index: Option<usize>| match index {
+            Some(index) if index >= visibility_start => {
+                Some(new_visibility_start + (index - visibility_start))
+            }
+            _ => inherited_visibility,
+        };
+        self.next_frame.tooltip_visibility.extend(
+            self.rendered_frame.tooltip_visibility
+                [visibility_start..range.end.tooltip_visibility_index]
+                .iter()
+                .cloned()
+                .map(|mut visibility| {
+                    visibility.parent_index = remap_visibility(visibility.parent_index);
+                    visibility
+                }),
+        );
+        self.next_frame.tooltip_owner_candidates.extend(
+            self.rendered_frame.tooltip_owner_candidates[range.start.tooltip_owner_candidates_index
+                ..range.end.tooltip_owner_candidates_index]
+                .iter()
+                .cloned()
+                .map(|mut candidate| {
+                    candidate.visibility_index = remap_visibility(candidate.visibility_index);
+                    candidate
+                }),
+        );
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -3857,12 +3985,6 @@ impl Window {
                 [range.start.tooltips_index..range.end.tooltips_index]
                 .iter_mut()
                 .map(|request| request.take()),
-        );
-        self.next_frame.tooltip_owners.extend(
-            self.rendered_frame.tooltip_owners
-                [range.start.tooltip_owners_index..range.end.tooltip_owners_index]
-                .iter()
-                .cloned(),
         );
         self.next_frame.accessed_element_states.extend(
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
@@ -3906,6 +4028,7 @@ impl Window {
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
+            tooltip_owners_index: self.next_frame.tooltip_owners.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
@@ -3916,6 +4039,12 @@ impl Window {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        self.next_frame.tooltip_owners.extend(
+            self.rendered_frame.tooltip_owners
+                [range.start.tooltip_owners_index..range.end.tooltip_owners_index]
+                .iter()
+                .cloned(),
+        );
         self.next_frame.cursor_styles.extend(
             self.rendered_frame.cursor_styles
                 [range.start.cursor_styles_index..range.end.cursor_styles_index]
@@ -4004,13 +4133,61 @@ impl Window {
         id
     }
 
-    pub(crate) fn register_tooltip_owner(
+    pub(crate) fn with_tooltip_visibility<R>(
+        &mut self,
+        visibility: HoverVisibility,
+        hitbox_id: Option<HitboxId>,
+        group: Option<&SharedString>,
+        hover_group: Option<&SharedString>,
+        hover_state: Option<&Rc<RefCell<ElementHoverState>>>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_prepaint();
+        if visibility.is_always_visible() && group.is_none() {
+            return f(self);
+        }
+
+        let parent_index = self.tooltip_visibility_index;
+        self.tooltip_visibility_index = Some(self.next_frame.tooltip_visibility.len());
+        self.next_frame.tooltip_visibility.push(TooltipVisibility {
+            parent_index,
+            visibility,
+            hitbox_id,
+            group: group.cloned(),
+            hover_group: hover_group.cloned(),
+            hover_state: hover_state.cloned(),
+        });
+        let result = f(self);
+        self.tooltip_visibility_index = parent_index;
+        result
+    }
+
+    pub(crate) fn register_tooltip_owner_candidate(
         &mut self,
         owner_id: &GlobalElementId,
         hitbox: &Hitbox,
         owns_mouse_position: Rc<dyn Fn(&Window) -> bool>,
     ) {
         self.invalidator.debug_assert_prepaint();
+        self.next_frame
+            .tooltip_owner_candidates
+            .push(TooltipOwnerCandidate {
+                owner: TooltipOwner {
+                    owner_id: owner_id.clone(),
+                    hitbox_id: hitbox.id,
+                    owns_mouse_position,
+                },
+                visibility_index: self.tooltip_visibility_index,
+            });
+    }
+
+    pub(crate) fn register_tooltip_owner(
+        &mut self,
+        owner_id: &GlobalElementId,
+        hitbox: &Hitbox,
+        owns_mouse_position: Rc<dyn Fn(&Window) -> bool>,
+    ) {
+        self.invalidator.debug_assert_paint();
         self.next_frame.tooltip_owners.push(TooltipOwner {
             owner_id: owner_id.clone(),
             hitbox_id: hitbox.id,
@@ -4031,7 +4208,7 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
         let hit_test = self.next_frame.hit_test(self.mouse_position);
         self.next_frame
-            .topmost_tooltip_owner(&hit_test, self)
+            .topmost_tooltip_owner_during_prepaint(&hit_test, self)
             .is_some_and(|topmost_owner_id| topmost_owner_id == owner_id)
     }
 
@@ -4122,8 +4299,11 @@ impl Window {
                 .tooltip_requests
                 .truncate(index.tooltips_index);
             self.next_frame
-                .tooltip_owners
-                .truncate(index.tooltip_owners_index);
+                .tooltip_owner_candidates
+                .truncate(index.tooltip_owner_candidates_index);
+            self.next_frame
+                .tooltip_visibility
+                .truncate(index.tooltip_visibility_index);
             self.next_frame
                 .deferred_draws
                 .truncate(index.deferred_draws_index);
