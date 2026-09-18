@@ -11147,7 +11147,10 @@ impl CursorLayout {
 }
 
 fn cursor_shape_supports_cursor_animation(shape: CursorShape) -> bool {
-    matches!(shape, CursorShape::Bar | CursorShape::Block)
+    matches!(
+        shape,
+        CursorShape::Bar | CursorShape::Block | CursorShape::Underline
+    )
 }
 
 #[derive(Debug)]
@@ -13623,10 +13626,10 @@ mod tests {
     }
 
     #[test]
-    fn cursor_animation_supports_bar_and_block_shapes() {
+    fn cursor_animation_supports_bar_block_and_underline_shapes() {
         assert!(cursor_shape_supports_cursor_animation(CursorShape::Bar));
         assert!(cursor_shape_supports_cursor_animation(CursorShape::Block));
-        assert!(!cursor_shape_supports_cursor_animation(
+        assert!(cursor_shape_supports_cursor_animation(
             CursorShape::Underline
         ));
         assert!(!cursor_shape_supports_cursor_animation(CursorShape::Hollow));
