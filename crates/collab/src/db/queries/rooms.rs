@@ -809,6 +809,7 @@ impl Database {
                                 .as_deref()
                                 .and_then(|s| serde_json::from_str(s).ok())
                                 .unwrap_or_default(),
+                            is_detached_head: db_repository.is_detached_head,
                         });
                     }
                 }
