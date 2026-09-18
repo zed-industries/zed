@@ -33,6 +33,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.commit_sha }}
+      - name: Install Linux build dependencies
+        run: ./script/linux
       - uses: wezel-build/gh-action@49be2cba2eaa12f1b99ae1c3ee9af3c815cb3125 # v1.0.1
         with:
           token: ${{ secrets.WEZEL_RUNNER_TOKEN }}
