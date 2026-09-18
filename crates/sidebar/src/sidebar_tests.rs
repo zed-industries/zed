@@ -1752,35 +1752,58 @@ async fn test_keyboard_select_first_and_last(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_keyboard_focus_in_does_not_set_selection(cx: &mut TestAppContext) {
+async fn test_refocus_sidebar_with_no_selection_focuses_search(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
 
-    // Initially no selection
-    assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.focus_handle(cx).focus(window, cx);
+    });
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        assert!(!sidebar.focus_handle.is_focused(window));
+        assert!(!sidebar.filter_editor.read(cx).is_focused(window));
+        assert_eq!(sidebar.selection, None);
+    });
 
-    // Open the sidebar so it's rendered, then focus it to trigger focus_in.
-    // focus_in no longer sets a default selection.
+    // Refocusing with no selection sends focus to search without selecting a row.
     focus_sidebar(&sidebar, cx);
-    assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        assert!(sidebar.filter_editor.read(cx).is_focused(window));
+        assert_eq!(sidebar.selection, None);
+    });
+}
 
-    // Manually set a selection, blur, then refocus — selection should be preserved
-    sidebar.update_in(cx, |sidebar, _window, _cx| {
+#[gpui::test]
+async fn test_refocus_sidebar_with_selection_preserves_it(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+
+    sidebar.update(cx, |sidebar, cx| {
         sidebar.selection = Some(0);
+        cx.notify();
     });
-
-    cx.update(|window, cx| {
-        window.blur(cx);
-    });
-    cx.run_until_parked();
-
-    sidebar.update_in(cx, |_, window, cx| {
-        cx.focus_self(window);
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.focus_handle(cx).focus(window, cx);
     });
     cx.run_until_parked();
-    assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+    // Refocusing with a selection returns focus to the list and keeps that row selected.
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(0));
+    });
 }
 
 #[gpui::test]
@@ -5236,74 +5259,301 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
     );
 }
 
+struct SidebarClickFixture {
+    sidebar: Entity<Sidebar>,
+    panel: Entity<AgentPanel>,
+}
+
+impl SidebarClickFixture {
+    fn new(multi_workspace: &Entity<MultiWorkspace>, cx: &mut gpui::VisualTestContext) -> Self {
+        let (sidebar, panel) = setup_sidebar_with_agent_panel(multi_workspace, cx);
+        Self { sidebar, panel }
+    }
+
+    fn insert_terminal(&self, title: &str, cx: &mut gpui::VisualTestContext) -> TerminalId {
+        let terminal_id = self
+            .panel
+            .update_in(cx, |panel, window, cx| {
+                panel.insert_test_terminal(title, true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+        terminal_id
+    }
+
+    fn terminal_index(&self, terminal_id: TerminalId, cx: &mut gpui::VisualTestContext) -> usize {
+        self.sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        ListEntry::Terminal(terminal)
+                            if terminal.metadata.terminal_id == terminal_id
+                    )
+                })
+                .expect("terminal should be visible in sidebar")
+        })
+    }
+
+    fn thread_index(&self, session_id: &acp::SessionId, cx: &mut gpui::VisualTestContext) -> usize {
+        self.sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        ListEntry::Thread(thread)
+                            if thread.metadata.session_id.as_ref() == Some(session_id)
+                    )
+                })
+                .expect("thread should be visible in sidebar")
+        })
+    }
+
+    fn select_and_focus(&self, entry_index: usize, cx: &mut gpui::VisualTestContext) {
+        self.sidebar.update_in(cx, |sidebar, window, cx| {
+            sidebar.selection = Some(entry_index);
+            sidebar.focus_handle.focus(window, cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+
+    fn click(&self, entry_index: usize, cx: &mut gpui::VisualTestContext) {
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(400.), px(400.)),
+            |_, _| self.sidebar.clone().into_any_element(),
+        );
+        let entry_bounds = self.sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .list_state
+                .bounds_for_item(entry_index)
+                .expect("sidebar entry should be measured")
+        });
+        cx.simulate_click(entry_bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+    }
+}
+
 #[gpui::test]
-async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppContext) {
-    let project = init_test_project("/my-project", cx).await;
+async fn test_keyboard_confirm_on_terminal_preserves_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let terminal_id = fixture.insert_terminal("Terminal A", cx);
+    let other_terminal_id = fixture.insert_terminal("Terminal B", cx);
+    let terminal_index = fixture.terminal_index(terminal_id, cx);
+    fixture.select_and_focus(terminal_index, cx);
+
+    fixture.sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(terminal_index));
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. })
+                    if *active_terminal_id == other_terminal_id
+            ),
+            "Terminal B should be active before confirming Terminal A, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+
+    // Confirm switches from Terminal B to Terminal A without clearing selection.
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, Some(terminal_index));
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. })
+                    if *active_terminal_id == terminal_id
+            ),
+            "confirmed terminal should be active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_keyboard_confirm_on_thread_preserves_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
-
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let session_id = acp::SessionId::new(Arc::from("thread-a"));
     save_thread_metadata(
-        acp::SessionId::new(Arc::from("t-1")),
+        session_id.clone(),
         Some("Thread A".into()),
-        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        Utc::now(),
         None,
         None,
         &project,
         cx,
     );
+    let thread_index = fixture.thread_index(&session_id, cx);
+    fixture.select_and_focus(thread_index, cx);
 
+    // Confirm must preserve selection without the test setting it again.
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, Some(thread_index));
+        assert_active_thread(sidebar, &session_id, "confirmed thread should be active");
+    });
+}
+
+#[gpui::test]
+async fn test_clicking_different_terminal_clears_sidebar_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let terminal_a_id = fixture.insert_terminal("Terminal A", cx);
+    let terminal_b_id = fixture.insert_terminal("Terminal B", cx);
+    let terminal_a_index = fixture.terminal_index(terminal_a_id, cx);
+    let terminal_b_index = fixture.terminal_index(terminal_b_id, cx);
+
+    fixture.panel.update_in(cx, |panel, window, cx| {
+        panel.activate_terminal(terminal_a_id, true, window, cx);
+    });
+    cx.run_until_parked();
+    fixture.select_and_focus(terminal_a_index, cx);
+
+    fixture.sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(terminal_a_index));
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id, .. })
+                    if *terminal_id == terminal_a_id
+            ),
+            "Terminal A should be active before clicking Terminal B, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+
+    // Clicking a different terminal clears keyboard selection and activates that terminal.
+    fixture.click(terminal_b_index, cx);
+
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, None);
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id, .. })
+                    if *terminal_id == terminal_b_id
+            ),
+            "Terminal B should be active after the click, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_clicking_active_terminal_clears_sidebar_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let terminal_id = fixture.insert_terminal("Terminal A", cx);
+    let terminal_index = fixture.terminal_index(terminal_id, cx);
+    fixture.select_and_focus(terminal_index, cx);
+
+    fixture.sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(terminal_index));
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. })
+                    if *active_terminal_id == terminal_id
+            ),
+            "Terminal A should be active before clicking it, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+
+    // Clicking the active terminal clears keyboard selection without changing the active terminal.
+    fixture.click(terminal_index, cx);
+
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, None);
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. })
+                    if *active_terminal_id == terminal_id
+            ),
+            "Terminal A should remain active after the click, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_clicking_different_thread_clears_sidebar_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let thread_a_session_id = acp::SessionId::new(Arc::from("thread-a"));
+    let thread_b_session_id = acp::SessionId::new(Arc::from("thread-b"));
     save_thread_metadata(
-        acp::SessionId::new(Arc::from("t-2")),
-        Some("Thread B".into()),
-        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        thread_a_session_id.clone(),
+        Some("Thread A".into()),
+        Utc::now() + chrono::Duration::days(2),
         None,
         None,
         &project,
         cx,
     );
-
-    cx.run_until_parked();
-    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&sidebar, cx),
-        vec![
-            //
-            "v [my-project]",
-            "  Thread A",
-            "  Thread B",
-        ]
+    save_thread_metadata(
+        thread_b_session_id.clone(),
+        Some("Thread B".into()),
+        Utc::now() + chrono::Duration::days(1),
+        None,
+        None,
+        &project,
+        cx,
     );
+    let thread_a_index = fixture.thread_index(&thread_a_session_id, cx);
+    let thread_b_index = fixture.thread_index(&thread_b_session_id, cx);
+    fixture.select_and_focus(thread_a_index, cx);
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    fixture.select_and_focus(thread_a_index, cx);
 
-    // Keyboard confirm preserves selection.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.selection = Some(1);
-        sidebar.confirm(&Confirm, window, cx);
+    fixture.sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(thread_a_index));
+        assert_active_thread(
+            sidebar,
+            &thread_a_session_id,
+            "Thread A should be active before clicking Thread B",
+        );
     });
-    assert_eq!(
-        sidebar.read_with(cx, |sidebar, _| sidebar.selection),
-        Some(1)
-    );
 
-    // Click handlers clear selection to None so no highlight lingers
-    // after a click regardless of focus state. The hover style provides
-    // visual feedback during mouse interaction instead.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.selection = None;
-        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let project_group_key = ProjectGroupKey::new(None, path_list);
-        sidebar.toggle_collapse(&project_group_key, window, cx);
-    });
-    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
+    // Clicking a different thread clears keyboard selection and activates that thread.
+    fixture.click(thread_b_index, cx);
 
-    // When the user tabs back into the sidebar, focus_in no longer
-    // restores selection — it stays None.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.focus_in(window, cx);
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, None);
+        assert_active_thread(
+            sidebar,
+            &thread_b_session_id,
+            "Thread B should be active after the click",
+        );
     });
-    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
 }
 
 #[gpui::test]

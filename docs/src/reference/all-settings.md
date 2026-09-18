@@ -2383,6 +2383,18 @@ The `"..."` entry expands to the list you are overriding, so the example above e
 }
 ```
 
+Use `"..."` to extend the inherited list instead of replacing it. In your user settings, it expands to Zed’s defaults. In a project’s `.zed/settings.json`, it expands to the resolved list from your user settings, including any defaults you kept.
+
+For example, add this to your settings.json to include generated files without repeating inherited patterns:
+
+```json [settings]
+{
+  "file_scan_inclusions": ["...", "generated/**"]
+}
+```
+
+With the default user settings, this keeps `.env*` and adds `generated/**`. Omit `"..."` to replace the inherited list, or use `[]` to clear it. Duplicate patterns keep their first occurrence, even if `"..."` appears more than once. `file_scan_exclusions` still takes precedence.
+
 ## File Scan Depth
 
 - Setting: `file_scan_depth`
@@ -2929,6 +2941,31 @@ Example:
 **Options**
 
 `boolean` values
+
+## Hidden Files {#hidden-files}
+
+- Description: Glob patterns that mark files and folders as hidden in the Project Panel.
+- Setting: `hidden_files`
+- Default: `["**/.*"]`
+
+**Options**
+
+List of `string` glob patterns.
+
+The default matches files and folders whose names start with a dot. Files inside matching folders are also considered hidden.
+
+The [Project Panel](../project-panel.md#hiding-files) shows hidden entries by default. To hide them, enable **Hide Hidden** under **Panels > Project Panel** in the Settings Editor, or set `project_panel.hide_hidden` to `true`.
+
+Customizing `hidden_files` replaces the default patterns. To hide `*.log` files while keeping dotfiles and dotfolders hidden, add this to your `settings.json`:
+
+```json [settings]
+{
+  "hidden_files": ["**/*.log", "**/.*"],
+  "project_panel": {
+    "hide_hidden": true
+  }
+}
+```
 
 ## Indent Guides
 
