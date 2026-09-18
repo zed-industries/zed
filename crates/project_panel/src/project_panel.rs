@@ -6964,7 +6964,7 @@ impl ProjectPanel {
             chevron.is_none() && folder_indicator.shows_chevron() && folder_indicator.shows_icon();
 
         let filename_text_color =
-            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
+            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked, cx);
 
         let is_cut = self
             .clipboard
@@ -8153,7 +8153,7 @@ fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)>
         return Some(("!", Color::Conflict));
     }
     if git_status.untracked > 0 {
-        return Some(("U", Color::Created));
+        return Some(("U", Color::Untracked));
     }
     if git_status.worktree.deleted > 0 {
         return Some(("D", Color::Deleted));
