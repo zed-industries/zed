@@ -11169,7 +11169,7 @@ pub fn open_paths(
                     open_options.requesting_window = Some(window);
                     window
                         .update(cx, |multi_workspace, _, cx| {
-                            if AgentSettings::get_global(cx).threads_sidebar_auto_open {
+                            if AgentSettings::get_global(cx).threads_sidebar.auto_open {
                                 multi_workspace.open_sidebar(cx);
                             } else {
                                 // Opening the sidebar is also what pins the
