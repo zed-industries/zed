@@ -211,8 +211,31 @@ pub struct WorktreeSettingsContent {
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
     pub private_files: Option<ExtendingVec<String>>,
 
-    /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
-    /// Default: ["**/.*"]
+    /// Treat files and folders matching these glob patterns as hidden, including
+    /// files inside matching folders. To hide these entries, run
+    /// `project panel: toggle hide hidden` from the command palette or set
+    /// `project_panel.hide_hidden` to `true`.
+    ///
+    /// Default:
+    ///
+    /// ```json
+    /// {
+    ///   "hidden_files": ["**/.*"]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "hidden_files": ["**/*.log", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub hidden_files: Option<SplicingVec>,
 
     /// Treat files matching these glob patterns as read-only when opened. You can
