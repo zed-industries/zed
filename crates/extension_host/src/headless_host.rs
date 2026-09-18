@@ -282,9 +282,7 @@ impl HeadlessExtensionStore {
         let mut debug_locators = Vec::new();
         let mut wasm_extension: Option<Arc<dyn Extension>> = None;
         if manifest.allow_remote_load() {
-            wasm_extension = Some(Arc::new(
-                WasmExtension::load(&load_dir, &manifest, wasm_host, cx).await?,
-            ));
+            wasm_extension = Some(WasmExtension::load(&load_dir, &manifest, wasm_host, cx).await?);
 
             for (language_server_id, language_server_config) in &manifest.language_servers {
                 for language in language_server_config.languages() {
