@@ -42,6 +42,11 @@ fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<Service
     }
 }
 
+/// Astra rejects temperature at every reasoning effort, including the default value.
+fn temperature_for_model(model_id: &str, temperature: Option<f32>) -> Option<f32> {
+    temperature.filter(|_| model_id != crate::Model::SixAstra.id())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChatCompletionMaxTokensParameter {
     MaxCompletionTokens,
@@ -58,6 +63,7 @@ pub fn into_open_ai(
     reasoning_effort: Option<ReasoningEffort>,
     interleaved_reasoning: bool,
 ) -> Result<crate::Request> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request
         .tools
         .iter()
@@ -195,7 +201,7 @@ pub fn into_open_ai(
             None
         },
         stop: request.stop,
-        temperature: request.temperature.or(Some(1.0)),
+        temperature: temperature_for_model(model_id, request.temperature.or(Some(1.0))),
         max_completion_tokens: match max_tokens_parameter {
             ChatCompletionMaxTokensParameter::MaxCompletionTokens => max_output_tokens,
             ChatCompletionMaxTokensParameter::MaxTokens => None,
@@ -257,6 +263,7 @@ pub fn into_open_ai_response(
     supports_none_reasoning_effort: bool,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<ResponseRequest> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     let stream = !model_id.starts_with("o1-");
 
     let LanguageModelRequest {
@@ -272,6 +279,7 @@ pub fn into_open_ai_response(
         thinking_effort,
         speed,
         compact_at_tokens,
+        max_output_tokens: _,
     } = request;
 
     let service_tier = service_tier_for(speed);
@@ -381,7 +389,7 @@ pub fn into_open_ai_response(
         store: Some(false),
         include,
         stream,
-        temperature,
+        temperature: temperature_for_model(model_id, temperature),
         top_p: None,
         max_output_tokens,
         parallel_tool_calls: if tools.is_empty() {
@@ -1834,6 +1842,7 @@ mod tests {
             thinking_effort: Some("high".into()),
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2020,6 +2029,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2121,6 +2131,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2206,6 +2217,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2272,6 +2284,7 @@ mod tests {
             thinking_effort: Some("high".into()),
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2288,6 +2301,53 @@ mod tests {
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(serialized.get("reasoning"), None);
+    }
+
+    #[test]
+    fn request_conversion_omits_unsupported_temperature() -> Result<()> {
+        for (model_id, temperature, expected_temperature) in [
+            ("gpt-6-astra", Some(0.25), None),
+            ("gpt-6-astra", None, None),
+            ("gpt-4o-mini", Some(0.25), Some(0.25)),
+            ("custom-model", Some(0.25), Some(0.25)),
+        ] {
+            let request = LanguageModelRequest {
+                temperature,
+                ..Default::default()
+            };
+            let response = into_open_ai_response(
+                request.clone(),
+                model_id,
+                true,
+                true,
+                None,
+                None,
+                false,
+                &OPEN_AI_PROVIDER_ID,
+            )?;
+            let chat = into_open_ai(
+                request,
+                model_id,
+                true,
+                true,
+                None,
+                ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                None,
+                false,
+            )?;
+
+            for (endpoint, serialized) in [
+                ("responses", serde_json::to_value(response)?),
+                ("chat/completions", serde_json::to_value(chat)?),
+            ] {
+                assert_eq!(
+                    serialized.get("temperature"),
+                    expected_temperature.map(serde_json::Value::from).as_ref(),
+                    "{endpoint} temperature for {model_id} with {temperature:?}",
+                );
+            }
+        }
+        Ok(())
     }
 
     /// `Speed::Fast` should translate to `service_tier: "priority"` on the
@@ -2318,6 +2378,7 @@ mod tests {
                 thinking_effort: None,
                 speed,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             };
 
             let response = into_open_ai_response(
@@ -2370,6 +2431,7 @@ mod tests {
                 thinking_effort: None,
                 speed,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             };
 
             let chat = into_open_ai(
@@ -2415,22 +2477,60 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
-        let chat = into_open_ai(
-            request,
-            "compatible-model",
-            false,
-            false,
-            Some(4096),
-            ChatCompletionMaxTokensParameter::MaxTokens,
-            None,
-            false,
-        )?;
+        for (requested, model_maximum, expected) in [
+            (None, None, None),
+            (None, Some(4096), Some(4096)),
+            (Some(1024), Some(4096), Some(1024)),
+            (Some(8192), Some(4096), Some(4096)),
+            (Some(1024), None, Some(1024)),
+        ] {
+            let mut request = request.clone();
+            request.max_output_tokens = requested;
+            for (parameter, field, absent_field) in [
+                (
+                    ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                    "max_completion_tokens",
+                    "max_tokens",
+                ),
+                (
+                    ChatCompletionMaxTokensParameter::MaxTokens,
+                    "max_tokens",
+                    "max_completion_tokens",
+                ),
+            ] {
+                let chat = into_open_ai(
+                    request.clone(),
+                    "compatible-model",
+                    false,
+                    false,
+                    model_maximum,
+                    parameter,
+                    None,
+                    false,
+                )?;
+                let serialized = serde_json::to_value(chat)?;
+                assert_eq!(serialized[field].as_u64(), expected);
+                assert!(serialized.get(absent_field).is_none());
+            }
 
-        let serialized = serde_json::to_value(&chat)?;
-        assert_eq!(serialized.get("max_completion_tokens"), None);
-        assert_eq!(serialized["max_tokens"], json!(4096));
+            let response = into_open_ai_response(
+                request,
+                "gpt-4.1",
+                false,
+                false,
+                model_maximum,
+                None,
+                false,
+                &language_model_core::OPEN_AI_PROVIDER_ID,
+            )?;
+            assert_eq!(
+                serde_json::to_value(response)?["max_output_tokens"].as_u64(),
+                expected
+            );
+        }
         Ok(())
     }
 
@@ -2454,6 +2554,7 @@ mod tests {
             thinking_effort: Some("high".into()),
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2495,6 +2596,7 @@ mod tests {
             thinking_effort: Some("none".into()),
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2548,6 +2650,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2640,6 +2743,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2730,6 +2834,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -4034,6 +4139,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_ai(

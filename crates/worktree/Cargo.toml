@@ -8,7 +8,6 @@ license = "GPL-3.0-or-later"
 [lib]
 path = "src/worktree.rs"
 doctest = false
-test = false
 
 [[test]]
 name = "integration"
