@@ -39,16 +39,17 @@ The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../accou
 
 ### Switching Modes {#switching-modes}
 
-Edit Prediction has two display modes:
+Edit Prediction has three display modes:
 
 1. `eager` (default): predictions are displayed inline as long as they don't conflict with language server completions
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
+3. `inline_only`: only predictions that can be drawn as ghost text at the cursor are shown, and accepting takes one line at a time rather than the whole prediction. Predictions that would require a diff popover are skipped.
 
 Toggle between them via the `mode` key:
 
 ```json [settings]
 "edit_predictions": {
-  "mode": "eager" // or "subtle"
+  "mode": "eager" // or "subtle", or "inline_only"
 },
 ```
 
