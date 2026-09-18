@@ -461,6 +461,17 @@ impl WgpuContext {
         adapter: &wgpu::Adapter,
         surface: &wgpu::Surface<'_>,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
+        // Every gpui shader reads instance data from a vertex-stage storage
+        // buffer. Bail early when the capability is missing; drivers that
+        // misreport it are caught by the pipeline probe below.
+        let downlevel = adapter.get_downlevel_capabilities();
+        if !downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::VERTEX_STORAGE)
+        {
+            anyhow::bail!("no vertex-stage storage buffer support");
+        }
+
         let caps = surface.get_capabilities(adapter);
         if caps.formats.is_empty() {
             anyhow::bail!("no compatible surface formats");
@@ -491,12 +502,99 @@ impl WgpuContext {
             anyhow::bail!("surface configuration failed: {e}");
         }
 
+        Self::probe_vertex_storage_pipeline(&device, caps.formats[0]).await?;
+
         Ok((
             device,
             queue,
             dual_source_blending,
             color_atlas_texture_format,
         ))
+    }
+
+    /// Probe that the device can compile a render pipeline that reads a
+    /// storage buffer from the vertex stage, the way every gpui shader does.
+    /// Adapter caps can't be trusted for this: on TeraScale 2 GPUs wgpu-hal
+    /// reports `VERTEX_STORAGE` despite a real GL limit of zero, and the first
+    /// real pipeline then dies in wgpu's fatal error handler ("Too many vertex
+    /// shader storage blocks"). Compiling a probe inside an error scope turns
+    /// that into an `Err` the adapter loop can skip.
+    ///
+    /// See <https://github.com/zed-industries/zed/issues/50996> and
+    /// <https://github.com/gfx-rs/wgpu/issues/9487>.
+    #[cfg(not(target_family = "wasm"))]
+    async fn probe_vertex_storage_pipeline(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+    ) -> anyhow::Result<()> {
+        const PROBE_SHADER: &str = "
+            struct Probe { v: vec4<f32> }
+            @group(0) @binding(0) var<storage, read> b_probe: array<Probe>;
+
+            @vertex
+            fn vs_probe(@builtin(instance_index) i: u32) -> @builtin(position) vec4<f32> {
+                return b_probe[i].v;
+            }
+
+            @fragment
+            fn fs_probe() -> @location(0) vec4<f32> {
+                return vec4<f32>(1.0);
+            }
+        ";
+
+        let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("vertex_storage_probe"),
+            source: wgpu::ShaderSource::Wgsl(PROBE_SHADER.into()),
+        });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex_storage_probe_bind_group_layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("vertex_storage_probe_layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+        let _pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("vertex_storage_probe"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_probe"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_probe"),
+                targets: &[Some(format.into())],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        if let Some(error) = error_scope.pop().await {
+            anyhow::bail!("vertex-storage pipeline probe failed: {error}");
+        }
+        Ok(())
     }
 
     fn select_color_texture_format(adapter: &wgpu::Adapter) -> anyhow::Result<wgpu::TextureFormat> {
