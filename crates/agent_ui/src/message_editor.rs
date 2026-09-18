@@ -580,6 +580,7 @@ impl MessageEditor {
                         );
                         has_hint = has_new_hint;
                     });
+                    this.ensure_mention_creases(window, cx);
                     cx.notify();
                 }
             }
@@ -1346,6 +1347,121 @@ impl MessageEditor {
         window.defer(cx, move |window, cx| {
             editor.update(cx, |editor, cx| editor.paste(&Paste, window, cx));
         });
+    }
+
+    fn ensure_mention_creases(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let (text, existing_creases) = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let text = editor.text(cx);
+            let creases: Vec<(CreaseId, Range<usize>)> = snapshot
+                .crease_snapshot
+                .creases()
+                .map(|(id, crease)| {
+                    let range = crease.range().to_offset(snapshot.buffer_snapshot());
+                    (id, range.start.0..range.end.0)
+                })
+                .collect();
+            (text, creases)
+        });
+
+        let path_style = workspace.read(cx).project().read(cx).path_style(cx);
+        let parsed_mentions = parse_mention_links(&text, path_style);
+        if parsed_mentions.is_empty() {
+            return;
+        }
+
+        let supports_images = self.session_capabilities.read().supports_images();
+        let http_client = workspace.read(cx).client().http_client();
+
+        for (range, mention_uri) in parsed_mentions {
+            let matching_crease = existing_creases
+                .iter()
+                .find(|(_, r)| r.start == range.start && r.end == range.end)
+                .map(|(id, _)| *id);
+
+            if let Some(crease_id) = matching_crease {
+                if self.mention_set.read(cx).mention_uri_for_crease(&crease_id).is_some() {
+                    continue;
+                }
+
+                let task = self.mention_set.update(cx, |mention_set, cx| {
+                    mention_set.confirm_mention_for_uri(
+                        mention_uri.clone(),
+                        supports_images,
+                        http_client.clone(),
+                        cx,
+                    )
+                });
+                let task = cx
+                    .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
+                    .shared();
+
+                self.mention_set.update(cx, |mention_set, cx| {
+                    mention_set.insert_mention(
+                        crease_id,
+                        mention_uri,
+                        task,
+                        None,
+                        cx,
+                    );
+                });
+            } else {
+                let anchor = self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx);
+                    let snapshot = buffer.snapshot(cx);
+                    let buffer_snapshot = snapshot.as_singleton()?;
+                    let text_anchor = buffer_snapshot.anchor_before(range.start);
+                    Some(text_anchor)
+                });
+                let Some(anchor) = anchor else {
+                    continue;
+                };
+
+                let content_len = range.end - range.start;
+                let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
+                    anchor,
+                    content_len,
+                    mention_uri.name().into(),
+                    mention_uri.icon_path(cx),
+                    mention_uri.tooltip_text(),
+                    Some(mention_uri.clone()),
+                    Some(self.workspace.clone()),
+                    None,
+                    self.editor.clone(),
+                    window,
+                    cx,
+                ) else {
+                    continue;
+                };
+                drop(tx);
+
+                let task = self.mention_set.update(cx, |mention_set, cx| {
+                    mention_set.confirm_mention_for_uri(
+                        mention_uri.clone(),
+                        supports_images,
+                        http_client.clone(),
+                        cx,
+                    )
+                });
+                let task = cx
+                    .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
+                    .shared();
+
+                self.mention_set.update(cx, |mention_set, cx| {
+                    mention_set.insert_mention(
+                        crease_id,
+                        mention_uri,
+                        task,
+                        crease_entity,
+                        cx,
+                    );
+                });
+            }
+        }
     }
 
     fn handle_pasted_context(
@@ -4923,6 +5039,94 @@ mod tests {
                 assert!(
                     !text.text.split_whitespace().any(|word| word == "selection"),
                     "text block must not contain bare fold placeholder: {:?}",
+                    text.text
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_undo_and_redo_with_selection_mentions_restores_mentions(cx: &mut TestAppContext) {
+        use editor::actions::{Redo, Undo};
+
+        init_test(cx);
+
+        let (message_editor, _source_editor, mut cx) = setup_paste_test_message_editor(
+            json!({"file.rs": "line 1\nline 2\nline 3\nline 4\n"}),
+            cx,
+        )
+        .await;
+
+        let first_uri = MentionUri::Selection {
+            abs_path: Some(path!("/project/file.rs").into()),
+            line_range: 0..=1,
+            column: None,
+        };
+
+        let link_text = format!("check this out: {} please", first_uri.as_link());
+
+        // Insert mention link into editor
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                editor.insert(&link_text, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        // Verify mention was creased and confirmed in mention_set
+        let contents = mention_contents(&message_editor, &mut cx).await;
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].0, first_uri);
+
+        // Verify draft content blocks snapshot resolves to a Resource block
+        let blocks = message_editor.update(&mut cx, |editor, cx| {
+            editor
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(acp::PromptCapabilities::new().embedded_context(true));
+            editor.draft_content_blocks_snapshot(cx)
+        });
+        assert!(blocks.iter().any(|b| matches!(b, acp::ContentBlock::Resource(_))));
+
+        // Undo the insertion (Cmd+Z)
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                editor.undo(&Undo, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let text_after_undo = message_editor.read_with(&cx, |editor, cx| editor.editor.read(cx).text(cx));
+        assert_eq!(text_after_undo, "");
+
+        // Redo the insertion (Cmd+Shift+Z)
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                editor.redo(&Redo, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let text_after_redo = message_editor.read_with(&cx, |editor, cx| editor.editor.read(cx).text(cx));
+        assert_eq!(text_after_redo, link_text);
+
+        // Verify that after Redo, the mention was re-creased and restored in mention_set!
+        let contents_after_redo = mention_contents(&message_editor, &mut cx).await;
+        assert_eq!(contents_after_redo.len(), 1, "mention should be restored after redo");
+        assert_eq!(contents_after_redo[0].0, first_uri);
+
+        let blocks_after_redo = message_editor.update(&mut cx, |editor, cx| {
+            editor.draft_content_blocks_snapshot(cx)
+        });
+        assert!(
+            blocks_after_redo.iter().any(|b| matches!(b, acp::ContentBlock::Resource(_))),
+            "selection mention should be restored as Resource block after redo, got {blocks_after_redo:#?}"
+        );
+        for block in &blocks_after_redo {
+            if let acp::ContentBlock::Text(text) = block {
+                assert!(
+                    !text.text.contains("selection"),
+                    "text block should not contain bare selection: {:?}",
                     text.text
                 );
             }
