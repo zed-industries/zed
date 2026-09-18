@@ -965,7 +965,7 @@ pub(crate) struct TooltipRequest {
 pub(crate) struct TooltipOwner {
     owner_id: GlobalElementId,
     hitbox_id: HitboxId,
-    owns_mouse_position: Rc<dyn Fn(&Window) -> bool>,
+    owns_mouse_position: Rc<dyn Fn(&mut Window, &mut App) -> bool>,
 }
 
 #[derive(Clone)]
@@ -1164,76 +1164,6 @@ impl Frame {
             hit_test.hover_hitbox_count = hit_test.ids.len();
         }
         hit_test
-    }
-
-    fn topmost_tooltip_owner<'a>(
-        &'a self,
-        hit_test: &HitTest,
-        window: &Window,
-    ) -> Option<&'a GlobalElementId> {
-        for hitbox_id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
-            if let Some(owner) =
-                self.tooltip_owners.iter().rev().find(|owner| {
-                    owner.hitbox_id == *hitbox_id && (owner.owns_mouse_position)(window)
-                })
-            {
-                return Some(&owner.owner_id);
-            }
-        }
-        None
-    }
-
-    fn topmost_tooltip_owner_during_prepaint(
-        &self,
-        hit_test: &HitTest,
-        window: &Window,
-    ) -> Option<&GlobalElementId> {
-        let is_hovered = |hitbox_id: HitboxId| {
-            window.captured_hitbox == Some(hitbox_id)
-                || (!window.last_input_was_keyboard() && hitbox_id.hit_test(hit_test))
-        };
-        let mut resolved_visibility = Vec::with_capacity(self.tooltip_visibility.len());
-        for tooltip_visibility in &self.tooltip_visibility {
-            let parent_visible = tooltip_visibility
-                .parent_index
-                .is_none_or(|index| resolved_visibility.get(index).copied().unwrap_or(false));
-            let visible = parent_visible && {
-                let hover_state = tooltip_visibility
-                    .hover_state
-                    .as_ref()
-                    .map(|state| *state.borrow())
-                    .unwrap_or_default();
-                let hovered = !window.last_input_was_touch()
-                    && tooltip_visibility.hitbox_id.is_some_and(is_hovered);
-                let group_hovered = !window.last_input_was_touch()
-                    && tooltip_visibility
-                        .group_hitbox(&self.tooltip_visibility)
-                        .map_or(hover_state.group, is_hovered);
-                tooltip_visibility
-                    .visibility
-                    .resolve(hovered, group_hovered)
-                    == Visibility::Visible
-            };
-            resolved_visibility.push(visible);
-        }
-
-        for hitbox_id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
-            if let Some(candidate) = self
-                .tooltip_owner_candidates
-                .iter()
-                .rev()
-                .find(|candidate| {
-                    candidate.owner.hitbox_id == *hitbox_id
-                        && candidate.visibility_index.is_none_or(|index| {
-                            resolved_visibility.get(index).copied().unwrap_or(false)
-                        })
-                        && (candidate.owner.owns_mouse_position)(window)
-                })
-            {
-                return Some(&candidate.owner.owner_id);
-            }
-        }
-        None
     }
 
     pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -4166,7 +4096,7 @@ impl Window {
         &mut self,
         owner_id: &GlobalElementId,
         hitbox: &Hitbox,
-        owns_mouse_position: Rc<dyn Fn(&Window) -> bool>,
+        owns_mouse_position: Rc<dyn Fn(&mut Window, &mut App) -> bool>,
     ) {
         self.invalidator.debug_assert_prepaint();
         self.next_frame
@@ -4185,7 +4115,7 @@ impl Window {
         &mut self,
         owner_id: &GlobalElementId,
         hitbox: &Hitbox,
-        owns_mouse_position: Rc<dyn Fn(&Window) -> bool>,
+        owns_mouse_position: Rc<dyn Fn(&mut Window, &mut App) -> bool>,
     ) {
         self.invalidator.debug_assert_paint();
         self.next_frame.tooltip_owners.push(TooltipOwner {
@@ -4195,21 +4125,87 @@ impl Window {
         });
     }
 
-    pub(crate) fn is_topmost_tooltip_owner(&self, owner_id: &GlobalElementId) -> bool {
-        self.rendered_frame
-            .topmost_tooltip_owner(&self.mouse_hit_test, self)
-            .is_some_and(|topmost_owner_id| topmost_owner_id == owner_id)
+    pub(crate) fn is_topmost_tooltip_owner(
+        &mut self,
+        owner_id: &GlobalElementId,
+        cx: &mut App,
+    ) -> bool {
+        let hitbox_ids = self.mouse_hit_test.ids.clone();
+        for hitbox_id in hitbox_ids
+            .iter()
+            .take(self.mouse_hit_test.hover_hitbox_count)
+        {
+            for index in (0..self.rendered_frame.tooltip_owners.len()).rev() {
+                let Some(owner) = self.rendered_frame.tooltip_owners.get(index) else {
+                    log::error!("Unexpectedly absent TooltipOwner");
+                    return false;
+                };
+                if owner.hitbox_id == *hitbox_id {
+                    let owner = owner.clone();
+                    if (owner.owns_mouse_position)(self, cx) {
+                        return owner.owner_id == *owner_id;
+                    }
+                }
+            }
+        }
+        false
     }
 
     pub(crate) fn is_topmost_tooltip_owner_during_prepaint(
-        &self,
+        &mut self,
         owner_id: &GlobalElementId,
+        cx: &mut App,
     ) -> bool {
         self.invalidator.debug_assert_prepaint();
         let hit_test = self.next_frame.hit_test(self.mouse_position);
-        self.next_frame
-            .topmost_tooltip_owner_during_prepaint(&hit_test, self)
-            .is_some_and(|topmost_owner_id| topmost_owner_id == owner_id)
+        let is_hovered = |hitbox_id: HitboxId| {
+            self.captured_hitbox == Some(hitbox_id)
+                || (!self.last_input_was_keyboard() && hitbox_id.hit_test(&hit_test))
+        };
+        let mut resolved_visibility = Vec::with_capacity(self.next_frame.tooltip_visibility.len());
+        for tooltip_visibility in &self.next_frame.tooltip_visibility {
+            let parent_visible = tooltip_visibility
+                .parent_index
+                .is_none_or(|index| resolved_visibility.get(index).copied().unwrap_or(false));
+            let visible = parent_visible && {
+                let hover_state = tooltip_visibility
+                    .hover_state
+                    .as_ref()
+                    .map(|state| *state.borrow())
+                    .unwrap_or_default();
+                let hovered = !self.last_input_was_touch()
+                    && tooltip_visibility.hitbox_id.is_some_and(is_hovered);
+                let group_hovered = !self.last_input_was_touch()
+                    && tooltip_visibility
+                        .group_hitbox(&self.next_frame.tooltip_visibility)
+                        .map_or(hover_state.group, is_hovered);
+                tooltip_visibility
+                    .visibility
+                    .resolve(hovered, group_hovered)
+                    == Visibility::Visible
+            };
+            resolved_visibility.push(visible);
+        }
+
+        for hitbox_id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
+            for index in (0..self.next_frame.tooltip_owner_candidates.len()).rev() {
+                let Some(candidate) = self.next_frame.tooltip_owner_candidates.get(index) else {
+                    log::error!("Unexpectedly absent TooltipOwnerCandidate");
+                    return false;
+                };
+                if candidate.owner.hitbox_id == *hitbox_id
+                    && candidate.visibility_index.is_none_or(|index| {
+                        resolved_visibility.get(index).copied().unwrap_or(false)
+                    })
+                {
+                    let owner = candidate.owner.clone();
+                    if (owner.owns_mouse_position)(self, cx) {
+                        return owner.owner_id == *owner_id;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Invoke the given function with the given content mask after intersecting it
