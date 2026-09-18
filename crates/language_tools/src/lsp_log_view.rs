@@ -81,10 +81,9 @@ pub fn open(
                                         .iter()
                                         .find(|(key, state)| {
                                             state.server_id == id
-                                                && key.kind.is_for_project(
-                                                    &weak_project,
-                                                    &weak_lsp_store,
-                                                )
+                                                && key
+                                                    .kind
+                                                    .is_for_project(&weak_project, &weak_lsp_store)
                                         })
                                         .map(|(key, state)| {
                                             LanguageServerLogKey::new(
@@ -110,10 +109,9 @@ pub fn open(
                                         .iter()
                                         .find(|(key, state)| {
                                             state.name.as_ref() == Some(&name)
-                                                && key.kind.is_for_project(
-                                                    &weak_project,
-                                                    &weak_lsp_store,
-                                                )
+                                                && key
+                                                    .kind
+                                                    .is_for_project(&weak_project, &weak_lsp_store)
                                         })
                                         .map(|(key, state)| {
                                             LanguageServerLogKey::new(

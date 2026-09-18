@@ -4019,6 +4019,11 @@ impl LocalLspStore {
     ) -> Vec<LanguageServerId> {
         self.restricted_worktrees_tasks.remove(&id_to_remove);
         self.diagnostics.remove(&id_to_remove);
+        self.stopped_server_ids_to_names_and_worktrees
+            .retain(|_, (_, stopped_worktree_ids)| {
+                stopped_worktree_ids.remove(&id_to_remove);
+                !stopped_worktree_ids.is_empty()
+            });
         self.prettier_store.update(cx, |prettier_store, cx| {
             prettier_store.remove_worktree(id_to_remove, cx);
         });
@@ -9927,6 +9932,13 @@ impl LspStore {
 
     fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut Context<Self>) {
         self.diagnostic_summaries.remove(&id_to_remove);
+        self.stopped_language_servers
+            .values_mut()
+            .for_each(|worktree_ids| {
+                worktree_ids.remove(&id_to_remove);
+            });
+        self.stopped_language_servers
+            .retain(|_, worktree_ids| !worktree_ids.is_empty());
         if let Some(local) = self.as_local_mut() {
             let to_remove = local.remove_worktree(id_to_remove, cx);
             for server in to_remove {
@@ -13050,6 +13062,15 @@ impl LspStore {
         // So, a direct emit is used here.
         if let Some((name, worktree_ids)) = server_identifier {
             log::info!("stopping language server {name}");
+            if retain_stopped_status {
+                for worktree_id in &worktree_ids {
+                    self.update_stopped_language_servers(
+                        name.clone(),
+                        *worktree_id,
+                        &BinaryStatus::Stopped,
+                    );
+                }
+            }
             cx.emit(LspStoreEvent::LanguageServerUpdate {
                 language_server_id: server_id,
                 name: Some(name.clone()),
@@ -13079,11 +13100,18 @@ impl LspStore {
                         };
                         for worktree_id in &worktree_ids {
                             if retain_stopped_status {
-                                lsp_store.update_stopped_language_servers(
-                                    name.clone(),
-                                    *worktree_id,
-                                    &binary_status,
-                                );
+                                let restarted = lsp_store.as_local().is_some_and(|local| {
+                                    local.language_server_ids.keys().any(|seed| {
+                                        seed.name == name && seed.worktree_id == *worktree_id
+                                    })
+                                });
+                                if !restarted {
+                                    lsp_store.update_stopped_language_servers(
+                                        name.clone(),
+                                        *worktree_id,
+                                        &binary_status,
+                                    );
+                                }
                             }
                             cx.emit(LspStoreEvent::LanguageServerUpdate {
                                 language_server_id: server_id,
@@ -13309,9 +13337,28 @@ impl LspStore {
                             local.all_language_servers_stopped = false;
                         }
                         if only_restart_servers.is_empty() {
-                            lsp_store.stopped_language_servers.clear();
-                            if let Some(local) = lsp_store.as_local_mut() {
-                                local.stopped_server_ids_to_names_and_worktrees.clear();
+                            if let Some(worktree_id) = worktree_id {
+                                lsp_store.stopped_language_servers.values_mut().for_each(
+                                    |worktree_ids| {
+                                        worktree_ids.remove(&worktree_id);
+                                    },
+                                );
+                                lsp_store
+                                    .stopped_language_servers
+                                    .retain(|_, worktree_ids| !worktree_ids.is_empty());
+                                if let Some(local) = lsp_store.as_local_mut() {
+                                    local.stopped_server_ids_to_names_and_worktrees.retain(
+                                        |_, (_, stopped_worktree_ids)| {
+                                            stopped_worktree_ids.remove(&worktree_id);
+                                            !stopped_worktree_ids.is_empty()
+                                        },
+                                    );
+                                }
+                            } else {
+                                lsp_store.stopped_language_servers.clear();
+                                if let Some(local) = lsp_store.as_local_mut() {
+                                    local.stopped_server_ids_to_names_and_worktrees.clear();
+                                }
                             }
                         } else {
                             for selector in &only_register_servers {
