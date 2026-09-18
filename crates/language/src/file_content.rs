@@ -1,4 +1,96 @@
+use anyhow::{Result, bail};
+use chardetng::EncodingDetector;
+use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
+
 pub const FILE_ANALYSIS_BYTES: usize = 1024;
+
+pub struct DecodedText {
+    pub text: String,
+    pub encoding: &'static Encoding,
+    pub has_bom: bool,
+}
+
+pub fn decode_text(bytes: Vec<u8>) -> Result<DecodedText> {
+    if let Some((encoding, _bom_len)) = Encoding::for_bom(&bytes) {
+        let (text, _) = encoding.decode_with_bom_removal(&bytes);
+        return Ok(DecodedText {
+            text: text.into_owned(),
+            encoding,
+            has_bom: true,
+        });
+    }
+
+    let encoding = match analyze_byte_content(&bytes) {
+        ByteContent::Utf16Le => UTF_16LE,
+        ByteContent::Utf16Be => UTF_16BE,
+        ByteContent::Binary => bail!("Binary files are not supported"),
+        ByteContent::Unknown => {
+            return match String::from_utf8(bytes) {
+                Ok(text) if !text.contains('\x1b') => Ok(DecodedText {
+                    text,
+                    encoding: UTF_8,
+                    has_bom: false,
+                }),
+                Ok(text) => Ok(decode_with_detected_encoding(text.into_bytes())),
+                Err(error) => Ok(decode_with_detected_encoding(error.into_bytes())),
+            };
+        }
+    };
+
+    let (text, _, _) = encoding.decode(&bytes);
+    Ok(DecodedText {
+        text: text.into_owned(),
+        encoding,
+        has_bom: false,
+    })
+}
+
+pub fn encode_text(text: String, encoding: &'static Encoding, has_bom: bool) -> Vec<u8> {
+    if encoding == UTF_8 && !has_bom {
+        return text.into_bytes();
+    }
+
+    // encoding_rs follows the WHATWG standard and encodes UTF-16 labels as UTF-8.
+    if encoding == UTF_16BE {
+        let mut bytes = Vec::with_capacity(text.len() * 2 + 2);
+        if has_bom {
+            bytes.extend_from_slice(&[0xFE, 0xFF]);
+        }
+        bytes.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+        return bytes;
+    }
+
+    if encoding == UTF_16LE {
+        let mut bytes = Vec::with_capacity(text.len() * 2 + 2);
+        if has_bom {
+            bytes.extend_from_slice(&[0xFF, 0xFE]);
+        }
+        bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        return bytes;
+    }
+
+    let (encoded, _, _) = encoding.encode(&text);
+    if has_bom && encoding == UTF_8 {
+        let mut bytes = Vec::with_capacity(encoded.len() + 3);
+        bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+        bytes.extend_from_slice(&encoded);
+        bytes
+    } else {
+        encoded.into_owned()
+    }
+}
+
+fn decode_with_detected_encoding(bytes: Vec<u8>) -> DecodedText {
+    let mut detector = EncodingDetector::new();
+    detector.feed(&bytes, true);
+    let encoding = detector.guess(None, true);
+    let (text, _, _) = encoding.decode(&bytes);
+    DecodedText {
+        text: text.into_owned(),
+        encoding,
+        has_bom: false,
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum ByteContent {
@@ -175,4 +267,42 @@ fn read_u16(bytes: &[u8], offset: usize, little_endian: bool) -> Option<u16> {
         return Some(u16::from_le_bytes(pair));
     }
     Some(u16::from_be_bytes(pair))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_and_encodes_windows_1251() {
+        let expected = "строка один\nстрока два\n";
+        let (bytes, _, _) = encoding_rs::WINDOWS_1251.encode(expected);
+
+        let decoded = decode_text(bytes.clone().into_owned()).unwrap();
+
+        assert_eq!(decoded.text, expected);
+        assert_eq!(decoded.encoding, encoding_rs::WINDOWS_1251);
+        assert!(!decoded.has_bom);
+        assert_eq!(
+            encode_text(decoded.text, decoded.encoding, decoded.has_bom),
+            bytes.as_ref()
+        );
+    }
+
+    #[test]
+    fn preserves_unicode_boms() {
+        let expected = "Hello, мир\n";
+        for encoding in [UTF_8, UTF_16LE, UTF_16BE] {
+            let bytes = encode_text(expected.to_owned(), encoding, true);
+            let decoded = decode_text(bytes.clone()).unwrap();
+
+            assert_eq!(decoded.text, expected);
+            assert_eq!(decoded.encoding, encoding);
+            assert!(decoded.has_bom);
+            assert_eq!(
+                encode_text(decoded.text, decoded.encoding, decoded.has_bom),
+                bytes
+            );
+        }
+    }
 }

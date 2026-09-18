@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
+use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -16,9 +17,9 @@ use std::sync::Arc;
 use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
     CacheTtl, CompactionTrigger, ContentDelta, ContextManagement, ContextManagementEdit, Event,
-    ImageSource, Message, RequestContent, ResponseContent, StringOrContents, Thinking, Tool,
-    ToolChoice, ToolResultContent, ToolResultPart, Usage, completion_error_from_anthropic,
-    completion_error_from_anthropic_api,
+    ImageSource, Message, PrefixMismatchBehavior, RequestContent, ResponseContent,
+    StringOrContents, Thinking, ThinkingBlockBinding, Tool, ToolChoice, ToolResultContent,
+    ToolResultPart, Usage, completion_error_from_anthropic, completion_error_from_anthropic_api,
 };
 
 pub const COMPACTION_STATE_FORMAT: &str = "anthropic.messages.encrypted-content.v1";
@@ -59,6 +60,62 @@ pub fn provider_compaction_encrypted_content(
         ));
     }
     Ok(Some(state.payload().into()))
+}
+
+/// Collects one paused compaction stream into replacement context and usage.
+///
+/// # Errors
+///
+/// Returns an error when the stream fails, ends without finalized replacement
+/// context, or reports that the provider abandoned compaction.
+pub async fn collect_compaction_result(
+    mut stream: BoxStream<
+        'static,
+        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+    >,
+    provider_name: LanguageModelProviderName,
+) -> Result<(CompactedContext, TokenUsage), LanguageModelCompletionError> {
+    let mut context = None;
+    let mut usage = TokenUsage::default();
+    while let Some(event) = stream.next().await {
+        match event? {
+            LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                compacted_context,
+            )) => {
+                context = Some(compacted_context);
+            }
+            LanguageModelCompletionEvent::Compaction(CompactionUpdate::Failed) => {
+                return Err(LanguageModelCompletionError::Other(anyhow!(
+                    "{provider_name} abandoned compaction without producing replacement context"
+                )));
+            }
+            LanguageModelCompletionEvent::UsageUpdate(updated_usage) => {
+                usage = updated_usage;
+            }
+            LanguageModelCompletionEvent::Stop(_) => {
+                return context.map(|context| (context, usage)).ok_or(
+                    LanguageModelCompletionError::StreamEndedUnexpectedly {
+                        provider: provider_name,
+                    },
+                );
+            }
+            LanguageModelCompletionEvent::Queued { .. }
+            | LanguageModelCompletionEvent::Started
+            | LanguageModelCompletionEvent::Text(_)
+            | LanguageModelCompletionEvent::Thinking { .. }
+            | LanguageModelCompletionEvent::RedactedThinking { .. }
+            | LanguageModelCompletionEvent::ToolUse(_)
+            | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
+            | LanguageModelCompletionEvent::StartMessage { .. }
+            | LanguageModelCompletionEvent::ReasoningDetails(_)
+            | LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started)
+            | LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(_)) => {}
+        }
+    }
+
+    Err(LanguageModelCompletionError::StreamEndedUnexpectedly {
+        provider: provider_name,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -233,6 +290,9 @@ pub fn into_anthropic(
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
+    let max_output_tokens = request
+        .max_output_tokens
+        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
     let mut any_message_wants_cache = false;
@@ -348,6 +408,11 @@ pub fn into_anthropic(
             }
             AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive {
                 display: Some(AdaptiveThinkingDisplay::Summarized),
+                block_binding: crate::binds_thinking_blocks_to_prefix(&model).then_some(
+                    ThinkingBlockBinding {
+                        prefix_mismatch_behavior: PrefixMismatchBehavior::DropBlock,
+                    },
+                ),
             }),
             AnthropicModelMode::Default => None,
         }
@@ -414,6 +479,7 @@ pub fn into_anthropic(
         context_management: request.compact_at_tokens.map(|value| ContextManagement {
             edits: vec![ContextManagementEdit::Compact {
                 trigger: Some(CompactionTrigger::InputTokens { value }),
+                pause_after_compaction: None,
             }],
         }),
     })
@@ -656,6 +722,7 @@ impl AnthropicEventMapper {
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
                         "refusal" => StopReason::Refusal,
+                        "compaction" => StopReason::EndTurn,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn
@@ -717,9 +784,32 @@ fn update_usage(usage: &mut Usage, new: &Usage) {
     if let Some(cache_read_input_tokens) = new.cache_read_input_tokens {
         usage.cache_read_input_tokens = Some(cache_read_input_tokens);
     }
+    if let Some(iterations) = &new.iterations {
+        usage.iterations = Some(iterations.clone());
+    }
 }
 
 fn convert_usage(usage: &Usage) -> TokenUsage {
+    if let Some(iterations) = usage.iterations.as_deref() {
+        return iterations
+            .iter()
+            .fold(TokenUsage::default(), |mut total, iteration| {
+                total.input_tokens = total
+                    .input_tokens
+                    .saturating_add(iteration.input_tokens.unwrap_or(0));
+                total.output_tokens = total
+                    .output_tokens
+                    .saturating_add(iteration.output_tokens.unwrap_or(0));
+                total.cache_creation_input_tokens = total
+                    .cache_creation_input_tokens
+                    .saturating_add(iteration.cache_creation_input_tokens.unwrap_or(0));
+                total.cache_read_input_tokens = total
+                    .cache_read_input_tokens
+                    .saturating_add(iteration.cache_read_input_tokens.unwrap_or(0));
+                total
+            });
+    }
+
     TokenUsage {
         input_tokens: usage.input_tokens.unwrap_or(0),
         output_tokens: usage.output_tokens.unwrap_or(0),
@@ -732,10 +822,56 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 mod tests {
     use super::*;
     use crate::{AnthropicModelMode, UsageIteration, UsageIterationType};
+    use futures::executor::block_on;
     use language_model_core::{
-        ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelImage,
-        LanguageModelRequestMessage, MessageContent,
+        ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelCompletionEvent,
+        LanguageModelImage, LanguageModelRequestMessage, MessageContent, TokenUsage,
     };
+
+    #[test]
+    fn test_collect_compaction_result_returns_context_and_usage() {
+        let context = CompactedContext::Summary {
+            content: "Summary of the conversation.".into(),
+            provider_state: None,
+        };
+        let usage = TokenUsage {
+            input_tokens: 60_000,
+            output_tokens: 1_000,
+            ..Default::default()
+        };
+        let stream = futures::stream::iter([
+            Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Started,
+            )),
+            Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Finished(context.clone()),
+            )),
+            Ok(LanguageModelCompletionEvent::UsageUpdate(usage)),
+            Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)),
+        ])
+        .boxed();
+
+        let result = block_on(collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME)).unwrap();
+
+        assert_eq!(result, (context, usage));
+    }
+
+    #[test]
+    fn test_collect_compaction_result_rejects_abandoned_compaction() {
+        let stream = futures::stream::iter([Ok(LanguageModelCompletionEvent::Compaction(
+            CompactionUpdate::Failed,
+        ))])
+        .boxed();
+
+        let error =
+            block_on(collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME)).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("abandoned compaction without producing replacement context")
+        );
+    }
 
     #[test]
     fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
@@ -774,6 +910,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: Some(1024),
         };
 
         let anthropic_request = into_anthropic(
@@ -787,6 +924,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            1024
+        );
         // No message content block should carry cache_control anymore; the
         // conversation breakpoint is set via top-level automatic caching.
         assert_eq!(anthropic_request.messages.len(), 1);
@@ -882,6 +1023,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: Some(8192),
         };
 
         let anthropic_request = into_anthropic(
@@ -895,6 +1037,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,
@@ -942,6 +1088,7 @@ mod tests {
             thinking_effort: Some("xhigh".into()),
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -961,6 +1108,76 @@ mod tests {
                 .and_then(|config| config.effort),
             Some(crate::Effort::XHigh)
         );
+    }
+
+    #[test]
+    fn test_block_binding_sent_only_for_prefix_binding_models() {
+        // (model, expects_block_binding): Claude Fable 5.1 rejects a replayed
+        // thinking block with a 400 when the conversation prefix changed, so
+        // its requests opt into dropping invalidated blocks instead. Models
+        // without the prefix-binding check must not receive the beta field.
+        for (model, expects_block_binding) in [
+            ("claude-fable-5-1", true),
+            ("claude-fable-5", false),
+            ("claude-mythos-5-1", false),
+            ("claude-opus-5", false),
+        ] {
+            let request = LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hi".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                thread_id: None,
+                prompt_id: None,
+                intent: None,
+                stop: vec![],
+                temperature: None,
+                tools: vec![],
+                tool_choice: None,
+                thinking_allowed: true,
+                thinking_effort: None,
+                speed: None,
+                compact_at_tokens: None,
+                max_output_tokens: None,
+            };
+
+            let anthropic_request = into_anthropic(
+                request,
+                model.to_string(),
+                1.0,
+                128_000,
+                AnthropicModelMode::AdaptiveThinking,
+                AnthropicPromptCacheMode::Automatic,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap();
+
+            let thinking_json =
+                serde_json::to_value(anthropic_request.thinking.as_ref().unwrap()).unwrap();
+            let Some(Thinking::Adaptive { block_binding, .. }) = anthropic_request.thinking else {
+                panic!("{model} should send adaptive thinking");
+            };
+            if expects_block_binding {
+                assert_eq!(
+                    thinking_json,
+                    serde_json::json!({
+                        "type": "adaptive",
+                        "display": "summarized",
+                        "block_binding": {
+                            "prefix_mismatch_behavior": "drop_block",
+                        },
+                    }),
+                    "{model} should opt into dropping invalidated thinking blocks"
+                );
+            } else {
+                assert_eq!(
+                    block_binding, None,
+                    "{model} must not send the block_binding beta field"
+                );
+            }
+        }
     }
 
     #[test]
@@ -993,6 +1210,7 @@ mod tests {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             };
 
             let anthropic_request = into_anthropic(
@@ -1059,6 +1277,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1072,6 +1291,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,
@@ -1099,6 +1322,7 @@ mod tests {
             thinking_allowed: true,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,
@@ -1226,6 +1450,61 @@ mod tests {
                 "edits": [{
                     "type": "compact_20260112",
                     "trigger": { "type": "input_tokens", "value": 100_000 }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn test_compact_request_pauses_at_minimum_trigger() {
+        let mut request =
+            request_with_assistant_content(vec![MessageContent::Text("Response".to_string())]);
+        request.tools.push(crate::Tool {
+            name: "search".to_string(),
+            description: "Search the project.".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+            eager_input_streaming: false,
+            cache_control: None,
+        });
+        request.tool_choice = Some(crate::ToolChoice::Auto);
+        let request = request.into_compact_request();
+
+        assert_eq!(
+            serde_json::to_value(
+                request
+                    .messages
+                    .last()
+                    .expect("compact request should contain a final message")
+            )
+            .expect("compact request message should serialize"),
+            serde_json::json!({
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": "Compact the conversation so far."
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&request.tools).expect("compact request tools should serialize"),
+            serde_json::json!([{
+                "name": "search",
+                "description": "Search the project.",
+                "input_schema": {"type": "object"}
+            }])
+        );
+        assert_eq!(
+            serde_json::to_value(&request.tool_choice)
+                .expect("compact request tool choice should serialize"),
+            serde_json::json!({"type": "none"})
+        );
+        assert_eq!(
+            serde_json::to_value(&request.context_management).unwrap(),
+            serde_json::json!({
+                "edits": [{
+                    "type": "compact_20260112",
+                    "trigger": { "type": "input_tokens", "value": 50_000 },
+                    "pause_after_compaction": true
                 }]
             })
         );
@@ -1533,7 +1812,7 @@ mod tests {
     }
 
     #[test]
-    fn test_usage_iterations_parsed_from_message_delta() {
+    fn test_usage_iterations_aggregated_from_message_delta() {
         let event: Event = serde_json::from_value(serde_json::json!({
             "type": "message_delta",
             "delta": { "stop_reason": "end_turn", "stop_sequence": null },
@@ -1568,5 +1847,13 @@ mod tests {
                 ..
             }
         ));
+        assert_eq!(
+            convert_usage(&usage),
+            TokenUsage {
+                input_tokens: 180_100,
+                output_tokens: 1_239,
+                ..Default::default()
+            }
+        );
     }
 }

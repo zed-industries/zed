@@ -37,7 +37,12 @@ const OPENAI_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
-const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+const TOKEN_REFRESH_BUFFER_MS: u64 = Duration::from_mins(5).as_millis() as u64;
+/// Requests the complete account catalog without Codex CLI version filtering.
+///
+/// The backend treats this exact version as an ungated sentinel. Other versions
+/// are compared with each model's `minimal_client_version`.
+const UNGATED_MODEL_CATALOG_CLIENT_VERSION: &str = "0.0.0";
 // Codex applies the same bound because model discovery is a startup-critical request.
 const MODEL_CATALOG_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -57,9 +62,15 @@ impl CodexCredentials {
     }
 }
 
+enum SignInState {
+    Idle,
+    Authorizing(Task<Result<()>>),
+    PersistingCredentials { _task: Task<Result<()>> },
+}
+
 pub struct State {
     credentials: Option<CodexCredentials>,
-    sign_in_task: Option<Task<Result<()>>>,
+    sign_in_state: SignInState,
     refresh_task: Option<Shared<Task<Result<CodexCredentials, Arc<anyhow::Error>>>>>,
     load_task: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
     credentials_provider: Arc<dyn CredentialsProvider>,
@@ -88,21 +99,15 @@ impl std::fmt::Display for RefreshError {
 }
 
 impl State {
-    /// Creates the state and starts loading any persisted credentials.
+    /// Creates state and starts loading persisted credentials.
+    ///
+    /// Model discovery requests the ungated account catalog because host
+    /// application versions are unrelated to Codex CLI compatibility versions.
+    ///
     /// [`State::load_task`] resolves once the load finishes.
     pub fn new(
         http_client: Arc<dyn HttpClient>,
         credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::new_with_client_version(http_client, credentials_provider, "0.0.0".into(), cx)
-    }
-
-    /// Creates the state with the client version reported during model discovery.
-    pub fn new_with_client_version(
-        http_client: Arc<dyn HttpClient>,
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        client_version: SharedString,
         cx: &mut Context<Self>,
     ) -> Self {
         let load_task = cx
@@ -155,12 +160,12 @@ impl State {
 
         Self {
             credentials: None,
-            sign_in_task: None,
+            sign_in_state: SignInState::Idle,
             refresh_task: None,
             load_task: Some(load_task),
             credentials_provider,
             http_client,
-            client_version,
+            client_version: UNGATED_MODEL_CATALOG_CLIENT_VERSION.into(),
             available_models: ChatGptModel::all(),
             auth_generation: 0,
             model_catalog_generation: 0,
@@ -178,7 +183,22 @@ impl State {
     }
 
     pub fn is_signing_in(&self) -> bool {
-        self.sign_in_task.is_some()
+        !matches!(self.sign_in_state, SignInState::Idle)
+    }
+
+    pub fn is_sign_in_cancellable(&self) -> bool {
+        matches!(self.sign_in_state, SignInState::Authorizing(_))
+    }
+
+    fn begin_persisting_credentials(&mut self, cx: &mut Context<Self>) {
+        let sign_in_state = std::mem::replace(&mut self.sign_in_state, SignInState::Idle);
+        self.sign_in_state = match sign_in_state {
+            SignInState::Authorizing(task) => {
+                cx.notify();
+                SignInState::PersistingCredentials { _task: task }
+            }
+            sign_in_state => sign_in_state,
+        };
     }
 
     pub fn last_auth_error(&self) -> Option<SharedString> {
@@ -281,6 +301,10 @@ impl State {
         let task = cx.spawn(async move |this, cx| {
             match do_oauth_flow(http_client, cx).await {
                 Ok(creds) => {
+                    this.update(cx, |state, cx| {
+                        state.begin_persisting_credentials(cx);
+                    })?;
+
                     let persist_result = async {
                         let credentials_provider =
                             this.read_with(cx, |state, _| state.credentials_provider.clone())?;
@@ -304,7 +328,7 @@ impl State {
                                 log::warn!("Failed to refresh ChatGPT models: {error:#}");
                             }
                             this.update(cx, |state, cx| {
-                                state.sign_in_task = None;
+                                state.sign_in_state = SignInState::Idle;
                                 cx.notify();
                             })?;
                         }
@@ -313,7 +337,7 @@ impl State {
                                 "ChatGPT subscription sign-in failed to persist credentials: {err:?}"
                             );
                             this.update(cx, |state, cx| {
-                                state.sign_in_task = None;
+                                state.sign_in_state = SignInState::Idle;
                                 state.last_auth_error =
                                     Some("Failed to save credentials. Please try again.".into());
                                 cx.notify();
@@ -325,7 +349,7 @@ impl State {
                 Err(err) => {
                     log::error!("ChatGPT subscription sign-in failed: {err:?}");
                     this.update(cx, |state, cx| {
-                        state.sign_in_task = None;
+                        state.sign_in_state = SignInState::Idle;
                         state.last_auth_error = Some("Sign-in failed. Please try again.".into());
                         cx.notify();
                     })
@@ -336,8 +360,15 @@ impl State {
         });
 
         self.last_auth_error = None;
-        self.sign_in_task = Some(task);
+        self.sign_in_state = SignInState::Authorizing(task);
         cx.notify();
+    }
+
+    pub fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.sign_in_state, SignInState::Authorizing(_)) {
+            self.sign_in_state = SignInState::Idle;
+            cx.notify();
+        }
     }
 
     /// Clears credentials and in-flight work immediately (so observers see the
@@ -346,7 +377,7 @@ impl State {
     pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.auth_generation += 1;
         self.credentials = None;
-        self.sign_in_task = None;
+        self.sign_in_state = SignInState::Idle;
         self.refresh_task = None;
         self.last_auth_error = None;
         self.reset_model_catalog();
@@ -798,7 +829,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                 })
                 .await?;
             let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            let mut event_stream = mapper.map_stream(response_stream.boxed());
+            let mut event_stream = language_model::stream_in_background(
+                mapper.map_stream(response_stream.boxed()).boxed(),
+                cx.background_executor().clone(),
+            );
             let mut compacted_context = None;
             let mut usage = language_model::TokenUsage::default();
 
@@ -890,6 +924,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
         let request_limiter = self.request_limiter.clone();
+        let executor = cx.background_executor().clone();
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
@@ -915,7 +950,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         async move {
             let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            Ok(mapper.map_stream(future.await?.boxed()).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(future.await?.boxed()).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }
@@ -1502,6 +1540,83 @@ mod tests {
                 "last_auth_error should not be set on transient refresh failure"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_cancel_sign_in_drops_pending_task(cx: &mut TestAppContext) {
+        let http: Arc<dyn HttpClient> = FakeHttpClient::create(|_| async {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::default())?)
+        });
+        let state = make_state(http, None, cx);
+        let (continue_sign_in_tx, continue_sign_in_rx) = futures::channel::oneshot::channel::<()>();
+
+        state.update(cx, |state, cx| {
+            let task = cx.spawn(async move |_this, _cx| {
+                continue_sign_in_rx.await?;
+                anyhow::Ok(())
+            });
+            state.sign_in_state = SignInState::Authorizing(task);
+        });
+
+        cx.read(|cx| assert!(state.read(cx).is_signing_in()));
+        state.update(cx, |state, cx| state.cancel_sign_in(cx));
+        cx.run_until_parked();
+        cx.read(|cx| assert!(!state.read(cx).is_signing_in()));
+        assert!(
+            continue_sign_in_tx.send(()).is_err(),
+            "canceling sign-in should drop the task"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sign_in_task_remains_alive_while_persisting_credentials(cx: &mut TestAppContext) {
+        let http: Arc<dyn HttpClient> = FakeHttpClient::create(|_| async {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::default())?)
+        });
+        let state = make_state(http, None, cx);
+        let (begin_persisting_tx, begin_persisting_rx) = futures::channel::oneshot::channel::<()>();
+        let (finish_persisting_tx, finish_persisting_rx) =
+            futures::channel::oneshot::channel::<()>();
+
+        state.update(cx, |state, cx| {
+            let task = cx.spawn(async move |this, cx| {
+                begin_persisting_rx.await?;
+                this.update(cx, |state, cx| {
+                    state.begin_persisting_credentials(cx);
+                })?;
+                finish_persisting_rx.await?;
+                this.update(cx, |state, cx| {
+                    state.sign_in_state = SignInState::Idle;
+                    cx.notify();
+                })?;
+                anyhow::Ok(())
+            });
+            state.sign_in_state = SignInState::Authorizing(task);
+        });
+
+        begin_persisting_tx
+            .send(())
+            .expect("sign-in task should be waiting to persist credentials");
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = state.read(cx);
+            assert!(state.is_signing_in());
+            assert!(!state.is_sign_in_cancellable());
+        });
+
+        state.update(cx, |state, cx| state.cancel_sign_in(cx));
+        cx.run_until_parked();
+        cx.read(|cx| assert!(state.read(cx).is_signing_in()));
+
+        finish_persisting_tx
+            .send(())
+            .expect("sign-in task should still be persisting credentials");
+        cx.run_until_parked();
+        cx.read(|cx| assert!(!state.read(cx).is_signing_in()));
     }
 
     #[gpui::test]
@@ -2213,7 +2328,7 @@ mod tests {
     ) -> Entity<State> {
         cx.new(|_cx| State {
             credentials,
-            sign_in_task: None,
+            sign_in_state: SignInState::Idle,
             refresh_task: None,
             load_task: None,
             credentials_provider,

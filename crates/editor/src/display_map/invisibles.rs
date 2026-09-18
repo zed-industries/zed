@@ -30,6 +30,8 @@
 // ref: https://gist.github.com/ConradIrwin/f759e1fc29267143c4c7895aa495dca5?h=1
 // ref: https://unicode.org/Public/emoji/13.0/emoji-test.txt
 // https://github.com/bits/UTF-8-Unicode-Test-Documents/blob/master/UTF-8_sequence_separated/utf8_sequence_0-0x10ffff_assigned_including-unprintable-asis.txt
+use unicode_segmentation::GraphemeCursor;
+
 #[ztracing::instrument(skip_all)]
 pub fn is_invisible(c: char) -> bool {
     if c <= '\u{1f}' {
@@ -109,6 +111,15 @@ fn should_preserve_invisible_character(c: char) -> bool {
         | '\u{e007f}' => true,
         _ => false,
     }
+}
+
+pub fn is_standalone_grapheme(text: &str, start: usize, end: usize) -> bool {
+    let mut cursor = GraphemeCursor::new(start, text.len(), true);
+    if cursor.is_boundary(text, 0) != Ok(true) {
+        return false;
+    }
+    cursor.set_cursor(end);
+    cursor.is_boundary(text, 0) == Ok(true)
 }
 
 const FIXED_WIDTH_SPACE: char = '\u{2007}';

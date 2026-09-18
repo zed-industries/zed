@@ -146,6 +146,34 @@ If you configured edit prediction keybindings before Zed `v0.229.0`, your `keyma
 
 **Renamed context**: The `edit_prediction_conflict` context has been replaced by `edit_prediction && (showing_completions || in_leading_whitespace)`. Zed automatically migrates any bindings that used `edit_prediction_conflict`, so no changes are required on your end.
 
+## Configuring the Prediction Debounce
+
+The prediction debounce controls how long Zed waits after you stop typing before automatically requesting an edit prediction. Configure it in milliseconds under the settings for your selected provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "open_ai_compatible_api",
+    "open_ai_compatible_api": {
+      "prediction_debounce": 500
+    }
+  }
+}
+```
+
+The default debounce depends on the provider:
+
+| Provider              | Default |
+| --------------------- | ------: |
+| GitHub Copilot        |   75 ms |
+| Codestral             |  150 ms |
+| Zed                   |    0 ms |
+| Mercury               |    0 ms |
+| Ollama                |    0 ms |
+| OpenAI-compatible API |    0 ms |
+
+Set `prediction_debounce` to `0` to disable the additional delay. Normal request throttling can still apply. Explicitly requesting a prediction with {#action editor::ShowEditPrediction} bypasses the configured debounce.
+
 ## Disabling Automatic Edit Prediction
 
 You can disable edit predictions at several levels, or turn them off entirely.
