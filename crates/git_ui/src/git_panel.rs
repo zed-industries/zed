@@ -796,9 +796,9 @@ struct GitPanelEntryId {
 }
 
 /// Reconciles the selection state after the entry list was rebuilt: drops
-/// marks whose identity is no longer visible, re-roots the selection onto the
-/// first surviving mark when the selected row disappeared, and re-anchors the
-/// range gesture at the selection.
+/// marks whose identity is no longer visible, and re-anchors the range
+/// gesture at the selection. The selection itself is left to the caller's
+/// path-anchored restore, matching the pre-identity behavior.
 fn reconcile_selection(
     selected: &mut Option<GitPanelEntryId>,
     marked: &mut HashSet<GitPanelEntryId>,
@@ -811,12 +811,6 @@ fn reconcile_selection(
     let selected_was_removed = selected
         .as_ref()
         .is_some_and(|entry| !visible_set.contains(entry));
-    if selected_was_removed {
-        *selected = visible
-            .iter()
-            .find(|entry| marked.contains(*entry))
-            .cloned();
-    }
     if selected_was_removed
         || anchor
             .as_ref()
@@ -824,61 +818,6 @@ fn reconcile_selection(
     {
         *anchor = selected.clone();
     }
-}
-
-/// Applies a pointer selection to the identity sets: `shift` marks the
-/// visible range between the current selection (or the last anchor) and the
-/// target, `toggle` adds or removes just the target, and a plain click marks
-/// only the target.
-fn update_selection(
-    selected: &mut Option<GitPanelEntryId>,
-    marked: &mut HashSet<GitPanelEntryId>,
-    anchor: &mut Option<GitPanelEntryId>,
-    visible: &[GitPanelEntryId],
-    target: GitPanelEntryId,
-    shift: bool,
-    toggle: bool,
-) {
-    let Some(target_index) = visible.iter().position(|entry| entry == &target) else {
-        return;
-    };
-
-    if shift {
-        // The current selection is the range anchor. Prefer it over the
-        // cached anchor so keyboard navigation and auto-selection cannot
-        // leave Shift selection rooted at a stale row.
-        let range_anchor = selected
-            .as_ref()
-            .filter(|entry| visible.contains(entry))
-            .or_else(|| anchor.as_ref().filter(|entry| visible.contains(entry)));
-        if let Some(anchor_id) = range_anchor {
-            if let Some(anchor_index) = visible.iter().position(|entry| entry == anchor_id) {
-                let range = if anchor_index <= target_index {
-                    anchor_index..=target_index
-                } else {
-                    target_index..=anchor_index
-                };
-                *marked = visible[range].iter().cloned().collect();
-                *anchor = Some(anchor_id.clone());
-            } else {
-                *marked = HashSet::from_iter([target.clone()]);
-                *anchor = Some(target.clone());
-            }
-        } else {
-            *marked = HashSet::from_iter([target.clone()]);
-            *anchor = Some(target.clone());
-        }
-    } else if toggle {
-        if !marked.remove(&target) {
-            marked.insert(target.clone());
-        }
-        *anchor = Some(target.clone());
-    } else {
-        *marked = HashSet::from_iter([target.clone()]);
-        *anchor = Some(target.clone());
-    }
-
-    *selected = Some(target);
 }
 
 /// Tracks, while walking `entries` in display order, whether the current row
@@ -5466,8 +5405,7 @@ impl GitPanel {
         let path_style = self.project.read(cx).path_style(cx);
         let selected_change = self
             .selected_entry
-            .and_then(|index| self.entry_identity(index))
-            .or_else(|| self.selected_entry_id.clone());
+            .and_then(|index| self.entry_identity(index));
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
             .as_ref()
@@ -5838,15 +5776,25 @@ impl GitPanel {
         // The rebuild may have reordered rows, invalidating the anchor index.
         self.mark_range_gesture = None;
 
-        if let Some(selected_id) = selected_change.or_else(|| self.selected_entry_id.clone()) {
+        if let Some(selected_id) = selected_change {
             self.selected_entry = self
                 .entries
                 .iter()
                 .enumerate()
-                .position(|(index, _)| {
-                    self.entry_identity(index).as_ref() == Some(&selected_id)
+                .position(|(index, _)| self.entry_identity(index).as_ref() == Some(&selected_id))
+                .or_else(|| {
+                    // The row may have moved between sections across the
+                    // rebuild; fall back to matching it by path alone, as the
+                    // pre-identity restore did.
+                    self.entries.iter().position(|entry| {
+                        entry
+                            .status_entry()
+                            .is_some_and(|status_entry| status_entry.repo_path == selected_id.path)
+                    })
                 });
-            self.selected_entry_id = Some(selected_id);
+            self.selected_entry_id = self
+                .selected_entry
+                .and_then(|index| self.entry_identity(index));
         }
         self.select_first_entry_if_none(window, cx);
         self.select_last_entry_if_out_of_bounds(window, cx);
@@ -11709,7 +11657,6 @@ mod tests {
             // section, we expect the menu to offer the ability to unstage the
             // files.
             let partial_path = repo_path("src/partial.rs");
-            let staged_path = repo_path("src/staged.rs");
             // With identity-keyed marks, seed the "Staged" section
             // projections of both files, matching the section the context
             // menu is deployed from below.
@@ -15282,9 +15229,9 @@ mod tests {
                     .map(|entry| entry.repo_path.clone())
                     .collect::<HashSet<_>>(),
                 HashSet::from_iter([
-                    file_id(panel, "src/a.rs"),
-                    file_id(panel, "src/b.rs"),
-                    file_id(panel, "top.txt"),
+                    repo_path("src/a.rs"),
+                    repo_path("src/b.rs"),
+                    repo_path("top.txt"),
                 ]),
                 "operations expand the selected directory to its files",
             );
@@ -15434,8 +15381,10 @@ mod tests {
                 })
                 .unwrap();
 
-            panel.marked_entries =
-                HashSet::from_iter([file_id(panel, "src/a.rs"), file_id(panel, "src/nested/c.rs")]);
+            panel.marked_entries = HashSet::from_iter([
+                file_id(panel, "src/a.rs"),
+                file_id(panel, "src/nested/c.rs"),
+            ]);
             assert_eq!(
                 panel.marked_directories,
                 HashSet::default(),
@@ -15456,7 +15405,7 @@ mod tests {
                     .iter()
                     .map(|entry| entry.repo_path.clone())
                     .collect::<HashSet<_>>(),
-                HashSet::from_iter([file_id(panel, "src/a.rs"), file_id(panel, "src/nested/c.rs")]),
+                HashSet::from_iter([repo_path("src/a.rs"), repo_path("src/nested/c.rs")]),
                 "operations expand a selected directory to its recursive descendants",
             );
 
