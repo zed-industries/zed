@@ -461,11 +461,7 @@ async fn test_blob_read_rpcs_are_bounded_on_host(
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .create_room(&mut [
-            (&client_a, cx_a),
-            (&client_b, cx_b),
-            (&client_c, cx_c),
-        ])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
@@ -497,7 +493,9 @@ async fn test_blob_read_rpcs_are_bounded_on_host(
 
     let (project_local, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_local.clone(), cx))
+        .update(cx_a, |call, cx| {
+            call.share_project(project_local.clone(), cx)
+        })
         .await
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
