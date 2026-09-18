@@ -172,29 +172,11 @@ impl Arena {
         }
 
         let layout = alloc::Layout::new::<T>();
-        let mut current_chunk = &mut self.chunks[self.current_chunk_index];
+        let current_chunk = &mut self.chunks[self.current_chunk_index];
         let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
             ptr.as_ptr()
         } else {
-            self.current_chunk_index += 1;
-            if self.current_chunk_index >= self.chunks.len() {
-                self.chunks.push(Chunk::new(self.chunk_size));
-                assert_eq!(self.current_chunk_index, self.chunks.len() - 1);
-                log::trace!(
-                    "increased element arena capacity to {}kb",
-                    self.capacity() / 1024,
-                );
-            }
-            current_chunk = &mut self.chunks[self.current_chunk_index];
-            if let Some(ptr) = current_chunk.allocate(layout) {
-                ptr.as_ptr()
-            } else {
-                panic!(
-                    "Arena chunk_size of {} is too small to allocate {} bytes",
-                    self.chunk_size,
-                    layout.size()
-                );
-            }
+            self.allocate_next_chunk(layout)
         };
 
         unsafe { inner_writer(ptr.cast(), f) };
@@ -206,6 +188,29 @@ impl Arena {
         ArenaBox {
             ptr: ptr.cast(),
             valid: self.valid.clone(),
+        }
+    }
+
+    #[inline(never)]
+    fn allocate_next_chunk(&mut self, layout: alloc::Layout) -> *mut u8 {
+        self.current_chunk_index += 1;
+        if self.current_chunk_index >= self.chunks.len() {
+            self.chunks.push(Chunk::new(self.chunk_size));
+            assert_eq!(self.current_chunk_index, self.chunks.len() - 1);
+            log::trace!(
+                "increased element arena capacity to {}kb",
+                self.capacity() / 1024,
+            );
+        }
+        let current_chunk = &mut self.chunks[self.current_chunk_index];
+        if let Some(pointer) = current_chunk.allocate(layout) {
+            pointer.as_ptr()
+        } else {
+            panic!(
+                "Arena chunk_size of {} is too small to allocate {} bytes",
+                self.chunk_size,
+                layout.size()
+            );
         }
     }
 }

@@ -1154,6 +1154,7 @@ impl App {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
+    #[inline(always)]
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
         self.start_update();
         let result = update(self);
@@ -1165,6 +1166,7 @@ impl App {
         self.pending_updates += 1;
     }
 
+    #[inline(never)]
     pub(crate) fn finish_update(&mut self) {
         if !self.flushing_effects && self.pending_updates == 1 {
             self.flushing_effects = true;
@@ -1962,6 +1964,7 @@ impl App {
     /// it has yet to be rendered. Returns `None` if the entity has no
     /// current window, or if that window has been closed, or if it is
     /// already on the update stack.
+    #[inline(always)]
     pub fn with_window<R>(
         &mut self,
         entity_id: EntityId,
@@ -1978,61 +1981,22 @@ impl App {
             .or_insert(window);
     }
 
+    #[inline(always)]
     pub(crate) fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
-        self.update(|cx| {
-            let mut window = cx.windows.get_mut(id)?.take()?;
-
-            let root_view = window.root.clone().unwrap();
-
-            cx.window_update_stack.push(window.handle.id);
-            let result = update(root_view, &mut window, cx);
-            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
-                cx.window_update_stack.pop();
-
-                if window.removed {
-                    cx.end_platform_drag(id);
-                    cx.window_handles.remove(&id);
-                    cx.windows.remove(id);
-                    if let Some(tracked) = cx.tracked_entities.remove(&id) {
-                        for entity_id in tracked {
-                            if let Some(windows) =
-                                cx.window_invalidators_by_entity.get_mut(&entity_id)
-                            {
-                                windows.remove(&id);
-                            }
-                            if cx.current_window_by_entity.get(&entity_id) == Some(&id) {
-                                cx.current_window_by_entity.remove(&entity_id);
-                            }
-                        }
-                    }
-
-                    cx.window_closed_observers.clone().retain(&(), |callback| {
-                        callback(cx, id);
-                        true
-                    });
-
-                    let quit_on_empty = match cx.quit_mode {
-                        QuitMode::Explicit => false,
-                        QuitMode::LastWindowClosed => true,
-                        QuitMode::Default => cfg!(not(target_os = "macos")),
-                    };
-
-                    if quit_on_empty && cx.windows.is_empty() {
-                        cx.quit();
-                    }
-                } else {
-                    cx.windows.get_mut(id)?.replace(window);
-                }
-                Some(())
+        let mut update = Some(update);
+        let mut result = None;
+        self.update_window_erased(id, &mut |arguments| {
+            if let Some((root_view, window, cx)) = arguments {
+                result = Some(update.take().unwrap()(root_view, window, cx));
+            } else {
+                drop(update.take());
+                drop(result.take());
             }
-            trail(id, window, cx)?;
-
-            Some(result)
-        })
-        .context("window not found")
+        });
+        result.context("window not found")
     }
 
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
@@ -2068,16 +2032,13 @@ impl App {
     /// Spawns the future returned by the given function on the main thread. The closure will be invoked
     /// with [AsyncApp], which allows the application state to be accessed across await points.
     #[track_caller]
+    #[inline(always)]
     pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
         AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
         R: 'static,
     {
-        if self.quitting {
-            debug_panic!("Can't spawn on main thread after on_app_quit")
-        };
-
-        let mut cx = self.to_async();
+        let mut cx = self.prepare_spawn();
 
         self.foreground_executor
             .spawn(async move { f(&mut cx).await }.boxed_local())
@@ -2912,6 +2873,90 @@ impl App {
     pub fn init_colors(&mut self) {
         self.set_global(GlobalColors(Arc::new(Colors::default())));
     }
+
+    #[inline(never)]
+    fn update_window_erased(
+        &mut self,
+        window_id: WindowId,
+        update: &mut dyn FnMut(Option<(AnyView, &mut Window, &mut App)>),
+    ) {
+        self.update(|cx| {
+            let Some(mut window) = cx.windows.get_mut(window_id).and_then(Option::take) else {
+                update(None);
+                return;
+            };
+
+            let root_view = window.root.clone().unwrap();
+
+            cx.window_update_stack.push(window.handle.id);
+            update(Some((root_view, &mut window, cx)));
+            fn trail(window_id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
+                cx.window_update_stack.pop();
+
+                if window.removed {
+                    cx.end_platform_drag(window_id);
+                    cx.window_handles.remove(&window_id);
+                    cx.windows.remove(window_id);
+                    if let Some(tracked) = cx.tracked_entities.remove(&window_id) {
+                        for entity_id in tracked {
+                            if let Some(windows) =
+                                cx.window_invalidators_by_entity.get_mut(&entity_id)
+                            {
+                                windows.remove(&window_id);
+                            }
+                            if cx.current_window_by_entity.get(&entity_id) == Some(&window_id) {
+                                cx.current_window_by_entity.remove(&entity_id);
+                            }
+                        }
+                    }
+
+                    cx.window_closed_observers.clone().retain(&(), |callback| {
+                        callback(cx, window_id);
+                        true
+                    });
+
+                    let quit_on_empty = match cx.quit_mode {
+                        QuitMode::Explicit => false,
+                        QuitMode::LastWindowClosed => true,
+                        QuitMode::Default => cfg!(not(target_os = "macos")),
+                    };
+
+                    if quit_on_empty && cx.windows.is_empty() {
+                        cx.quit();
+                    }
+                } else {
+                    cx.windows.get_mut(window_id)?.replace(window);
+                }
+                Some(())
+            }
+            if trail(window_id, window, cx).is_none() {
+                update(None);
+            }
+        });
+    }
+
+    #[inline(never)]
+    fn update_entity_erased(
+        &mut self,
+        handle: &AnyEntity,
+        entity_type: &str,
+        update: &mut dyn FnMut(&mut dyn Any, &mut App),
+    ) {
+        self.update(|cx| {
+            let mut lease = cx.entities.lease_erased(handle, entity_type);
+            update(lease.entity.as_deref_mut().unwrap(), cx);
+            cx.entities.end_lease_erased(handle.entity_id, lease);
+        });
+    }
+
+    #[inline(never)]
+    #[track_caller]
+    fn prepare_spawn(&self) -> AsyncApp {
+        if self.quitting {
+            debug_panic!("Can't spawn on main thread after on_app_quit")
+        };
+        self.to_async()
+    }
 }
 
 impl AppContext for App {
@@ -2953,20 +2998,22 @@ impl AppContext for App {
 
     /// Updates the entity referenced by the given handle. The function is passed a mutable reference to the
     /// entity along with a `Context` for the entity.
+    #[inline(always)]
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> R {
-        self.update(|cx| {
-            let mut entity = cx.entities.lease(handle);
-            let result = update(
-                &mut entity,
+        let mut update = Some(update);
+        let mut result = None;
+        self.update_entity_erased(handle, type_name::<T>(), &mut |entity, cx| {
+            let value = update.take().unwrap()(
+                entity.downcast_mut::<T>().unwrap(),
                 &mut Context::new_context(cx, handle.downgrade()),
             );
-            cx.entities.end_lease(entity);
-            result
-        })
+            result = Some(value);
+        });
+        result.unwrap()
     }
 
     fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> GpuiBorrow<'a, T>
@@ -2976,6 +3023,7 @@ impl AppContext for App {
         GpuiBorrow::new(handle.clone(), self)
     }
 
+    #[inline(always)]
     fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,

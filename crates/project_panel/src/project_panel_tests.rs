@@ -6206,8 +6206,9 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions =
                     Some(SplicingVec::from(Vec::new()));
-                settings.project.worktree.file_scan_inclusions =
-                    Some(vec!["always_included_but_ignored_dir/*".to_string()]);
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![
+                    "always_included_but_ignored_dir/*".to_string(),
+                ]));
                 settings
                     .project_panel
                     .get_or_insert_default()

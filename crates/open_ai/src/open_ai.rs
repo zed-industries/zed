@@ -100,6 +100,8 @@ pub enum Model {
     FivePointSixTerra,
     #[serde(rename = "gpt-5.6-luna")]
     FivePointSixLuna,
+    #[serde(rename = "gpt-6-astra")]
+    SixAstra,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -149,6 +151,7 @@ impl Model {
             "gpt-5.6-sol" => Ok(Self::FivePointSixSol),
             "gpt-5.6-terra" => Ok(Self::FivePointSixTerra),
             "gpt-5.6-luna" => Ok(Self::FivePointSixLuna),
+            "gpt-6-astra" => Ok(Self::SixAstra),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -173,6 +176,7 @@ impl Model {
             Self::FivePointSixSol => "gpt-5.6-sol",
             Self::FivePointSixTerra => "gpt-5.6-terra",
             Self::FivePointSixLuna => "gpt-5.6-luna",
+            Self::SixAstra => "gpt-6-astra",
             Self::Custom { name, .. } => name,
         }
     }
@@ -197,6 +201,7 @@ impl Model {
             Self::FivePointSixSol => "GPT-5.6 Sol",
             Self::FivePointSixTerra => "GPT-5.6 Terra",
             Self::FivePointSixLuna => "GPT-5.6 Luna",
+            Self::SixAstra => "GPT-6 Astra",
             Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
         }
     }
@@ -221,6 +226,7 @@ impl Model {
             Self::FivePointSixSol => 1_050_000,
             Self::FivePointSixTerra => 1_050_000,
             Self::FivePointSixLuna => 1_050_000,
+            Self::SixAstra => 1_050_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -248,6 +254,7 @@ impl Model {
             Self::FivePointSixSol => Some(128_000),
             Self::FivePointSixTerra => Some(128_000),
             Self::FivePointSixLuna => Some(128_000),
+            Self::SixAstra => Some(128_000),
         }
     }
 
@@ -271,7 +278,8 @@ impl Model {
             | Self::FivePointFive
             | Self::FivePointFivePro
             | Self::FivePointSixTerra
-            | Self::FivePointSixLuna => Some(ReasoningEffort::Medium),
+            | Self::FivePointSixLuna
+            | Self::SixAstra => Some(ReasoningEffort::Medium),
             _ => None,
         }
     }
@@ -326,6 +334,13 @@ impl Model {
                 ReasoningEffort::XHigh,
                 ReasoningEffort::Max,
             ],
+            Self::SixAstra => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
+            ],
             Self::FivePointTwo
             | Self::FivePointFour
             | Self::FivePointFive
@@ -372,6 +387,7 @@ impl Model {
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
             | Self::FivePointSixLuna
+            | Self::SixAstra
             | Self::FiveNano => true,
             Self::O3 | Model::Custom { .. } => false,
         }
@@ -402,7 +418,8 @@ impl Model {
             | Self::FivePointFivePro
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
-            | Self::FivePointSixLuna => true,
+            | Self::FivePointSixLuna
+            | Self::SixAstra => true,
             Self::Four
             | Self::FourOmniMini
             | Self::O3
@@ -432,7 +449,8 @@ impl Model {
             | Self::FivePointFive
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
-            | Self::FivePointSixLuna => true,
+            | Self::FivePointSixLuna
+            | Self::SixAstra => true,
             Self::Four
             | Self::FiveNano
             | Self::FivePointFourNano
@@ -705,11 +723,11 @@ pub struct Request {
     pub service_tier: Option<ServiceTier>,
 }
 
-/// Service tier for OpenAI requests. Maps to the top-level `service_tier`
-/// field on Responses and Chat Completions. We only ever send `Priority`
-/// today (in response to Fast Mode being enabled); the other variants are
-/// included for symmetry with the API and so deserialization of echoed
-/// values does not fail.
+/// Selects the service tier for OpenAI requests.
+///
+/// This maps to the top-level `service_tier` field on Responses and Chat
+/// Completions. `Priority` serializes as `priority` for compatibility, while
+/// deserialization also accepts the `fast` value echoed by some models.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceTier {
@@ -717,6 +735,7 @@ pub enum ServiceTier {
     Default,
     Flex,
     Scale,
+    #[serde(alias = "fast")]
     Priority,
 }
 
