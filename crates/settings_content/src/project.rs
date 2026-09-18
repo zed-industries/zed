@@ -213,7 +213,7 @@ pub struct WorktreeSettingsContent {
 
     /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
     /// Default: ["**/.*"]
-    pub hidden_files: Option<Vec<String>>,
+    pub hidden_files: Option<SplicingVec>,
 
     /// Treat files matching these glob patterns as read-only when opened. You can
     /// view but not edit them, which is useful for build outputs, external
@@ -1161,6 +1161,97 @@ mod tests {
 
         settings.merge_from(&inclusions(&["**/*.project", "**/*.user", "**/*.project"]));
         assert_eq!(settings, inclusions(&["**/*.project", "**/*.user"]));
+    }
+
+    fn hidden_files(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            hidden_files: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_hidden_files_splice_each_layer() {
+        let mut settings = hidden_files(&["**/.*"]);
+        settings.merge_from(&hidden_files(&[SplicingVec::REST, "**/*.user"]));
+        assert_eq!(settings, hidden_files(&["**/.*", "**/*.user"]));
+
+        settings.merge_from(&hidden_files(&["**/*.project", SplicingVec::REST]));
+        assert_eq!(
+            settings,
+            hidden_files(&["**/*.project", "**/.*", "**/*.user"])
+        );
+
+        settings.merge_from(&hidden_files(&[
+            "**/*.before",
+            SplicingVec::REST,
+            "**/*.after",
+        ]));
+        assert_eq!(
+            settings,
+            hidden_files(&[
+                "**/*.before",
+                "**/*.project",
+                "**/.*",
+                "**/*.user",
+                "**/*.after",
+            ])
+        );
+    }
+
+    #[test]
+    fn test_hidden_files_replace_and_clear() {
+        let mut settings = hidden_files(&["**/.*"]);
+        settings.merge_from(&hidden_files(&["**/*.user"]));
+        assert_eq!(settings, hidden_files(&["**/*.user"]));
+
+        settings.merge_from(&hidden_files(&["**/*.project"]));
+        assert_eq!(settings, hidden_files(&["**/*.project"]));
+
+        settings.merge_from(&hidden_files(&[]));
+        assert_eq!(settings, hidden_files(&[]));
+
+        settings.merge_from(&hidden_files(&[SplicingVec::REST, "**/*.next"]));
+        assert_eq!(settings, hidden_files(&["**/*.next"]));
+    }
+
+    #[test]
+    fn test_hidden_files_splice_preserves_first_occurrence() {
+        let inherited = hidden_files(&["**/.*", "**/*.user"]);
+        let mut settings = inherited.clone();
+        settings.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&hidden_files(&[SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&hidden_files(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&hidden_files(&[
+            "**/*.user",
+            SplicingVec::REST,
+            "**/.*",
+            "**/*.project",
+            SplicingVec::REST,
+            "**/*.project",
+        ]));
+        assert_eq!(
+            settings,
+            hidden_files(&["**/*.user", "**/.*", "**/*.project"])
+        );
+
+        settings.merge_from(&hidden_files(&[
+            "**/*.project",
+            "**/*.user",
+            "**/*.project",
+        ]));
+        assert_eq!(settings, hidden_files(&["**/*.project", "**/*.user"]));
     }
 
     fn read_only_files(globs: &[&str]) -> WorktreeSettingsContent {

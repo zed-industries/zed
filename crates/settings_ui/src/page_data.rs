@@ -6064,7 +6064,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(
                     SettingField {
                         organization_override: None,
-                        json_path: Some("worktree.hidden_files"),
+                        json_path: Some("hidden_files"),
                         pick: |settings_content| {
                             settings_content.project.worktree.hidden_files.as_ref()
                         },
@@ -11260,6 +11260,22 @@ fn write_helix_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_hidden_files_json_path() {
+        let page = panels_page();
+        let field = page
+            .items
+            .iter()
+            .find_map(|item| match item {
+                SettingsPageItem::SettingItem(item) if item.title == "Hidden Files" => {
+                    Some(&item.field)
+                }
+                _ => None,
+            })
+            .expect("hidden files setting");
+        assert_eq!(field.json_path(), Some("hidden_files"));
+    }
 
     #[test]
     fn test_write_vim_helix_mode() {
