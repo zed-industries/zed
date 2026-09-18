@@ -3,6 +3,7 @@ use crate::{
     SelectionEffects,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     editor_settings::GoToDefinitionScrollStrategy,
+    element::rendered_selection_head,
     scroll::{ScrollOffset, WasScrolled},
 };
 use gpui::{App, Bounds, Context, Pixels, Window};
@@ -172,20 +173,18 @@ impl Editor {
             target_bottom = target_top + 1.;
         } else {
             // Autoscroll only needs the first, last, and newest selections.
-            target_point = self
-                .selections
-                .first::<Point>(&display_map)
-                .head()
-                .to_display_point(&display_map);
+            target_point = rendered_selection_head(
+                self,
+                self.selections.first::<Point>(&display_map),
+                &display_map,
+            );
             target_top = target_point.row().as_f64();
-            target_bottom = self
-                .selections
-                .last::<Point>(&display_map)
-                .head()
-                .to_display_point(&display_map)
-                .row()
-                .next_row()
-                .as_f64();
+            let last_head = rendered_selection_head(
+                self,
+                self.selections.last::<Point>(&display_map),
+                &display_map,
+            );
+            target_bottom = last_head.row().next_row().as_f64();
 
             let selections_fit = target_bottom - target_top <= visible_lines;
             if matches!(
@@ -194,11 +193,11 @@ impl Editor {
             ) || (matches!(autoscroll, Autoscroll::Strategy(AutoscrollStrategy::Fit, _))
                 && !selections_fit)
             {
-                target_point = self
-                    .selections
-                    .newest::<Point>(&display_map)
-                    .head()
-                    .to_display_point(&display_map);
+                target_point = rendered_selection_head(
+                    self,
+                    self.selections.newest::<Point>(&display_map),
+                    &display_map,
+                );
                 target_top = target_point.row().as_f64();
                 target_bottom = target_top + 1.;
             }
@@ -410,7 +409,7 @@ impl Editor {
             target_left = f64::INFINITY;
             target_right = 0.;
             for selection in selections {
-                let head = selection.head().to_display_point(&display_map);
+                let head = rendered_selection_head(self, selection, &display_map);
                 if head.row() >= start_row
                     && head.row() < DisplayRow(start_row.0 + layouts.len() as u32)
                 {
@@ -418,15 +417,19 @@ impl Editor {
                     let start_dp = selection.start.to_display_point(&display_map);
                     let end_dp = selection.end.to_display_point(&display_map);
 
-                    let start_column = if start_dp.row() == head.row() {
-                        start_dp.column()
+                    let start_column = if selection.is_empty() {
+                        head.column()
+                    } else if start_dp.row() == head.row() {
+                        start_dp.column().min(head.column())
                     } else {
                         0
                     };
                     let end_column = cmp::min(
                         row_line_len,
-                        if end_dp.row() == head.row() {
-                            end_dp.column()
+                        if selection.is_empty() {
+                            head.column()
+                        } else if end_dp.row() == head.row() {
+                            end_dp.column().max(head.column())
                         } else {
                             row_line_len
                         },
