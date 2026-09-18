@@ -1136,15 +1136,8 @@ impl VsCodeSettings {
                 })
                 .filter(|r| !r.is_empty())
                 .map(SplicingVec::from),
-            file_scan_inclusions: self
-                .read_value("files.watcherInclude")
-                .and_then(|v| v.as_array())
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|n| n.as_str().map(str::to_owned))
-                        .collect::<Vec<_>>()
-                })
-                .filter(|r| !r.is_empty()),
+            // `files.watcherInclude` adds watch roots, not Git-ignore overrides
+            file_scan_inclusions: None,
             scan_symlinks: None,
             private_files: None,
             hidden_files: None,
@@ -1241,6 +1234,46 @@ mod tests {
             .unwrap()
             .settings_content()
             .reduce_motion
+    }
+
+    #[test]
+    fn test_import_watcher_include_preserves_file_scan_inclusions() -> Result<()> {
+        let inherited = WorktreeSettingsContent {
+            file_scan_inclusions: Some(SplicingVec::from(vec![
+                ".env*".to_string(),
+                "**/*.local".to_string(),
+            ])),
+            ..Default::default()
+        };
+        for content in [
+            r#"{}"#,
+            r#"{"files.watcherInclude": []}"#,
+            r#"{"files.watcherInclude": ["linked-folder"]}"#,
+            r#"{"files.watcherInclude": ["..."]}"#,
+            r#"{"files.watcherInclude": ["linked-folder", false]}"#,
+            r#"{"files.watcherInclude": {"linked-folder": true}}"#,
+        ] {
+            let mut content: Value = serde_json::from_str(content)?;
+            content["editor.tabSize"] = serde_json::json!(8);
+            let imported = VsCodeSettings::from_str(
+                &serde_json::to_string(&content)?,
+                VsCodeSettingsSource::VsCode,
+            )?
+            .settings_content();
+            assert_eq!(imported.project.worktree.file_scan_inclusions, None);
+            assert_eq!(
+                imported.project.all_languages.defaults.tab_size,
+                NonZeroU32::new(8)
+            );
+
+            let mut unchanged = inherited.clone();
+            unchanged.merge_from(&imported.project.worktree);
+            assert_eq!(
+                unchanged.file_scan_inclusions,
+                inherited.file_scan_inclusions
+            );
+        }
+        Ok(())
     }
 
     #[test]

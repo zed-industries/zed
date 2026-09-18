@@ -148,13 +148,15 @@ pub struct WorktreeSettingsContent {
     /// ]
     pub file_scan_exclusions: Option<SplicingVec>,
 
-    /// Always include files that match these globs when scanning for files, even if they're
-    /// ignored by git. This setting is overridden by `file_scan_exclusions`.
-    /// Default: [
-    ///  ".env*",
-    ///  "docker-compose.*.yml",
-    /// ]
-    pub file_scan_inclusions: Option<Vec<String>>,
+    /// Always include files that match these globs when scanning for files, even
+    /// if they’re ignored by Git. This setting is overridden by
+    /// `file_scan_exclusions`.
+    ///
+    /// A "..." entry expands to the value being overridden. Leave "..." out to
+    /// replace the inherited globs, or use an empty list to clear them.
+    ///
+    /// Default: [".env*"]
+    pub file_scan_inclusions: Option<SplicingVec>,
 
     /// When to scan content of linked directories.
     ///
@@ -1042,6 +1044,74 @@ mod tests {
             settings.file_scan_exclusions.unwrap().0,
             vec![SplicingVec::REST, "**/target"]
         );
+    }
+
+    fn inclusions(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            file_scan_inclusions: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_each_layer() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.user"]));
+        assert_eq!(settings, inclusions(&[".env*", "**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project", SplicingVec::REST]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.project", ".env*", "**/*.user"])
+        );
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_replace_and_clear() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&["**/*.user"]));
+        assert_eq!(settings, inclusions(&["**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project"]));
+
+        settings.merge_from(&inclusions(&[]));
+        assert_eq!(settings, inclusions(&[]));
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.next"]));
+        assert_eq!(settings, inclusions(&["**/*.next"]));
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_preserves_first_occurrence() {
+        let inherited = inclusions(&[".env*", "**/*.user"]);
+        let mut settings = inherited.clone();
+        settings.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[
+            "**/*.user",
+            SplicingVec::REST,
+            ".env*",
+            "**/*.project",
+            SplicingVec::REST,
+            "**/*.project",
+        ]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.user", ".env*", "**/*.project"])
+        );
+
+        settings.merge_from(&inclusions(&["**/*.project", "**/*.user", "**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project", "**/*.user"]));
     }
 
     fn read_only_files(globs: &[&str]) -> WorktreeSettingsContent {
