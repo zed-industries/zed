@@ -28,6 +28,8 @@ pub struct Model {
     pub common_dir_abs_path: Option<String>,
     // JSON array of linked worktree objects
     pub linked_worktrees: Option<String>,
+    // JSON array of tag name strings
+    pub tags: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
