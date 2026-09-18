@@ -55,6 +55,7 @@ pub enum Mention {
 pub struct MentionImage {
     pub data: SharedString,
     pub format: ImageFormat,
+    pub metadata: Option<SharedString>,
 }
 
 pub struct MentionSet {
@@ -405,16 +406,22 @@ impl MentionSet {
                 return Task::ready(Err(anyhow!("This model does not support images yet")));
             }
             let task = project.update(cx, |project, cx| project.open_image(project_path, cx));
+            let image_metadata_task = {
+                let abs_path = abs_path.clone();
+                cx.background_spawn(async move { image_metadata_from_path(&abs_path) })
+            };
             return cx.spawn(async move |_, cx| {
                 let image = task.await?;
                 let image = image.update(cx, |image, _| image.image.clone());
                 let image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await;
+                let metadata = image_metadata_task.await;
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
                         data: image.source,
                         format: LanguageModelImage::FORMAT,
+                        metadata,
                     }))
                 } else {
                     Err(anyhow!("Failed to convert image"))
@@ -981,6 +988,27 @@ pub(crate) async fn insert_images_as_context(
             });
         }
     }
+}
+
+fn image_metadata_from_path(path: &Path) -> Option<SharedString> {
+    let bytes = std::fs::read(path).ok()?;
+    let format = image::guess_format(&bytes).ok()?;
+    let format = image_format_from_external_content(format)?;
+    let (width, height) = image::load_from_memory(&bytes).ok()?.dimensions();
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Image");
+
+    Some(
+        format!(
+            "Image metadata:\nname: {name}\npath: {}\nformat: {}\ndimensions: {width}x{height}\nsize_bytes: {}",
+            path.display(),
+            format.mime_type(),
+            bytes.len(),
+        )
+        .into(),
+    )
 }
 
 fn image_format_from_external_content(format: image::ImageFormat) -> Option<ImageFormat> {
