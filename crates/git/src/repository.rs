@@ -1611,20 +1611,22 @@ impl GitRepository for RealGitRepository {
                 );
             }
 
-            let mut process = git
-                .build_command(&[
-                    "checkout",
-                    &commit,
-                    "--pathspec-from-file=-",
-                    "--pathspec-file-nul",
-                ])
+            let mut command = git.build_command(&[
+                "checkout",
+                "--no-recurse-submodules",
+                &commit,
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ]);
+            command
                 .envs(env.iter())
                 .env("GIT_LITERAL_PATHSPECS", "0")
                 .env("GIT_ICASE_PATHSPECS", "0")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()?;
+                .stderr(Stdio::piped());
+            remove_repository_location_envs(&mut command);
+            let mut process = command.spawn()?;
 
             let mut stdin = BufWriter::new(
                 process
@@ -3784,6 +3786,28 @@ fn parse_initial_graph_output<'a>(
         .collect()
 }
 
+/// Git resolves the repository from the environment before falling back to the working
+/// directory, and these commands inherit both this process's environment and the project's.
+/// A variable that points git elsewhere would make the checkout operate on a repository
+/// other than the one whose worktree the preflight below inspects, silently bypassing its
+/// protection and writing into an unrelated worktree. Removal must therefore happen on the
+/// command itself, after every other environment has been applied.
+fn remove_repository_location_envs(command: &mut util::command::Command) {
+    const REPOSITORY_LOCATION_VARIABLES: &[&str] = &[
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_WORK_TREE",
+    ];
+
+    for variable in REPOSITORY_LOCATION_VARIABLES {
+        command.env_remove(variable);
+    }
+}
+
 async fn checkout_filesystem_obstruction(
     git: &GitBinary,
     commit: &str,
@@ -3795,9 +3819,15 @@ async fn checkout_filesystem_obstruction(
     for repo_path in repo_paths {
         let target_mode = target_modes
             .get(repo_path.as_unix_str())
-            .map(String::as_str);
+            .with_context(|| {
+                format!(
+                    "pathspec '{}' did not match any file(s) known to git",
+                    repo_path.as_unix_str()
+                )
+            })?
+            .as_str();
         anyhow::ensure!(
-            target_mode != Some(crate::commit::TREE_MODE),
+            target_mode != crate::commit::TREE_MODE,
             "checking out directory {} is not supported",
             repo_path.as_unix_str()
         );
@@ -3819,7 +3849,7 @@ async fn checkout_filesystem_obstruction(
 async fn checkout_path_filesystem_obstruction(
     working_directory: &Path,
     repo_path: &RepoPath,
-    target_mode: Option<&str>,
+    target_mode: &str,
     checked_directories: &mut HashSet<PathBuf>,
 ) -> Result<Option<PathBuf>> {
     let mut path = working_directory.to_path_buf();
@@ -3848,7 +3878,7 @@ async fn checkout_path_filesystem_obstruction(
         if is_target {
             if metadata.is_dir()
                 && !metadata.file_type().is_symlink()
-                && matches!(target_mode, Some("100644" | "100755" | "120000"))
+                && matches!(target_mode, "100644" | "100755" | "120000")
             {
                 let mut entries = smol::fs::read_dir(&path).await?;
                 if entries.next().await.transpose()?.is_some() {
@@ -3871,22 +3901,11 @@ async fn checkout_target_modes<'a>(
     repo_paths: &'a [RepoPath],
     env: &HashMap<String, String>,
 ) -> Result<HashMap<&'a str, String>> {
-    let Some((first_path, other_paths)) = repo_paths.split_first() else {
+    if repo_paths.is_empty() {
         return Ok(HashMap::default());
-    };
-
-    let mut common_components = first_path.as_unix_str().split('/').collect::<Vec<_>>();
-    for repo_path in other_paths {
-        let shared_len = common_components
-            .iter()
-            .zip(repo_path.as_unix_str().split('/'))
-            .take_while(|(common, component)| *common == component)
-            .count();
-        common_components.truncate(shared_len);
     }
-    let common_prefix = common_components.join("/");
 
-    let mut args = vec![
+    let args = vec![
         OsString::from("ls-tree"),
         OsString::from("-r"),
         OsString::from("-t"),
@@ -3894,17 +3913,14 @@ async fn checkout_target_modes<'a>(
         OsString::from(commit),
         OsString::from("--"),
     ];
-    if !common_prefix.is_empty() {
-        args.push(OsString::from(format!(":(literal){common_prefix}")));
-    }
 
-    let output = git
-        .build_command(&args)
+    let mut command = git.build_command(&args);
+    command
         .envs(env.iter())
         .env("GIT_LITERAL_PATHSPECS", "0")
-        .env("GIT_ICASE_PATHSPECS", "0")
-        .output()
-        .await?;
+        .env("GIT_ICASE_PATHSPECS", "0");
+    remove_repository_location_envs(&mut command);
+    let output = command.output().await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -5700,6 +5716,64 @@ mod tests {
         }
     }
 
+    // Only the project environment is exercised here: the same removal covers variables
+    // inherited from this process, but setting those would race with every other test in
+    // this binary.
+    #[gpui::test]
+    async fn test_checkout_files_ignores_repository_location_envs(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        let unrelated_dir = temp_dir.path().join("unrelated");
+
+        for (directory, contents) in [(&repo_dir, "original"), (&unrelated_dir, "unrelated")] {
+            git_init_repo(directory);
+            fs::write(directory.join("file.txt"), contents).unwrap();
+            git_command(directory, ["add", "file.txt"]);
+            git_command(directory, ["commit", "-m", "Add file"]);
+            fs::write(directory.join("file.txt"), "modified").unwrap();
+        }
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let env = HashMap::from_iter([
+            (
+                "GIT_DIR".to_string(),
+                unrelated_dir.join(".git").to_str().unwrap().to_string(),
+            ),
+            (
+                "GIT_WORK_TREE".to_string(),
+                unrelated_dir.to_str().unwrap().to_string(),
+            ),
+        ]);
+
+        repo.checkout_files(
+            "HEAD".to_string(),
+            vec![RepoPath::new("file.txt").unwrap()],
+            Arc::new(env),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo_dir.join("file.txt")).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            fs::read_to_string(unrelated_dir.join("file.txt")).unwrap(),
+            "modified"
+        );
+    }
+
     #[gpui::test]
     async fn test_checkout_files_recreates_deleted_directories_and_replaces_empty_ones(
         cx: &mut TestAppContext,
@@ -5769,17 +5843,31 @@ mod tests {
 
     #[gpui::test]
     async fn test_checkout_files_allows_gitlink_target_directory(cx: &mut TestAppContext) {
-        const FIRST_SUBMODULE_COMMIT: &str = "1111111111111111111111111111111111111111";
-        const SECOND_SUBMODULE_COMMIT: &str = "2222222222222222222222222222222222222222";
-
         disable_git_global_config();
 
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
+        let submodule_path = repo_dir.path().join("modules/example");
 
         git_init_repo(repo_dir.path());
+        git_init_repo(&submodule_path);
+        fs::write(submodule_path.join("collision"), "tracked in submodule").unwrap();
+        git_command(&submodule_path, ["add", "."]);
+        git_command(&submodule_path, ["commit", "-m", "Add collision"]);
+        let first_submodule_commit = git_command_output(&submodule_path, ["rev-parse", "HEAD"]);
+        fs::remove_file(submodule_path.join("collision")).unwrap();
+        git_command(&submodule_path, ["add", "."]);
+        git_command(&submodule_path, ["commit", "-m", "Remove collision"]);
+        let second_submodule_commit = git_command_output(&submodule_path, ["rev-parse", "HEAD"]);
+
         fs::write(repo_dir.path().join("file.txt"), "original").unwrap();
+        fs::write(
+            repo_dir.path().join(".gitmodules"),
+            "[submodule \"example\"]\n\tpath = modules/example\n\turl = ./modules/example\n",
+        )
+        .unwrap();
+        git_command(repo_dir.path(), ["add", ".gitmodules", "file.txt"]);
         git_command(
             repo_dir.path(),
             [
@@ -5787,27 +5875,35 @@ mod tests {
                 "--add",
                 "--cacheinfo",
                 crate::commit::GITLINK_MODE,
-                FIRST_SUBMODULE_COMMIT,
+                first_submodule_commit.as_str(),
                 "modules/example",
             ],
         );
-        git_command(repo_dir.path(), ["add", "file.txt"]);
         git_command(repo_dir.path(), ["commit", "-m", "Add files"]);
 
         fs::write(repo_dir.path().join("file.txt"), "modified").unwrap();
-        fs::create_dir_all(repo_dir.path().join("modules/example")).unwrap();
+        fs::create_dir(submodule_path.join("collision")).unwrap();
         fs::write(
-            repo_dir.path().join("modules/example/untracked.txt"),
+            submodule_path.join("collision/keep.txt"),
             "submodule worktree contents",
         )
         .unwrap();
+        git_command(repo_dir.path(), ["config", "submodule.recurse", "true"]);
+        git_command(
+            repo_dir.path(),
+            ["config", "submodule.example.active", "true"],
+        );
+        git_command(
+            repo_dir.path(),
+            ["config", "submodule.example.url", "./modules/example"],
+        );
         git_command(
             repo_dir.path(),
             [
                 "update-index",
                 "--cacheinfo",
                 crate::commit::GITLINK_MODE,
-                SECOND_SUBMODULE_COMMIT,
+                second_submodule_commit.as_str(),
                 "modules/example",
             ],
         );
@@ -5836,12 +5932,34 @@ mod tests {
             "original"
         );
         assert_eq!(
-            fs::read_to_string(repo_dir.path().join("modules/example/untracked.txt")).unwrap(),
+            fs::read_to_string(submodule_path.join("collision/keep.txt")).unwrap(),
             "submodule worktree contents"
         );
         assert!(
             git_command_output(repo_dir.path(), ["ls-files", "--stage", "modules/example"])
-                .contains(FIRST_SUBMODULE_COMMIT)
+                .contains(&first_submodule_commit)
+        );
+        assert_eq!(
+            git_command_output(&submodule_path, ["rev-parse", "HEAD"]),
+            second_submodule_commit
+        );
+
+        // Paths below a submodule are absent from the superproject's tree, so the mode
+        // lookup finds nothing for them and the checkout must be refused rather than run
+        // without knowing what it would replace.
+        let error = repo
+            .checkout_files(
+                "HEAD".to_string(),
+                vec![RepoPath::new("modules/example/collision").unwrap()],
+                Arc::new(HashMap::default()),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("did not match any file(s)"));
+        assert_eq!(
+            fs::read_to_string(submodule_path.join("collision/keep.txt")).unwrap(),
+            "submodule worktree contents"
         );
     }
 
@@ -5967,6 +6085,60 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(repo_dir.path().join(replacement_path).join("kept.txt")).unwrap(),
+            "untracked"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_checkout_files_refuses_nonempty_directory_for_decomposed_path(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let nfd_path = "src/cafe\u{301}.txt";
+
+        git_init_repo(repo_dir.path());
+        git_command(
+            repo_dir.path(),
+            ["config", "core.precomposeunicode", "false"],
+        );
+        fs::create_dir_all(repo_dir.path().join("src")).unwrap();
+        fs::write(repo_dir.path().join(nfd_path), "tracked file contents").unwrap();
+        git_command(repo_dir.path(), ["add", nfd_path]);
+        git_command(repo_dir.path(), ["commit", "-m", "Add decomposed path"]);
+
+        git_command(
+            repo_dir.path(),
+            ["config", "core.precomposeunicode", "true"],
+        );
+        fs::remove_file(repo_dir.path().join(nfd_path)).unwrap();
+        fs::create_dir(repo_dir.path().join(nfd_path)).unwrap();
+        fs::write(repo_dir.path().join(nfd_path).join("keep.txt"), "untracked").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let error = repo
+            .checkout_files(
+                "HEAD".to_string(),
+                vec![RepoPath::new(nfd_path).unwrap()],
+                Arc::new(HashMap::default()),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("would be removed"));
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join(nfd_path).join("keep.txt")).unwrap(),
             "untracked"
         );
     }
