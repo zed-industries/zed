@@ -1246,7 +1246,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn markdown_preview_font_section() -> [SettingsPageItem; 4] {
+    fn markdown_preview_font_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Markdown Preview Font"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1313,6 +1313,29 @@ fn appearance_page() -> SettingsPage {
                             .markdown_preview
                             .get_or_insert_default()
                             .font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Heading Font Weight",
+                description: "Font weight for headings in the markdown preview, in CSS units from 100 to 900.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.heading_font_weight"),
+                    pick: |settings_content| {
+                        settings_content
+                            .markdown_preview
+                            .as_ref()?
+                            .heading_font_weight
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .markdown_preview
+                            .get_or_insert_default()
+                            .heading_font_weight = value;
                     },
                 }),
                 metadata: None,
