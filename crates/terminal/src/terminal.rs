@@ -3068,8 +3068,8 @@ impl Terminal {
         };
         let info = info.clone();
 
-        // Nothing can feed the parse buffer once the PTY is gone, and the terminal
-        // itself is retained to render the output it already captured.
+        // The terminal is retained past the command, so drop the parse buffer's
+        // reservation; `write_output` builds a new one if it is called again.
         self.output_processor = None;
 
         pty_tx.shutdown();
@@ -5689,9 +5689,7 @@ mod tests {
     /// The parse buffer `write_output` needs is only built for injected bytes and
     /// must not outlive the command, even though the terminal does.
     #[gpui::test]
-    async fn test_release_pty_resources_drops_an_allocated_parse_buffer(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_release_pty_resources_drops_an_allocated_parse_buffer(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
         let terminal = build_test_terminal(cx, "echo", &["captured_output"]).await;
