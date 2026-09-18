@@ -128,34 +128,67 @@ pub struct WorktreeSettingsContent {
     #[serde(default)]
     pub prevent_sharing_in_public_channels: bool,
 
-    /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
-    /// `file_scan_inclusions`.
+    /// Exclude files matching these glob patterns from file scans, file searches,
+    /// and the project file tree. Takes precedence over `file_scan_inclusions`.
     ///
-    /// A `"..."` entry expands to the value being overridden, so
-    /// `["**/node_modules", "..."]` adds to the inherited globs instead of
-    /// replacing them. Leave `"..."` out to replace them.
+    /// Default:
     ///
-    /// Default: [
-    ///   "**/.git",
-    ///   "**/.svn",
-    ///   "**/.hg",
-    ///   "**/.jj",
-    ///   "**/CVS",
-    ///   "**/.DS_Store",
-    ///   "**/Thumbs.db",
-    ///   "**/.classpath",
-    ///   "**/.settings"
-    /// ]
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": [
+    ///     "**/.git",
+    ///     "**/.svn",
+    ///     "**/.hg",
+    ///     "**/.jj",
+    ///     "**/.sl",
+    ///     "**/.repo",
+    ///     "**/CVS",
+    ///     "**/.DS_Store",
+    ///     "**/Thumbs.db",
+    ///     "**/.classpath",
+    ///     "**/.settings"
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": ["**/node_modules", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub file_scan_exclusions: Option<SplicingVec>,
 
-    /// Always include files that match these globs when scanning for files, even
-    /// if they’re ignored by Git. This setting is overridden by
-    /// `file_scan_exclusions`.
+    /// Include files matching these glob patterns when scanning, even if ignored
+    /// by Git. Note that broad patterns can slow file scanning.
+    /// `file_scan_exclusions` takes precedence.
     ///
-    /// A "..." entry expands to the value being overridden. Leave "..." out to
-    /// replace the inherited globs, or use an empty list to clear them.
+    /// Default:
     ///
-    /// Default: [".env*"]
+    /// ```json
+    /// {
+    ///   "file_scan_inclusions": [".env*"]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_inclusions": ["**/build/**", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub file_scan_inclusions: Option<SplicingVec>,
 
     /// When to scan content of linked directories.
@@ -182,14 +215,30 @@ pub struct WorktreeSettingsContent {
     /// Default: ["**/.*"]
     pub hidden_files: Option<Vec<String>>,
 
-    /// Treat the files matching these globs as read-only. These files can be opened and viewed,
-    /// but cannot be edited. This is useful for generated files, build outputs, or files from
-    /// external dependencies that should not be modified directly.
+    /// Treat files matching these glob patterns as read-only when opened. You can
+    /// view but not edit them, which is useful for build outputs, external
+    /// dependencies, or generated files.
     ///
-    /// A "..." entry expands to the value being overridden. Leave "..." out
-    /// to replace the inherited globs, or use an empty list to clear them.
+    /// Default:
     ///
-    /// Default: []
+    /// ```json
+    /// {
+    ///   "read_only_files": []
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "read_only_files": ["**/build/**", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub read_only_files: Option<SplicingVec>,
 }
 
