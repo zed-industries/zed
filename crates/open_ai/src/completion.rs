@@ -211,7 +211,7 @@ pub fn into_open_ai(
             None
         },
         prompt_cache_key: if supports_prompt_cache_key {
-            request.thread_id
+            request.prompt_cache_key.or(request.thread_id)
         } else {
             None
         },
@@ -263,6 +263,7 @@ pub fn into_open_ai_response(
 
     let LanguageModelRequest {
         thread_id,
+        prompt_cache_key,
         prompt_id: _,
         intent: _,
         messages,
@@ -399,7 +400,7 @@ pub fn into_open_ai_response(
         }),
         tools,
         prompt_cache_key: if supports_prompt_cache_key {
-            thread_id
+            prompt_cache_key.or(thread_id)
         } else {
             None
         },
@@ -1519,6 +1520,51 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn prompt_cache_key_respects_override_fallback_and_capability() -> Result<()> {
+        for (explicit, thread, supported, expected) in [
+            (Some("cache"), Some("thread"), true, Some("cache")),
+            (Some("cache"), None, true, Some("cache")),
+            (None, Some("thread"), true, Some("thread")),
+            (None, None, true, None),
+            (Some("cache"), Some("thread"), false, None),
+            (None, Some("thread"), false, None),
+        ] {
+            let request = LanguageModelRequest {
+                thread_id: thread.map(str::to_owned),
+                prompt_cache_key: explicit.map(str::to_owned),
+                ..Default::default()
+            };
+            let chat = into_open_ai(
+                request.clone(),
+                "gpt-5",
+                true,
+                supported,
+                None,
+                ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                None,
+                false,
+            )?;
+            let response = into_open_ai_response(
+                request,
+                "gpt-5",
+                true,
+                supported,
+                None,
+                None,
+                false,
+                &OPEN_AI_PROVIDER_ID,
+            )?;
+            assert_eq!(chat.prompt_cache_key.as_deref(), expected);
+            assert_eq!(response.prompt_cache_key.as_deref(), expected);
+            assert_eq!(
+                response.into_compact_request().prompt_cache_key.as_deref(),
+                expected
+            );
+        }
+        Ok(())
+    }
+
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
             OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
@@ -1790,6 +1836,7 @@ mod tests {
 
         let request = LanguageModelRequest {
             thread_id: Some("thread-123".into()),
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![
@@ -1996,6 +2043,7 @@ mod tests {
 
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
@@ -2090,6 +2138,7 @@ mod tests {
 
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
@@ -2182,6 +2231,7 @@ mod tests {
     fn into_open_ai_response_replays_reasoning_without_encrypted_content() {
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
@@ -2263,6 +2313,7 @@ mod tests {
     fn into_open_ai_response_omits_reasoning_when_thinking_is_disabled_and_none_is_unsupported() {
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
@@ -2310,6 +2361,7 @@ mod tests {
         ] {
             let request = LanguageModelRequest {
                 thread_id: None,
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: None,
                 messages: vec![LanguageModelRequestMessage {
@@ -2363,6 +2415,7 @@ mod tests {
         ] {
             let request = LanguageModelRequest {
                 thread_id: None,
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: None,
                 messages: vec![LanguageModelRequestMessage {
@@ -2409,6 +2462,7 @@ mod tests {
     fn into_open_ai_can_send_max_tokens_parameter() -> Result<()> {
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
@@ -2486,6 +2540,7 @@ mod tests {
     fn into_open_ai_response_sends_none_reasoning_when_thinking_is_disabled() -> Result<()> {
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
@@ -2528,6 +2583,7 @@ mod tests {
     fn into_open_ai_response_uses_default_effort_when_selected_effort_is_none() -> Result<()> {
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
@@ -2572,6 +2628,7 @@ mod tests {
     fn into_open_ai_response_replays_assistant_phase() {
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
@@ -2667,6 +2724,7 @@ mod tests {
         });
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![
@@ -2746,6 +2804,7 @@ mod tests {
     fn into_open_ai_response_replays_reasoning_details_but_not_thinking_text() {
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
@@ -4046,6 +4105,7 @@ mod tests {
         };
         let request = LanguageModelRequest {
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             messages: vec![
