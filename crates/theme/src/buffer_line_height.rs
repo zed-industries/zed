@@ -1,10 +1,10 @@
 /// The buffer's line height.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum BufferLineHeight {
-    /// A less dense line height.
+    /// The default line height.
     #[default]
     Comfortable,
-    /// The default line height.
+    /// A denser line height.
     Standard,
     /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
     Custom(f32),

@@ -495,10 +495,10 @@ impl From<FontFamilyName> for String {
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
-    /// A less dense line height.
+    /// The default line height.
     #[default]
     Comfortable,
-    /// The default line height.
+    /// A denser line height.
     Standard,
     /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
     Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
