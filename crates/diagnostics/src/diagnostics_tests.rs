@@ -2377,6 +2377,103 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     })
 }
 
+#[gpui::test]
+async fn test_diagnostics_hint_markdown(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/test"),
+        json!({
+            "main.rs": "
+                fn main() {
+                    let x = 1;
+                    // line 1
+                    // line 2
+                    // line 3
+                    // line 4
+                    // line 5
+                    let y = x;
+                }
+            "
+            .unindent(),
+        }),
+    )
+    .await;
+
+    let language_server_id = LanguageServerId(0);
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let uri = lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap();
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: uri.clone(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(7, 4), lsp::Position::new(7, 12)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: lsp::DiagnosticMessage::String(
+                            "cannot borrow `x` as mutable".to_string(),
+                        ),
+                        related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location::new(
+                                uri.clone(),
+                                lsp::Range::new(
+                                    lsp::Position::new(1, 4),
+                                    lsp::Position::new(1, 12),
+                                ),
+                            ),
+                            message: "immutable borrow `x` occurs here".to_string(),
+                        }]),
+                        ..Default::default()
+                    }],
+                    version: None,
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    let diagnostics = window.build_entity(cx, |window, cx| {
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+    });
+    let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
+
+    diagnostics
+        .next_notification(std::time::Duration::from_millis(100), cx)
+        .await;
+
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.rs
+             § -----
+             fn main() {
+                 let x = 1; § immutable borrow `x` occurs here (back)
+                 // line 1
+                 // line 2
+             § -----
+                 // line 4
+                 // line 5
+                 let y = x;
+             § cannot borrow `x` as mutable
+             § hint: immutable borrow `x` occurs here
+             }"
+        }
+    );
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         zlog::init_test();
