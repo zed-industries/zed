@@ -11,6 +11,11 @@ workspace = true
 [lib]
 path = "src/gpui_macos.rs"
 
+[[test]]
+name = "popup_decorations"
+harness = false
+test = false
+
 [features]
 default = ["gpui/default"]
 bench-support = ["gpui/bench-support", "gpui_apple/bench-support"]
