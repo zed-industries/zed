@@ -74,6 +74,32 @@ impl ThreadStore {
         })
     }
 
+    /// Saves a copy of the thread with the given id under a new session id,
+    /// creating an independent fork that shares the source thread's history.
+    /// Returns the fork's session id.
+    pub fn fork_thread(
+        &mut self,
+        source_id: acp::SessionId,
+        folder_paths: PathList,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<acp::SessionId>> {
+        let fork_id = acp::SessionId::new(uuid::Uuid::new_v4().to_string());
+        let database_future = ThreadsDatabase::connect(cx);
+        cx.spawn(async move |this, cx| {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            let thread = database
+                .load_thread(source_id.clone())
+                .await?
+                .ok_or_else(|| anyhow!("thread {} not found", source_id))?
+                .forked();
+            database
+                .save_thread(fork_id.clone(), thread, folder_paths)
+                .await?;
+            this.update(cx, |this, cx| this.reload(cx))?;
+            Ok(fork_id)
+        })
+    }
+
     pub fn delete_thread(
         &mut self,
         id: acp::SessionId,
@@ -310,5 +336,52 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, first_id);
         assert_eq!(entries[1].id, second_id);
+    }
+
+    #[gpui::test]
+    async fn test_fork_thread(cx: &mut TestAppContext) {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        cx.run_until_parked();
+
+        let source_id = session_id("thread-a");
+        let mut source_thread = make_thread(
+            "Thread A",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        // Never touched by the test; the path only needs to round-trip as data,
+        // but keep it obviously fake since `delete_thread` removes this
+        // directory from disk for real.
+        source_thread.sandboxed_terminal_temp_dir =
+            Some(std::path::PathBuf::from("/nonexistent/sandbox-temp-dir"));
+        source_thread.sandbox_grants.network_any_host = true;
+
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(source_id.clone(), source_thread, PathList::default(), cx)
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+
+        let fork_task = thread_store.update(cx, |store, cx| {
+            store.fork_thread(source_id.clone(), PathList::default(), cx)
+        });
+        let fork_id = fork_task.await.unwrap();
+        cx.run_until_parked();
+
+        assert_ne!(fork_id, source_id);
+
+        let entries: Vec<_> = thread_store.read_with(cx, |store, _cx| store.entries().collect());
+        assert_eq!(entries.len(), 2);
+        // The fork preserves the source's updated_at so it sorts next to it.
+        assert_eq!(entries[0].updated_at, entries[1].updated_at);
+
+        let fork = thread_store
+            .update(cx, |store, cx| store.load_thread(fork_id, cx))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fork.title.as_ref(), "Thread A (fork)");
+        assert!(fork.subagent_context.is_none());
+        assert!(fork.sandboxed_terminal_temp_dir.is_none());
+        assert_eq!(fork.sandbox_grants, crate::DbSandboxGrants::default());
     }
 }
