@@ -572,7 +572,7 @@ impl WgpuRenderer {
             globals_bind_group,
             path_globals_bind_group,
             instance_data,
-            // Defer intermediate texture creation to first draw call via ensure_intermediate_textures().
+            // Allocated by ensure_intermediate_textures() on the first frame that draws paths.
             // This avoids panics when the device/surface is in an invalid state during initialization.
             path_intermediate_texture: None,
             path_intermediate_view: None,
@@ -1338,8 +1338,11 @@ impl WgpuRenderer {
             }
         };
 
-        // Now that we know the surface is healthy, ensure intermediate textures exist
-        self.ensure_intermediate_textures();
+        // Only scenes with paths need the intermediate targets, and the surface
+        // has to be known healthy before allocating them.
+        if !scene.paths.is_empty() {
+            self.ensure_intermediate_textures();
+        }
 
         let frame_view = frame
             .texture
