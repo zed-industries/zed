@@ -42,6 +42,11 @@ fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<Service
     }
 }
 
+/// Astra rejects temperature at every reasoning effort, including the default value.
+fn temperature_for_model(model_id: &str, temperature: Option<f32>) -> Option<f32> {
+    temperature.filter(|_| model_id != crate::Model::SixAstra.id())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChatCompletionMaxTokensParameter {
     MaxCompletionTokens,
@@ -196,7 +201,7 @@ pub fn into_open_ai(
             None
         },
         stop: request.stop,
-        temperature: request.temperature.or(Some(1.0)),
+        temperature: temperature_for_model(model_id, request.temperature.or(Some(1.0))),
         max_completion_tokens: match max_tokens_parameter {
             ChatCompletionMaxTokensParameter::MaxCompletionTokens => max_output_tokens,
             ChatCompletionMaxTokensParameter::MaxTokens => None,
@@ -384,7 +389,7 @@ pub fn into_open_ai_response(
         store: Some(false),
         include,
         stream,
-        temperature,
+        temperature: temperature_for_model(model_id, temperature),
         top_p: None,
         max_output_tokens,
         parallel_tool_calls: if tools.is_empty() {
@@ -2296,6 +2301,53 @@ mod tests {
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(serialized.get("reasoning"), None);
+    }
+
+    #[test]
+    fn request_conversion_omits_unsupported_temperature() -> Result<()> {
+        for (model_id, temperature, expected_temperature) in [
+            ("gpt-6-astra", Some(0.25), None),
+            ("gpt-6-astra", None, None),
+            ("gpt-4o-mini", Some(0.25), Some(0.25)),
+            ("custom-model", Some(0.25), Some(0.25)),
+        ] {
+            let request = LanguageModelRequest {
+                temperature,
+                ..Default::default()
+            };
+            let response = into_open_ai_response(
+                request.clone(),
+                model_id,
+                true,
+                true,
+                None,
+                None,
+                false,
+                &OPEN_AI_PROVIDER_ID,
+            )?;
+            let chat = into_open_ai(
+                request,
+                model_id,
+                true,
+                true,
+                None,
+                ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                None,
+                false,
+            )?;
+
+            for (endpoint, serialized) in [
+                ("responses", serde_json::to_value(response)?),
+                ("chat/completions", serde_json::to_value(chat)?),
+            ] {
+                assert_eq!(
+                    serialized.get("temperature"),
+                    expected_temperature.map(serde_json::Value::from).as_ref(),
+                    "{endpoint} temperature for {model_id} with {temperature:?}",
+                );
+            }
+        }
+        Ok(())
     }
 
     /// `Speed::Fast` should translate to `service_tier: "priority"` on the
