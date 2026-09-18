@@ -1002,7 +1002,7 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
 
 // Case-insensitive so that e.g. `foo.PNG` is recognized the same as `foo.png`.
 // SVG is excluded because it is handled separately.
-fn is_raster_image_path(path: &Path) -> bool {
+pub(crate) fn is_raster_image_path(path: &Path) -> bool {
     let Some(extension) = path.extension().and_then(OsStr::to_str) else {
         return false;
     };

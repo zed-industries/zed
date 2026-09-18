@@ -6413,8 +6413,7 @@ impl AgentPanel {
     ) {
         if matches!(&self.base_view, BaseView::Terminal { .. }) {
             // Terminal drops should match normal terminal views by pasting raw OS paths.
-            // The agent-thread path below converts paths to project paths, which can add
-            // worktrees and is only needed when attaching files to a conversation.
+            // The agent-thread path below lets the message editor resolve attachments.
             self.paste_external_paths_into_active_terminal(paths, window, cx);
             return;
         }
@@ -6422,29 +6421,63 @@ impl AgentPanel {
         let BaseView::AgentThread { conversation_view } = &self.base_view else {
             return;
         };
-        let conversation_view = conversation_view.clone();
-        let tasks = paths
+        let image_paths = paths
             .paths()
             .iter()
-            .map(|path| Workspace::project_path_for_path(self.project.clone(), path, false, cx))
+            .filter(|path| crate::mention_set::is_raster_image_path(path))
+            .cloned()
             .collect::<Vec<_>>();
-        cx.spawn_in(window, async move |_this, cx| {
-            let mut paths = vec![];
-            let mut added_worktrees = vec![];
-            let opened_paths = futures::future::join_all(tasks).await;
-            for entry in opened_paths {
-                if let Some((worktree, project_path)) = entry.log_err() {
-                    added_worktrees.push(worktree);
-                    paths.push(project_path);
-                }
+        let contains_non_image = image_paths.len() != paths.paths().len();
+        if image_paths.is_empty() {
+            Self::show_deferred_toast(
+                &self.workspace,
+                "Only image files can be dropped here. Add workspace files with @.",
+                cx,
+            );
+            return;
+        }
+        if contains_non_image {
+            Self::show_deferred_toast(
+                &self.workspace,
+                "Only image files can be dropped here. Other files were ignored.",
+                cx,
+            );
+        }
+        let clipboard = ClipboardItem {
+            entries: vec![gpui::ClipboardEntry::ExternalPaths(ExternalPaths(
+                image_paths.into(),
+            ))],
+        };
+        let workspace = self.workspace.clone();
+        conversation_view.update(cx, |conversation_view, cx| {
+            let Some(thread) = conversation_view.active_thread() else {
+                return;
+            };
+            if !thread
+                .read(cx)
+                .session_capabilities
+                .read()
+                .supports_images()
+            {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let toast = StatusToast::new(
+                            "The current agent does not support image attachments.",
+                            cx,
+                            |this, _cx| this.dismiss_button(true),
+                        );
+                        workspace.toggle_status_toast(toast, cx);
+                    })
+                    .log_err();
+                return;
             }
-            conversation_view
-                .update_in(cx, |conversation_view, window, cx| {
-                    conversation_view.insert_dragged_files(paths, added_worktrees, window, cx);
-                })
-                .log_err();
-        })
-        .detach();
+            thread.update(cx, |thread, cx| {
+                thread.message_editor.update(cx, |editor, cx| {
+                    editor.paste_item(&clipboard, window, cx);
+                    editor.focus_handle(cx).focus(window, cx);
+                });
+            });
+        });
     }
 
     fn paste_external_paths_into_active_terminal(
@@ -9635,9 +9668,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_external_file_drop_on_thread_does_not_paste_into_later_terminal(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_external_file_drop_on_thread_is_ignored(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
@@ -9699,14 +9730,8 @@ mod tests {
             "thread drop completion should not write to the active terminal"
         );
 
-        let expected_uri = MentionUri::File {
-            abs_path: file_path,
-        }
-        .to_uri()
-        .to_string();
-        let expected_text = format!("[@file.txt]({expected_uri}) ");
         let actual_text = panel.read_with(&cx, |panel, cx| panel.editor_text(thread_id, cx));
-        assert_eq!(actual_text.as_deref(), Some(expected_text.as_str()));
+        assert_eq!(actual_text.as_deref(), Some(""));
     }
 
     #[gpui::test]
