@@ -525,7 +525,18 @@ impl AgentSettingsContent {
             .allow_unsandboxed = Some(true);
     }
 
-    pub fn add_sandbox_write_path(&mut self, granted: GrantedWritePathContent) {
+    pub fn add_sandbox_write_path(&mut self, mut granted: GrantedWritePathContent) {
+        let Ok(requested) = util::paths::normalize_lexically(&granted.requested) else {
+            return;
+        };
+        granted.requested = requested;
+        if let Some(resolved) = &granted.resolved {
+            let Ok(resolved) = util::paths::normalize_lexically(resolved) else {
+                return;
+            };
+            granted.resolved = Some(resolved);
+        }
+
         let write_paths = &mut self
             .sandbox_permissions
             .get_or_insert_default()
@@ -1378,6 +1389,28 @@ mod tests {
                 on_windows_fs: false,
             }]
         );
+    }
+
+    #[test]
+    fn test_add_sandbox_write_path_normalizes_paths() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build/./"),
+            resolved: Some(PathBuf::from("/tmp/real/./")),
+            on_windows_fs: false,
+        });
+
+        let write_path = &settings
+            .sandbox_permissions
+            .as_ref()
+            .unwrap()
+            .write_paths
+            .as_ref()
+            .unwrap()
+            .0[0];
+        assert_eq!(write_path.requested, PathBuf::from("/tmp/build"));
+        assert_eq!(write_path.resolved, Some(PathBuf::from("/tmp/real")));
     }
 
     #[test]
