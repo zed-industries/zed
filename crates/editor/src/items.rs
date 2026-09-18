@@ -59,7 +59,7 @@ use workspace::{
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
+        SearchableItemHandle, SelectSearchOptions,
     },
 };
 use workspace::{
@@ -2121,12 +2121,12 @@ impl SearchableItem for Editor {
         self.expect_bounds_change = self.last_bounds;
     }
 
-    fn set_search_is_case_sensitive(
+    fn set_select_search_options(
         &mut self,
-        case_sensitive: Option<bool>,
+        select_search_options: Option<SelectSearchOptions>,
         _cx: &mut Context<Self>,
     ) {
-        self.select_next_is_case_sensitive = case_sensitive;
+        self.select_next_options = select_search_options;
     }
 }
 

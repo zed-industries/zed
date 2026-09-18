@@ -70,6 +70,12 @@ pub enum FilteredSearchRange {
     Default,
 }
 
+#[derive(Copy, Clone)]
+pub struct SelectSearchOptions {
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+}
+
 pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     type Match: Any + Sync + Send + Clone;
 
@@ -205,7 +211,8 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize>;
-    fn set_search_is_case_sensitive(&mut self, _: Option<bool>, _: &mut Context<Self>) {}
+    fn set_select_search_options(&mut self, _: Option<SelectSearchOptions>, _: &mut Context<Self>) {
+    }
 }
 
 pub trait SearchableItemHandle: ItemHandle {
@@ -303,7 +310,7 @@ pub trait SearchableItemHandle: ItemHandle {
         cx: &mut App,
     );
 
-    fn set_search_is_case_sensitive(&self, is_case_sensitive: Option<bool>, cx: &mut App);
+    fn set_select_search_options(&self, search_options: Option<SelectSearchOptions>, cx: &mut App);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
@@ -507,9 +514,9 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
             this.toggle_filtered_search_ranges(enabled, window, cx)
         });
     }
-    fn set_search_is_case_sensitive(&self, enabled: Option<bool>, cx: &mut App) {
+    fn set_select_search_options(&self, search_options: Option<SelectSearchOptions>, cx: &mut App) {
         self.update(cx, |this, cx| {
-            this.set_search_is_case_sensitive(enabled, cx)
+            this.set_select_search_options(search_options, cx)
         });
     }
 }
