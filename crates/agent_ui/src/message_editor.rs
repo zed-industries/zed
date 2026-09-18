@@ -2458,6 +2458,39 @@ mod tests {
     }
 
     #[test]
+    fn test_image_mention_includes_metadata() {
+        let uri = MentionUri::File {
+            abs_path: PathBuf::from("/project/assets/logo.png"),
+        };
+        let mention = Mention::Image(MentionImage {
+            data: "aGVsbG8=".into(),
+            format: ImageFormat::Png,
+            metadata: Some(
+                "Image metadata:\nname: logo.png\npath: /project/assets/logo.png\nformat: image/png\ndimensions: 800x600\nsize_bytes: 12345"
+                    .into(),
+            ),
+        });
+        let mut tracked_buffers = Vec::new();
+
+        let blocks = mention_to_content_blocks(
+            &uri,
+            Some(&mention),
+            false,
+            &mut tracked_buffers,
+        );
+
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(
+            &blocks[0],
+            acp::ContentBlock::Text(text)
+                if text.text.contains("path: /project/assets/logo.png")
+                    && text.text.contains("dimensions: 800x600")
+                    && text.text.contains("format: image/png")
+        ));
+        assert!(matches!(blocks[1], acp::ContentBlock::Image(_)));
+    }
+
+    #[test]
     fn test_parse_mention_links() {
         // Single file mention
         let text = "[@bundle-mac](file:///Users/test/zed/script/bundle-mac)";
