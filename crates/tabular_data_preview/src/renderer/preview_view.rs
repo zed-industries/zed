@@ -25,7 +25,11 @@ impl Render for TabularDataPreviewPane {
             .track_focus(&self.focus_handle)
             .child({
                 let is_parsing = self.is_parsing;
-                if is_parsing || self.engine.contents.number_of_cols == 0 {
+                if is_parsing
+                    || self.parse_error.is_some()
+                    || (self.engine.contents.number_of_cols == 0
+                        && self.engine.contents.rows.is_empty())
+                {
                     v_flex()
                         .size_full()
                         .child(
@@ -54,7 +58,15 @@ impl Render for TabularDataPreviewPane {
                                             .child("Loading…"),
                                     )
                                 })
-                                .when(!is_parsing, |div| div.child("No data to display")),
+                                .when(!is_parsing, |div| {
+                                    if let Some(error) = &self.parse_error {
+                                        div.p_4()
+                                            .text_color(cx.theme().status().error)
+                                            .child(error.clone())
+                                    } else {
+                                        div.child("No data to display")
+                                    }
+                                }),
                         )
                         .into_any_element()
                 } else {
