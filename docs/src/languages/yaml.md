@@ -42,9 +42,19 @@ Note, settings keys must be nested, so `yaml.keyOrdering` becomes `{"yaml": { "k
 
 ## Formatting
 
-By default, Zed uses Prettier for formatting YAML files.
+By default, Zed uses `yaml-language-server` for formatting YAML files.
 
 ### Prettier Formatting
+
+To use Prettier instead of `yaml-language-server` for YAML formatting, configure in Settings ({#kb zed::OpenSettings}) under Languages > YAML, or add to your settings file:
+
+```json [settings]
+  "languages": {
+    "YAML": {
+      "formatter": "prettier"
+    }
+  }
+```
 
 You can customize the formatting behavior of Prettier. For example to use single-quotes in yaml files add the following to your `.prettierrc` configuration file:
 
@@ -63,7 +73,8 @@ You can customize the formatting behavior of Prettier. For example to use single
 
 ### yaml-language-server Formatting
 
-To use `yaml-language-server` instead of Prettier for YAML formatting, configure in Settings ({#kb zed::OpenSettings}) under Languages > YAML, or add to your settings file:
+`yaml-language-server` is the default YAML formatter. To explicitly set it your settings
+you can add the following to your settings file
 
 ```json [settings]
   "languages": {
