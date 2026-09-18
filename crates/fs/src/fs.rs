@@ -2442,7 +2442,6 @@ impl FakeFs {
         .unwrap();
     }
 
-    /// OIDs are assigned deterministically by position and stay distinct for any count.
     pub fn set_merge_base_content_for_repo(
         &self,
         dot_git: &Path,

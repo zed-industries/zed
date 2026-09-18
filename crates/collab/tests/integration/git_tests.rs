@@ -502,8 +502,7 @@ async fn test_blob_read_rpcs_are_bounded_on_host(
     let project_c = client_c.join_remote_project(project_id, cx_c).await;
     executor.run_until_parked();
 
-    // Each guest caps its own outbound RPCs, so their combined load exceeds the cap only if
-    // the host does not enforce its own limit. The host's limiter is what keeps this bounded.
+    // Two guests exceed the cap combined; only the host's own limiter holds them to it.
     let mut diffs = Vec::with_capacity(names.len() * 2);
     for (project, cx) in [(&project_b, &mut *cx_b), (&project_c, &mut *cx_c)] {
         let git_store = project.read_with(cx, |project, _| project.git_store().clone());

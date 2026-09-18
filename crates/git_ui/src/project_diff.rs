@@ -1542,8 +1542,6 @@ mod tests {
         );
     }
 
-    /// Excerpt order must come from `PathKey`, not from the order loads finish.
-    /// Uses more files than `MAX_CONCURRENT_BUFFER_LOADS` so the stream refills.
     #[gpui::test(iterations = 10)]
     async fn test_excerpts_are_ordered_by_path(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1623,7 +1621,6 @@ mod tests {
         fs.insert_tree(project_root, serde_json::Value::Object(tree))
             .await;
 
-        // Merge-base (old) content differs from the worktree, so every file is Modified.
         let merge_base = names
             .iter()
             .enumerate()
