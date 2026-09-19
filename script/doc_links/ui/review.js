@@ -154,7 +154,9 @@ function render() {
         <div class="badges">
           <span class="badge">Queue: <strong>${escapeHtml(decision.queue)}</strong></span>
           <span class="badge">Reason: <strong>${decision.reason_probability.toFixed(2)}</strong></span>
+          <span class="badge">Destination: <strong>${decision.destination_probability.toFixed(2)}</strong></span>
           <span class="badge">Anchor: <strong>${decision.anchor_probability.toFixed(2)}</strong></span>
+          <span class="badge">Anchor quality: <strong>${decision.anchor_quality_probability.toFixed(2)}</strong></span>
           <span class="badge">Choice: <strong>${escapeHtml(decision.anchor_choice)}</strong></span>
         </div>
       </div>

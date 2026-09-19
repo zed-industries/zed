@@ -101,10 +101,24 @@ def overlaps_excluded(block: Block, start: int, end: int) -> bool:
     return any(start < span.end and end > span.start for span in block.excluded)
 
 
+def earliest_occurrence(
+    phrase: str,
+    blocks: tuple[Block, ...],
+) -> tuple[int, int, Block] | None:
+    for block in blocks:
+        for match in re.finditer(re.escape(phrase), block.source):
+            start = block.start + match.start()
+            end = block.start + match.end()
+            if not overlaps_excluded(block, start, end):
+                return start, end, block
+    return None
+
+
 def anchor_options(
     target: Page,
     blocks: tuple[Block, ...],
     count: int,
+    all_blocks: tuple[Block, ...] | None = None,
 ) -> tuple[AnchorOption, ...]:
     primary_tokens = set(tokenize(target.title))
     secondary_tokens = set(tokenize(target.overview))
@@ -161,12 +175,19 @@ def anchor_options(
         key=lambda item: (-item[0], len(item[3].split()), item[1])
     )
     selected = []
-    seen = set()
+    search_blocks = all_blocks or blocks
     for score, start, end, phrase, block in candidates:
-        key = phrase.casefold()
-        if key in seen:
+        earliest = earliest_occurrence(phrase, search_blocks)
+        if earliest:
+            start, end, block = earliest
+        overlaps_selected = any(
+            start < option.end
+            and end > option.start
+            and block.start == option.block_start
+            for option in selected
+        )
+        if overlaps_selected:
             continue
-        seen.add(key)
         selected.append(
             AnchorOption(
                 identifier=f"anchor_{len(selected):03d}",
@@ -214,7 +235,12 @@ class Index:
         result = []
         for similarity, target in destinations:
             blocks = top_blocks(source, target, self.inverse, block_count)
-            anchors = anchor_options(target, blocks, anchor_count)
+            anchors = anchor_options(
+                target,
+                blocks,
+                anchor_count,
+                source.prose_blocks,
+            )
             if len(anchors) != anchor_count:
                 continue
             result.append(

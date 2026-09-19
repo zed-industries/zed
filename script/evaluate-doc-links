@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+
+import argparse
+from pathlib import Path
+
+from doc_links.evaluation import evaluate_report, load_cases
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Check an audit report against reviewed link regressions."
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=Path("target/doc-link-audit/audit.json"),
+    )
+    parser.add_argument(
+        "--cases",
+        type=Path,
+        default=Path("script/doc_links/evals/pr_64481_review.json"),
+    )
+    parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
+    return parser.parse_args()
+
+
+def main() -> int:
+    arguments = parse_arguments()
+    cases = load_cases(arguments.cases)
+    failures = evaluate_report(arguments.report, arguments.cases, arguments.docs_dir)
+    if failures:
+        for failure in failures:
+            print(f"FAIL {failure.identifier}: {failure.message}")
+        print(f"{len(failures)} of {len(cases)} reviewed regressions returned.")
+        return 1
+    print(f"Passed {len(cases)} reviewed regression cases.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

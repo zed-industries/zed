@@ -9,7 +9,7 @@ import sys
 from doc_links.corpus import load_pages, select_pages
 from doc_links.io import write_json_atomic, write_text_atomic
 from doc_links.jev import Client, api_key_from_environment, build_request, evaluate_source
-from doc_links.policy import Thresholds, decision_for
+from doc_links.policy import Thresholds, decisions_for_source
 from doc_links.retrieval import Index
 from doc_links.schema import Report
 
@@ -45,9 +45,19 @@ def parse_arguments() -> argparse.Namespace:
         default=defaults.automatic_reason,
     )
     parser.add_argument(
+        "--direct-destination",
+        type=probability,
+        default=defaults.direct_destination,
+    )
+    parser.add_argument(
         "--exact-anchor",
         type=probability,
         default=defaults.exact_anchor,
+    )
+    parser.add_argument(
+        "--anchor-quality",
+        type=probability,
+        default=defaults.anchor_quality,
     )
     parser.add_argument(
         "--near-reason",
@@ -95,7 +105,9 @@ def markdown_report(report: Report) -> str:
                 (
                     f"- `{decision.source_path}` → `{decision.target_path}`",
                     f"  - Reason: {decision.reason_probability:.3f}",
+                    f"  - Destination: {decision.destination_probability:.3f}",
                     f"  - Anchor: `{anchor}` ({decision.anchor_probability:.3f})",
+                    f"  - Anchor quality: {decision.anchor_quality_probability:.3f}",
                 )
             )
         lines.append("")
@@ -137,7 +149,9 @@ def main() -> int:
 
     thresholds = Thresholds(
         automatic_reason=arguments.automatic_reason,
+        direct_destination=arguments.direct_destination,
         exact_anchor=arguments.exact_anchor,
+        anchor_quality=arguments.anchor_quality,
         near_reason=arguments.near_reason,
     )
     auditable = tuple(source for source in selected if candidates[source.path])
@@ -174,9 +188,9 @@ def main() -> int:
         raise RuntimeError(f"TypeSafe returned multiple models: {sorted(models)}")
     response_model = models.pop() if models else arguments.model
     decisions = tuple(
-        decision_for(source, evaluation, thresholds)
+        decision
         for source, result in results
-        for evaluation in result.evaluations
+        for decision in decisions_for_source(source, result.evaluations, thresholds)
     )
     queue_order = {
         "automatic": 0,
@@ -190,6 +204,8 @@ def main() -> int:
             key=lambda item: (
                 queue_order[item.queue],
                 -item.reason_probability,
+                -item.destination_probability,
+                -item.anchor_quality_probability,
                 -item.anchor_probability,
                 item.source_path,
                 item.target_path,

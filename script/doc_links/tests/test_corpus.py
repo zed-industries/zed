@@ -25,5 +25,13 @@ class CorpusTest(unittest.TestCase):
         self.assertEqual([str(page.path) for page in selected], ["ai/direct.md"])
 
 
+    def test_root_filename_matches_only_root_page(self):
+        pages = (
+            self.page("languages.md"),
+            self.page("extensions/languages.md"),
+        )
+        selected = select_pages(pages, ("languages.md",))
+        self.assertEqual([str(page.path) for page in selected], ["languages.md"])
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,24 @@ class Page:
         return " ".join(block.visible_text for block in self.prose_blocks[:2])[:1000]
 
 
+
+
+def page_kind(path: Path) -> str:
+    value = str(path)
+    if value.startswith("reference/"):
+        return "reference"
+    if value.startswith("migrate/"):
+        return "migration guide"
+    if value == "extensions/installing-extensions.md" or "install" in path.stem:
+        return "installation guide"
+    if value.startswith("extensions/"):
+        return "extension authoring guide"
+    if path.stem in {"overview", "languages", "getting-started"}:
+        return "overview"
+    if value.startswith("languages/"):
+        return "language guide"
+    return "guide"
+
 def resolve_link(source_path: Path, destination: str, docs_dir: Path) -> Path | None:
     link = destination.strip("<>").split("#", 1)[0].split("?", 1)[0]
     if not link or link.startswith(("mailto:", "tel:")):
@@ -108,10 +126,13 @@ def relative_link(source_path: Path, target_path: Path) -> str:
 def select_pages(
     pages: Iterable[Page], patterns: tuple[str, ...]
 ) -> tuple[Page, ...]:
+    def matches(path: Path, pattern: str) -> bool:
+        return str(path) == pattern if "/" not in pattern else path.match(pattern)
+
     selected = []
     for page in pages:
         if page.prose_blocks and (
-            not patterns or any(page.path.match(pattern) for pattern in patterns)
+            not patterns or any(matches(page.path, pattern) for pattern in patterns)
         ):
             selected.append(page)
     return tuple(selected)

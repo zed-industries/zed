@@ -86,6 +86,36 @@ Run `command palette` in code.
         )
         self.assertTrue(all(not anchor.text.startswith("1.") for anchor in anchors))
 
+    def test_repeated_anchor_text_uses_first_eligible_occurrence(self):
+        source_text = (
+            "Use the command palette for actions.\n\n"
+            "Open the command palette again.\n"
+        )
+        target_text = "# Command Palette\n\nRun commands.\n"
+        source = Page(
+            path=Path("source.md"),
+            title="Source",
+            source=source_text,
+            blocks=markdown.parse(source_text),
+            existing_links=frozenset(),
+        )
+        target = Page(
+            path=Path("target.md"),
+            title="Command Palette",
+            source=target_text,
+            blocks=markdown.parse(target_text),
+            existing_links=frozenset(),
+        )
+        anchors = anchor_options(
+            target,
+            source.prose_blocks,
+            10,
+            source.prose_blocks,
+        )
+        matches = [item for item in anchors if item.text == "command palette"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].start, source_text.index("command palette"))
+
     def test_heading_table_html_and_code_are_not_anchor_blocks(self):
         source = """# Heading
 

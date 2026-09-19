@@ -95,8 +95,10 @@ class Decision:
     target_path: str
     target_hash: str
     reason_probability: float
+    destination_probability: float
     anchor_choice: str
     anchor_probability: float
+    anchor_quality_probability: float
     anchor: Anchor | None
 
     def to_dict(self) -> dict[str, Any]:
@@ -107,8 +109,10 @@ class Decision:
             "target_path": self.target_path,
             "target_hash": self.target_hash,
             "reason_probability": self.reason_probability,
+            "destination_probability": self.destination_probability,
             "anchor_choice": self.anchor_choice,
             "anchor_probability": self.anchor_probability,
+            "anchor_quality_probability": self.anchor_quality_probability,
             "anchor": self.anchor.to_dict() if self.anchor else None,
         }
 
@@ -138,6 +142,10 @@ class Decision:
                 value.get("reason_probability"),
                 "decision.reason_probability",
             ),
+            destination_probability=require_probability(
+                value.get("destination_probability"),
+                "decision.destination_probability",
+            ),
             anchor_choice=require_string(
                 value.get("anchor_choice"),
                 "decision.anchor_choice",
@@ -145,6 +153,10 @@ class Decision:
             anchor_probability=require_probability(
                 value.get("anchor_probability"),
                 "decision.anchor_probability",
+            ),
+            anchor_quality_probability=require_probability(
+                value.get("anchor_quality_probability"),
+                "decision.anchor_quality_probability",
             ),
             anchor=Anchor.from_dict(anchor_raw) if anchor_raw is not None else None,
         )

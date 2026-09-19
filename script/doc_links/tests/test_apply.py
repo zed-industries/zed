@@ -56,8 +56,10 @@ class ApplyTest(unittest.TestCase):
                 (self.docs / "target.md").read_text(encoding="utf-8")
             ),
             reason_probability=0.9,
+            destination_probability=0.9,
             anchor_choice="anchor_000",
             anchor_probability=0.8,
+            anchor_quality_probability=0.9,
             anchor=anchor,
         )
 
@@ -209,8 +211,10 @@ class ApplyTest(unittest.TestCase):
                 (self.docs / "target.md").read_text(encoding="utf-8")
             ),
             reason_probability=0.9,
+            destination_probability=0.9,
             anchor_choice="anchor_000",
             anchor_probability=0.8,
+            anchor_quality_probability=0.9,
             anchor=anchor,
         )
         with self.assertRaisesRegex(ValueError, "source block changed"):

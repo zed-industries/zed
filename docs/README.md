@@ -61,6 +61,22 @@ Limit an audit to one documentation area with one or more source globs:
 script/audit-doc-links --source 'ai/*.md'
 ```
 
+Each proposal has separate checks for reader value, direct destination quality,
+exact anchor selection, and anchor phrase quality. When destinations compete for
+the same phrase, only the strongest result remains actionable. When the same
+phrase points to one destination more than once, the first qualified occurrence
+wins.
+
+Check the report against reviewed regressions before opening the review page:
+
+```sh
+script/evaluate-doc-links
+```
+
+The default cases come from review feedback on PR #64481. Add new false
+positives to `script/doc_links/evals/pr_64481_review.json` or pass another case
+file with `--cases`.
+
 Generate a self-contained review page:
 
 ```sh

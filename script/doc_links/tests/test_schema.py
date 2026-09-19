@@ -1,5 +1,6 @@
 import unittest
 
+from doc_links import SCHEMA_VERSION
 from doc_links.schema import parse_review_export
 
 
@@ -8,7 +9,7 @@ class SchemaTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown decision"):
             parse_review_export(
                 {
-                    "schema_version": 1,
+                    "schema_version": SCHEMA_VERSION,
                     "report_hash": "hash",
                     "decisions": [],
                     "labels": {

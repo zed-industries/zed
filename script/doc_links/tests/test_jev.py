@@ -14,6 +14,7 @@ from doc_links.corpus import Page
 from doc_links import markdown
 from doc_links.jev import (
     Client,
+    Evaluation,
     MaxTokensError,
     build_request,
     evaluate_source,
@@ -22,8 +23,6 @@ from doc_links.jev import (
 )
 from doc_links.policy import Thresholds, queue_for
 from doc_links.retrieval import AnchorOption, DestinationCandidate
-
-
 
 
 class FakeResponse:
@@ -63,8 +62,8 @@ def fixture():
         AnchorOption(
             identifier=f"anchor_{index:03d}",
             text="command palette" if index == 0 else f"candidate {index}",
-            start=start,
-            end=start + len("command palette"),
+            start=start + index,
+            end=start + index + len("command palette"),
             block_start=block.start,
             block_end=block.end,
             block_hash=block.content_hash,
@@ -86,6 +85,7 @@ def fixture():
         "model": "jev-1.13.0",
         "answers": {
             "reason_target_000": {"type": "noul", "noul": 0.9},
+            "destination_target_000": {"type": "noul", "noul": 0.9},
             "anchor_target_000": {
                 "type": "choice",
                 "choice": "anchor_000",
@@ -95,23 +95,32 @@ def fixture():
         },
         "usage": {"input_tokens": 100, "output_tokens": 10},
     }
-    return payload, target_map, response
+    quality_response = {
+        "model": "jev-1.13.0",
+        "answers": {
+            "quality_proposal_000": {"type": "noul", "noul": 0.9},
+        },
+        "usage": {"input_tokens": 20, "output_tokens": 2},
+    }
+    return source, candidate, payload, target_map, response, quality_response
 
 
 class JevTest(unittest.TestCase):
     def test_validates_complete_response(self):
-        _, target_map, response = fixture()
+        _, _, _, target_map, response, _ = fixture()
         result = validate_response(response, target_map)
-        self.assertEqual(result.evaluations[0].anchor_probability, 0.8)
+        evaluation = result.evaluations[0]
+        self.assertEqual(evaluation.anchor_probability, 0.8)
+        self.assertEqual(evaluation.destination_probability, 0.9)
 
     def test_missing_no_anchor_probability_is_rejected(self):
-        _, target_map, response = fixture()
+        _, _, _, target_map, response, _ = fixture()
         del response["answers"]["anchor_target_000"]["probabilities"]["no_anchor"]
         with self.assertRaisesRegex(ValueError, "do not match choices"):
             validate_response(response, target_map)
 
     def test_invalid_response_is_not_cached(self):
-        payload, target_map, response = fixture()
+        _, _, payload, target_map, response, _ = fixture()
         response["answers"] = {}
         with tempfile.TemporaryDirectory() as directory:
             client = Client("key", Path(directory))
@@ -127,7 +136,7 @@ class JevTest(unittest.TestCase):
             self.assertEqual(list(Path(directory).glob("*.json")), [])
 
     def test_valid_response_is_cached_after_validation(self):
-        payload, target_map, response = fixture()
+        _, _, payload, target_map, response, _ = fixture()
         with tempfile.TemporaryDirectory() as directory:
             client = Client("key", Path(directory))
             with mock.patch(
@@ -155,7 +164,7 @@ class JevTest(unittest.TestCase):
         self.assertEqual(retry_delay(SimpleNamespace(headers=headers), 3), 8)
 
     def test_rate_limit_is_retried(self):
-        payload, target_map, response = fixture()
+        _, _, payload, target_map, response, _ = fixture()
         headers = Message()
         headers["Retry-After"] = "0"
         error = urllib.error.HTTPError(
@@ -180,28 +189,21 @@ class JevTest(unittest.TestCase):
             self.assertEqual(result.model, "jev-1.13.0")
 
     def test_oversized_request_splits_targets_not_anchor_choices(self):
-        _, target_map, _ = fixture()
-        candidate = next(iter(target_map.values()))
+        source, candidate, _, _, response, quality_response = fixture()
         candidates = (candidate, candidate)
-        source_text = "# Source\n\nUse the command palette.\n"
-        source = Page(
-            path=Path("source.md"),
-            title="Source",
-            source=source_text,
-            blocks=markdown.parse(source_text),
-            existing_links=frozenset(),
-        )
 
         class SplittingClient:
             def __init__(self):
                 self.target_counts = []
 
             def evaluate(self, payload, validator):
-                target_count = len(payload["state"]["targets"])
-                self.target_counts.append(target_count)
-                if target_count > 1:
-                    raise MaxTokensError("too large")
-                return validator(fixture()[2])
+                if "targets" in payload["state"]:
+                    target_count = len(payload["state"]["targets"])
+                    self.target_counts.append(target_count)
+                    if target_count > 1:
+                        raise MaxTokensError("too large")
+                    return validator(response)
+                return validator(quality_response)
 
         client = SplittingClient()
         result = evaluate_source(client, source, candidates, "jev-1.13.0")
@@ -210,14 +212,42 @@ class JevTest(unittest.TestCase):
         self.assertTrue(
             all(len(item.target.anchors) == 6 for item in result.evaluations)
         )
+        self.assertTrue(
+            all(item.anchor_quality_probability == 0.9 for item in result.evaluations)
+        )
+
+    def evaluation(self, **changes):
+        _, candidate, _, _, _, _ = fixture()
+        values = {
+            "target": candidate,
+            "reason_probability": 0.9,
+            "destination_probability": 0.9,
+            "anchor_choice": "anchor_000",
+            "anchor_probability": 0.7,
+            "anchor_quality_probability": 0.9,
+        }
+        values.update(changes)
+        return Evaluation(**values)
 
     def test_policy_ladder(self):
         thresholds = Thresholds()
-        anchor = object()
-        self.assertEqual(queue_for(0.9, anchor, 0.7, thresholds), "automatic")
-        self.assertEqual(queue_for(0.9, anchor, 0.5, thresholds), "strong_review")
-        self.assertEqual(queue_for(0.76, anchor, 0.7, thresholds), "near_review")
-        self.assertEqual(queue_for(0.7, anchor, 0.7, thresholds), "rejected")
+        self.assertEqual(queue_for(self.evaluation(), thresholds), "automatic")
+        self.assertEqual(
+            queue_for(self.evaluation(destination_probability=0.5), thresholds),
+            "rejected",
+        )
+        self.assertEqual(
+            queue_for(self.evaluation(anchor_quality_probability=0.5), thresholds),
+            "strong_review",
+        )
+        self.assertEqual(
+            queue_for(self.evaluation(reason_probability=0.76), thresholds),
+            "near_review",
+        )
+        self.assertEqual(
+            queue_for(self.evaluation(reason_probability=0.7), thresholds),
+            "rejected",
+        )
 
 
 if __name__ == "__main__":

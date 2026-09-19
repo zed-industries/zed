@@ -43,8 +43,10 @@ class ReviewTest(unittest.TestCase):
                 target_path="target.md",
                 target_hash=content_hash(self.target),
                 reason_probability=0.9,
+                destination_probability=0.9,
                 anchor_choice="anchor_000",
                 anchor_probability=0.8,
+                anchor_quality_probability=0.9,
                 anchor=anchor,
             )
             for index in range(2)
@@ -53,7 +55,9 @@ class ReviewTest(unittest.TestCase):
             model="jev-1.13.0",
             thresholds={
                 "automatic_reason": 0.8,
+                "direct_destination": 0.8,
                 "exact_anchor": 0.6,
+                "anchor_quality": 0.8,
                 "near_reason": 0.75,
             },
             pages={
