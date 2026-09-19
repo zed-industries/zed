@@ -3277,45 +3277,21 @@ impl LspCommand for GetCompletions {
                             return false;
                         }
 
-                        let default_edit_range = lsp_defaults.as_ref().and_then(|lsp_defaults| {
-                            lsp_defaults
-                                .edit_range
-                                .as_ref()
-                                .and_then(|range| match range {
-                                    CompletionListItemDefaultsEditRange::Range(r) => Some(r),
-                                    _ => None,
-                                })
-                        });
+                        let range = range_for_token
+                            .get_or_insert_with(|| {
+                                let offset = self.position.to_offset(&snapshot);
+                                let (range, kind) = snapshot
+                                    .surrounding_word(offset, Some(CharScopeContext::Completion));
+                                let range = if kind == Some(CharKind::Word) {
+                                    range
+                                } else {
+                                    offset..offset
+                                };
 
-                        let range = if let Some(range) = default_edit_range {
-                            let range = range_from_lsp(*range);
-                            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                            if start != range.start.0 || end != range.end.0 {
-                                log::info!("completion out of expected range");
-                                return false;
-                            }
-
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end)
-                        } else {
-                            range_for_token
-                                .get_or_insert_with(|| {
-                                    let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot.surrounding_word(
-                                        offset,
-                                        Some(CharScopeContext::Completion),
-                                    );
-                                    let range = if kind == Some(CharKind::Word) {
-                                        range
-                                    } else {
-                                        offset..offset
-                                    };
-
-                                    snapshot.anchor_before(range.start)
-                                        ..snapshot.anchor_after(range.end)
-                                })
-                                .clone()
-                        };
+                                snapshot.anchor_before(range.start)
+                                    ..snapshot.anchor_after(range.end)
+                            })
+                            .clone();
 
                         // We already know text_edit is None here
                         let text = lsp_completion
@@ -3324,9 +3300,10 @@ impl LspCommand for GetCompletions {
                             .unwrap_or(&lsp_completion.label)
                             .clone();
 
+                        let insert_range = Some(range.start..snapshot.anchor_after(self.position));
                         ParsedCompletionEdit {
                             replace_range: range,
-                            insert_range: None,
+                            insert_range,
                             new_text: text,
                         }
                     }

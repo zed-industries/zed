@@ -57,6 +57,7 @@ scap.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 core-video.workspace = true
+objc2-core-foundation.workspace = true
 coreaudio-rs = "0.12.1"
 
 [dev-dependencies]

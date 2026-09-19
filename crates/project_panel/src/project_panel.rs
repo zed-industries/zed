@@ -1546,10 +1546,14 @@ impl ProjectPanel {
             match expanded_dir_ids.binary_search(&entry_id) {
                 Ok(ix) => {
                     expanded_dir_ids.remove(ix);
+                    self.selection = Some(SelectedEntry {
+                        worktree_id,
+                        entry_id,
+                    });
                     self.update_visible_entries(
                         Some((worktree_id, entry_id)),
                         false,
-                        false,
+                        true,
                         window,
                         cx,
                     );

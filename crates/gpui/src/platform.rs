@@ -32,7 +32,8 @@ pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
 #[cfg(not(feature = "screen-capture"))]
 pub(crate) type PlatformScreenCaptureFrame = ();
 #[cfg(all(target_os = "macos", feature = "screen-capture"))]
-pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBuffer;
+pub(crate) type PlatformScreenCaptureFrame =
+    objc2_core_foundation::CFRetained<objc2_core_video::CVImageBuffer>;
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
@@ -47,6 +48,7 @@ use crate::{
 use anyhow::bail;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
+use collections::FxHashMap;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
@@ -60,6 +62,7 @@ use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
@@ -1383,13 +1386,6 @@ pub enum AtlasKey {
 }
 
 impl AtlasKey {
-    #[cfg_attr(
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            not(any(feature = "x11", feature = "wayland"))
-        ),
-        allow(dead_code)
-    )]
     /// Returns the texture kind for this atlas key.
     pub fn texture_kind(&self) -> AtlasTextureKind {
         match self {
@@ -1428,9 +1424,10 @@ impl From<RenderImageParams> for AtlasKey {
 
 #[expect(missing_docs)]
 pub trait PlatformAtlas {
+    /// The builder runs with the atlas locked and must not re-enter the same atlas.
     fn get_or_insert_with<'a>(
         &self,
-        key: &AtlasKey,
+        key: AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
@@ -1438,6 +1435,136 @@ pub trait PlatformAtlas {
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn contains(&self, _key: &AtlasKey) -> bool {
         false
+    }
+}
+
+#[doc(hidden)]
+pub trait AtlasBackend {
+    fn insert(
+        &mut self,
+        kind: AtlasTextureKind,
+        size: Size<DevicePixels>,
+        bytes: &[u8],
+    ) -> Result<AtlasTile>;
+
+    fn remove(&mut self, tile: AtlasTile);
+}
+
+#[doc(hidden)]
+pub struct AtlasState<Backend> {
+    tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    pub backend: Backend,
+}
+
+impl<Backend> AtlasState<Backend> {
+    pub fn new(backend: Backend) -> Self {
+        Self {
+            tiles_by_key: FxHashMap::default(),
+            backend,
+        }
+    }
+
+    pub fn contains(&self, key: &AtlasKey) -> bool {
+        self.tiles_by_key.contains_key(key)
+    }
+
+    pub fn clear(&mut self, reset_backend: impl FnOnce(&mut Backend)) {
+        self.tiles_by_key.clear();
+        reset_backend(&mut self.backend);
+    }
+}
+
+impl<Backend: Default> Default for AtlasState<Backend> {
+    fn default() -> Self {
+        Self::new(Backend::default())
+    }
+}
+
+impl<Backend: AtlasBackend> AtlasState<Backend> {
+    pub fn get_or_insert_with<'a>(
+        &mut self,
+        key: AtlasKey,
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<Option<AtlasTile>> {
+        match self.tiles_by_key.entry(key) {
+            Entry::Occupied(entry) => Ok(Some(*entry.get())),
+            Entry::Vacant(entry) => {
+                profiling::scope!("new tile");
+                let Some((size, bytes)) = build()? else {
+                    return Ok(None);
+                };
+                let tile = self
+                    .backend
+                    .insert(entry.key().texture_kind(), size, &bytes)?;
+                entry.insert(tile);
+                Ok(Some(tile))
+            }
+        }
+    }
+
+    pub fn remove(&mut self, key: &AtlasKey) {
+        if let Some(tile) = self.tiles_by_key.remove(key) {
+            self.backend.remove(tile);
+        }
+    }
+}
+
+/// A sprite atlas for windows without a GPU. It hands out uniquely identified
+/// tiles without uploading any pixels, so glyph, SVG, and image painting can
+/// run to completion in tests and headless platforms.
+#[derive(Default)]
+pub struct HeadlessAtlas(parking_lot::Mutex<AtlasState<HeadlessAtlasBackend>>);
+
+#[doc(hidden)]
+#[derive(Default)]
+pub struct HeadlessAtlasBackend {
+    next_id: u32,
+}
+
+impl AtlasBackend for HeadlessAtlasBackend {
+    fn insert(
+        &mut self,
+        kind: AtlasTextureKind,
+        size: Size<DevicePixels>,
+        _bytes: &[u8],
+    ) -> Result<AtlasTile> {
+        self.next_id += 1;
+        let texture_id = self.next_id;
+        self.next_id += 1;
+        let tile_id = self.next_id;
+        Ok(AtlasTile {
+            texture_id: AtlasTextureId {
+                index: texture_id,
+                kind,
+            },
+            tile_id: TileId(tile_id),
+            padding: 0,
+            bounds: Bounds {
+                origin: Point::default(),
+                size,
+            },
+        })
+    }
+
+    fn remove(&mut self, _tile: AtlasTile) {}
+}
+
+impl PlatformAtlas for HeadlessAtlas {
+    fn get_or_insert_with<'a>(
+        &self,
+        key: AtlasKey,
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<Option<AtlasTile>> {
+        self.0.lock().get_or_insert_with(key, build)
+    }
+
+    fn remove(&self, key: &AtlasKey) {
+        self.0.lock().remove(key);
+    }
+
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    fn contains(&self, key: &AtlasKey) -> bool {
+        self.0.lock().contains(key)
     }
 }
 
@@ -3026,6 +3153,124 @@ mod image_tests {
         for pixel in bytes.chunks_exact(4) {
             assert_eq!(pixel, &[0xF8, 0xBD, 0x38, 0xFF]);
         }
+    }
+}
+
+#[cfg(test)]
+mod atlas_tests {
+    use super::*;
+
+    const TILE_SIZE: Size<DevicePixels> = Size {
+        width: DevicePixels(1),
+        height: DevicePixels(1),
+    };
+
+    #[derive(Default)]
+    struct RecordingAtlasBackend {
+        insert_calls: u32,
+        fail_next_insert: bool,
+        removed_tiles: Vec<AtlasTile>,
+    }
+
+    impl AtlasBackend for RecordingAtlasBackend {
+        fn insert(
+            &mut self,
+            kind: AtlasTextureKind,
+            size: Size<DevicePixels>,
+            _bytes: &[u8],
+        ) -> Result<AtlasTile> {
+            self.insert_calls += 1;
+            if std::mem::take(&mut self.fail_next_insert) {
+                anyhow::bail!("backend failed");
+            }
+            Ok(AtlasTile {
+                texture_id: AtlasTextureId { index: 0, kind },
+                tile_id: TileId(self.insert_calls),
+                padding: 0,
+                bounds: Bounds {
+                    origin: Point::default(),
+                    size,
+                },
+            })
+        }
+
+        fn remove(&mut self, tile: AtlasTile) {
+            self.removed_tiles.push(tile);
+        }
+    }
+
+    fn image_key(image_id: usize) -> AtlasKey {
+        AtlasKey::Image(RenderImageParams {
+            image_id: crate::ImageId(image_id),
+            frame_index: 0,
+        })
+    }
+
+    fn build_tile() -> Result<Option<(Size<DevicePixels>, Cow<'static, [u8]>)>> {
+        Ok(Some((TILE_SIZE, Cow::Borrowed(&[0, 0, 0, 255]))))
+    }
+
+    #[test]
+    fn only_successful_inserts_are_cached() -> Result<()> {
+        let mut state = AtlasState::new(RecordingAtlasBackend::default());
+        let key = image_key(1);
+
+        assert_eq!(
+            state.get_or_insert_with(key.clone(), &mut || Ok(None))?,
+            None
+        );
+        state
+            .get_or_insert_with(key.clone(), &mut || anyhow::bail!("builder failed"))
+            .expect_err("builder error should propagate");
+        assert!(!state.contains(&key));
+        assert_eq!(state.backend.insert_calls, 0);
+
+        state.backend.fail_next_insert = true;
+        state
+            .get_or_insert_with(key.clone(), &mut build_tile)
+            .expect_err("backend error should propagate");
+        assert!(!state.contains(&key));
+        assert_eq!(state.backend.insert_calls, 1);
+
+        let tile = state
+            .get_or_insert_with(key.clone(), &mut build_tile)?
+            .context("builder should produce a tile")?;
+        assert_eq!(tile.texture_id.kind, key.texture_kind());
+        assert_eq!(
+            state.get_or_insert_with(key.clone(), &mut || {
+                anyhow::bail!("cache hit must not call the builder")
+            })?,
+            Some(tile)
+        );
+        assert!(state.contains(&key));
+        assert_eq!(state.backend.insert_calls, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn remove_and_clear_invalidate_keys() -> Result<()> {
+        let mut state = AtlasState::new(RecordingAtlasBackend::default());
+        let key = image_key(1);
+        let other_key = image_key(2);
+        let tile = state
+            .get_or_insert_with(key.clone(), &mut build_tile)?
+            .context("builder should produce a tile")?;
+        state
+            .get_or_insert_with(other_key.clone(), &mut build_tile)?
+            .context("builder should produce another tile")?;
+
+        state.remove(&key);
+        state.remove(&key);
+        assert!(!state.contains(&key));
+        assert!(state.contains(&other_key));
+        assert_eq!(state.backend.removed_tiles, vec![tile]);
+
+        let mut reset_calls = 0;
+        state.clear(|_| reset_calls += 1);
+        assert_eq!(reset_calls, 1);
+        assert!(!state.contains(&other_key));
+        assert_eq!(state.backend.removed_tiles, vec![tile]);
+        Ok(())
     }
 }
 

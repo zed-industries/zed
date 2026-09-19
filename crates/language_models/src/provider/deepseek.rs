@@ -166,7 +166,7 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = IndexMap::default();
 
-        models.insert("deepseek-v4-flash", deepseek::Model::V4Flash);
+        models.insert("deepseek-flash", deepseek::Model::V4_1Flash);
         models.insert("deepseek-v4-pro", deepseek::Model::V4Pro);
 
         for available_model in &Self::settings(cx).available_models {
@@ -284,7 +284,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     fn supports_thinking(&self) -> bool {
         matches!(
             self.model,
-            deepseek::Model::V4Flash | deepseek::Model::V4Pro
+            deepseek::Model::V4_1Flash | deepseek::Model::V4Pro
         )
     }
 
@@ -317,7 +317,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images()
     }
 
     fn telemetry_id(&self) -> String {
@@ -376,6 +376,8 @@ pub fn into_deepseek(
         .as_ref()
         .is_some_and(|thinking| thinking.kind == deepseek::ThinkingType::Enabled);
 
+    let supports_images = model.supports_images();
+
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
 
@@ -390,15 +392,24 @@ pub fn into_deepseek(
                     };
 
                     if should_add {
-                        messages.push(match message.role {
-                            Role::User => deepseek::RequestMessage::User { content: text },
-                            Role::Assistant => deepseek::RequestMessage::Assistant {
-                                content: Some(text),
-                                tool_calls: Vec::new(),
-                                reasoning_content: current_reasoning.take(),
-                            },
-                            Role::System => deepseek::RequestMessage::System { content: text },
-                        });
+                        match message.role {
+                            Role::User => {
+                                add_user_message_content_part(
+                                    deepseek::MessagePart::Text { text },
+                                    &mut messages,
+                                );
+                            }
+                            Role::Assistant => {
+                                messages.push(deepseek::RequestMessage::Assistant {
+                                    content: Some(text),
+                                    tool_calls: Vec::new(),
+                                    reasoning_content: current_reasoning.take(),
+                                });
+                            }
+                            Role::System => {
+                                messages.push(deepseek::RequestMessage::System { content: text });
+                            }
+                        }
                     }
                 }
                 MessageContent::Thinking { text, .. } => {
@@ -406,6 +417,17 @@ pub fn into_deepseek(
                     current_reasoning.get_or_insert_default().push_str(&text);
                 }
                 MessageContent::RedactedThinking(_) => {}
+                MessageContent::Image(image) if message.role == Role::User => {
+                    add_user_message_content_part(
+                        deepseek::MessagePart::Image {
+                            image_url: deepseek::ImageUrl {
+                                url: image.to_base64_url(),
+                                detail: None,
+                            },
+                        },
+                        &mut messages,
+                    );
+                }
                 MessageContent::Image(_) => {}
                 MessageContent::Compaction(_) => {}
                 MessageContent::ToolUse(tool_use) => {
@@ -436,24 +458,32 @@ pub fn into_deepseek(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let mut text_parts: Vec<String> = Vec::new();
-                    for part in &tool_result.content {
-                        match part {
+                    let content: Vec<deepseek::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .filter_map(|part| match part {
                             LanguageModelToolResultContent::Text(text) => {
-                                text_parts.push(text.to_string());
+                                Some(deepseek::MessagePart::Text {
+                                    text: text.to_string(),
+                                })
                             }
-                            LanguageModelToolResultContent::Image(_) => {
-                                text_parts.push("[Tool responded with an image]".to_string());
+                            LanguageModelToolResultContent::Image(image) => {
+                                if supports_images {
+                                    Some(deepseek::MessagePart::Image {
+                                        image_url: deepseek::ImageUrl {
+                                            url: image.to_base64_url(),
+                                            detail: None,
+                                        },
+                                    })
+                                } else {
+                                    None
+                                }
                             }
-                        }
-                    }
-                    let content = if text_parts.is_empty() {
-                        "<Tool returned an empty string>".to_string()
-                    } else {
-                        text_parts.join("\n")
-                    };
+                        })
+                        .collect();
+
                     messages.push(deepseek::RequestMessage::Tool {
-                        content,
+                        content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
@@ -508,12 +538,28 @@ pub fn into_deepseek(
     })
 }
 
+fn add_user_message_content_part(
+    new_part: deepseek::MessagePart,
+    messages: &mut Vec<deepseek::RequestMessage>,
+) {
+    match messages.last_mut() {
+        Some(deepseek::RequestMessage::User { content }) => {
+            content.push_part(new_part);
+        }
+        _ => {
+            messages.push(deepseek::RequestMessage::User {
+                content: deepseek::MessageContent::from(vec![new_part]),
+            });
+        }
+    }
+}
+
 fn deepseek_thinking(
     model: &deepseek::Model,
     thinking_allowed: bool,
 ) -> Option<deepseek::Thinking> {
     let kind = match model {
-        deepseek::Model::V4Flash | deepseek::Model::V4Pro => {
+        deepseek::Model::V4_1Flash | deepseek::Model::V4Pro => {
             if thinking_allowed {
                 deepseek::ThinkingType::Enabled
             } else {
@@ -671,6 +717,47 @@ impl DeepSeekEventMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use language_model::{LanguageModelImage, LanguageModelRequestMessage};
+    use serde_json::json;
+
+    #[test]
+    fn serializes_deepseek_image_parts() -> Result<()> {
+        let image = LanguageModelImage {
+            source: SharedString::from("aGVsbG8="),
+        };
+        let image_url = image.to_base64_url();
+        let request = into_deepseek(
+            LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![
+                        MessageContent::Text("Describe this".to_string()),
+                        MessageContent::Image(image),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+            &deepseek::Model::V4_1Flash,
+            Some(1024),
+        )?;
+
+        assert_eq!(
+            serde_json::to_value(&request.messages)?,
+            json!([
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "text", "text": "Describe this" },
+                        { "type": "image_url", "image_url": { "url": image_url } }
+                    ]
+                }
+            ])
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn request_output_limits_reach_deepseek_payloads() -> Result<()> {

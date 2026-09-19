@@ -195,7 +195,7 @@ impl WebTextSystem {
         }
         let mut replacements = Vec::new();
         for candidate in collect_candidates(text, font_runs, layout) {
-            if !self.canvas_font_fallback.allows(candidate.color) {
+            if !self.canvas_font_fallback.allows(candidate.is_emoji) {
                 continue;
             }
             let Some(glyphs) = candidate.glyphs else {
