@@ -716,6 +716,17 @@
     "current_line_highlight": null,
     // Maximum number of columns to display in the minimap.
     "max_width_columns": 80,
+    // Whether to show git diff indicators in the minimap.
+    // Set to null to use the scrollbar git diff setting.
+    "git_diff": null,
+    // Which diagnostic indicators to show in the minimap:
+    //  - "none": do not show diagnostics
+    //  - "error": show only errors
+    //  - "warning": show only errors and warnings
+    //  - "information": show only errors, warnings, and information
+    //  - "all": show all diagnostics
+    //  - null: use the scrollbar diagnostics setting
+    "diagnostics": null,
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,

@@ -413,9 +413,7 @@ impl Editor {
                 cx,
             );
 
-            self.display_map.update(cx, |display_map, cx| {
-                display_map.insert_blocks(blocks, cx).into_iter().collect()
-            })
+            self.insert_blocks(blocks, None, cx).into_iter().collect()
         } else {
             // Ensure that, even if there's no global renderer set, we still use
             // an empty set of blocks, such that we can record the active group
@@ -440,10 +438,7 @@ impl Editor {
 
         let prev = mem::replace(&mut self.active_diagnostics, ActiveDiagnostic::None);
         if let ActiveDiagnostic::Group(group) = prev {
-            self.display_map.update(cx, |display_map, cx| {
-                display_map.remove_blocks(group.blocks, cx);
-            });
-            cx.notify();
+            self.remove_blocks(group.blocks, None, cx);
         }
     }
 
@@ -592,7 +587,7 @@ impl Editor {
         }
         self.refresh_active_diagnostics(cx);
         self.refresh_inline_diagnostics(true, window, cx);
-        self.scrollbar_marker_state.dirty = true;
+        self.dirty_marker_states();
         cx.notify();
     }
 
