@@ -137,45 +137,36 @@ async fn extract_to_staging(
     staging_path: &Path,
     asset_kind: AssetKind,
 ) -> Result<()> {
-    match digest {
-        Some(expected_sha_256) => {
-            let temp_asset_file = tempfile::NamedTempFile::new()
-                .with_context(|| format!("creating a temporary file for {url}"))?;
-            let (temp_asset_file, _temp_guard) = temp_asset_file.into_parts();
-            let mut writer = HashingWriter {
-                writer: async_fs::File::from(temp_asset_file),
-                hasher: Sha256::new(),
-            };
-            futures::io::copy(&mut BufReader::new(body), &mut writer)
-                .await
-                .with_context(|| {
-                    format!("saving archive contents into the temporary file for {url}")
-                })?;
-            let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
+    // Buffer the whole response on disk before extracting, even when there is
+    // no digest to verify. Extracting straight from the network stream turns
+    // an interrupted download into an opaque archive error that is
+    // indistinguishable from a corrupt asset.
+    let temp_asset_file = tempfile::NamedTempFile::new()
+        .with_context(|| format!("creating a temporary file for {url}"))?;
+    let (temp_asset_file, _temp_guard) = temp_asset_file.into_parts();
+    let mut writer = HashingWriter {
+        writer: async_fs::File::from(temp_asset_file),
+        hasher: Sha256::new(),
+    };
+    futures::io::copy(&mut BufReader::new(body), &mut writer)
+        .await
+        .with_context(|| format!("saving archive contents into the temporary file for {url}"))?;
+    let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
 
-            anyhow::ensure!(
-                sha256_matches(&asset_sha_256, expected_sha_256),
-                "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
-            );
-            writer
-                .writer
-                .seek(std::io::SeekFrom::Start(0))
-                .await
-                .with_context(|| format!("seeking temporary file for {url}"))?;
-            stream_file_archive(&mut writer.writer, url, staging_path, asset_kind)
-                .await
-                .with_context(|| {
-                    format!("extracting downloaded asset for {url} into {staging_path:?}")
-                })?;
-        }
-        None => {
-            stream_response_archive(body, url, staging_path, asset_kind)
-                .await
-                .with_context(|| {
-                    format!("extracting response for asset {url} into {staging_path:?}")
-                })?;
-        }
+    if let Some(expected_sha_256) = digest {
+        anyhow::ensure!(
+            sha256_matches(&asset_sha_256, expected_sha_256),
+            "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
+        );
     }
+    writer
+        .writer
+        .seek(std::io::SeekFrom::Start(0))
+        .await
+        .with_context(|| format!("seeking temporary file for {url}"))?;
+    stream_file_archive(&mut writer.writer, url, staging_path, asset_kind)
+        .await
+        .with_context(|| format!("extracting downloaded asset for {url} into {staging_path:?}"))?;
     Ok(())
 }
 
@@ -223,23 +214,6 @@ async fn finalize_download(staging_path: &Path, destination_path: &Path) -> Resu
     async_fs::rename(staging_path, destination_path)
         .await
         .with_context(|| format!("renaming {staging_path:?} to {destination_path:?}"))?;
-    Ok(())
-}
-
-async fn stream_response_archive(
-    response: impl AsyncRead + Unpin,
-    url: &str,
-    destination_path: &Path,
-    asset_kind: AssetKind,
-) -> Result<()> {
-    match asset_kind {
-        AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
-        AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, response).await?,
-        AssetKind::Gz => extract_gz(destination_path, url, response).await?,
-        AssetKind::Zip => {
-            util::archive::extract_zip(destination_path, response).await?;
-        }
-    };
     Ok(())
 }
 
@@ -471,17 +445,7 @@ mod tests {
     #[test]
     fn downloads_archive_with_uppercase_digest_and_extracts_contents() {
         futures::executor::block_on(async {
-            let archive = vec![
-                0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
-                0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
-                0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x50, 0x4b,
-                0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
-                0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00,
-                0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00,
-                0x00, 0x01, 0x00, 0x01, 0x00, 0x33, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00,
-                0x00,
-            ];
+            let archive = zip_archive_containing_agent_file();
             let expected_sha_256 = format!("{:X}", Sha256::digest(&archive));
             let client = StaticResponseClient { body: archive };
             let temp_dir = tempfile::tempdir().unwrap();
@@ -501,6 +465,64 @@ mod tests {
                 std::fs::read(destination_path.join("agent")).unwrap(),
                 b"hello"
             );
+        });
+    }
+
+    #[test]
+    fn downloads_archive_without_digest_and_extracts_contents() {
+        futures::executor::block_on(async {
+            let client = StaticResponseClient {
+                body: zip_archive_containing_agent_file(),
+            };
+            let temp_dir = tempfile::tempdir().unwrap();
+            let destination_path = temp_dir.path().join("v_1");
+
+            download_server_binary(
+                &client,
+                "https://example.com/agent.zip",
+                None,
+                &destination_path,
+                AssetKind::Zip,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                std::fs::read(destination_path.join("agent")).unwrap(),
+                b"hello"
+            );
+        });
+    }
+
+    #[test]
+    fn interrupted_download_without_digest_reports_download_error_and_cleans_up_staging() {
+        futures::executor::block_on(async {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let destination_path = temp_dir.path().join("v_1");
+            let mut truncated_archive = zip_archive_containing_agent_file();
+            truncated_archive.truncate(10);
+            let client = InterruptedResponseClient {
+                prefix: truncated_archive,
+            };
+
+            let error = download_server_binary(
+                &client,
+                "https://example.com/agent.zip",
+                None,
+                &destination_path,
+                AssetKind::Zip,
+            )
+            .await
+            .unwrap_err();
+
+            let error_chain = format!("{error:#}");
+            assert!(
+                error_chain.contains("saving archive contents"),
+                "error should point at the download, got: {error_chain}"
+            );
+            assert!(!destination_path.exists());
+            let leftover_entries = std::fs::read_dir(temp_dir.path()).unwrap().count();
+            assert_eq!(leftover_entries, 0, "staging directory should be removed");
         });
     }
 
@@ -528,5 +550,74 @@ mod tests {
             let leftover_entries = std::fs::read_dir(temp_dir.path()).unwrap().count();
             assert_eq!(leftover_entries, 0, "staging directory should be removed");
         });
+    }
+
+    /// A zip archive holding a single file named `agent` whose contents are `hello`.
+    fn zip_archive_containing_agent_file() -> Vec<u8> {
+        vec![
+            0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
+            0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
+            0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x50, 0x4b,
+            0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
+            0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x01, 0x00, 0x33, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00,
+            0x00,
+        ]
+    }
+
+    /// Serves `prefix` and then fails the stream, like a connection dropped
+    /// partway through a download.
+    struct InterruptedResponseClient {
+        prefix: Vec<u8>,
+    }
+
+    impl HttpClient for InterruptedResponseClient {
+        fn send(
+            &self,
+            _req: http::Request<AsyncBody>,
+        ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+            let prefix = self.prefix.clone();
+            Box::pin(async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from_reader(InterruptedReader {
+                        remaining: prefix,
+                    }))
+                    .unwrap())
+            })
+        }
+
+        fn user_agent(&self) -> Option<&HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+    }
+
+    struct InterruptedReader {
+        remaining: Vec<u8>,
+    }
+
+    impl AsyncRead for InterruptedReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<std::io::Result<usize>> {
+            if self.remaining.is_empty() {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "connection reset mid-download",
+                )));
+            }
+            let byte_count = buf.len().min(self.remaining.len());
+            buf[..byte_count].copy_from_slice(&self.remaining[..byte_count]);
+            self.remaining.drain(..byte_count);
+            Poll::Ready(Ok(byte_count))
+        }
     }
 }
