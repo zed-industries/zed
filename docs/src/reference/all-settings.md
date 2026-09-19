@@ -209,7 +209,7 @@ Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add 
 }
 ```
 
-> Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> Note: This setting has no effect in [Vim mode](../vim.md), as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
@@ -4232,7 +4232,7 @@ To enable semantic tokens globally:
 }
 ```
 
-To enable semantic tokens for a specific language:
+To enable [semantic tokens](../semantic-tokens.md) for a specific language:
 
 ```json [settings]
 {
