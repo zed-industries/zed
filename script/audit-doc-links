@@ -2,191 +2,16 @@
 
 import argparse
 import concurrent.futures
-import dataclasses
-import fnmatch
-import hashlib
-import json
-import math
-import os
-from pathlib import Path
-import re
-import sys
-import time
-import urllib.error
-import urllib.request
 from collections import Counter
-from typing import Any
+from pathlib import Path
+import sys
 
-
-API_URL = "https://api.typesafe.ai/v1/systemone"
-LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)")
-MARKDOWN_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\([^)]+\)")
-INLINE_CODE_PATTERN = re.compile(r"`+[^`]+`+")
-SPECIAL_MARKUP_PATTERN = re.compile(r"\{#[^}]+\}|<[^>]+>|https?://\S+")
-TOKEN_PATTERN = re.compile(r"[a-z][a-z0-9+#.-]{1,}")
-ANCHOR_WORD_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+#.'’/-]*")
-HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)(?:\s+\{#[^}]+\})?\s*$")
-STOP_WORDS = {
-    "about",
-    "after",
-    "again",
-    "also",
-    "and",
-    "are",
-    "because",
-    "before",
-    "being",
-    "can",
-    "code",
-    "does",
-    "docs",
-    "documentation",
-    "each",
-    "for",
-    "from",
-    "have",
-    "how",
-    "into",
-    "linux",
-    "macos",
-    "more",
-    "not",
-    "only",
-    "page",
-    "section",
-    "that",
-    "the",
-    "their",
-    "then",
-    "these",
-    "this",
-    "through",
-    "use",
-    "using",
-    "when",
-    "where",
-    "which",
-    "will",
-    "windows",
-    "with",
-    "you",
-    "your",
-    "zed",
-}
-
-
-@dataclasses.dataclass(frozen=True)
-class Passage:
-    identifier: str
-    text: str
-    tokens: Counter[str]
-
-
-@dataclasses.dataclass(frozen=True)
-class Page:
-    path: Path
-    title: str
-    headings: tuple[str, ...]
-    overview: str
-    passages: tuple[Passage, ...]
-    tokens: Counter[str]
-    existing_links: frozenset[Path]
-
-
-@dataclasses.dataclass(frozen=True)
-class Candidate:
-    page: Page
-    similarity: float
-    passages: tuple[Passage, ...]
-
-
-@dataclasses.dataclass(frozen=True)
-class AnchorCandidate:
-    identifier: str
-    text: str
-    passage_id: str
-    context: str
-    score: float
-
-
-def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Use Jev to find useful missing links between Zed documentation pages."
-        )
-    )
-    parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
-    parser.add_argument(
-        "--source",
-        action="append",
-        default=[],
-        help="Glob for source paths relative to --docs-dir. May be repeated.",
-    )
-    parser.add_argument(
-        "--candidate-count",
-        type=positive_integer,
-        default=15,
-        help="Destination pages Jev evaluates for each source page.",
-    )
-    parser.add_argument(
-        "--passage-count",
-        type=positive_integer,
-        default=4,
-        help="Existing source passages Jev may select for each destination.",
-    )
-    parser.add_argument(
-        "--anchor-candidate-count",
-        type=positive_integer,
-        default=12,
-        help="Exact existing phrases Jev may select for each destination.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=positive_integer,
-        help="Maximum source pages to audit after applying --source.",
-    )
-    parser.add_argument("--model", default="jev-1.13.0")
-    parser.add_argument(
-        "--minimum-reason-probability",
-        type=probability,
-        default=0.80,
-        help="Minimum reason-to-link probability for a suggestion.",
-    )
-    parser.add_argument(
-        "--minimum-anchor-probability",
-        type=probability,
-        default=0.80,
-        help="Minimum existing-anchor-text probability for a suggestion.",
-    )
-    parser.add_argument(
-        "--minimum-anchor-choice-probability",
-        type=probability,
-        default=0.60,
-        help="Minimum exact-phrase probability for a suggestion.",
-    )
-    parser.add_argument(
-        "--review-probability",
-        type=probability,
-        default=0.50,
-        help="Minimum probability on both decisions for manual review.",
-    )
-    parser.add_argument("--workers", type=positive_integer, default=8)
-    parser.add_argument(
-        "--output-dir", type=Path, default=Path("target/doc-link-audit")
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Build candidates and request payloads without calling Jev.",
-    )
-    return parser.parse_args()
-
-
-def positive_integer(value: str) -> int:
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("must be at least 1")
-    return parsed
+from doc_links.corpus import load_pages, select_pages
+from doc_links.io import write_json_atomic, write_text_atomic
+from doc_links.jev import Client, api_key_from_environment, build_request, evaluate_source
+from doc_links.policy import Thresholds, decision_for
+from doc_links.retrieval import Index
+from doc_links.schema import Report
 
 
 def probability(value: str) -> float:
@@ -196,1005 +21,191 @@ def probability(value: str) -> float:
     return parsed
 
 
-def remove_non_prose(markdown: str) -> str:
-    lines = []
-    in_code_block = False
-    in_front_matter = markdown.startswith("---\n")
-    for line_number, line in enumerate(markdown.splitlines()):
-        if line_number == 0 and in_front_matter:
-            continue
-        if in_front_matter:
-            if line.strip() == "---":
-                in_front_matter = False
-            continue
-        if line.lstrip().startswith("```"):
-            in_code_block = not in_code_block
-            continue
-        if in_code_block:
-            continue
-        lines.append(line)
-    return "\n".join(lines)
+def positive_integer(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
-def tokenize(text: str) -> Counter[str]:
-    return Counter(
-        token
-        for token in TOKEN_PATTERN.findall(text.lower())
-        if token not in STOP_WORDS
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Find useful missing links between Zed documentation pages."
     )
-
-
-def extract_title_and_headings(
-    markdown: str, path: Path
-) -> tuple[str, tuple[str, ...]]:
-    headings = []
-    for line in markdown.splitlines():
-        match = HEADING_PATTERN.match(line)
-        if match:
-            headings.append(re.sub(r"[`*_]", "", match.group(1)).strip())
-    title = headings[0] if headings else path.stem.replace("-", " ").title()
-    return title, tuple(headings)
-
-
-def extract_passages(markdown: str) -> tuple[Passage, ...]:
-    prose = remove_non_prose(markdown)
-    passages = []
-    current_lines = []
-
-    def add_current() -> None:
-        if not current_lines:
-            return
-        text = " ".join(line.strip() for line in current_lines).strip()
-        current_lines.clear()
-        if not text or text.startswith(("#", "<", "{#")):
-            return
-        text = re.sub(r"\s+", " ", text)
-        if len(text) < 30:
-            return
-        identifier = f"passage_{len(passages):03d}"
-        passages.append(Passage(identifier, text[:700], tokenize(text)))
-
-    for line in prose.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            add_current()
-            continue
-        if stripped.startswith("#"):
-            add_current()
-            continue
-        if stripped.startswith(("- ", "* ", "> ", "1. ")):
-            add_current()
-            current_lines.append(stripped)
-            add_current()
-            continue
-        current_lines.append(stripped)
-    add_current()
-    return tuple(passages)
-
-
-def resolve_doc_link(source_path: Path, raw_link: str, docs_dir: Path) -> Path | None:
-    link = raw_link.strip("<>").split("#", 1)[0].split("?", 1)[0]
-    if not link or link.startswith(("mailto:", "tel:")):
-        return None
-    if link.startswith(("https://zed.dev/docs/", "http://zed.dev/docs/")):
-        candidate = docs_dir / Path(link.split("zed.dev/docs/", 1)[1].rstrip("/"))
-    elif "://" in link:
-        return None
-    elif link.startswith("/docs/"):
-        candidate = docs_dir / Path(link[len("/docs/") :].rstrip("/"))
-    elif link.startswith("/"):
-        return None
-    else:
-        candidate = docs_dir / source_path.parent / link
-    if candidate.suffix == ".html":
-        candidate = candidate.with_suffix(".md")
-    elif candidate.suffix == "":
-        candidate = candidate.with_suffix(".md")
-    try:
-        return candidate.resolve().relative_to(docs_dir.resolve())
-    except ValueError:
-        return None
-
-
-def relative_doc_link(source_path: Path, target_path: Path) -> str:
-    relative = os.path.relpath(target_path, source_path.parent)
-    if not relative.startswith("."):
-        relative = f"./{relative}"
-    return relative
-
-
-def load_pages(docs_dir: Path) -> list[Page]:
-    summary_path = docs_dir / "SUMMARY.md"
-    if summary_path.exists():
-        summary = remove_non_prose(summary_path.read_text(encoding="utf-8"))
-        published_paths = {
-            resolved
-            for raw_link in LINK_PATTERN.findall(summary)
-            if (resolved := resolve_doc_link(Path("SUMMARY.md"), raw_link, docs_dir))
-            is not None
-        }
-        markdown_paths = sorted(
-            docs_dir / path for path in published_paths if (docs_dir / path).is_file()
-        )
-    else:
-        markdown_paths = sorted(
-            path for path in docs_dir.rglob("*.md") if path.name != "SUMMARY.md"
-        )
-    known_paths = {
-        path.resolve().relative_to(docs_dir.resolve()) for path in markdown_paths
-    }
-    pages = []
-    for absolute_path in markdown_paths:
-        relative_path = absolute_path.resolve().relative_to(docs_dir.resolve())
-        markdown = absolute_path.read_text(encoding="utf-8")
-        prose = remove_non_prose(markdown)
-        title, headings = extract_title_and_headings(prose, relative_path)
-        passages = extract_passages(markdown)
-        existing_links = frozenset(
-            resolved
-            for raw_link in LINK_PATTERN.findall(prose)
-            if (resolved := resolve_doc_link(relative_path, raw_link, docs_dir))
-            in known_paths
-        )
-        overview_parts = [passage.text for passage in passages[:2]]
-        overview = " ".join(overview_parts)[:1_000]
-        page_text = " ".join(
-            (title, *headings, *(passage.text for passage in passages))
-        )
-        pages.append(
-            Page(
-                path=relative_path,
-                title=title,
-                headings=headings,
-                overview=overview,
-                passages=passages,
-                tokens=tokenize(page_text),
-                existing_links=existing_links,
-            )
-        )
-    return pages
-
-
-def inverse_document_frequencies(pages: list[Page]) -> dict[str, float]:
-    document_frequencies = Counter(
-        token for page in pages for token in page.tokens.keys()
+    parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
+    parser.add_argument("--source", action="append", default=[])
+    parser.add_argument("--candidate-count", type=positive_integer, default=15)
+    parser.add_argument("--block-count", type=positive_integer, default=4)
+    parser.add_argument("--anchor-count", type=positive_integer, default=6)
+    parser.add_argument("--model", default="jev-1.13.0")
+    parser.add_argument("--automatic-reason", type=probability, default=0.80)
+    parser.add_argument("--exact-anchor", type=probability, default=0.60)
+    parser.add_argument("--near-reason", type=probability, default=0.75)
+    parser.add_argument("--workers", type=positive_integer, default=8)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("target/doc-link-audit"),
     )
-    return {
-        token: math.log((len(pages) + 1) / (frequency + 1)) + 1
-        for token, frequency in document_frequencies.items()
-    }
+    parser.add_argument("--dry-run", action="store_true")
+    return parser.parse_args()
 
 
-def weighted_vector(
-    tokens: Counter[str], inverse_frequencies: dict[str, float]
-) -> dict[str, float]:
-    return {
-        token: (1 + math.log(frequency)) * inverse_frequencies.get(token, 1)
-        for token, frequency in tokens.items()
-    }
-
-
-def cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float:
-    common_tokens = left.keys() & right.keys()
-    numerator = sum(left[token] * right[token] for token in common_tokens)
-    left_norm = math.sqrt(sum(value * value for value in left.values()))
-    right_norm = math.sqrt(sum(value * value for value in right.values()))
-    if left_norm == 0 or right_norm == 0:
-        return 0
-    return numerator / (left_norm * right_norm)
-
-
-def top_passages(
-    source: Page,
-    destination: Page,
-    inverse_frequencies: dict[str, float],
-    passage_count: int,
-) -> tuple[Passage, ...]:
-    destination_text = " ".join(
-        (destination.title, *destination.headings, destination.overview)
-    )
-    destination_vector = weighted_vector(
-        tokenize(destination_text), inverse_frequencies
-    )
-    scored = [
-        (
-            cosine_similarity(
-                weighted_vector(passage.tokens, inverse_frequencies),
-                destination_vector,
-            ),
-            passage,
-        )
-        for passage in source.passages
-    ]
-    scored.sort(key=lambda item: (-item[0], item[1].identifier))
-    return tuple(passage for _, passage in scored[:passage_count])
-
-
-def build_candidates(
-    pages: list[Page], candidate_count: int, passage_count: int
-) -> dict[Path, list[Candidate]]:
-    inverse_frequencies = inverse_document_frequencies(pages)
-    vectors = {
-        page.path: weighted_vector(page.tokens, inverse_frequencies) for page in pages
-    }
-    candidates_by_source = {}
-    for source in pages:
-        scored_destinations = []
-        for destination in pages:
-            if (
-                destination.path == source.path
-                or destination.path in source.existing_links
-                or not destination.passages
-            ):
-                continue
-            similarity = cosine_similarity(
-                vectors[source.path], vectors[destination.path]
-            )
-            scored_destinations.append((similarity, destination))
-        scored_destinations.sort(key=lambda item: (-item[0], str(item[1].path)))
-        candidates_by_source[source.path] = [
-            Candidate(
-                page=destination,
-                similarity=similarity,
-                passages=top_passages(
-                    source,
-                    destination,
-                    inverse_frequencies,
-                    passage_count,
-                ),
-            )
-            for similarity, destination in scored_destinations[:candidate_count]
-        ]
-    return candidates_by_source
-
-
-def mask_ranges(text: str, patterns: tuple[re.Pattern[str], ...]) -> str:
-    masked = list(text)
-    for pattern in patterns:
-        for match in pattern.finditer(text):
-            for index in range(match.start(), match.end()):
-                masked[index] = "|"
-    return "".join(masked)
-
-
-def build_anchor_candidates(
-    candidate: Candidate, candidate_count: int
-) -> tuple[AnchorCandidate, ...]:
-    primary_target_tokens = set(tokenize(candidate.page.title))
-    secondary_target_tokens = set(
-        tokenize(
-            " ".join(
-                (
-                    *candidate.page.headings,
-                    candidate.page.overview,
-                )
-            )
-        )
-    )
-    title_tokens = set(tokenize(candidate.page.title))
-    raw_candidates = []
-
-    for passage_rank, passage in enumerate(candidate.passages):
-        masked = mask_ranges(
-            passage.text,
-            (
-                MARKDOWN_LINK_PATTERN,
-                INLINE_CODE_PATTERN,
-                SPECIAL_MARKUP_PATTERN,
-            ),
-        )
-        for segment in re.finditer(r"[^.!?;:|\n]+", masked):
-            words = list(ANCHOR_WORD_PATTERN.finditer(segment.group()))
-            for start_index, start_word in enumerate(words):
-                for word_count in range(1, 7):
-                    end_index = start_index + word_count
-                    if end_index > len(words):
-                        break
-                    end_word = words[end_index - 1]
-                    absolute_start = segment.start() + start_word.start()
-                    absolute_end = segment.start() + end_word.end()
-                    phrase = passage.text[absolute_start:absolute_end].strip()
-                    phrase_tokens = set(tokenize(phrase))
-                    primary_overlap = phrase_tokens & primary_target_tokens
-                    secondary_overlap = phrase_tokens & secondary_target_tokens
-                    if not primary_overlap and len(secondary_overlap) < 2:
-                        continue
-                    first_token = start_word.group().lower().strip(".'’/-")
-                    last_token = end_word.group().lower().strip(".'’/-")
-                    if (
-                        first_token in STOP_WORDS
-                        or last_token in STOP_WORDS
-                        or not first_token
-                        or not last_token
-                    ):
-                        continue
-                    if word_count == 1 and (
-                        first_token not in title_tokens or len(first_token) < 4
-                    ):
-                        continue
-                    normalized_phrase = re.sub(r"\s+", " ", phrase).strip()
-                    if not normalized_phrase:
-                        continue
-                    title_overlap = len(phrase_tokens & title_tokens)
-                    score = (
-                        len(primary_overlap) * 6
-                        + len(secondary_overlap)
-                        + title_overlap * 2
-                        - abs(word_count - 3) * 0.1
-                        - passage_rank * 0.05
-                    )
-                    if normalized_phrase.lower() == candidate.page.title.lower():
-                        score += 8
-                    raw_candidates.append(
-                        AnchorCandidate(
-                            identifier="",
-                            text=normalized_phrase,
-                            passage_id=passage.identifier,
-                            context=passage.text,
-                            score=score,
-                        )
-                    )
-
-    best_by_text = {}
-    for anchor_candidate in raw_candidates:
-        key = anchor_candidate.text.casefold()
-        previous = best_by_text.get(key)
-        if previous is None or anchor_candidate.score > previous.score:
-            best_by_text[key] = anchor_candidate
-    ranked = sorted(
-        best_by_text.values(),
-        key=lambda anchor_candidate: (
-            -anchor_candidate.score,
-            len(anchor_candidate.text.split()),
-            anchor_candidate.text.casefold(),
-        ),
-    )
-    return tuple(
-        dataclasses.replace(
-            anchor_candidate,
-            identifier=f"anchor_{index:03d}",
-        )
-        for index, anchor_candidate in enumerate(ranked[:candidate_count])
-    )
-
-
-def build_request(
-    source: Page,
-    candidates: list[Candidate],
-    model: str,
-    anchor_candidate_count: int,
-) -> tuple[
-    dict[str, Any],
-    dict[str, Candidate],
-    dict[str, dict[str, AnchorCandidate]],
-]:
-    targets = {}
-    questions = {}
-    candidates_by_identifier = {}
-    anchors_by_target = {}
-    source_passages = {
-        passage.identifier: passage.text
-        for candidate in candidates
-        for passage in candidate.passages
-    }
-    for index, candidate in enumerate(candidates):
-        target_identifier = f"target_{index:03d}"
-        candidates_by_identifier[target_identifier] = candidate
-        anchor_candidates = build_anchor_candidates(
-            candidate, anchor_candidate_count
-        )
-        anchors_by_target[target_identifier] = {
-            anchor_candidate.identifier: anchor_candidate
-            for anchor_candidate in anchor_candidates
-        }
-        targets[target_identifier] = {
-            "path": str(candidate.page.path),
-            "title": candidate.page.title,
-            "headings": list(candidate.page.headings),
-            "overview": candidate.page.overview,
-            "candidate_passage_ids": [
-                passage.identifier for passage in candidate.passages
-            ],
-            "anchor_candidates": {
-                anchor_candidate.identifier: {
-                    "text": anchor_candidate.text,
-                    "passage_id": anchor_candidate.passage_id,
-                    "context": anchor_candidate.context,
-                }
-                for anchor_candidate in anchor_candidates
-            },
-        }
-        questions[f"reason_{target_identifier}"] = {
-            "type": "noul",
-            "instructions": {
-                "judgment": (
-                    "Does this source page have a real reader-serving reason to "
-                    f"link to `targets.{target_identifier}`?"
-                ),
-                "source": "`source`",
-                "target": f"`targets.{target_identifier}`",
-            },
-            "criteria": {
-                "true": (
-                    "The target gives materially useful detail, prerequisites, next "
-                    "steps, or context for a concept the source already discusses."
-                ),
-                "false": (
-                    "The pages only share a broad topic, the target repeats the "
-                    "source, duplicates a page in `source.existing_links`, or the "
-                    "link would not help the reader's current task."
-                ),
-            },
-        }
-        anchor_criteria = {
-            anchor_candidate.identifier: {
-                "selection": (
-                    "Use the exact currently unlinked text at "
-                    f"`targets.{target_identifier}.anchor_candidates."
-                    f"{anchor_candidate.identifier}.text`."
-                ),
-                "requirement": (
-                    "The phrase describes the target accurately and reads naturally "
-                    "as a link in its existing sentence."
-                ),
-            }
-            for anchor_candidate in anchor_candidates
-        }
-        anchor_criteria["other_anchor"] = (
-            "A suitable exact unlinked phrase exists in the candidate passages, "
-            "but it is missing from the provided anchor candidates."
-        )
-        anchor_criteria["no_anchor"] = (
-            "No exact existing unlinked phrase can point to this target naturally "
-            "and accurately without rewriting the source."
-        )
-        questions[f"anchor_{target_identifier}"] = {
-            "type": "choice",
-            "instructions": {
-                "task": (
-                    "Choose the best exact existing anchor phrase for "
-                    f"`targets.{target_identifier}`."
-                ),
-                "rules": [
-                    "Select only text copied exactly from an anchor candidate.",
-                    "Prefer a concise descriptive noun phrase of 1 to 6 words.",
-                    "Reject sentence fragments and generic clauses.",
-                    "Do not select vague or misleading text.",
-                    "Do not select text already inside a Markdown link.",
-                    "Choose `other_anchor` only when the extractor omitted a phrase.",
-                    "Choose `no_anchor` when the source needs rewriting.",
-                ],
-            },
-            "criteria": anchor_criteria,
-        }
-    payload = {
-        "state": {
-            "source": {
-                "path": str(source.path),
-                "title": source.title,
-                "headings": list(source.headings),
-                "overview": source.overview,
-                "existing_links": sorted(str(path) for path in source.existing_links),
-                "passages": source_passages,
-            },
-            "targets": targets,
-        },
-        "model": model,
-        "questions": questions,
-    }
-    return payload, candidates_by_identifier, anchors_by_target
-
-
-def request_cache_path(cache_dir: Path, payload: dict[str, Any]) -> Path:
-    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return cache_dir / f"{hashlib.sha256(serialized).hexdigest()}.json"
-
-
-def call_jev(
-    payload: dict[str, Any], api_key: str, cache_dir: Path
-) -> dict[str, Any]:
-    cache_path = request_cache_path(cache_dir, payload)
-    if cache_path.exists():
-        return json.loads(cache_path.read_text(encoding="utf-8"))
-
-    body = json.dumps(payload).encode()
-    request = urllib.request.Request(
-        API_URL,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                result = json.loads(response.read())
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(
-                json.dumps(result, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            return result
-        except urllib.error.HTTPError as error:
-            response_body = error.read().decode(errors="replace")
-            if error.code not in (429, 529) or attempt == 3:
-                raise RuntimeError(
-                    f"TypeSafe returned HTTP {error.code}: {response_body}"
-                ) from error
-            retry_after = error.headers.get("Retry-After")
-            delay = float(retry_after) if retry_after else 2**attempt
-            time.sleep(delay)
-        except urllib.error.URLError as error:
-            if attempt == 3:
-                raise RuntimeError(f"TypeSafe request failed: {error}") from error
-            time.sleep(2**attempt)
-    raise RuntimeError("TypeSafe request failed without an error")
-
-
-def audit_source(
-    source: Page,
-    candidates: list[Candidate],
-    arguments: argparse.Namespace,
-    api_key: str,
-) -> dict[str, Any]:
-    anchor_candidate_count = arguments.anchor_candidate_count
-    while True:
-        payload, candidates_by_identifier, anchors_by_target = build_request(
-            source,
-            candidates,
-            arguments.model,
-            anchor_candidate_count,
-        )
-        try:
-            response = call_jev(
-                payload, api_key, arguments.output_dir / "cache"
-            )
-            break
-        except RuntimeError as error:
-            if (
-                "max_tokens_exceeded" not in str(error)
-                or anchor_candidate_count == 1
-            ):
-                raise
-            anchor_candidate_count = max(1, anchor_candidate_count // 2)
-    answers = response.get("answers")
-    if not isinstance(answers, dict):
-        raise RuntimeError("TypeSafe response did not contain an answers object")
-    expected_answers = {
-        f"{decision}_{target_identifier}"
-        for target_identifier in candidates_by_identifier
-        for decision in ("reason", "anchor")
-    }
-    actual_answers = set(answers)
-    if actual_answers != expected_answers:
-        missing = sorted(expected_answers - actual_answers)
-        unexpected = sorted(actual_answers - expected_answers)
-        raise RuntimeError(
-            f"TypeSafe answer mismatch. Missing: {missing}. "
-            f"Unexpected: {unexpected}."
-        )
-    decisions = []
-    for target_identifier, candidate in candidates_by_identifier.items():
-        reason_answer = answers[f"reason_{target_identifier}"]
-        anchor_answer = answers[f"anchor_{target_identifier}"]
-        if reason_answer.get("type") != "noul":
-            raise RuntimeError(
-                f"TypeSafe returned {reason_answer.get('type')} for "
-                f"reason_{target_identifier}"
-            )
-        if anchor_answer.get("type") != "choice":
-            raise RuntimeError(
-                f"TypeSafe returned {anchor_answer.get('type')} for "
-                f"anchor_{target_identifier}"
-            )
-        reason_probability = float(reason_answer["noul"])
-        anchor_choice = anchor_answer["choice"]
-        anchor_probabilities = anchor_answer["probabilities"]
-        anchor_candidates = anchors_by_target[target_identifier]
-        if anchor_choice not in {
-            *anchor_candidates,
-            "other_anchor",
-            "no_anchor",
-        }:
-            raise RuntimeError(
-                f"TypeSafe selected unknown anchor {anchor_choice} for "
-                f"{target_identifier}"
-            )
-        selected_anchor = anchor_candidates.get(anchor_choice)
-        no_anchor_probability = float(
-            anchor_probabilities.get("no_anchor", 0)
-        )
-        anchor_probability = 1 - no_anchor_probability
-        selected_anchor_probability = float(
-            anchor_probabilities.get(anchor_choice, 0)
-        )
-        if not (0 <= reason_probability <= 1 and 0 <= anchor_probability <= 1):
-            raise RuntimeError(
-                f"TypeSafe returned an invalid probability for {target_identifier}"
-            )
-        qualification_probability = min(reason_probability, anchor_probability)
-        if (
-            reason_probability >= arguments.minimum_reason_probability
-            and anchor_probability >= arguments.minimum_anchor_probability
-            and selected_anchor is not None
-            and selected_anchor_probability
-            >= arguments.minimum_anchor_choice_probability
-        ):
-            status = "suggested"
-        elif (
-            reason_probability >= arguments.minimum_reason_probability
-            and anchor_choice == "no_anchor"
-        ):
-            status = "rewrite_candidate"
-        elif (
-            reason_probability >= arguments.review_probability
-            and anchor_probability >= arguments.review_probability
-        ):
-            status = "review"
-        elif (
-            reason_probability < arguments.review_probability
-            and anchor_probability < arguments.review_probability
-        ):
-            status = "rejected_both"
-        elif reason_probability < arguments.review_probability:
-            status = "rejected_reason"
-        else:
-            status = "rejected_anchor"
-        decisions.append(
-            {
-                "status": status,
-                "source_path": str(source.path),
-                "source_title": source.title,
-                "target_path": str(candidate.page.path),
-                "target_title": candidate.page.title,
-                "relative_target": relative_doc_link(
-                    source.path, candidate.page.path
-                ),
-                "reason_probability": reason_probability,
-                "anchor_probability": anchor_probability,
-                "qualification_probability": qualification_probability,
-                "anchor_choice": anchor_choice,
-                "anchor_choice_probability": selected_anchor_probability,
-                "anchor_confidence": float(anchor_answer.get("confidence", 0)),
-                "selected_anchor": (
-                    {
-                        "id": selected_anchor.identifier,
-                        "text": selected_anchor.text,
-                        "passage_id": selected_anchor.passage_id,
-                        "context": selected_anchor.context,
-                    }
-                    if selected_anchor
-                    else None
-                ),
-                "anchor_probabilities": anchor_probabilities,
-                "anchor_candidates": [
-                    {
-                        "id": anchor_candidate.identifier,
-                        "text": anchor_candidate.text,
-                        "passage_id": anchor_candidate.passage_id,
-                        "context": anchor_candidate.context,
-                        "retrieval_score": anchor_candidate.score,
-                    }
-                    for anchor_candidate in anchor_candidates.values()
-                ],
-                "candidate_passages": [
-                    {
-                        "id": passage.identifier,
-                        "text": passage.text,
-                    }
-                    for passage in candidate.passages
-                ],
-                "retrieval_similarity": candidate.similarity,
-            }
-        )
-    usage = response.get("usage", {})
-    return {
-        "source_path": str(source.path),
-        "response_model": response.get("model"),
-        "anchor_candidate_count": anchor_candidate_count,
-        "decisions": decisions,
-        "usage": {
-            "input_tokens": int(usage.get("input_tokens", 0)),
-            "output_tokens": int(usage.get("output_tokens", 0)),
-        },
-    }
-
-
-def select_sources(
-    pages: list[Page], patterns: list[str], limit: int | None
-) -> list[Page]:
-    selected = [
-        page
-        for page in pages
-        if page.passages
-        and (
-            not patterns
-            or any(fnmatch.fnmatch(str(page.path), pattern) for pattern in patterns)
-        )
-    ]
-    if limit is not None:
-        selected = selected[:limit]
-    return selected
-
-
-def write_dry_run(
-    selected_sources: list[Page],
-    candidates_by_source: dict[Path, list[Candidate]],
-    arguments: argparse.Namespace,
-) -> None:
-    requests_dir = arguments.output_dir / "requests"
-    requests_dir.mkdir(parents=True, exist_ok=True)
-    for source in selected_sources:
-        payload, _, _ = build_request(
-            source,
-            candidates_by_source[source.path],
-            arguments.model,
-            arguments.anchor_candidate_count,
-        )
-        filename = str(source.path).replace("/", "__").removesuffix(".md") + ".json"
-        (requests_dir / filename).write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    candidate_pairs = sum(
-        len(candidates_by_source[source.path]) for source in selected_sources
-    )
-    print(
-        f"Prepared {len(selected_sources)} Jev requests with "
-        f"{candidate_pairs} candidate pairs and {candidate_pairs * 2} decisions "
-        f"in {requests_dir}"
-    )
-
-
-def write_results(
-    source_results: list[dict[str, Any]],
-    arguments: argparse.Namespace,
-) -> None:
-    arguments.output_dir.mkdir(parents=True, exist_ok=True)
-    decisions = [
-        decision
-        for source_result in source_results
-        for decision in source_result["decisions"]
-    ]
-    input_tokens = sum(
-        result["usage"]["input_tokens"] for result in source_results
-    )
-    output_tokens = sum(
-        result["usage"]["output_tokens"] for result in source_results
-    )
-    counts = Counter(decision["status"] for decision in decisions)
-    reason_passes = sum(
-        decision["reason_probability"] >= arguments.minimum_reason_probability
-        for decision in decisions
-    )
-    anchor_passes = sum(
-        decision["anchor_probability"] >= arguments.minimum_anchor_probability
-        for decision in decisions
-    )
-    both_passes = sum(
-        decision["reason_probability"] >= arguments.minimum_reason_probability
-        and decision["anchor_probability"]
-        >= arguments.minimum_anchor_probability
-        for decision in decisions
-    )
-    response_models = sorted(
-        {
-            result["response_model"]
-            for result in source_results
-            if result["response_model"]
-        }
-    )
-    anchor_candidate_counts = Counter(
-        result["anchor_candidate_count"] for result in source_results
-    )
-    report = {
-        "requested_model": arguments.model,
-        "response_models": response_models,
-        "anchor_candidates_per_target": {
-            str(count): source_count
-            for count, source_count in sorted(anchor_candidate_counts.items())
-        },
-        "source_pages": len(source_results),
-        "candidate_pairs": len(decisions),
-        "judgments": len(decisions) * 2,
-        "status_counts": dict(sorted(counts.items())),
-        "decision_pass_counts": {
-            "reason": reason_passes,
-            "anchor": anchor_passes,
-            "both": both_passes,
-            "direct_anchor": counts["suggested"],
-        },
-        "usage": {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-        },
-        "thresholds": {
-            "minimum_reason_probability": arguments.minimum_reason_probability,
-            "minimum_anchor_probability": arguments.minimum_anchor_probability,
-            "minimum_anchor_choice_probability": (
-                arguments.minimum_anchor_choice_probability
-            ),
-            "review_probability": arguments.review_probability,
-        },
-        "decisions": sorted(
-            decisions,
-            key=lambda decision: (
-                {
-                    "suggested": 0,
-                    "review": 1,
-                    "rewrite_candidate": 2,
-                    "rejected_anchor": 3,
-                    "rejected_reason": 4,
-                    "rejected_both": 5,
-                }[decision["status"]],
-                -decision["qualification_probability"],
-                decision["source_path"],
-                decision["target_path"],
-            ),
-        ),
-    }
-    json_path = arguments.output_dir / "audit.json"
-    json_path.write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
-    markdown_lines = [
+def markdown_report(report: Report) -> str:
+    counts = Counter(decision.queue for decision in report.decisions)
+    lines = [
         "# Zed documentation link audit",
         "",
-        f"- Requested model: {arguments.model}",
-        f"- Response models: {', '.join(response_models)}",
-        (
-            "- Anchor candidates per target: "
-            + ", ".join(
-                f"{count} on {source_count} source pages"
-                for count, source_count in sorted(anchor_candidate_counts.items())
-            )
-        ),
-        f"- Source pages: {len(source_results)}",
-        f"- Candidate page pairs: {len(decisions)}",
-        f"- Jev decisions: {len(decisions) * 2}",
-        f"- Strong reason-to-link decisions: {reason_passes}",
-        f"- Strong existing-anchor decisions: {anchor_passes}",
-        f"- Both decisions strong: {both_passes}",
-        f"- Suggested links: {counts['suggested']}",
-        f"- Rewrite candidates: {counts['rewrite_candidate']}",
-        f"- Links requiring review: {counts['review']}",
-        f"- Rejected for no reason to link: {counts['rejected_reason']}",
-        f"- Rejected for no anchor text: {counts['rejected_anchor']}",
-        f"- Rejected for both reasons: {counts['rejected_both']}",
-        f"- Input tokens: {input_tokens:,}",
-        f"- Output tokens: {output_tokens:,}",
+        f"- Model: {report.model}",
+        f"- Candidate pairs: {len(report.decisions)}",
+        f"- Automatic: {counts['automatic']}",
+        f"- Strong review: {counts['strong_review']}",
+        f"- Near review: {counts['near_review']}",
+        f"- Rejected: {counts['rejected']}",
+        f"- Input tokens: {report.usage['input_tokens']:,}",
+        f"- Output tokens: {report.usage['output_tokens']:,}",
         "",
     ]
-    for status, heading in (
-        ("suggested", "Suggested links"),
-        ("rewrite_candidate", "Candidates requiring new anchor text"),
-        ("review", "Links requiring review"),
+    for queue, heading in (
+        ("automatic", "Automatic candidates"),
+        ("strong_review", "Strong reason, uncertain anchor"),
+        ("near_review", "Near-threshold reason"),
     ):
-        markdown_lines.extend((f"## {heading}", ""))
-        matching = [
-            decision
-            for decision in report["decisions"]
-            if decision["status"] == status
-        ]
+        lines.extend((f"## {heading}", ""))
+        matching = [item for item in report.decisions if item.queue == queue]
         if not matching:
-            markdown_lines.extend(("None.", ""))
+            lines.extend(("None.", ""))
             continue
         for decision in matching:
-            selected_anchor = decision["selected_anchor"]
-            if selected_anchor:
-                anchor_summary = (
-                    f"Selected anchor: `{selected_anchor['text']}` "
-                    f"(choice probability "
-                    f"{decision['anchor_choice_probability']:.3f})."
-                )
-                context = selected_anchor["context"]
-            else:
-                anchor_summary = (
-                    f"Anchor outcome: `{decision['anchor_choice']}` "
-                    f"(choice probability "
-                    f"{decision['anchor_choice_probability']:.3f})."
-                )
-                context = decision["candidate_passages"][0]["text"]
-            markdown_lines.extend(
+            anchor = decision.anchor.text if decision.anchor else decision.anchor_choice
+            lines.extend(
                 (
-                    f"### `{decision['source_path']}` → `{decision['target_path']}`",
-                    "",
-                    (
-                        f"Reason probability: "
-                        f"{decision['reason_probability']:.3f}. "
-                        f"Anchor probability: "
-                        f"{decision['anchor_probability']:.3f}."
-                    ),
-                    "",
-                    anchor_summary,
-                    "",
-                    "Source context:",
-                    "",
-                    f"> {context}",
-                    "",
+                    f"- `{decision.source_path}` → `{decision.target_path}`",
+                    f"  - Reason: {decision.reason_probability:.3f}",
+                    f"  - Anchor: `{anchor}` ({decision.anchor_probability:.3f})",
                 )
             )
-    markdown_path = arguments.output_dir / "audit.md"
-    markdown_path.write_text("\n".join(markdown_lines), encoding="utf-8")
-    print(f"Wrote {json_path}")
-    print(f"Wrote {markdown_path}")
-    print(
-        f"Jev selected {counts['suggested']} suggestions, "
-        f"{counts['rewrite_candidate']} rewrite candidates, "
-        f"{counts['review']} review items, rejected "
-        f"{counts['rejected_reason']} for no reason to link, and rejected "
-        f"{counts['rejected_anchor']} for no anchor text. "
-        f"{counts['rejected_both']} failed both decisions."
-    )
+        lines.append("")
+    return "\n".join(lines)
 
 
 def main() -> int:
     arguments = parse_arguments()
-    if arguments.review_probability > min(
-        arguments.minimum_reason_probability,
-        arguments.minimum_anchor_probability,
-    ):
-        print(
-            "--review-probability cannot exceed either suggestion threshold.",
-            file=sys.stderr,
-        )
-        return 1
+    if arguments.near_reason > arguments.automatic_reason:
+        raise SystemExit("--near-reason cannot exceed --automatic-reason")
     pages = load_pages(arguments.docs_dir)
-    if not pages:
-        print(f"No Markdown pages found in {arguments.docs_dir}", file=sys.stderr)
-        return 1
-    selected_sources = select_sources(pages, arguments.source, arguments.limit)
-    if not selected_sources:
-        print("No source pages with prose matched --source.", file=sys.stderr)
-        return 1
-    candidates_by_source = build_candidates(
-        pages, arguments.candidate_count, arguments.passage_count
-    )
+    selected = select_pages(pages, tuple(arguments.source))
+    if not selected:
+        raise SystemExit("No published source pages with prose matched.")
+    index = Index(pages)
+    candidates = {
+        page.path: index.candidates(
+            page,
+            arguments.candidate_count,
+            arguments.block_count,
+            arguments.anchor_count,
+        )
+        for page in selected
+    }
     if arguments.dry_run:
-        write_dry_run(selected_sources, candidates_by_source, arguments)
+        request_dir = arguments.output_dir / "requests"
+        for source in selected:
+            if not candidates[source.path]:
+                continue
+            payload, _ = build_request(source, candidates[source.path], arguments.model)
+            filename = str(source.path).replace("/", "__").removesuffix(".md")
+            write_json_atomic(request_dir / f"{filename}.json", payload)
+        pair_count = sum(len(items) for items in candidates.values())
+        print(
+            f"Prepared {len(selected)} requests with {pair_count} candidate pairs "
+            f"in {request_dir}"
+        )
         return 0
 
-    api_key = os.environ.get("TYPESAFE_API_KEY")
-    if not api_key:
-        print(
-            "TYPESAFE_API_KEY is not set. Export it or use --dry-run.",
-            file=sys.stderr,
-        )
-        return 1
-
-    source_results = []
+    thresholds = Thresholds(
+        automatic_reason=arguments.automatic_reason,
+        exact_anchor=arguments.exact_anchor,
+        near_reason=arguments.near_reason,
+    )
+    auditable = tuple(source for source in selected if candidates[source.path])
+    client = (
+        Client(api_key_from_environment(), arguments.output_dir / "cache")
+        if auditable
+        else None
+    )
+    results = []
     with concurrent.futures.ThreadPoolExecutor(
-        max_workers=min(arguments.workers, len(selected_sources))
+        max_workers=min(arguments.workers, len(auditable)) if auditable else 1
     ) as executor:
         futures = {
             executor.submit(
-                audit_source,
+                evaluate_source,
+                client,
                 source,
-                candidates_by_source[source.path],
-                arguments,
-                api_key,
+                candidates[source.path],
+                arguments.model,
             ): source
-            for source in selected_sources
+            for source in auditable
         }
         for completed, future in enumerate(
-            concurrent.futures.as_completed(futures), start=1
+            concurrent.futures.as_completed(futures),
+            start=1,
         ):
             source = futures[future]
-            try:
-                source_results.append(future.result())
-            except Exception as error:
-                print(f"Audit failed for {source.path}: {error}", file=sys.stderr)
-                return 1
-            print(
-                f"Audited {completed}/{len(selected_sources)}: {source.path}",
-                file=sys.stderr,
-            )
+            result = future.result()
+            results.append((source, result))
+            print(f"Audited {completed}/{len(auditable)}: {source.path}", file=sys.stderr)
 
-    source_results.sort(key=lambda result: result["source_path"])
-    write_results(source_results, arguments)
+    models = {result.model for _, result in results}
+    if len(models) > 1:
+        raise RuntimeError(f"TypeSafe returned multiple models: {sorted(models)}")
+    response_model = models.pop() if models else arguments.model
+    decisions = tuple(
+        decision_for(source, evaluation, thresholds)
+        for source, result in results
+        for evaluation in result.evaluations
+    )
+    queue_order = {
+        "automatic": 0,
+        "strong_review": 1,
+        "near_review": 2,
+        "rejected": 3,
+    }
+    decisions = tuple(
+        sorted(
+            decisions,
+            key=lambda item: (
+                queue_order[item.queue],
+                -item.reason_probability,
+                -item.anchor_probability,
+                item.source_path,
+                item.target_path,
+            ),
+        )
+    )
+    report = Report(
+        model=response_model,
+        thresholds=thresholds.to_dict(),
+        pages={
+            str(page.path): {
+                "title": page.title,
+                "content_hash": page.content_hash,
+            }
+            for page in pages
+        },
+        decisions=decisions,
+        usage={
+            "input_tokens": sum(result.input_tokens for _, result in results),
+            "output_tokens": sum(result.output_tokens for _, result in results),
+        },
+    )
+    write_json_atomic(arguments.output_dir / "audit.json", report.to_dict())
+    write_text_atomic(arguments.output_dir / "audit.md", markdown_report(report))
+    counts = Counter(item.queue for item in decisions)
+    print(
+        f"Automatic {counts['automatic']}; strong review {counts['strong_review']}; "
+        f"near review {counts['near_review']}; rejected {counts['rejected']}."
+    )
     return 0
 
 

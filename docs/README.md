@@ -50,54 +50,48 @@ The audit sends selected documentation prose to the TypeSafe API. Do not run it
 against private or unreleased documentation without confirming the applicable
 data-handling policy.
 
-Results and cached API responses are written to `target/doc-link-audit/`. To
-audit one part of the documentation, pass one or more source globs:
+Results and validated API responses are cached under `target/doc-link-audit/`.
+The model version is pinned because the review thresholds are calibrated against
+that version. Use `--model` only when validating a new model and its thresholds
+together.
+
+Limit an audit to one documentation area with one or more source globs:
 
 ```sh
 script/audit-doc-links --source 'ai/*.md'
 ```
 
-The default model is pinned because the probability thresholds were calibrated
-against that version. Use `--model` only when validating a new model and its
-thresholds together.
-
-Create a self-contained review page:
+Generate a self-contained review page:
 
 ```sh
-script/review-doc-links \
-  --static-output target/doc-link-audit/review.html
+script/review-doc-links html --open
 ```
 
-The review page shows the source context, destination page, model
-probabilities, and proposed anchor. Reviewers mark each item Pass, Fail, or
-Defer, then use **Export labels** to download `doc-link-review.json`.
+Reviewers mark each item Pass, Fail, or Defer, then use **Export labels** to
+download `doc-link-review.json`. Browser labels are isolated by the audit report
+hash, so labels from an older audit do not carry into a new review.
 
-Validate an exported review before changing any files:
+Validate an exported review before changing files:
 
 ```sh
-script/review-doc-links --apply-export ~/Downloads/doc-link-review.json
+script/review-doc-links apply ~/Downloads/doc-link-review.json
 ```
 
-Apply the approved exact anchors with `--write`:
+Apply approved anchors with `--write`:
 
 ```sh
-script/review-doc-links \
-  --apply-export ~/Downloads/doc-link-review.json \
-  --write
+script/review-doc-links apply ~/Downloads/doc-link-review.json --write
 ```
 
-The apply command refuses to edit source pages that changed after the audit.
-Rerun the audit when possible. Use `--allow-updated-sources` to apply anchors
-that still match while reporting suggestions whose source text disappeared.
+Every anchor records its exact source block and offset. The apply command permits
+unrelated edits elsewhere in a page, but refuses to continue if the reviewed
+source block or target page changed. It validates the complete batch before
+writing any file.
 
-The audit does not call a text-generating model. Items marked
-`rewrite_candidate` need new wording and stay in the review queue unless you
-provide a rewrite-selection JSON file with `--rewrites`.
-
-Run the local tests after changing either script:
+Run the tests after changing this tooling:
 
 ```sh
-python3 script/test_doc_links.py
+PYTHONPATH=script python3 -m unittest discover -s script/doc_links/tests -p 'test_*.py'
 ```
 
 ## Preprocessor
