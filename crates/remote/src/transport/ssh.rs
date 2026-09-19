@@ -402,6 +402,91 @@ impl RemoteConnection for SshRemoteConnection {
         })
     }
 
+    async fn update_port_forwards(
+        &self,
+        previous_forwards: &[(u16, String, u16)],
+        new_forwards: &[(u16, String, u16)],
+    ) -> Result<()> {
+        #[cfg(not(windows))]
+        {
+            use std::collections::HashSet;
+
+            let previous: HashSet<_> = previous_forwards.iter().collect();
+            let current: HashSet<_> = new_forwards.iter().collect();
+
+            for &&(local_port, ref host, remote_port) in previous.difference(&current) {
+                log::info!(
+                    "Removing port forward: {}:{}:{}",
+                    local_port,
+                    host,
+                    remote_port
+                );
+                let mut command = util::command::new_command("ssh");
+                command
+                    .args(self.socket.connection_options.additional_args_for_scp())
+                    .arg("-O")
+                    .arg("cancel")
+                    .arg("-L")
+                    .arg(format!(
+                        "{}:{}:{}",
+                        local_port,
+                        bracket_ipv6(host),
+                        remote_port
+                    ))
+                    .arg("-S")
+                    .arg(&self.socket.socket_path)
+                    .arg(self.socket.connection_options.ssh_destination());
+
+                let output = command.output().await?;
+                if !output.status.success() {
+                    log::error!(
+                        "Failed to remove port forward: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+            }
+
+            for &&(local_port, ref host, remote_port) in current.difference(&previous) {
+                log::info!(
+                    "Adding port forward: {}:{}:{}",
+                    local_port,
+                    host,
+                    remote_port
+                );
+                let mut command = util::command::new_command("ssh");
+                command
+                    .args(self.socket.connection_options.additional_args_for_scp())
+                    .arg("-O")
+                    .arg("forward")
+                    .arg("-L")
+                    .arg(format!(
+                        "{}:{}:{}",
+                        local_port,
+                        bracket_ipv6(host),
+                        remote_port
+                    ))
+                    .arg("-S")
+                    .arg(&self.socket.socket_path)
+                    .arg(self.socket.connection_options.ssh_destination());
+
+                let output = command.output().await?;
+                if !output.status.success() {
+                    anyhow::bail!(
+                        "Failed to add port forward: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            log::warn!("Dynamic port forwarding is not supported on Windows");
+        }
+
+        Ok(())
+    }
+
     fn upload_directory(
         &self,
         src_path: PathBuf,
