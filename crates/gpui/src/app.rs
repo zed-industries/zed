@@ -21,7 +21,9 @@ use slotmap::SlotMap;
 
 pub use async_context::*;
 #[cfg(feature = "bench-support")]
-pub use bench_context::{BenchAppContext, BenchReport, BenchWindowContext, bench_platform};
+pub use bench_context::{
+    BenchAppContext, BenchReport, BenchWindowContext, ResidentMemorySummary, bench_platform,
+};
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;
 pub use entity_map::*;
@@ -753,6 +755,8 @@ pub struct App {
     pub(crate) foreground_executor: ForegroundExecutor,
     #[cfg(feature = "profiler")]
     foreground_journal: crate::profiler::journal::ForegroundJournal,
+    #[cfg(feature = "profiler")]
+    drawing_window: bool,
     pub(crate) entities: EntityMap,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
@@ -879,6 +883,8 @@ impl App {
                 foreground_executor,
                 #[cfg(feature = "profiler")]
                 foreground_journal,
+                #[cfg(feature = "profiler")]
+                drawing_window: false,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
@@ -2137,11 +2143,24 @@ impl App {
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
     }
 
+    fn note_global_write<G: Global>(&mut self) {
+        let global_type = TypeId::of::<G>();
+        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        #[cfg(feature = "profiler")]
+        crate::profiler::note_global_write(type_name::<G>(), self.drawing_window);
+    }
+
+    #[cfg(feature = "profiler")]
+    pub(crate) fn set_drawing_window(&mut self, drawing: bool) {
+        debug_assert_ne!(self.drawing_window, drawing);
+        self.drawing_window = drawing;
+    }
+
     /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global_mut<G: Global>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         self.globals_by_type
             .get_mut(&global_type)
             .and_then(|any_state| any_state.downcast_mut::<G>())
@@ -2152,7 +2171,7 @@ impl App {
     /// yet been assigned.
     pub fn default_global<G: Global + Default>(&mut self) -> &mut G {
         let global_type = TypeId::of::<G>();
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         self.globals_by_type
             .entry(global_type)
             .or_insert_with(|| Box::<G>::default())
@@ -2163,7 +2182,7 @@ impl App {
     /// Sets the value of the global of the given type.
     pub fn set_global<G: Global>(&mut self, global: G) {
         let global_type = TypeId::of::<G>();
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         self.globals_by_type.insert(global_type, Box::new(global));
     }
 
@@ -2176,7 +2195,7 @@ impl App {
     /// Remove the global of the given type from the app context. Does not notify global observers.
     pub fn remove_global<G: Global>(&mut self) -> G {
         let global_type = TypeId::of::<G>();
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         *self
             .globals_by_type
             .remove(&global_type)
@@ -2216,7 +2235,7 @@ impl App {
     pub(crate) fn end_global_lease<G: Global>(&mut self, lease: GlobalLease<G>) {
         let global_type = TypeId::of::<G>();
 
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         self.globals_by_type.insert(global_type, lease.global);
     }
 

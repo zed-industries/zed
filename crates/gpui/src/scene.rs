@@ -39,9 +39,15 @@ impl From<bool> for PaddedBool32 {
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
-    pub(crate) paint_operations: Vec<PaintOperation>,
+    operations: Vec<RecordedOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
+    painted: PaintedLanes,
+    /// The kind of every primitive, in paint order.
+    painted_kinds: Vec<PrimitiveKind>,
+    /// Painted index to position in the sorted lane, per kind; valid once finished.
+    positions: LanePositions,
+    sort_scratch: Vec<(u64, u32)>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
     pub paths: Vec<Path<ScaledPixels>>,
@@ -52,15 +58,114 @@ pub struct Scene {
     pub surfaces: Vec<PaintSurface>,
 }
 
+#[derive(Default)]
+struct PaintedLanes {
+    shadows: Vec<Shadow>,
+    quads: Vec<Quad>,
+    paths: Vec<Path<ScaledPixels>>,
+    underlines: Vec<Underline>,
+    monochrome_sprites: Vec<MonochromeSprite>,
+    subpixel_sprites: Vec<SubpixelSprite>,
+    polychrome_sprites: Vec<PolychromeSprite>,
+    surfaces: Vec<PaintSurface>,
+}
+
+#[derive(Default)]
+struct LanePositions {
+    shadows: Vec<u32>,
+    quads: Vec<u32>,
+    paths: Vec<u32>,
+    underlines: Vec<u32>,
+    monochrome_sprites: Vec<u32>,
+    subpixel_sprites: Vec<u32>,
+    polychrome_sprites: Vec<u32>,
+    surfaces: Vec<u32>,
+}
+
+#[derive(Clone, Copy)]
+enum RecordedOperation {
+    Primitive { kind_index: u32, painted_index: u32 },
+    StartLayer(Bounds<ScaledPixels>),
+    EndLayer,
+}
+
+fn sort_lane<T: Copy>(
+    painted: &mut Vec<T>,
+    sorted: &mut Vec<T>,
+    positions: &mut Vec<u32>,
+    scratch: &mut Vec<(u64, u32)>,
+    key: impl Fn(&T) -> (DrawOrder, u32),
+) {
+    sort_keys(painted, positions, scratch, key);
+    sorted.clear();
+    sorted.extend(scratch.iter().map(|(_, index)| painted[*index as usize]));
+    painted.clear();
+}
+
+fn sort_lane_in_place<T>(
+    painted: &mut Vec<T>,
+    sorted: &mut Vec<T>,
+    positions: &mut Vec<u32>,
+    scratch: &mut Vec<(u64, u32)>,
+    key: impl Fn(&T) -> (DrawOrder, u32),
+) {
+    sort_keys(painted, positions, scratch, key);
+    for start in 0..scratch.len() {
+        let mut position = start;
+        loop {
+            let source = scratch[position].1;
+            if source == u32::MAX {
+                break;
+            }
+            scratch[position].1 = u32::MAX;
+            if source as usize == start {
+                break;
+            }
+            painted.swap(position, source as usize);
+            position = source as usize;
+        }
+    }
+    std::mem::swap(painted, sorted);
+    painted.clear();
+}
+
+fn sort_keys<T>(
+    painted: &[T],
+    positions: &mut Vec<u32>,
+    scratch: &mut Vec<(u64, u32)>,
+    key: impl Fn(&T) -> (DrawOrder, u32),
+) {
+    scratch.clear();
+    scratch.extend(painted.iter().enumerate().map(|(index, item)| {
+        let (order, tie) = key(item);
+        (((order as u64) << 32) | tie as u64, index as u32)
+    }));
+    scratch.sort_unstable();
+    positions.clear();
+    positions.resize(painted.len(), 0);
+    for (position, (_, index)) in scratch.iter().enumerate() {
+        positions[*index as usize] = position as u32;
+    }
+}
+
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
-        self.paint_operations.clear();
+        self.operations.clear();
         self.primitive_bounds.clear();
         self.layer_stack.clear();
-        self.paths.clear();
+        self.painted.shadows.clear();
+        self.painted.quads.clear();
+        self.painted.paths.clear();
+        self.painted.underlines.clear();
+        self.painted.monochrome_sprites.clear();
+        self.painted.subpixel_sprites.clear();
+        self.painted.polychrome_sprites.clear();
+        self.painted.surfaces.clear();
+        self.painted_kinds.clear();
         self.shadows.clear();
         self.quads.clear();
+        self.paths.clear();
         self.underlines.clear();
         self.monochrome_sprites.clear();
         self.subpixel_sprites.clear();
@@ -69,19 +174,18 @@ impl Scene {
     }
 
     pub fn len(&self) -> usize {
-        self.paint_operations.len()
+        self.operations.len()
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
-        self.paint_operations
-            .push(PaintOperation::StartLayer(bounds));
+        self.operations.push(RecordedOperation::StartLayer(bounds));
     }
 
     pub fn pop_layer(&mut self) {
         self.layer_stack.pop();
-        self.paint_operations.push(PaintOperation::EndLayer);
+        self.operations.push(RecordedOperation::EndLayer);
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
@@ -89,7 +193,6 @@ impl Scene {
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
-
         if clipped_bounds.is_empty() {
             return;
         }
@@ -99,67 +202,193 @@ impl Scene {
             .last()
             .copied()
             .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
-        match &mut primitive {
+        let kind = primitive.kind();
+        let painted_index = match &mut primitive {
             Primitive::Shadow(shadow) => {
                 shadow.order = order;
-                self.shadows.push(*shadow);
+                let index = self.painted.shadows.len();
+                self.painted.shadows.push(*shadow);
+                index
             }
             Primitive::Quad(quad) => {
                 quad.order = order;
-                self.quads.push(*quad);
+                let index = self.painted.quads.len();
+                self.painted.quads.push(*quad);
+                index
             }
             Primitive::Path(path) => {
                 path.order = order;
-                path.id = PathId(self.paths.len());
-                self.paths.push(path.clone());
+                let index = self.painted.paths.len();
+                path.id = PathId(index);
+                self.painted.paths.push(path.clone());
+                index
             }
             Primitive::Underline(underline) => {
                 underline.order = order;
-                self.underlines.push(*underline);
+                let index = self.painted.underlines.len();
+                self.painted.underlines.push(*underline);
+                index
             }
             Primitive::MonochromeSprite(sprite) => {
                 sprite.order = order;
-                self.monochrome_sprites.push(*sprite);
+                let index = self.painted.monochrome_sprites.len();
+                self.painted.monochrome_sprites.push(*sprite);
+                index
             }
             Primitive::SubpixelSprite(sprite) => {
                 sprite.order = order;
-                self.subpixel_sprites.push(*sprite);
+                let index = self.painted.subpixel_sprites.len();
+                self.painted.subpixel_sprites.push(*sprite);
+                index
             }
             Primitive::PolychromeSprite(sprite) => {
                 sprite.order = order;
-                self.polychrome_sprites.push(*sprite);
+                let index = self.painted.polychrome_sprites.len();
+                self.painted.polychrome_sprites.push(*sprite);
+                index
             }
             Primitive::Surface(surface) => {
                 surface.order = order;
-                self.surfaces.push(surface.clone());
+                let index = self.painted.surfaces.len();
+                self.painted.surfaces.push(surface.clone());
+                index
             }
-        }
-        self.paint_operations
-            .push(PaintOperation::Primitive(primitive));
+        };
+        let kind_index = self.painted_kinds.len();
+        self.painted_kinds.push(kind);
+        self.operations.push(RecordedOperation::Primitive {
+            kind_index: kind_index as u32,
+            painted_index: painted_index as u32,
+        });
     }
 
-    pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
-        for operation in &prev_scene.paint_operations[range] {
-            match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
-                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
-                PaintOperation::EndLayer => self.pop_layer(),
+    pub fn replay(&mut self, range: Range<usize>, previous_scene: &Scene) {
+        for operation in &previous_scene.operations[range] {
+            match *operation {
+                RecordedOperation::Primitive {
+                    kind_index,
+                    painted_index,
+                } => {
+                    let primitive = match previous_scene.painted_kinds[kind_index as usize] {
+                        PrimitiveKind::Shadow => {
+                            Primitive::Shadow(*previous_scene.painted_shadow(painted_index))
+                        }
+                        PrimitiveKind::Quad => {
+                            Primitive::Quad(*previous_scene.painted_quad(painted_index))
+                        }
+                        PrimitiveKind::Path => {
+                            Primitive::Path(previous_scene.painted_path(painted_index).clone())
+                        }
+                        PrimitiveKind::Underline => {
+                            Primitive::Underline(*previous_scene.painted_underline(painted_index))
+                        }
+                        PrimitiveKind::MonochromeSprite => Primitive::MonochromeSprite(
+                            *previous_scene.painted_monochrome_sprite(painted_index),
+                        ),
+                        PrimitiveKind::SubpixelSprite => Primitive::SubpixelSprite(
+                            *previous_scene.painted_subpixel_sprite(painted_index),
+                        ),
+                        PrimitiveKind::PolychromeSprite => Primitive::PolychromeSprite(
+                            *previous_scene.painted_polychrome_sprite(painted_index),
+                        ),
+                        PrimitiveKind::Surface => Primitive::Surface(
+                            previous_scene.painted_surface(painted_index).clone(),
+                        ),
+                    };
+                    self.insert_primitive(primitive);
+                }
+                RecordedOperation::StartLayer(bounds) => self.push_layer(bounds),
+                RecordedOperation::EndLayer => self.pop_layer(),
             }
         }
     }
 
+    pub(crate) fn painted_shadow(&self, painted: u32) -> &Shadow {
+        &self.shadows[self.positions.shadows[painted as usize] as usize]
+    }
+    pub(crate) fn painted_quad(&self, painted: u32) -> &Quad {
+        &self.quads[self.positions.quads[painted as usize] as usize]
+    }
+    pub(crate) fn painted_path(&self, painted: u32) -> &Path<ScaledPixels> {
+        &self.paths[self.positions.paths[painted as usize] as usize]
+    }
+    pub(crate) fn painted_underline(&self, painted: u32) -> &Underline {
+        &self.underlines[self.positions.underlines[painted as usize] as usize]
+    }
+    pub(crate) fn painted_monochrome_sprite(&self, painted: u32) -> &MonochromeSprite {
+        &self.monochrome_sprites[self.positions.monochrome_sprites[painted as usize] as usize]
+    }
+    pub(crate) fn painted_subpixel_sprite(&self, painted: u32) -> &SubpixelSprite {
+        &self.subpixel_sprites[self.positions.subpixel_sprites[painted as usize] as usize]
+    }
+    pub(crate) fn painted_polychrome_sprite(&self, painted: u32) -> &PolychromeSprite {
+        &self.polychrome_sprites[self.positions.polychrome_sprites[painted as usize] as usize]
+    }
+    pub(crate) fn painted_surface(&self, painted: u32) -> &PaintSurface {
+        &self.surfaces[self.positions.surfaces[painted as usize] as usize]
+    }
+
+    /// Sorts what was painted into the lanes the renderers upload.
     pub fn finish(&mut self) {
-        self.shadows.sort_by_key(|shadow| shadow.order);
-        self.quads.sort_by_key(|quad| quad.order);
-        self.paths.sort_by_key(|path| path.order);
-        self.underlines.sort_by_key(|underline| underline.order);
-        self.monochrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.subpixel_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.polychrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.surfaces.sort_by_key(|surface| surface.order);
+        let painted = &mut self.painted;
+        let positions = &mut self.positions;
+        let scratch = &mut self.sort_scratch;
+        sort_lane(
+            &mut painted.shadows,
+            &mut self.shadows,
+            &mut positions.shadows,
+            scratch,
+            |item| (item.order, 0),
+        );
+        sort_lane(
+            &mut painted.quads,
+            &mut self.quads,
+            &mut positions.quads,
+            scratch,
+            |item| (item.order, 0),
+        );
+        sort_lane_in_place(
+            &mut painted.paths,
+            &mut self.paths,
+            &mut positions.paths,
+            scratch,
+            |item| (item.order, 0),
+        );
+        sort_lane(
+            &mut painted.underlines,
+            &mut self.underlines,
+            &mut positions.underlines,
+            scratch,
+            |item| (item.order, 0),
+        );
+        sort_lane(
+            &mut painted.monochrome_sprites,
+            &mut self.monochrome_sprites,
+            &mut positions.monochrome_sprites,
+            scratch,
+            |item| (item.order, item.tile.tile_id.0),
+        );
+        sort_lane(
+            &mut painted.subpixel_sprites,
+            &mut self.subpixel_sprites,
+            &mut positions.subpixel_sprites,
+            scratch,
+            |item| (item.order, item.tile.tile_id.0),
+        );
+        sort_lane(
+            &mut painted.polychrome_sprites,
+            &mut self.polychrome_sprites,
+            &mut positions.polychrome_sprites,
+            scratch,
+            |item| (item.order, item.tile.tile_id.0),
+        );
+        sort_lane_in_place(
+            &mut painted.surfaces,
+            &mut self.surfaces,
+            &mut positions.surfaces,
+            scratch,
+            |item| (item.order, 0),
+        );
     }
 
     #[cfg_attr(
@@ -192,6 +421,7 @@ impl Scene {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
+#[repr(u8)]
 #[cfg_attr(
     all(
         any(target_os = "linux", target_os = "freebsd"),
@@ -211,12 +441,6 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
-pub(crate) enum PaintOperation {
-    Primitive(Primitive),
-    StartLayer(Bounds<ScaledPixels>),
-    EndLayer,
-}
-
 #[derive(Clone)]
 #[expect(missing_docs)]
 pub enum Primitive {
@@ -232,6 +456,19 @@ pub enum Primitive {
 
 #[expect(missing_docs)]
 impl Primitive {
+    pub(crate) fn kind(&self) -> PrimitiveKind {
+        match self {
+            Primitive::Shadow(_) => PrimitiveKind::Shadow,
+            Primitive::Quad(_) => PrimitiveKind::Quad,
+            Primitive::Path(_) => PrimitiveKind::Path,
+            Primitive::Underline(_) => PrimitiveKind::Underline,
+            Primitive::MonochromeSprite(_) => PrimitiveKind::MonochromeSprite,
+            Primitive::SubpixelSprite(_) => PrimitiveKind::SubpixelSprite,
+            Primitive::PolychromeSprite(_) => PrimitiveKind::PolychromeSprite,
+            Primitive::Surface(_) => PrimitiveKind::Surface,
+        }
+    }
+
     pub fn bounds(&self) -> &Bounds<ScaledPixels> {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,

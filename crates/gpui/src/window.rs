@@ -1176,6 +1176,7 @@ pub struct Window {
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    pub(crate) group_hitboxes: crate::elements::GroupHitboxes,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
@@ -2036,6 +2037,7 @@ impl Window {
             root: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
+            group_hitboxes: Default::default(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -3259,6 +3261,25 @@ impl Window {
         self.capslock
     }
 
+    pub(crate) fn with_focused_input_handler<R>(
+        &mut self,
+        cx: &mut App,
+        callback: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        if self.rendered_frame.focus != self.focus {
+            return None;
+        }
+        let index = self
+            .rendered_frame
+            .input_handlers
+            .iter()
+            .rposition(Option::is_some)?;
+        let mut input_handler = self.rendered_frame.input_handlers[index].take()?;
+        let result = input_handler.with_handler(self, cx, callback);
+        self.rendered_frame.input_handlers[index] = Some(input_handler);
+        result
+    }
+
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
@@ -3268,7 +3289,10 @@ impl Window {
         #[cfg(feature = "profiler")]
         let frame_dirty = self.invalidator.take_frame_dirty();
         #[cfg(feature = "profiler")]
-        self.window_profiler.begin_draw();
+        {
+            self.window_profiler.begin_draw();
+            cx.set_drawing_window(true);
+        }
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -3283,23 +3307,7 @@ impl Window {
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
 
-        // Restore the previously-used input handler.
-        // Place it back into a None slot (left by a previous .take()) so that
-        // cached paint_range indices in reuse_paint find the handler at the
-        // expected position.
-        if let Some(input_handler) = self.platform_window.take_input_handler() {
-            if let Some(slot) = self
-                .rendered_frame
-                .input_handlers
-                .iter_mut()
-                .rev()
-                .find(|h| h.is_none())
-            {
-                *slot = Some(input_handler);
-            } else {
-                self.rendered_frame.input_handlers.push(Some(input_handler));
-            }
-        }
+        self.platform_window.take_input_handler();
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
             #[cfg(feature = "profiler")]
@@ -3316,18 +3324,25 @@ impl Window {
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
-        // Register requested input handler with the platform window.
-        // Use .take() instead of .pop() to preserve Vec length, so that cached
-        // paint_range indices remain valid for reuse_paint on the next frame.
-        // Search backwards to find the last Some entry, since reuse_paint may
-        // have copied None slots from the previous frame. (Fixes #50456)
-        let focused_text_input_active = if let Some(mut input_handler) = self
-            .next_frame
+        self.layout_engine.as_mut().unwrap().clear();
+        self.text_system().finish_frame();
+        self.next_frame.finish(&mut self.rendered_frame);
+
+        self.invalidator.set_phase(DrawPhase::Focus);
+        let previous_focus_path = self.rendered_frame.focus_path();
+        let previous_window_active = self.rendered_frame.window_active;
+        mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.next_frame.clear();
+        let current_focus_path = self.rendered_frame.focus_path();
+        let current_window_active = self.rendered_frame.window_active;
+
+        let focused_text_input_active = if self
+            .rendered_frame
             .input_handlers
-            .iter_mut()
-            .rev()
-            .find_map(|h| h.take())
+            .iter()
+            .any(Option::is_some)
         {
+            let mut input_handler = PlatformInputHandler::for_focused(self.to_async(cx));
             let accepts_text_input = input_handler.accepts_text_input(self, cx);
             self.platform_window.set_input_handler(input_handler);
             accepts_text_input
@@ -3345,17 +3360,6 @@ impl Window {
                 });
         }
 
-        self.layout_engine.as_mut().unwrap().clear();
-        self.text_system().finish_frame();
-        self.next_frame.finish(&mut self.rendered_frame);
-
-        self.invalidator.set_phase(DrawPhase::Focus);
-        let previous_focus_path = self.rendered_frame.focus_path();
-        let previous_window_active = self.rendered_frame.window_active;
-        mem::swap(&mut self.rendered_frame, &mut self.next_frame);
-        self.next_frame.clear();
-        let current_focus_path = self.rendered_frame.focus_path();
-        let current_window_active = self.rendered_frame.window_active;
         let mut focus_before_listeners = self.focus;
 
         if previous_focus_path != current_focus_path
@@ -3407,6 +3411,7 @@ impl Window {
 
         #[cfg(feature = "profiler")]
         {
+            cx.set_drawing_window(false);
             let draw_duration = self
                 .window_profiler
                 .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
@@ -9065,6 +9070,7 @@ mod tests {
     fn paint_test_underlines(window: &mut Window, paint: impl FnOnce(&mut Window)) -> &[Underline] {
         window.next_frame.scene.clear();
         paint(window);
+        window.next_frame.scene.finish();
         &window.next_frame.scene.underlines
     }
 

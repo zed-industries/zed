@@ -393,7 +393,7 @@ impl BoxShadow {
 }
 
 /// How to handle whitespace in text
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum WhiteSpace {
     /// Normal line wrapping when text overflows the width of the element
     #[default]
@@ -403,7 +403,7 @@ pub enum WhiteSpace {
 }
 
 /// How to truncate text that overflows the width of the element
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum TextOverflow {
     /// Truncate the text at the end when it doesn't fit, and represent this truncation by
     /// displaying the provided string (e.g., "very long te…").
@@ -419,7 +419,7 @@ pub enum TextOverflow {
 }
 
 /// How to align text within the element
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum TextAlign {
     /// Align the text to the left of the element
     #[default]
@@ -480,6 +480,71 @@ pub struct TextStyle {
 
     /// The number of lines to display before truncating the text
     pub line_clamp: Option<usize>,
+}
+
+impl std::hash::Hash for TextStyle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        fn float<H: std::hash::Hasher>(value: f32, state: &mut H) {
+            std::hash::Hash::hash(&(value + 0.0).to_bits(), state);
+        }
+        fn hsla<H: std::hash::Hasher>(color: &Hsla, state: &mut H) {
+            for component in [color.h, color.s, color.l, color.a] {
+                float(component, state);
+            }
+        }
+        fn absolute<H: std::hash::Hasher>(length: &AbsoluteLength, state: &mut H) {
+            match length {
+                AbsoluteLength::Pixels(pixels) => {
+                    0u8.hash(state);
+                    float(pixels.0, state);
+                }
+                AbsoluteLength::Rems(rems) => {
+                    1u8.hash(state);
+                    float(rems.0, state);
+                }
+            }
+        }
+
+        hsla(&self.color, state);
+        self.font_family.hash(state);
+        self.font_features.hash(state);
+        self.font_fallbacks.hash(state);
+        absolute(&self.font_size, state);
+        match &self.line_height {
+            DefiniteLength::Absolute(length) => absolute(length, state),
+            DefiniteLength::Fraction(fraction) => {
+                2u8.hash(state);
+                float(*fraction, state);
+            }
+        }
+        float(self.font_weight.0, state);
+        self.font_style.hash(state);
+        self.background_color.is_some().hash(state);
+        if let Some(color) = &self.background_color {
+            hsla(color, state);
+        }
+        self.underline.is_some().hash(state);
+        if let Some(underline) = &self.underline {
+            float(underline.thickness.0, state);
+            underline.wavy.hash(state);
+            underline.color.is_some().hash(state);
+            if let Some(color) = &underline.color {
+                hsla(color, state);
+            }
+        }
+        self.strikethrough.is_some().hash(state);
+        if let Some(strikethrough) = &self.strikethrough {
+            float(strikethrough.thickness.0, state);
+            strikethrough.color.is_some().hash(state);
+            if let Some(color) = &strikethrough.color {
+                hsla(color, state);
+            }
+        }
+        self.white_space.hash(state);
+        self.text_overflow.hash(state);
+        self.text_align.hash(state);
+        self.line_clamp.hash(state);
+    }
 }
 
 impl Default for TextStyle {
@@ -1525,5 +1590,42 @@ mod tests {
             Some(FontWeight::SEMIBOLD),
             style.text_style().unwrap().font_weight
         );
+    }
+
+    #[test]
+    fn text_style_hash_canonicalizes_signed_zero() {
+        let mut positive = TextStyle::default();
+        positive.font_size = AbsoluteLength::Pixels(px(0.0));
+        positive.line_height = DefiniteLength::Fraction(0.0);
+        positive.font_weight = FontWeight(0.0);
+        positive.underline = Some(UnderlineStyle {
+            thickness: px(0.0),
+            ..Default::default()
+        });
+        positive.strikethrough = Some(StrikethroughStyle {
+            thickness: px(0.0),
+            ..Default::default()
+        });
+
+        let mut negative = positive.clone();
+        negative.font_size = AbsoluteLength::Pixels(px(-0.0));
+        negative.line_height = DefiniteLength::Fraction(-0.0);
+        negative.font_weight = FontWeight(-0.0);
+        negative.underline = negative.underline.map(|mut underline| {
+            underline.thickness = px(-0.0);
+            underline
+        });
+        negative.strikethrough = negative.strikethrough.map(|mut strikethrough| {
+            strikethrough.thickness = px(-0.0);
+            strikethrough
+        });
+
+        assert_eq!(positive, negative);
+        let hash = |style: &TextStyle| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            style.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&positive), hash(&negative));
     }
 }
