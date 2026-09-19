@@ -32,6 +32,74 @@ Before committing, verify that the docs are formatted in the way Prettier expect
 cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
 ```
 
+## Audit internal links
+
+The internal-link audit finds related documentation pages, asks
+[TypeSafe Jev](https://typesafe.ai/) whether a link would help the reader, and
+selects exact unlinked anchor text from the source page. The scripts require
+Python 3.10 or later and use only the Python standard library.
+
+Set a TypeSafe API key before running the audit:
+
+```sh
+export TYPESAFE_API_KEY="..."
+script/audit-doc-links
+```
+
+The audit sends selected documentation prose to the TypeSafe API. Do not run it
+against private or unreleased documentation without confirming the applicable
+data-handling policy.
+
+Results and cached API responses are written to `target/doc-link-audit/`. To
+audit one part of the documentation, pass one or more source globs:
+
+```sh
+script/audit-doc-links --source 'ai/*.md'
+```
+
+The default model is pinned because the probability thresholds were calibrated
+against that version. Use `--model` only when validating a new model and its
+thresholds together.
+
+Create a self-contained review page:
+
+```sh
+script/review-doc-links \
+  --static-output target/doc-link-audit/review.html
+```
+
+The review page shows the source context, destination page, model
+probabilities, and proposed anchor. Reviewers mark each item Pass, Fail, or
+Defer, then use **Export labels** to download `doc-link-review.json`.
+
+Validate an exported review before changing any files:
+
+```sh
+script/review-doc-links --apply-export ~/Downloads/doc-link-review.json
+```
+
+Apply the approved exact anchors with `--write`:
+
+```sh
+script/review-doc-links \
+  --apply-export ~/Downloads/doc-link-review.json \
+  --write
+```
+
+The apply command refuses to edit source pages that changed after the audit.
+Rerun the audit when possible. Use `--allow-updated-sources` to apply anchors
+that still match while reporting suggestions whose source text disappeared.
+
+The audit does not call a text-generating model. Items marked
+`rewrite_candidate` need new wording and stay in the review queue unless you
+provide a rewrite-selection JSON file with `--rewrites`.
+
+Run the local tests after changing either script:
+
+```sh
+python3 script/test_doc_links.py
+```
+
 ## Preprocessor
 
 We have a custom mdBook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
