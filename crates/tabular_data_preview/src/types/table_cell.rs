@@ -20,6 +20,7 @@ pub enum TableCell {
         /// Cached display value (for performance)
         cached_value: SharedString,
     },
+    Generated(SharedString),
     /// Virtual cell, created to pad malformed row
     Virtual,
 }
@@ -48,6 +49,7 @@ impl TableCell {
     pub fn display_value(&self) -> Option<&SharedString> {
         match self {
             TableCell::Real { cached_value, .. } => Some(cached_value),
+            TableCell::Generated(value) => Some(value),
             TableCell::Virtual => None,
         }
     }

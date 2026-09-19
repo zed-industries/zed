@@ -18102,6 +18102,7 @@ dependencies = [
  "editor",
  "fuzzy",
  "gpui",
+ "indexmap 2.14.0",
  "log",
  "picker",
  "project",
