@@ -1142,7 +1142,10 @@ impl VsCodeSettings {
                         .collect::<Vec<_>>()
                 })
                 .filter(|patterns| !patterns.is_empty())
-                .map(SplicingVec::from),
+                .map(|mut patterns| {
+                    patterns.push(SplicingVec::REST.to_owned());
+                    SplicingVec::from(patterns)
+                }),
             // `files.watcherInclude` adds watch roots, not Git-ignore overrides
             file_scan_inclusions: None,
             scan_symlinks: None,
@@ -1265,7 +1268,7 @@ mod tests {
         .settings_content();
         assert_eq!(
             serde_json::to_value(&imported.project.worktree.file_scan_exclusions)?,
-            serde_json::json!(["**/build/**", "**/target/**"])
+            serde_json::json!(["**/build/**", "**/target/**", "..."])
         );
 
         let mut inherited = WorktreeSettingsContent {
@@ -1274,8 +1277,8 @@ mod tests {
         };
         inherited.merge_from(&imported.project.worktree);
         assert_eq!(
-            inherited.file_scan_exclusions,
-            imported.project.worktree.file_scan_exclusions
+            serde_json::to_value(&inherited.file_scan_exclusions)?,
+            serde_json::json!(["**/build/**", "**/target/**", "**/inherited/**"])
         );
         Ok(())
     }
