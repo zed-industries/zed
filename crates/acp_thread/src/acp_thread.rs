@@ -4846,7 +4846,7 @@ impl AcpThread {
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
                     let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
-                    if headless {
+                    if headless || (cfg!(target_os = "linux") && sandbox_wrap.is_some()) {
                         builder = builder.non_interactive();
                     }
                     let (task_command, task_args) = builder
