@@ -2723,6 +2723,38 @@ fn model_id_to_selection(model_id: &AgentModelId, cx: &App) -> LanguageModelSele
 
 pub static ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed Agent"));
 
+pub fn available_native_agent(cx: &App) -> AvailableAgent {
+    let registry = LanguageModelRegistry::read_global(cx);
+    let default = registry.default_model();
+    let mut models = Vec::new();
+    for provider in registry.providers() {
+        if !provider.is_authenticated(cx) {
+            continue;
+        }
+        let provider_id = provider.id();
+        for model in provider.provided_models(cx) {
+            let id = format!("{}/{}", provider_id.0, model.id().0);
+            let is_default = default
+                .as_ref()
+                .is_some_and(|default| {
+                    default.provider.id() == provider_id && default.model.id() == model.id()
+                });
+            models.push(AvailableModel {
+                id,
+                name: model.name().0,
+                is_default,
+            });
+        }
+    }
+
+    AvailableAgent {
+        id: ZED_AGENT_ID.to_string(),
+        name: ZED_AGENT_ID.0.clone(),
+        is_native: true,
+        models,
+    }
+}
+
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
         ZED_AGENT_ID.clone()
@@ -3184,8 +3216,23 @@ impl NativeThreadEnvironment {
     pub(crate) fn create_subagent_thread(
         &self,
         label: String,
+        model: Option<String>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
+        let model = if let Some(model) = model {
+            let model_id = AgentModelId::from(model);
+            let available = self.agent.read_with(cx, |agent, _| {
+                agent.models.model_from_id(&model_id).is_some()
+            })?;
+            if !available {
+                anyhow::bail!(
+                    "Model {model_id} is unavailable. Call list_agents_and_models to inspect available models."
+                );
+            }
+            Some(model_id_to_selection(&model_id, cx))
+        } else {
+            None
+        };
         let Some(parent_thread_entity) = self.thread.upgrade() else {
             anyhow::bail!("Parent thread no longer exists".to_string());
         };
@@ -3201,7 +3248,7 @@ impl NativeThreadEnvironment {
         }
 
         let subagent_thread: Entity<Thread> = cx.new(|cx| {
-            let mut thread = Thread::new_subagent(&parent_thread_entity, cx);
+            let mut thread = Thread::new_subagent(&parent_thread_entity, model.as_ref(), cx);
             thread.set_title(label.into(), cx);
             thread
         });
@@ -3393,8 +3440,13 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         })
     }
 
-    fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
-        self.create_subagent_thread(label, cx)
+    fn create_subagent(
+        &self,
+        label: String,
+        model: Option<String>,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        self.create_subagent_thread(label, model, cx)
     }
 
     fn resume_subagent(
@@ -3429,14 +3481,14 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents> {
         let host = self
             .agent
-            .read_with(cx, |agent, _| agent.sibling_thread_host())?
-            .ok_or_else(|| {
-                anyhow!(
-                    "No sibling-thread host is registered. This usually means the \
-                     agent panel hasn't been initialized in this workspace."
-                )
-            })?;
-        host.list_available_agents(cx)
+            .read_with(cx, |agent, _| agent.sibling_thread_host())?;
+        if let Some(host) = host {
+            host.list_available_agents(cx)
+        } else {
+            Ok(AvailableAgents {
+                agents: vec![available_native_agent(cx)],
+            })
+        }
     }
 }
 
@@ -5829,7 +5881,8 @@ mod internal_tests {
 
         // Build the subagent thread the same way
         // `NativeThreadEnvironment::create_subagent_thread` does.
-        let subagent_thread = cx.update(|cx| cx.new(|cx| Thread::new_subagent(&parent_thread, cx)));
+        let subagent_thread =
+            cx.update(|cx| cx.new(|cx| Thread::new_subagent(&parent_thread, None, cx)));
 
         // Run the subagent through the production registration path.
         // This is what installs the `SkillTool` on the thread.
@@ -7393,10 +7446,10 @@ mod internal_tests {
         };
 
         let first_subagent = cx
-            .update(|cx| environment.create_subagent_thread("first".to_string(), cx))
+            .update(|cx| environment.create_subagent_thread("first".to_string(), None, cx))
             .unwrap();
         let second_subagent = cx
-            .update(|cx| environment.create_subagent_thread("second".to_string(), cx))
+            .update(|cx| environment.create_subagent_thread("second".to_string(), None, cx))
             .unwrap();
         cx.run_until_parked();
 

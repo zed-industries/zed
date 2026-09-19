@@ -10688,6 +10688,13 @@ impl ThreadView {
                 _ => false,
             });
 
+        let model_name = thread_view
+            .and_then(|view| view.read(cx).as_native_thread(cx))
+            .and_then(|thread| {
+                let thread = thread.read(cx);
+                let model = thread.model()?;
+                Some(SharedString::from(model.name().0))
+            });
         let thread_title = thread
             .as_ref()
             .and_then(|t| t.read(cx).title())
@@ -10797,6 +10804,14 @@ impl ThreadView {
                                             .size(LabelSize::Custom(self.tool_name_font_size()))
                                             .truncate(),
                                     )
+                                    .when_some(model_name, |this, model_name| {
+                                        this.child(
+                                            Label::new(format!("· {model_name}"))
+                                                .size(LabelSize::Custom(self.tool_name_font_size()))
+                                                .color(Color::Muted)
+                                                .flex_none(),
+                                        )
+                                    })
                                     .when(files_changed > 0, |this| {
                                         this.child(
                                             Label::new(format!(
