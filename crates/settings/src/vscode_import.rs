@@ -1128,13 +1128,20 @@ impl VsCodeSettings {
             file_scan_depth: None,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
-                .and_then(|v| v.as_array())
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|n| n.as_str().map(str::to_owned))
+                .and_then(Value::as_object)
+                .map(|patterns| {
+                    patterns
+                        .iter()
+                        .filter(|(pattern, enabled)| {
+                            // Zed reserves `...` for inheritance, not a literal path
+                            !pattern.is_empty()
+                                && pattern.as_str() != SplicingVec::REST
+                                && enabled.as_bool() == Some(true)
+                        })
+                        .map(|(pattern, _)| pattern.to_owned())
                         .collect::<Vec<_>>()
                 })
-                .filter(|r| !r.is_empty())
+                .filter(|patterns| !patterns.is_empty())
                 .map(SplicingVec::from),
             // `files.watcherInclude` adds watch roots, not Git-ignore overrides
             file_scan_inclusions: None,
@@ -1234,6 +1241,79 @@ mod tests {
             .unwrap()
             .settings_content()
             .reduce_motion
+    }
+
+    #[test]
+    fn test_import_watcher_exclusions() -> Result<()> {
+        let imported = VsCodeSettings::from_str(
+            r#"{
+                "files.watcherExclude": {
+                    "": true,
+                    "**/array/**": [],
+                    "**/build/**": true,
+                    "**/cache/**": false,
+                    "**/null/**": null,
+                    "**/number/**": 1,
+                    "**/object/**": {"enabled": true},
+                    "**/string/**": "true",
+                    "**/target/**": true,
+                    "...": true
+                }
+            }"#,
+            VsCodeSettingsSource::VsCode,
+        )?
+        .settings_content();
+        assert_eq!(
+            serde_json::to_value(&imported.project.worktree.file_scan_exclusions)?,
+            serde_json::json!(["**/build/**", "**/target/**"])
+        );
+
+        let mut inherited = WorktreeSettingsContent {
+            file_scan_exclusions: Some(SplicingVec::from(vec!["**/inherited/**".to_string()])),
+            ..Default::default()
+        };
+        inherited.merge_from(&imported.project.worktree);
+        assert_eq!(
+            inherited.file_scan_exclusions,
+            imported.project.worktree.file_scan_exclusions
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_import_watcher_exclusions_without_usable_patterns() -> Result<()> {
+        let inherited = WorktreeSettingsContent {
+            file_scan_exclusions: Some(SplicingVec::from(vec!["**/inherited/**".to_string()])),
+            ..Default::default()
+        };
+        for content in [
+            r#"{"files.watcherExclude": "**/cache/**"}"#,
+            r#"{"files.watcherExclude": 1}"#,
+            r#"{"files.watcherExclude": ["**/cache/**"]}"#,
+            r#"{"files.watcherExclude": []}"#,
+            r#"{"files.watcherExclude": null}"#,
+            r#"{"files.watcherExclude": true}"#,
+            r#"{"files.watcherExclude": {"": true}}"#,
+            r#"{"files.watcherExclude": {"**/cache/**": "true"}}"#,
+            r#"{"files.watcherExclude": {"**/cache/**": false}}"#,
+            r#"{"files.watcherExclude": {"...": true}}"#,
+            r#"{"files.watcherExclude": {}}"#,
+            r#"{}"#,
+        ] {
+            let imported =
+                VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)?.settings_content();
+            assert_eq!(
+                imported.project.worktree.file_scan_exclusions, None,
+                "{content}"
+            );
+            let mut unchanged = inherited.clone();
+            unchanged.merge_from(&imported.project.worktree);
+            assert_eq!(
+                unchanged.file_scan_exclusions, inherited.file_scan_exclusions,
+                "{content}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
