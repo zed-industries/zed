@@ -57,11 +57,11 @@ Each thread can use a different agent, so you can run Zed's built-in agent in on
 
 The Threads Sidebar can hold different thread types:
 
-| Thread type                                   | Configuration                                                                   |
-| --------------------------------------------- | ------------------------------------------------------------------------------- |
-| [Zed Agent thread](./zed-agent.md)            | Uses Zed Agent settings, profiles, tools, Skills, Instructions, and MCP         |
-| [External Agent thread](./external-agents.md) | Uses the ACP integration and the agent's native configuration                   |
-| [Terminal Thread](./terminal-threads.md)      | Runs a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration |
+| Thread type                                   | Configuration                                                                          |
+| --------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [Zed Agent thread](./zed-agent.md)            | Uses Zed Agent settings, profiles, tools, [Skills](./skills.md), Instructions, and MCP |
+| [External Agent thread](./external-agents.md) | Uses the ACP integration and the agent's native configuration                          |
+| [Terminal Thread](./terminal-threads.md)      | Runs a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration        |
 
 ## Multiple Projects {#multiple-projects}
 
