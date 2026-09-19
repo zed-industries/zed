@@ -108,6 +108,14 @@ impl Command {
         self.args.iter().map(|s| s.as_os_str())
     }
 
+    /// The environment overrides set on this command. A `None` value means the
+    /// variable is removed.
+    pub fn get_envs(&self) -> impl Iterator<Item = (&OsStr, Option<&OsStr>)> {
+        self.envs
+            .iter()
+            .map(|(key, val)| (key.as_os_str(), val.as_deref()))
+    }
+
     pub fn env(&mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> &mut Self {
         self.envs
             .insert(key.as_ref().to_owned(), Some(val.as_ref().to_owned()));
