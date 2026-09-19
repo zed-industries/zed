@@ -1815,6 +1815,8 @@
     "branch_picker": {
       "show_author_name": true,
     },
+    // Git hosting provider base URLs enabled for repository search in the clone picker.
+    "repository_search_providers": [],
     "file_diff": {
       // Whether newly opened file diffs show the full file instead of changes only.
       "show_full_file": true,

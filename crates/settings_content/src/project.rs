@@ -629,6 +629,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: Option<BranchPickerSettingsContent>,
+    /// Git hosting provider base URLs enabled for repository search in the clone picker.
+    ///
+    /// Default: []
+    pub repository_search_providers: Option<Vec<String>>,
     /// File diff settings.
     pub file_diff: Option<FileDiffSettingsContent>,
     /// How hunks are displayed visually in the editor.

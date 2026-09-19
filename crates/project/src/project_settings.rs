@@ -480,6 +480,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: BranchPickerSettings,
+    /// Git hosting provider base URLs enabled for repository search in the clone picker.
+    ///
+    /// Default: []
+    pub repository_search_providers: Vec<String>,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
@@ -711,6 +715,7 @@ impl Settings for ProjectSettings {
                     show_author_name: branch_picker.show_author_name.unwrap(),
                 }
             },
+            repository_search_providers: git.repository_search_providers.clone().unwrap(),
             hunk_style: git.hunk_style.unwrap(),
             diff_base: git.diff_base.unwrap_or_default(),
             path_style: git.path_style.unwrap().into(),
