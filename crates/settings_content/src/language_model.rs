@@ -277,13 +277,28 @@ pub struct OpenCodeAvailableModel {
     pub protocol: Option<OpenCodeApiProtocol>,
     /// The subscription for this model: "zen" or "go". Defaults to Zen.
     pub subscription: Option<OpenCodeModelSubscription>,
-    /// Custom Model API URL to use for this model.
-    pub custom_model_api_url: Option<String>,
-    /// Supported reasoning effort levels, for example `["low", "medium", "high"].
+    #[serde(default)]
+    pub capabilities: OpenCodeModelCapabilities,
+    /// Supported reasoning effort levels, for example `["none", "low", "xhigh", "max"].
     pub reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
     /// When using OpenAiChat protocol, whether thinking tokens are sent as a dedicated `reasoning_content` field or inline in message text.
     #[serde(default)]
     pub interleaved_reasoning: bool,
+    /// Custom Model API URL to use for this model.
+    pub custom_model_api_url: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct OpenCodeModelCapabilities {
+    #[serde(default)]
+    pub images: bool,
+}
+
+impl Default for OpenCodeModelCapabilities {
+    fn default() -> Self {
+        Self { images: false }
+    }
 }
 
 #[with_fallible_options]
