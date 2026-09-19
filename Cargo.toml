@@ -862,6 +862,7 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.12"
 tokio = { version = "1" }
+tokio-rustls = { version = "0.26", default-features = false }
 toml = "0.8"
 toml_edit = { version = "0.22", default-features = false, features = [
     "display",
