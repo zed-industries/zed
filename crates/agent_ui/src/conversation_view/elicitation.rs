@@ -8,8 +8,8 @@ use gpui::{AnyElement, App, Div, Empty, Entity, Focusable, Hsla, SharedString, W
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
-    Button, Checkbox, Color, Icon, IconName, IconSize, Indicator, Label, LabelSize, ToggleState,
-    prelude::*,
+    Button, Checkbox, Color, Icon, IconName, IconSize, Label, LabelSize, RadioIndicator,
+    ToggleState, prelude::*,
 };
 
 #[derive(Clone)]
@@ -2176,7 +2176,7 @@ impl<'a> ElicitationCard<'a> {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(Self::render_radio_indicator(
+                            .child(RadioIndicator::new(
                                 is_selected,
                                 border_color,
                                 control_background,
@@ -2225,21 +2225,6 @@ impl<'a> ElicitationCard<'a> {
 
     fn option_control_background(cx: &App) -> Hsla {
         cx.theme().colors().editor_background
-    }
-
-    fn render_radio_indicator(is_selected: bool, border_color: Hsla, background: Hsla) -> Div {
-        div()
-            .size_3()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .border_1()
-            .border_color(border_color)
-            .bg(background)
-            .when(is_selected, |this| {
-                this.child(Indicator::dot().color(Color::Accent))
-            })
     }
 
     fn render_url_elicitation(&self, mode: &acp::ElicitationUrlMode) -> AnyElement {
