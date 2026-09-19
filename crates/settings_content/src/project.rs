@@ -230,7 +230,10 @@ pub struct WorktreeSettingsContent {
     ///
     /// ```json
     /// {
-    ///   "hidden_files": ["**/*.log", "..."]
+    ///   "hidden_files": ["**/*.log", "..."],
+    ///   "project_panel": {
+    ///     "hide_hidden": true
+    ///   }
     /// }
     /// ```
     ///

@@ -2948,7 +2948,10 @@ Use `"..."` to add patterns without repeating Zed’s defaults. In project setti
 
 ```json [settings]
 {
-  "hidden_files": ["**/*.log", "..."]
+  "hidden_files": ["**/*.log", "..."],
+  "project_panel": {
+    "hide_hidden": true
+  }
 }
 ```
 
