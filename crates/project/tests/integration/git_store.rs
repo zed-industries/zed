@@ -1205,49 +1205,78 @@ mod git_worktrees {
     }
 
     #[test]
-    fn test_validate_worktree_directory() {
+    fn test_resolve_worktree_directory() {
         let work_dir = Path::new("/code/my-project");
 
-        // Valid: sibling
-        assert!(worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).is_ok());
-
-        // Valid: subdirectory
-        assert!(
-            worktrees_directory_for_repo(work_dir, ".git/zed-worktrees", PathStyle::Unix).is_ok()
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap(),
+            PathBuf::from("/code/worktrees/my-project")
         );
-        assert!(worktrees_directory_for_repo(work_dir, "my-worktrees", PathStyle::Unix).is_ok());
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, ".git/zed-worktrees", PathStyle::Unix).unwrap(),
+            PathBuf::from("/code/my-project/.git/zed-worktrees")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, "my-worktrees", PathStyle::Unix).unwrap(),
+            PathBuf::from("/code/my-project/my-worktrees")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(
+                work_dir,
+                "../../other-project/worktrees",
+                PathStyle::Unix
+            )
+            .unwrap(),
+            PathBuf::from("/other-project/worktrees/my-project")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, "/tmp/worktrees", PathStyle::Unix).unwrap(),
+            PathBuf::from("/tmp/worktrees/my-project")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(work_dir, "/", PathStyle::Unix).unwrap(),
+            PathBuf::from("/my-project")
+        );
+        assert_eq!(
+            worktrees_directory_for_repo(
+                work_dir,
+                "/code/my-project/.git/zed-worktrees",
+                PathStyle::Unix
+            )
+            .unwrap(),
+            PathBuf::from("/code/my-project/.git/zed-worktrees")
+        );
 
-        // Invalid: just ".." would resolve back to the working directory itself
-        let err = worktrees_directory_for_repo(work_dir, "..", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("must not be \"..\""));
+        for setting in ["", "..", "../", "/code", "/code/my-project"] {
+            let error =
+                worktrees_directory_for_repo(work_dir, setting, PathStyle::Unix).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("must not resolve to the repository directory")
+            );
+        }
+    }
 
-        // Invalid: ".." with trailing separators
-        let err = worktrees_directory_for_repo(work_dir, "..\\", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("must not be \"..\""));
-        let err = worktrees_directory_for_repo(work_dir, "../", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("must not be \"..\""));
+    #[test]
+    fn test_resolve_absolute_windows_worktree_directory() {
+        let directory = worktrees_directory_for_repo(
+            Path::new("C:/code/my-project"),
+            r"D:\worktrees",
+            PathStyle::Windows,
+        )
+        .unwrap();
 
-        // Invalid: empty string would resolve to the working directory itself
-        let err = worktrees_directory_for_repo(work_dir, "", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("must not be empty"));
+        assert_eq!(directory.to_string_lossy(), r"D:\worktrees\my-project");
 
-        // Invalid: absolute path
-        let err =
-            worktrees_directory_for_repo(work_dir, "/tmp/worktrees", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("relative path"));
+        let directory = worktrees_directory_for_repo(
+            Path::new("C:/code/my-project"),
+            "D:\\",
+            PathStyle::Windows,
+        )
+        .unwrap();
 
-        // Invalid: "/" is absolute on Unix
-        let err = worktrees_directory_for_repo(work_dir, "/", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
-        // Invalid: "///" is absolute
-        let err = worktrees_directory_for_repo(work_dir, "///", PathStyle::Unix).unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
-        // Invalid: escapes too far up
-        let err = worktrees_directory_for_repo(work_dir, "../../other-project/wt", PathStyle::Unix)
-            .unwrap_err();
-        assert!(err.to_string().contains("outside"));
+        assert_eq!(directory.to_string_lossy(), r"D:\my-project");
     }
 
     #[test]
