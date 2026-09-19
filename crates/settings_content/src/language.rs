@@ -97,6 +97,7 @@ pub enum EditPredictionProvider {
     Codestral,
     Ollama,
     OpenAiCompatibleApi,
+    AmazonBedrock,
     Mercury,
 }
 
@@ -109,6 +110,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Codestral
             | EditPredictionProvider::Ollama
             | EditPredictionProvider::OpenAiCompatibleApi
+            | EditPredictionProvider::AmazonBedrock
             | EditPredictionProvider::Mercury => false,
         }
     }
@@ -122,6 +124,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
             EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
+            EditPredictionProvider::AmazonBedrock => Some("Amazon Bedrock"),
         }
     }
 }
@@ -147,6 +150,8 @@ pub struct EditPredictionSettingsContent {
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
+    /// Settings specific to using Amazon Bedrock for edit prediction.
+    pub amazon_bedrock: Option<AmazonBedrockEditPredictionSettingsContent>,
     /// Settings specific to Zed's Edit Predictions provider.
     pub zed: Option<ZedEditPredictionSettingsContent>,
     /// Settings specific to the Mercury Edit Predictions provider.
@@ -185,6 +190,71 @@ pub struct CustomEditPredictionProviderSettingsContent {
     ///
     /// Default: 0
     pub prediction_debounce: Option<DelayMs>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct AmazonBedrockEditPredictionSettingsContent {
+    /// Which Bedrock endpoint family to send completions to.
+    ///
+    /// Default: mantle
+    pub backend: Option<AmazonBedrockPredictionBackendContent>,
+    /// The id of the model, e.g. `qwen.qwen3-coder-30b-a3b-instruct`.
+    ///
+    /// Default: ""
+    pub model: Option<String>,
+    /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
+    ///
+    /// Default: ""
+    pub prompt_format: Option<EditPredictionPromptFormatContent>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 256
+    pub max_output_tokens: Option<u32>,
+    /// AWS profile to resolve credentials from. When empty, the default AWS
+    /// credential provider chain is used.
+    ///
+    /// Default: ""
+    pub profile: Option<String>,
+    /// AWS region to sign requests for and to derive the endpoint from.
+    ///
+    /// Default: "us-east-1"
+    pub region: Option<String>,
+    /// Overrides the OpenAI-compatible base URL derived from the backend and
+    /// region, e.g. `https://bedrock-mantle.us-east-1.api.aws/v1`.
+    ///
+    /// Default: none
+    pub endpoint_url: Option<String>,
+    /// Overrides the system message that instructs the model to reply with
+    /// only the code belonging at the cursor. Set to `""` to use the built-in
+    /// prompt.
+    ///
+    /// Default: ""
+    pub system_prompt: Option<String>,
+}
+
+/// The Bedrock endpoint family used for edit predictions.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AmazonBedrockPredictionBackendContent {
+    /// The `bedrock-mantle.{region}.api.aws` endpoint.
+    #[default]
+    Mantle,
+    /// The `bedrock-runtime.{region}.amazonaws.com` endpoint.
+    Runtime,
 }
 
 #[derive(
