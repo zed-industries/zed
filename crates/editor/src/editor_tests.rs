@@ -8629,6 +8629,24 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
         the «LAZYˇ» dog
     "});
 
+    // Test multiple cursors within a single word - the word should only be converted once
+    cx.set_state(indoc! {"
+        some_ˇvariˇable_naˇme
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_upper_case(&ConvertToUpperCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «SOME_VARIABLE_NAMEˇ»
+    "});
+
+    // Test a selection that partially overlaps the word another cursor expands to
+    cx.set_state(indoc! {"
+        «someˇ»_variaˇble
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_upper_case(&ConvertToUpperCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «SOME_VARIABLEˇ»
+    "});
+
     // Test case where text length grows
     cx.set_state(indoc! {"
         «tschüßˇ»
