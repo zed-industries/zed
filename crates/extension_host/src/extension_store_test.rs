@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use client::{AnyProtoClient, TypedEnvelope, proto};
 use collections::{BTreeMap, HashMap, HashSet};
 use extension::{
-    BuildTaskTemplate, CodeLabel, Command, Completion, ContextServerConfiguration,
+    BuildTaskTemplate, ClientCommand, CodeLabel, Command, Completion, ContextServerConfiguration,
     DebugAdapterBinary, DebugRequest, DebugScenario, DebugTaskDefinition, Extension,
     ExtensionHostProxy, KeyValueStoreDelegate, LibManifestEntry, ProjectDelegate, SlashCommand,
     SlashCommandArgumentCompletion, SlashCommandOutput, StartDebuggingRequestArgumentsRequest,
@@ -4175,6 +4175,15 @@ impl Extension for FakeExtension {
         _worktree: Arc<dyn WorktreeDelegate>,
         _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
+        anyhow::bail!("not supported by FakeExtension")
+    }
+
+    async fn language_server_client_command(
+        &self,
+        _language_server_id: LanguageServerName,
+        _command: String,
+        _arguments: Vec<serde_json::Value>,
+    ) -> anyhow::Result<Option<ClientCommand>> {
         anyhow::bail!("not supported by FakeExtension")
     }
 
