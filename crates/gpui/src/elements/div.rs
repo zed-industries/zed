@@ -1390,6 +1390,12 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the current state for this element (`aria-current`).
+    fn aria_current(mut self, current: accesskit::AriaCurrent) -> Self {
+        self.interactivity().aria.current = Some(current);
+        self
+    }
+
     /// Set the expanded state for this element.
     fn aria_expanded(mut self, expanded: bool) -> Self {
         self.interactivity().aria.expanded = Some(expanded);
@@ -2103,6 +2109,7 @@ pub(crate) struct AriaProperties {
     pub(crate) description: Option<SharedString>,
     pub(crate) keyshortcuts: Option<SharedString>,
     pub(crate) selected: Option<bool>,
+    pub(crate) current: Option<accesskit::AriaCurrent>,
     pub(crate) expanded: Option<bool>,
     pub(crate) toggled: Option<accesskit::Toggled>,
     pub(crate) numeric_value: Option<f64>,
@@ -3536,6 +3543,9 @@ impl Interactivity {
         }
         if let Some(selected) = self.aria.selected {
             node.set_selected(selected);
+        }
+        if let Some(current) = self.aria.current {
+            node.set_aria_current(current);
         }
         if let Some(expanded) = self.aria.expanded {
             node.set_expanded(expanded);
@@ -5279,6 +5289,17 @@ mod tests {
         assert_eq!(node.min_numeric_value(), Some(6.0));
         assert_eq!(node.max_numeric_value(), Some(72.0));
         assert_eq!(node.numeric_value_step(), Some(1.0));
+    }
+
+    #[test]
+    fn test_write_a11y_info_aria_current() {
+        let mut interactivity = Interactivity::default();
+        interactivity.aria.current = Some(accesskit::AriaCurrent::Page);
+
+        let mut node = accesskit::Node::new(accesskit::Role::Link);
+        interactivity.write_a11y_info(&mut node);
+
+        assert_eq!(node.aria_current(), Some(accesskit::AriaCurrent::Page));
     }
 
     /// Two focusable, clickable elements ("a" and "b") used to exercise the
