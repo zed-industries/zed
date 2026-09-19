@@ -194,6 +194,9 @@ pub enum ModelMode {
     AdaptiveThinking {
         effort: bedrock::BedrockAdaptiveThinkingEffort,
     },
+    Reasoning {
+        effort: bedrock::BedrockAdaptiveThinkingEffort,
+    },
 }
 
 impl From<ModelMode> for BedrockModelMode {
@@ -202,6 +205,7 @@ impl From<ModelMode> for BedrockModelMode {
             ModelMode::Default => BedrockModelMode::Default,
             ModelMode::Thinking { budget_tokens } => BedrockModelMode::Thinking { budget_tokens },
             ModelMode::AdaptiveThinking { effort } => BedrockModelMode::AdaptiveThinking { effort },
+            ModelMode::Reasoning { effort } => BedrockModelMode::Reasoning { effort },
         }
     }
 }
@@ -212,6 +216,7 @@ impl From<BedrockModelMode> for ModelMode {
             BedrockModelMode::Default => ModelMode::Default,
             BedrockModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
             BedrockModelMode::AdaptiveThinking { effort } => ModelMode::AdaptiveThinking { effort },
+            BedrockModelMode::Reasoning { effort } => ModelMode::Reasoning { effort },
         }
     }
 }
@@ -866,7 +871,8 @@ impl LanguageModel for BedrockModel {
     }
 
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
-        if self.model.supports_adaptive_thinking() {
+        let is_gpt_6_astra = matches!(self.model, ConverseModel::Gpt6Astra);
+        if self.model.supports_adaptive_thinking() || is_gpt_6_astra {
             vec![
                 language_model::LanguageModelEffortLevel {
                     name: "Low".into(),
@@ -876,12 +882,12 @@ impl LanguageModel for BedrockModel {
                 language_model::LanguageModelEffortLevel {
                     name: "Medium".into(),
                     value: "medium".into(),
-                    is_default: false,
+                    is_default: is_gpt_6_astra,
                 },
                 language_model::LanguageModelEffortLevel {
                     name: "High".into(),
                     value: "high".into(),
-                    is_default: true,
+                    is_default: !is_gpt_6_astra,
                 },
                 language_model::LanguageModelEffortLevel {
                     name: "XHigh".into(),
@@ -896,7 +902,9 @@ impl LanguageModel for BedrockModel {
             ]
             .into_iter()
             .filter(|effort_level| {
-                effort_level.value != "xhigh" || self.model.supports_xhigh_adaptive_thinking()
+                effort_level.value != "xhigh"
+                    || self.model.supports_xhigh_adaptive_thinking()
+                    || is_gpt_6_astra
             })
             .collect()
         } else {
@@ -906,8 +914,10 @@ impl LanguageModel for BedrockModel {
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
+            LanguageModelToolChoice::Auto => self.model.supports_tool_use(),
+            LanguageModelToolChoice::Any => {
                 self.model.supports_tool_use()
+                    && anthropic::supports_forced_tool_use(self.model.id())
             }
             // Add support for None - we'll filter tool calls at response
             LanguageModelToolChoice::None => self.model.supports_tool_use(),
@@ -980,6 +990,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let display_name = self.model.display_name().to_string();
+        let model = self.model.clone();
         let executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| match err {
@@ -1048,7 +1059,7 @@ impl LanguageModel for BedrockModel {
                 other => LanguageModelCompletionError::Other(anyhow!(other)),
             })?;
             let events = language_model::stream_in_background(
-                map_to_language_model_completion_events(response).boxed(),
+                map_to_language_model_completion_events(response, model).boxed(),
                 executor,
             );
 
@@ -1993,6 +2004,50 @@ fn deny_tool_use_events(
     })
 }
 
+fn prepare_bedrock_content(
+    content: Vec<BedrockInnerContent>,
+    tool_result_images_as_siblings: bool,
+) -> Result<Vec<BedrockInnerContent>> {
+    use base64::Engine;
+
+    let mut prepared = Vec::with_capacity(content.len());
+    for block in content {
+        match block {
+            BedrockInnerContent::ReasoningContent(BedrockThinkingBlock::RedactedContent(data)) => {
+                // Zed stores base64 strings; the AWS SDK expects the decoded encrypted bytes.
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(data.as_ref())
+                    .context("Invalid base64 in Bedrock reasoning history")?;
+                prepared.push(BedrockInnerContent::ReasoningContent(
+                    BedrockThinkingBlock::RedactedContent(BedrockBlob::new(bytes)),
+                ));
+            }
+            BedrockInnerContent::ToolResult(mut result) if tool_result_images_as_siblings => {
+                // OpenAI tool-result images belong in sibling user-message content blocks.
+                // <https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html>
+                let mut images = Vec::new();
+                for content in std::mem::take(&mut result.content) {
+                    match content {
+                        BedrockToolResultContentBlock::Image(image) => {
+                            images.push(BedrockInnerContent::Image(image))
+                        }
+                        other => result.content.push(other),
+                    }
+                }
+                if !images.is_empty() && result.content.is_empty() {
+                    result.content.push(BedrockToolResultContentBlock::Text(
+                        "See the attached image output.".into(),
+                    ));
+                }
+                prepared.push(BedrockInnerContent::ToolResult(result));
+                prepared.extend(images);
+            }
+            other => prepared.push(other),
+        }
+    }
+    Ok(prepared)
+}
+
 pub fn into_bedrock(
     request: LanguageModelRequest,
     model: String,
@@ -2009,6 +2064,12 @@ pub fn into_bedrock(
         .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
     if request.contains_custom_tool_input() {
         anyhow::bail!("Bedrock does not support custom tools");
+    }
+
+    let is_fable_5_1 = model.contains(ConverseModel::ClaudeFable5_1.request_id());
+    let is_gpt_6_astra = model.contains(ConverseModel::Gpt6Astra.request_id());
+    if is_fable_5_1 && request.tool_choice == Some(LanguageModelToolChoice::Any) {
+        anyhow::bail!("Claude Fable 5.1 does not support forced tool use");
     }
 
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
@@ -2175,6 +2236,8 @@ pub fn into_bedrock(
                         }
                     })
                     .collect();
+                bedrock_message_content =
+                    prepare_bedrock_content(bedrock_message_content, is_gpt_6_astra)?;
                 if message.cache && supports_caching && !bedrock_message_content.is_empty() {
                     bedrock_message_content.push(BedrockInnerContent::CachePoint(
                         CachePointBlock::builder()
@@ -2304,41 +2367,57 @@ pub fn into_bedrock(
         }
     }
 
-    let thinking = if request.thinking_allowed {
-        match thinking_mode {
-            BedrockModelMode::Thinking { budget_tokens } => {
-                Some(bedrock::Thinking::Enabled { budget_tokens })
-            }
-            BedrockModelMode::AdaptiveThinking {
-                effort: default_effort,
-            } => {
-                let effort = request
-                    .thinking_effort
-                    .as_deref()
-                    .and_then(|e| match e {
-                        "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
-                        "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
-                        "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
-                        "xhigh" => Some(bedrock::BedrockAdaptiveThinkingEffort::XHigh),
-                        "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
-                        _ => None,
-                    })
-                    .unwrap_or(default_effort);
-                Some(bedrock::Thinking::Adaptive { effort })
-            }
-            BedrockModelMode::Default => None,
+    let selected_effort = |default_effort| {
+        // Astra and Fable 5.1 keep reasoning enabled, so suppressed requests use low effort.
+        // <https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra>
+        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html>
+        if !request.thinking_allowed {
+            return bedrock::BedrockAdaptiveThinkingEffort::Low;
         }
-    } else if model.contains(ConverseModel::ClaudeOpus5.request_id()) {
-        // On Claude Opus 5, omitting the `thinking` field no longer means
-        // "off": the model runs adaptive thinking by default, so features
-        // that suppress thinking (e.g. inline assist) must opt out
-        // explicitly. Earlier Claude models treat omission as "off" and must
-        // keep omitting the field. No effort accompanies the opt-out because
-        // `disabled` combined with effort `xhigh`/`max` is a 400.
-        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
-        Some(bedrock::Thinking::Disabled)
-    } else {
+        request
+            .thinking_effort
+            .as_deref()
+            .and_then(|effort| match effort {
+                "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
+                "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
+                "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
+                "xhigh" => Some(bedrock::BedrockAdaptiveThinkingEffort::XHigh),
+                "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
+                _ => None,
+            })
+            .unwrap_or(default_effort)
+    };
+    let thinking = match thinking_mode {
+        BedrockModelMode::Reasoning { effort } => Some(bedrock::Thinking::Reasoning {
+            effort: selected_effort(effort),
+        }),
+        BedrockModelMode::AdaptiveThinking { effort }
+            if request.thinking_allowed || is_fable_5_1 =>
+        {
+            Some(bedrock::Thinking::Adaptive {
+                effort: selected_effort(effort),
+                binding_controls_beta: model
+                    .rsplit_once("anthropic.")
+                    .filter(|(_, model_id)| anthropic::binds_thinking_blocks_to_prefix(model_id))
+                    .map(|_| anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string()),
+            })
+        }
+        BedrockModelMode::Thinking { budget_tokens } if request.thinking_allowed => {
+            Some(bedrock::Thinking::Enabled { budget_tokens })
+        }
+        _ if !request.thinking_allowed
+            && model.contains(ConverseModel::ClaudeOpus5.request_id()) =>
+        {
+            // Opus 5 defaults to adaptive thinking, so turning it off requires `disabled`.
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
+            Some(bedrock::Thinking::Disabled)
+        }
+        _ => None,
+    };
+    let temperature = if is_fable_5_1 || is_gpt_6_astra {
         None
+    } else {
+        request.temperature.or(Some(default_temperature))
     };
 
     Ok(bedrock::Request {
@@ -2350,7 +2429,7 @@ pub fn into_bedrock(
         thinking,
         metadata: None,
         stop_sequences: Vec::new(),
-        temperature: request.temperature.or(Some(default_temperature)),
+        temperature,
         top_k: None,
         top_p: None,
         guardrail_identifier,
@@ -2360,6 +2439,7 @@ pub fn into_bedrock(
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, anyhow::Error>>>>,
+    model: ConverseModel,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     struct RawToolUse {
         id: String,
@@ -2370,16 +2450,20 @@ pub fn map_to_language_model_completion_events(
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, anyhow::Error>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
+        redacted_thinking_by_index: HashMap<i32, Vec<u8>>,
         emitted_tool_use: bool,
     }
 
     let initial_state = State {
         events,
         tool_uses_by_index: HashMap::default(),
+        redacted_thinking_by_index: HashMap::default(),
         emitted_tool_use: false,
     };
+    let report_refusals = matches!(model, ConverseModel::ClaudeFable5_1);
+    let preserve_redacted_thinking = matches!(model, ConverseModel::Gpt6Astra);
 
-    futures::stream::unfold(initial_state, |mut state| async move {
+    futures::stream::unfold(initial_state, move |mut state| async move {
         match state.events.next().await {
             Some(event_result) => match event_result {
                 Ok(event) => {
@@ -2431,12 +2515,22 @@ pub fn map_to_language_model_completion_events(
                                     }))
                                 }
                                 ReasoningContentBlockDelta::RedactedContent(redacted) => {
-                                    let content = String::from_utf8(redacted.into_inner())
-                                        .unwrap_or("REDACTED".to_string());
-                                    Some(Ok(LanguageModelCompletionEvent::Thinking {
-                                        text: content,
-                                        signature: None,
-                                    }))
+                                    if preserve_redacted_thinking {
+                                        // A reasoning block can span multiple binary deltas.
+                                        state
+                                            .redacted_thinking_by_index
+                                            .entry(cb_delta.content_block_index)
+                                            .or_default()
+                                            .extend(redacted.into_inner());
+                                        None
+                                    } else {
+                                        let content = String::from_utf8(redacted.into_inner())
+                                            .unwrap_or("REDACTED".to_string());
+                                        Some(Ok(LanguageModelCompletionEvent::Thinking {
+                                            text: content,
+                                            signature: None,
+                                        }))
+                                    }
                                 }
                                 _ => None,
                             },
@@ -2457,26 +2551,38 @@ pub fn map_to_language_model_completion_events(
                         }
                         ConverseStreamOutput::MessageStart(_) => None,
                         ConverseStreamOutput::ContentBlockStop(cb_stop) => state
-                            .tool_uses_by_index
+                            .redacted_thinking_by_index
                             .remove(&cb_stop.content_block_index)
-                            .map(|tool_use| {
-                                state.emitted_tool_use = true;
+                            .map(|data| {
+                                use base64::Engine;
+                                Ok(LanguageModelCompletionEvent::RedactedThinking {
+                                    data: base64::engine::general_purpose::STANDARD.encode(data),
+                                })
+                            })
+                            .or_else(|| {
+                                state
+                                    .tool_uses_by_index
+                                    .remove(&cb_stop.content_block_index)
+                                    .map(|tool_use| {
+                                        state.emitted_tool_use = true;
 
-                                let input = parse_tool_arguments(&tool_use.input_json)
-                                    .unwrap_or_else(|_| Value::Object(Default::default()));
+                                        let input = parse_tool_arguments(&tool_use.input_json)
+                                            .unwrap_or_else(|_| Value::Object(Default::default()));
 
-                                Ok(LanguageModelCompletionEvent::ToolUse(
-                                    LanguageModelToolUse {
-                                        id: tool_use.id.into(),
-                                        name: tool_use.name.into(),
-                                        is_input_complete: true,
-                                        raw_input: tool_use.input_json,
-                                        input: language_model::LanguageModelToolUseInput::Json(
-                                            input,
-                                        ),
-                                        thought_signature: None,
-                                    },
-                                ))
+                                        Ok(LanguageModelCompletionEvent::ToolUse(
+                                            LanguageModelToolUse {
+                                                id: tool_use.id.into(),
+                                                name: tool_use.name.into(),
+                                                is_input_complete: true,
+                                                raw_input: tool_use.input_json,
+                                                input:
+                                                    language_model::LanguageModelToolUseInput::Json(
+                                                        input,
+                                                    ),
+                                                thought_signature: None,
+                                            },
+                                        ))
+                                    })
                             }),
                         ConverseStreamOutput::Metadata(cb_meta) => cb_meta.usage.map(|metadata| {
                             Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
@@ -2493,7 +2599,12 @@ pub fn map_to_language_model_completion_events(
                             }))
                         }),
                         ConverseStreamOutput::MessageStop(message_stop) => {
-                            let stop_reason = if state.emitted_tool_use {
+                            let stop_reason = if report_refusals
+                                && (message_stop.stop_reason == StopReason::ContentFiltered
+                                    || message_stop.stop_reason.as_str() == "refusal")
+                            {
+                                language_model::StopReason::Refusal
+                            } else if state.emitted_tool_use {
                                 // Some models (e.g. Kimi) send EndTurn even when
                                 // they've made tool calls. Trust the content over
                                 // the stop reason.
@@ -2944,6 +3055,40 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_gpt_6_astra_and_fable_5_1_defaults() -> Result<()> {
+        for (model, expected_thinking) in [
+            (
+                ConverseModel::Gpt6Astra,
+                serde_json::json!({"Reasoning": {"effort": "Medium"}}),
+            ),
+            (
+                ConverseModel::ClaudeFable5_1,
+                serde_json::json!({"Adaptive": {
+                    "effort": "High", "binding_controls_beta": "thinking-binding-controls-2026-08-01"
+                }}),
+            ),
+        ] {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    thinking_allowed: true,
+                    ..Default::default()
+                },
+                model.cross_region_inference_id("us-east-1", false)?,
+                model.default_temperature(),
+                model.max_output_tokens(),
+                model.thinking_mode(),
+                model.supports_caching(),
+                model.supports_tool_use(),
+                None,
+                None,
+            )?;
+            assert_eq!(serde_json::to_value(request.thinking)?, expected_thinking);
+            assert_eq!(request.temperature, None);
+        }
+        Ok(())
     }
 
     #[test]
