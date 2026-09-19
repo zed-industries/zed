@@ -383,6 +383,25 @@ impl AsyncWindowContext {
             })
             .unwrap_or_else(|_| oneshot::channel().1)
     }
+
+    /// Present a platform dialog with an optional verification checkbox.
+    pub fn prompt_with_checkbox<T>(
+        &mut self,
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        checkbox_label: Option<&str>,
+        answers: &[T],
+    ) -> oneshot::Receiver<(usize, bool)>
+    where
+        T: Clone + Into<PromptButton>,
+    {
+        self.app
+            .update_window(self.window, |_, window, cx| {
+                window.prompt_with_checkbox(level, message, detail, checkbox_label, answers, cx)
+            })
+            .unwrap_or_else(|_| oneshot::channel().1)
+    }
 }
 
 impl AppContext for AsyncWindowContext {

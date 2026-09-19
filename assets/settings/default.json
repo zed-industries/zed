@@ -982,6 +982,10 @@
       // Whether to automatically open files dropped from external sources.
       "on_drop": true,
     },
+    // Whether to ask for confirmation when moving files or directories to the trash.
+    "confirm_trash": true,
+    // Whether to ask for confirmation when permanently deleting files or directories.
+    "confirm_delete": true,
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar

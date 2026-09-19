@@ -95,8 +95,10 @@ impl ScreenCaptureStream for TestScreenCaptureStream {
 struct TestPrompt {
     msg: String,
     detail: Option<String>,
+    #[allow(dead_code)]
+    checkbox_label: Option<String>,
     answers: Vec<String>,
-    tx: oneshot::Sender<usize>,
+    tx: oneshot::Sender<(usize, bool)>,
 }
 
 #[derive(Default)]
@@ -220,19 +222,29 @@ impl TestPlatform {
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
     pub(crate) fn simulate_prompt_answer(&self, response: &str) {
+        self.simulate_prompt_answer_with_checkbox(response, false);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[track_caller]
+    pub(crate) fn simulate_prompt_answer_with_checkbox(&self, response: &str, checkbox_checked: bool) {
         let prompt = self
             .prompts
             .borrow_mut()
             .multiple_choice
             .pop_front()
             .expect("no pending multiple choice prompt");
-        let Some(ix) = prompt.answers.iter().position(|a| a == response) else {
+        let Some(ix) = prompt
+            .answers
+            .iter()
+            .position(|a| a == response || a.replace('&', "") == response)
+        else {
             panic!(
                 "PROMPT: {}\n{:?}\n{:?}\nCannot respond with {}",
                 prompt.msg, prompt.detail, prompt.answers, response
             )
         };
-        prompt.tx.send(ix).ok();
+        prompt.tx.send((ix, checkbox_checked)).ok();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -264,6 +276,26 @@ impl TestPlatform {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> oneshot::Receiver<usize> {
+        let rx = self.prompt_with_checkbox(msg, detail, None, answers);
+        let (tx, done_rx) = oneshot::channel();
+        self.background_executor
+            .spawn(async move {
+                if let Ok((ix, _)) = rx.await {
+                    tx.send(ix).ok();
+                }
+            })
+            .detach();
+        done_rx
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn prompt_with_checkbox(
+        &self,
+        msg: &str,
+        detail: Option<&str>,
+        checkbox_label: Option<&str>,
+        answers: &[PromptButton],
+    ) -> oneshot::Receiver<(usize, bool)> {
         let (tx, rx) = oneshot::channel();
         let answers: Vec<String> = answers.iter().map(|s| s.label().to_string()).collect();
         self.prompts
@@ -272,6 +304,7 @@ impl TestPlatform {
             .push_back(TestPrompt {
                 msg: msg.to_string(),
                 detail: detail.map(|s| s.to_string()),
+                checkbox_label: checkbox_label.map(|s| s.to_string()),
                 answers,
                 tx,
             });
@@ -288,6 +321,17 @@ impl TestPlatform {
         _detail: Option<&str>,
         _answers: &[PromptButton],
     ) -> oneshot::Receiver<usize> {
+        oneshot::channel().1
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    pub(crate) fn prompt_with_checkbox(
+        &self,
+        _msg: &str,
+        _detail: Option<&str>,
+        _checkbox_label: Option<&str>,
+        _answers: &[PromptButton],
+    ) -> oneshot::Receiver<(usize, bool)> {
         oneshot::channel().1
     }
 

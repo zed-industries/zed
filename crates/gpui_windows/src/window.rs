@@ -722,9 +722,31 @@ impl PlatformWindow for WindowsWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
+        let (done_tx, done_rx) = oneshot::channel();
+        let rx = self.prompt_with_checkbox(level, msg, detail, None, answers)?;
+        self.0
+            .executor
+            .spawn(async move {
+                if let Ok((ix, _)) = rx.await {
+                    done_tx.send(ix).ok();
+                }
+            })
+            .detach();
+        Some(done_rx)
+    }
+
+    fn prompt_with_checkbox(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        checkbox_label: Option<&str>,
+        answers: &[PromptButton],
+    ) -> Option<Receiver<(usize, bool)>> {
         let (mut done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
         let detail_string = detail.map(|detail| detail.to_string());
+        let checkbox_label_string = checkbox_label.map(|label| label.to_string());
         let answers = answers.to_vec();
         let dialog = crate::dialog::show_dialog(
             Some(self.0.dialog_owner.clone()),
@@ -735,23 +757,12 @@ impl PlatformWindow for WindowsWindow {
                     config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
                     config.hwndParent = handle;
                     config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION;
-                    let title;
-                    let main_icon;
-                    match level {
-                        PromptLevel::Info => {
-                            title = windows::core::w!("Info");
-                            main_icon = TD_INFORMATION_ICON;
-                        }
-                        PromptLevel::Warning => {
-                            title = windows::core::w!("Warning");
-                            main_icon = TD_WARNING_ICON;
-                        }
-                        PromptLevel::Critical => {
-                            title = windows::core::w!("Critical");
-                            main_icon = TD_ERROR_ICON;
-                        }
+                    let main_icon = match level {
+                        PromptLevel::Info => TD_INFORMATION_ICON,
+                        PromptLevel::Warning => TD_WARNING_ICON,
+                        PromptLevel::Critical => TD_ERROR_ICON,
                     };
-                    config.pszWindowTitle = title;
+                    config.pszWindowTitle = windows::core::w!("Zed");
                     config.Anonymous1.pszMainIcon = main_icon;
                     let instruction = HSTRING::from(msg);
                     config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
@@ -760,6 +771,11 @@ impl PlatformWindow for WindowsWindow {
                         hints_encoded = HSTRING::from(hints);
                         config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
                     };
+                    let verification_encoded;
+                    if let Some(ref cb_label) = checkbox_label_string {
+                        verification_encoded = HSTRING::from(cb_label);
+                        config.pszVerificationText = PCWSTR::from_raw(verification_encoded.as_ptr());
+                    }
                     let mut button_id_map = Vec::with_capacity(answers.len());
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
@@ -785,9 +801,16 @@ impl PlatformWindow for WindowsWindow {
                     config.pfCallback = Some(crate::dialog::task_dialog_callback);
                     config.lpCallbackData = button_id_map.contains(&IDCANCEL.0) as isize;
                     let mut res = std::mem::zeroed();
-                    TaskDialogIndirect(&config, Some(&mut res), None, None)
-                        .context("unable to create task dialog")?;
-                    Ok(button_id_map.iter().position(|&button_id| button_id == res))
+                    let mut verification_checked = BOOL::default();
+                    TaskDialogIndirect(
+                        &config,
+                        Some(&mut res),
+                        None,
+                        Some(&mut verification_checked),
+                    )
+                    .context("unable to create task dialog")?;
+                    let clicked = button_id_map.iter().position(|&button_id| button_id == res);
+                    Ok(clicked.map(|ix| (ix, verification_checked.as_bool())))
                 }
             },
         );
