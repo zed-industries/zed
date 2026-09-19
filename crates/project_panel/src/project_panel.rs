@@ -2059,7 +2059,8 @@ impl ProjectPanel {
                     } else {
                         filename.to_owned()
                     };
-                    if let Some(existing) = worktree.read(cx).entry_for_path(&new_path)
+                    if !entry.path.is_empty()
+                        && let Some(existing) = worktree.read(cx).entry_for_path(&new_path)
                         && existing.id != entry.id
                     {
                         already_exists = true;
@@ -2147,7 +2148,9 @@ impl ProjectPanel {
             } else {
                 filename.clone()
             };
-            if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
+            if !entry.path.is_empty()
+                && let Some(existing) = worktree.read(cx).entry_for_path(&new_path)
+            {
                 if existing.id == entry.id && refocus {
                     window.focus(&self.focus_handle, cx);
                 }

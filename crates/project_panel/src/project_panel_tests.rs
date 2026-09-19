@@ -4620,7 +4620,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
         &["v root1  <== selected", "    v dir1", "          file1.txt",],
     );
 
-    // Rename root1 to new_root1
+    // Rename root1 to match the name of its child directory.
     panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
 
     assert_eq!(
@@ -4635,7 +4635,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
     let confirm = panel.update_in(cx, |panel, window, cx| {
         panel
             .filename_editor
-            .update(cx, |editor, cx| editor.set_text("new_root1", window, cx));
+            .update(cx, |editor, cx| editor.set_text("dir1", window, cx));
         panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
@@ -4643,7 +4643,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            "v new_root1  <== selected",
+            "v dir1  <== selected",
             "    v dir1",
             "          file1.txt",
         ],
@@ -4651,11 +4651,11 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
     );
 
     // Ensure internal paths have been updated
-    select_path(&panel, "new_root1/dir1/file1.txt", cx);
+    select_path(&panel, "dir1/dir1/file1.txt", cx);
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            "v new_root1",
+            "v dir1",
             "    v dir1",
             "          file1.txt  <== selected",
         ],
