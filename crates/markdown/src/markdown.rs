@@ -3876,8 +3876,12 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
-        self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
+        // The text around an image is a single flex item, so the image can only sit beside the
+        // whole text box, never inside its last wrapped row. Once the text is long enough to
+        // wrap, the image drops to the next line, unlike a browser, which flows it into the last row.
+
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
+        self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
         self.append_child(child.into_any_element());
     }
 
@@ -4185,18 +4189,25 @@ impl MarkdownElementBuilder {
             highlights,
             code_chips: line.code_chips.into_iter().collect(),
         });
-        if rendered_line.highlights.is_empty() && rendered_line.code_chips.is_empty() {
+        let child = if rendered_line.highlights.is_empty() && rendered_line.code_chips.is_empty() {
             self.rendered_lines.push(rendered_line);
-            self.append_child(text.into_any());
+            text.into_any()
         } else {
             self.rendered_lines.push(rendered_line.clone());
-            self.append_child(
-                HighlightedLine {
-                    text: text.into_any(),
-                    line: rendered_line,
-                }
-                .into_any_element(),
-            );
+            HighlightedLine {
+                text: text.into_any(),
+                line: rendered_line,
+            }
+            .into_any_element()
+        };
+        // In a flex-wrap container the text is a flex item, and its automatic minimum size is
+        // its min-content width, which gpui reports as the full unwrapped width. Without an
+        // explicit `min-width: 0` taffy clamps the item back up to that width, so it never
+        // receives a definite width to wrap against.
+        if self.uses_flex_line_breaks() {
+            self.append_child(div().min_w_0().child(child).into_any_element());
+        } else {
+            self.append_child(child);
         }
     }
 
@@ -5640,6 +5651,68 @@ mod tests {
         assert!(
             !text.contains("textthat"),
             "soft break between words must not be dropped; got: {text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_long_text_before_image_wraps(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let long_text = "word ".repeat(200);
+        let rendered = render_markdown_with_image_resolver(
+            &format!("{long_text}\n![alt](https://example.com/a.png)"),
+            MarkdownOptions::default(),
+            move |_, _| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let first_line = rendered
+            .lines
+            .first()
+            .expect("paragraph text should render a line");
+        let wrapped = first_line.layout.wrapped_text();
+        assert!(
+            wrapped.contains('\n'),
+            "long text sharing a paragraph with an image should wrap to the pane width; got: {wrapped:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_long_text_after_image_wraps(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let long_text = "word ".repeat(200);
+        let rendered = render_markdown_with_image_resolver(
+            &format!("![alt](https://example.com/a.png)\n{long_text}"),
+            MarkdownOptions::default(),
+            move |_, _| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let first_line = rendered
+            .lines
+            .first()
+            .expect("paragraph text should render a line");
+        let wrapped = first_line.layout.wrapped_text();
+        assert!(
+            wrapped.contains('\n'),
+            "long text following an image in the same paragraph should wrap; got: {wrapped:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_long_text_without_image_wraps(cx: &mut TestAppContext) {
+        let long_text = "word ".repeat(200);
+        let rendered = render_markdown_with_image_resolver(
+            &long_text,
+            MarkdownOptions::default(),
+            |_, _| None,
+            cx,
+        );
+        let first_line = rendered
+            .lines
+            .first()
+            .expect("paragraph text should render a line");
+        let wrapped = first_line.layout.wrapped_text();
+        assert!(
+            wrapped.contains('\n'),
+            "long text in a plain paragraph should wrap; got: {wrapped:?}"
         );
     }
 
