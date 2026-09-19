@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     ops::Range,
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
@@ -15,8 +16,8 @@ use gpui::{
     Subscription, Task, TextRun, TextStyle, WeakEntity, Window,
 };
 use language::{
-    Buffer, CharClassifier, CodeLabel, File as _, Language, Location, Rope, ToOffset, ToPoint,
-    lsp_to_symbol_kind,
+    Buffer, CharClassifier, CodeLabel, File as _, Language, LanguageServerId, Location, Rope,
+    ToOffset, ToPoint, lsp_to_symbol_kind,
 };
 use picker::{Picker, PickerDelegate};
 use project::{CallHierarchyItem, LspStoreEvent, Project};
@@ -160,7 +161,8 @@ pub fn init(cx: &mut App) {
 pub struct CallHierarchyView {
     picker: Entity<Picker<CallHierarchyDelegate>>,
     mode: CallHierarchyMode,
-    _subscriptions: [Subscription; 2],
+    hidden: bool,
+    _subscriptions: [Subscription; 3],
 }
 
 impl CallHierarchyView {
@@ -217,11 +219,16 @@ impl CallHierarchyView {
             window,
             |view, _, event, window, cx| match event {
                 LspStoreEvent::LanguageServerUpdate {
+                    language_server_id,
                     message: proto::update_language_server::Variant::WorkEnd(_),
                     ..
                 } => {
+                    let server_id = *language_server_id;
                     view.retry_empty_hierarchy(
-                        |delegate, _| delegate.queried_buffer.is_some(),
+                        |delegate, cx| {
+                            delegate.busy_servers_at_request.contains(&server_id)
+                                && !server_has_pending_work(&delegate.project, server_id, cx)
+                        },
                         window,
                         cx,
                     );
@@ -254,6 +261,15 @@ impl CallHierarchyView {
                 ))
         });
         let picker_focus_handle = picker.focus_handle(cx);
+        let reveal_subscription =
+            cx.on_focus_in(&picker_focus_handle, window, |view, window, cx| {
+                if view.hidden {
+                    view.hidden = false;
+                    view.picker.update(cx, |picker, cx| {
+                        picker.delegate.resume_fetch(window, cx);
+                    });
+                }
+            });
         picker.update(cx, |picker, cx| {
             picker.delegate.modal_width = modal_width;
             picker.delegate.focus_handle = picker_focus_handle;
@@ -263,7 +279,12 @@ impl CallHierarchyView {
         CallHierarchyView {
             picker,
             mode,
-            _subscriptions: [project_subscription, lsp_store_subscription],
+            hidden: false,
+            _subscriptions: [
+                project_subscription,
+                lsp_store_subscription,
+                reveal_subscription,
+            ],
         }
     }
 
@@ -273,8 +294,11 @@ impl CallHierarchyView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.hidden {
+            return;
+        }
         self.picker.update(cx, |picker, cx| {
-            if picker.delegate.root_item.is_none() && should_retry(&picker.delegate, cx) {
+            if picker.delegate.state == FetchState::NoSymbol && should_retry(&picker.delegate, cx) {
                 picker.delegate.fetch_root(window, cx);
             }
         });
@@ -312,7 +336,9 @@ impl ModalView for CallHierarchyView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DismissDecision {
+        self.hidden = true;
         self.picker.update(cx, |picker, cx| {
+            picker.delegate.fetch_task = None;
             picker.delegate.restore_editor(window, cx);
         });
         DismissDecision::Dismiss(true)
@@ -349,6 +375,7 @@ pub struct CallHierarchyDelegate {
     prev_scroll_position: Option<Point<ScrollOffset>>,
     focus_handle: FocusHandle,
     queried_buffer: Option<Entity<Buffer>>,
+    busy_servers_at_request: HashSet<LanguageServerId>,
     modal_width: Pixels,
     calls: Vec<Call>,
     candidates: Arc<Vec<StringMatchCandidate>>,
@@ -379,6 +406,7 @@ impl CallHierarchyDelegate {
             prev_scroll_position,
             focus_handle,
             queried_buffer: None,
+            busy_servers_at_request: HashSet::new(),
             modal_width: Pixels::ZERO,
             calls: Vec::new(),
             candidates: Arc::new(Vec::new()),
@@ -402,6 +430,13 @@ impl CallHierarchyDelegate {
         };
         self.queried_buffer = Some(buffer.clone());
         self.state = FetchState::Loading;
+        self.busy_servers_at_request = self
+            .project
+            .read(cx)
+            .language_server_statuses(cx)
+            .filter(|(_, status)| !status.pending_work.is_empty())
+            .map(|(server_id, _)| server_id)
+            .collect();
         cx.notify();
 
         let prepare_task = self.project.update(cx, |project, cx| {
@@ -461,6 +496,16 @@ impl CallHierarchyDelegate {
         self.fetch_task = Some(cx.spawn_in(window, async move |picker, mut cx| {
             load_and_apply_calls(picker, root_item, select_item, &mut cx).await;
         }));
+    }
+
+    fn resume_fetch(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        match self.root_item.clone() {
+            None => self.fetch_root(window, cx),
+            Some(root_item) if self.state == FetchState::Loading => {
+                self.load_calls(root_item, None, window, cx)
+            }
+            Some(_) => {}
+        }
     }
 
     fn selected_call(&self) -> Option<&Call> {
@@ -866,6 +911,17 @@ fn toggle_call_hierarchy(
     });
 }
 
+fn server_has_pending_work(
+    project: &Entity<Project>,
+    server_id: LanguageServerId,
+    cx: &App,
+) -> bool {
+    project
+        .read(cx)
+        .language_server_statuses(cx)
+        .any(|(id, status)| id == server_id && !status.pending_work.is_empty())
+}
+
 fn item_location(item: &CallHierarchyItem) -> Location {
     Location {
         buffer: item.buffer.clone(),
@@ -1220,8 +1276,8 @@ mod tests {
     use project::{CallHierarchyItem, FakeFs};
     use serde_json::json;
     use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
     use theme::SyntaxTheme;
     use util::{path, rel_path::rel_path};
@@ -2232,12 +2288,15 @@ mod tests {
             setup_modal_test("fn main() { helper(); }\nfn helper() {}\n", cx).await;
 
         let server_ready = Arc::new(AtomicBool::new(false));
+        let prepare_requests = Arc::new(AtomicUsize::new(0));
         fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
             let uri = test_uri.clone();
             let server_ready = server_ready.clone();
+            let prepare_requests = prepare_requests.clone();
             move |_, _| {
                 let uri = uri.clone();
                 let server_ready = server_ready.clone();
+                prepare_requests.fetch_add(1, Ordering::AcqRel);
                 async move {
                     if server_ready.load(Ordering::Acquire) {
                         Ok(Some(vec![make_lsp_call_hierarchy_item("helper", uri, 1)]))
@@ -2258,6 +2317,9 @@ mod tests {
                 }
             }
         });
+        fake_server.start_progress("loading").await;
+        fake_server.start_progress("indexing").await;
+        cx.executor().run_until_parked();
 
         cx.dispatch_action(ShowIncomingCalls);
         cx.executor().run_until_parked();
@@ -2267,31 +2329,191 @@ mod tests {
                 workspace.active_modal::<CallHierarchyView>(cx)
             })
             .expect("modal should be open");
-        let project = modal.read_with(cx, |view, cx| {
-            let delegate = &view.picker.read(cx).delegate;
-            assert_eq!(delegate.state, FetchState::NoSymbol);
-            delegate.project.clone()
-        });
-
-        emit_work_end(&project, cx);
-        cx.executor().run_until_parked();
         modal.read_with(cx, |view, cx| {
-            assert_eq!(
-                view.picker.read(cx).delegate.state,
-                FetchState::NoSymbol,
-                "a retry against a still-empty server should stay empty"
-            );
+            assert_eq!(view.picker.read(cx).delegate.state, FetchState::NoSymbol);
         });
+        assert_eq!(prepare_requests.load(Ordering::Acquire), 1);
 
         server_ready.store(true, Ordering::Release);
-        emit_work_end(&project, cx);
+        fake_server.end_progress("loading");
+        cx.executor().run_until_parked();
+        modal.read_with(cx, |view, cx| {
+            assert_eq!(view.picker.read(cx).delegate.state, FetchState::NoSymbol);
+        });
+        assert_eq!(
+            prepare_requests.load(Ordering::Acquire),
+            1,
+            "a server that still has pending work should not be queried again"
+        );
+
+        fake_server.end_progress("indexing");
         cx.executor().run_until_parked();
         modal.read_with(cx, |view, cx| {
             let delegate = &view.picker.read(cx).delegate;
             assert_eq!(
                 delegate.root_item.as_ref().map(|item| item.name.as_str()),
                 Some("helper"),
-                "finished language server work should retry the preparation"
+                "a server that finished all its work should retry the preparation"
+            );
+            assert_eq!(delegate.calls[0].item.name, "main");
+        });
+        assert_eq!(prepare_requests.load(Ordering::Acquire), 2);
+    }
+
+    #[gpui::test]
+    async fn test_call_hierarchy_modal_ignores_work_started_after_prepare(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, fake_server, _test_uri, cx) =
+            setup_modal_test("fn main() { helper(); }\nfn helper() {}\n", cx).await;
+
+        let prepare_requests = Arc::new(AtomicUsize::new(0));
+        fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let prepare_requests = prepare_requests.clone();
+            move |_, _| {
+                prepare_requests.fetch_add(1, Ordering::AcqRel);
+                async move { Ok(Some(Vec::new())) }
+            }
+        });
+
+        cx.dispatch_action(ShowIncomingCalls);
+        cx.executor().run_until_parked();
+
+        let modal = workspace
+            .update(cx, |workspace, cx| {
+                workspace.active_modal::<CallHierarchyView>(cx)
+            })
+            .expect("modal should be open");
+        modal.read_with(cx, |view, cx| {
+            assert_eq!(view.picker.read(cx).delegate.state, FetchState::NoSymbol);
+        });
+        assert_eq!(prepare_requests.load(Ordering::Acquire), 1);
+
+        fake_server.start_progress("reconcile").await;
+        fake_server.end_progress("reconcile");
+        cx.executor().run_until_parked();
+        modal.read_with(cx, |view, cx| {
+            assert_eq!(view.picker.read(cx).delegate.state, FetchState::NoSymbol);
+        });
+        assert_eq!(
+            prepare_requests.load(Ordering::Acquire),
+            1,
+            "work that began after the request was sent must not trigger another request"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_call_hierarchy_modal_pending_prepare_is_not_restarted(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, fake_server, test_uri, cx) =
+            setup_modal_test("fn main() { helper(); }\nfn helper() {}\n", cx).await;
+
+        let prepare_requests = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = futures::channel::oneshot::channel::<()>();
+        let release_rx = Arc::new(Mutex::new(Some(release_rx)));
+        fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let uri = test_uri.clone();
+            let prepare_requests = prepare_requests.clone();
+            move |_, _| {
+                let uri = uri.clone();
+                prepare_requests.fetch_add(1, Ordering::AcqRel);
+                let release_rx = release_rx.lock().unwrap().take();
+                async move {
+                    if let Some(release_rx) = release_rx {
+                        release_rx.await.ok();
+                    }
+                    Ok(Some(vec![make_lsp_call_hierarchy_item("helper", uri, 1)]))
+                }
+            }
+        });
+        fake_server.set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
+            move |_, _| {
+                let uri = test_uri.clone();
+                async move {
+                    Ok(Some(vec![lsp::CallHierarchyIncomingCall {
+                        from: make_lsp_call_hierarchy_item("main", uri, 0),
+                        from_ranges: Vec::new(),
+                    }]))
+                }
+            }
+        });
+        fake_server.start_progress("indexing").await;
+        cx.executor().run_until_parked();
+
+        cx.dispatch_action(ShowIncomingCalls);
+        cx.executor().run_until_parked();
+
+        let modal = workspace
+            .update(cx, |workspace, cx| {
+                workspace.active_modal::<CallHierarchyView>(cx)
+            })
+            .expect("modal should be open");
+        let (project, buffer_id) = modal.read_with(cx, |view, cx| {
+            let delegate = &view.picker.read(cx).delegate;
+            assert_eq!(delegate.state, FetchState::Loading);
+            let buffer = delegate.queried_buffer.clone().unwrap();
+            (delegate.project.clone(), buffer.read(cx).remote_id())
+        });
+        assert_eq!(prepare_requests.load(Ordering::Acquire), 1);
+
+        fake_server.end_progress("indexing");
+        cx.executor().run_until_parked();
+        modal.read_with(cx, |view, cx| {
+            assert_eq!(view.picker.read(cx).delegate.state, FetchState::Loading);
+        });
+        assert_eq!(
+            prepare_requests.load(Ordering::Acquire),
+            1,
+            "finished work must not restart a prepare request that is still pending"
+        );
+        assert!(!release_tx.is_canceled());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.hide_modal(window, cx);
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(
+            workspace.update(cx, |workspace, cx| {
+                workspace.active_modal::<CallHierarchyView>(cx)
+            }),
+            None
+        );
+        assert!(
+            release_tx.is_canceled(),
+            "dismissing the modal should cancel the outstanding prepare request"
+        );
+
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::LanguageServerBufferRegistered {
+                server_id: lsp::LanguageServerId(0),
+                buffer_id,
+                buffer_abs_path: std::path::PathBuf::from(path!("/test/src/main.rs")),
+                name: None,
+            });
+        });
+        fake_server.start_progress("indexing").await;
+        fake_server.end_progress("indexing");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            prepare_requests.load(Ordering::Acquire),
+            1,
+            "a dismissed modal must not send requests"
+        );
+
+        cx.dispatch_action(workspace::ReopenLastPicker);
+        cx.executor().run_until_parked();
+        let reopened = workspace
+            .update(cx, |workspace, cx| {
+                workspace.active_modal::<CallHierarchyView>(cx)
+            })
+            .expect("modal should be reopened");
+        assert_eq!(reopened.entity_id(), modal.entity_id());
+        assert_eq!(prepare_requests.load(Ordering::Acquire), 2);
+        reopened.read_with(cx, |view, cx| {
+            let delegate = &view.picker.read(cx).delegate;
+            assert_eq!(delegate.state, FetchState::Loaded);
+            assert_eq!(
+                delegate.root_item.as_ref().map(|item| item.name.as_str()),
+                Some("helper")
             );
             assert_eq!(delegate.calls[0].item.name, "main");
         });
