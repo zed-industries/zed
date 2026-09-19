@@ -5520,6 +5520,7 @@ impl EditorElement {
     }
 
     const DELETED_MARKER_WIDTH_RATIO: f32 = 0.35 / 0.275;
+    const MIN_DELETED_MARKER_WIDTH: f32 = 5.0;
 
     fn gutter_strip_width(line_height: Pixels, cx: &App) -> Pixels {
         match EditorSettings::get_global(cx).gutter.git_gutter_width {
@@ -5530,7 +5531,14 @@ impl EditorElement {
 
     fn deleted_marker_base_width(setting: GitGutterWidth, line_height: Pixels) -> Pixels {
         match setting {
-            GitGutterWidth::Custom(width) => px(*width * Self::DELETED_MARKER_WIDTH_RATIO),
+            GitGutterWidth::Custom(width) => {
+                let scaled_width = *width * Self::DELETED_MARKER_WIDTH_RATIO;
+                px(if scaled_width > 0.0 {
+                    scaled_width.max(Self::MIN_DELETED_MARKER_WIDTH)
+                } else {
+                    0.0
+                })
+            }
             GitGutterWidth::Default => {
                 (0.275 * line_height * Self::DELETED_MARKER_WIDTH_RATIO).floor()
             }
@@ -13683,6 +13691,16 @@ mod tests {
             boosted > px(6.0),
             "boosted={boosted:?} must exceed the raw custom width so the deleted pill stays visible"
         );
+
+        for width in [1.0, 2.0, 3.0] {
+            assert_eq!(
+                EditorElement::deleted_marker_base_width(
+                    GitGutterWidth::Custom(PixelSetting(width)),
+                    px(22.0),
+                ),
+                px(EditorElement::MIN_DELETED_MARKER_WIDTH),
+            );
+        }
 
         assert_eq!(
             EditorElement::deleted_marker_base_width(
