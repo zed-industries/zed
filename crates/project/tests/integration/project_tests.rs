@@ -9296,6 +9296,58 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_reload_buffers_for_file_recreated_since_last_scan(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "the-file": "one\n" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/the-file"), cx)
+        })
+        .await
+        .unwrap();
+
+    fs.remove_file(path!("/dir/the-file").as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, cx| buffer.set_text("unsaved edit\n", cx));
+
+    // Recreate the file and reload it before the worktree has been notified about the
+    // new file, the way restoring a deleted file from git does.
+    fs.pause_events();
+    fs.write(path!("/dir/the-file").as_ref(), b"one\n")
+        .await
+        .unwrap();
+    project
+        .update(cx, |project, cx| {
+            project.reload_buffers(HashSet::from_iter([buffer.clone()]), true, cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one\n");
+        assert!(!buffer.is_dirty());
+    });
+
+    // Edit the buffer again, so that the notification about the recreated file does not
+    // trigger an automatic reload. What the reload recorded as the file's mtime is then
+    // what decides whether the buffer is considered to conflict with the file.
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "two\n")], None, cx));
+    fs.unpause_events_and_flush();
+    cx.executor().run_until_parked();
+
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "two\none\n");
+        assert!(!buffer.has_conflict());
+    });
+}
+
+#[gpui::test]
 async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
