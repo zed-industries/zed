@@ -41,7 +41,7 @@ The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../accou
 
 Edit Prediction has two display modes:
 
-1. `eager` (default): predictions are displayed inline as long as they don't conflict with language server completions
+1. `eager` (default): predictions are displayed inline as long as they don't conflict with [language server completions](../completions.md)
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
 
 Toggle between them via the `mode` key:
@@ -73,7 +73,7 @@ In `eager` mode, you can also use the `tab` key to accept edit predictions, unle
 
 To always use `tab` for accepting edit predictions, regardless of whether the LSP completions menu is open, you can add the following to your keymap:
 
-Open the keymap editor with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and hit `edit`. Then change the context the binding is active in to just `Editor && edit_prediction` and save it.
+Open the [keymap editor](../key-bindings.md) with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and hit `edit`. Then change the context the binding is active in to just `Editor && edit_prediction` and save it.
 
 Alternatively, you can put the following in your `keymap.json`:
 

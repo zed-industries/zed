@@ -11,7 +11,7 @@ See [All Settings](./reference/all-settings.md) for additional information and o
 
 ## Themes
 
-You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of extensions by running {#action zed::Extensions} from the command palette.
+You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of [extensions](./extensions.md) by running {#action zed::Extensions} from the command palette.
 
 You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and {#action icon_theme_selector::Toggle} which will modify the following settings:
 
@@ -473,7 +473,7 @@ TBD: Centered layout related settings
 
 ## Project Panel
 
-Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
+[Project panel](./project-panel.md) can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
 
 ```json [settings]
   // Project Panel Settings
