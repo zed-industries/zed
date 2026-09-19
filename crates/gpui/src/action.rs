@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use collections::{HashMap, TypeIdHashMap};
 pub use gpui_macros::Action;
-pub use no_action::{NoAction, Unbind, is_no_action, is_unbind};
+pub use no_action::{NoAction, PassToSystem, Unbind, is_no_action, is_pass_to_system, is_unbind};
 use serde_json::json;
 use std::{
     any::{Any, TypeId},
@@ -436,6 +436,17 @@ mod no_action {
         ]
     );
 
+    actions!(
+        zed,
+        [
+            /// Action with special handling which stops dispatching the key event and leaves it
+            /// unhandled, so that the platform's own key handling still gets a chance at it. On
+            /// macOS this lets the main menu's key equivalents run, such as the
+            /// Window > Move & Resize window-tiling shortcuts.
+            PassToSystem
+        ]
+    );
+
     /// Action with special handling which unbinds later bindings for the same keystrokes when they
     /// dispatch the named action, regardless of that action's context.
     ///
@@ -454,5 +465,11 @@ mod no_action {
     /// Returns whether or not this action represents an unbind marker.
     pub fn is_unbind(action: &dyn gpui::Action) -> bool {
         action.as_any().is::<Unbind>()
+    }
+
+    /// Returns whether or not this action represents a request to leave the key event unhandled
+    /// for the platform to act on.
+    pub fn is_pass_to_system(action: &dyn gpui::Action) -> bool {
+        action.as_any().is::<PassToSystem>()
     }
 }

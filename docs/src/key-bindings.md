@@ -268,6 +268,31 @@ This is useful for preventing Zed from falling back to a default key binding whe
 ]
 ```
 
+### Passing a key to the operating system
+
+If you'd like a keystroke to be left alone entirely, so that the operating system can act on it instead of Zed, bind it to `zed::PassToSystem`. This is different from `null`: a `null` binding only removes lower-precedence bindings, and Zed's own key handling still sees the key. `zed::PassToSystem` stops dispatch outright and reports the key as unhandled.
+
+On macOS this is mainly useful for the window tiling shortcuts under Window > Move & Resize. Those are menu key equivalents, so the frontmost application gets first refusal, and they only reach the menu if Zed declines the key:
+
+```json [keymap]
+[
+  {
+    "bindings": {
+      "ctrl-alt-left": "zed::PassToSystem",
+      "ctrl-alt-right": "zed::PassToSystem"
+    }
+  }
+]
+```
+
+Leaving out the `context` is deliberate. A binding with no context is treated as the deepest context, and user bindings are added after the built-in ones, so this outranks the default bindings in every context at once. That includes `Terminal`, where the terminal would otherwise translate the keystroke into an escape sequence and send it to the shell.
+
+There are some limitations, notably:
+
+- It only works as a complete, single-keystroke binding. Used as the prefix of a multi-key sequence, Zed waits for the rest of the sequence and nothing is passed on.
+- It does not apply to printable input on layouts where a modified key still produces a character, such as AltGr layouts, because text input takes precedence over bindings there.
+- On Linux and Windows there is usually no system-level handling waiting behind an unhandled key, so the binding tends to mean "do nothing" rather than "do something else".
+
 ### Remapping keys
 
 A common request is to be able to map from a single keystroke to a sequence. You can do this with the `workspace::SendKeystrokes` action.
@@ -319,6 +344,8 @@ For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ct
   }
 }
 ```
+
+For the opposite direction, taking a key away from Zed so that the operating system can act on it, see [Passing a key to the operating system](#passing-a-key-to-the-operating-system).
 
 ### Task Key bindings
 
