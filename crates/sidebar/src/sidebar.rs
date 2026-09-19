@@ -7344,7 +7344,12 @@ impl Sidebar {
         h_flex()
             .h(header_height)
             .map(|header| match window.window_decorations() {
-                Decorations::Client { .. } => header.mt(px(-1.)),
+                Decorations::Client { .. } => header
+                    .mt(px(-1.))
+                    .pt_px()
+                    .when(no_open_projects, |header| header.pb_px())
+                    .when(left_window_controls, |header| header.pl_px())
+                    .when(right_window_controls, |header| header.pr_px()),
                 Decorations::Server => header.mt_px().pb_px(),
             })
             .when(left_window_controls, |this| {
