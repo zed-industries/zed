@@ -1054,7 +1054,6 @@
       "right": "git_panel::ExpandSelectedEntry",
       "alt-y": "git::StageFile",
       "shift-alt-y": "git::UnstageFile",
-      "space": "git::ToggleStaged",
       "shift-space": "git::StageRange",
       "shift-alt-c": "workspace::CopyPath",
       "ctrl-k ctrl-shift-c": "workspace::CopyRelativePath",
@@ -1066,6 +1065,20 @@
       "shift-delete": ["git::RestoreFile", { "skip_prompt": false }],
       "ctrl-backspace": ["git::RestoreFile", { "skip_prompt": false }],
       "ctrl-delete": ["git::RestoreFile", { "skip_prompt": false }],
+    },
+  },
+  {
+    "context": "GitPanel && ChangesList && GitRepositoryRow && !GitBranchSelector",
+    "use_key_equivalents": true,
+    "bindings": {
+      "space": "menu::Confirm",
+    },
+  },
+  {
+    "context": "GitPanel && ChangesList && !GitRepositoryRow && !GitBranchSelector",
+    "use_key_equivalents": true,
+    "bindings": {
+      "space": "git::ToggleStaged",
     },
   },
   {

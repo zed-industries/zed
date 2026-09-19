@@ -1120,7 +1120,6 @@
       "left": "git_panel::CollapseSelectedEntry",
       "right": "git_panel::ExpandSelectedEntry",
       "cmd-alt-y": "git::ToggleStaged",
-      "space": "git::ToggleStaged",
       "shift-space": "git::StageRange",
       "cmd-y": "git::StageFile",
       "cmd-shift-y": "git::UnstageFile",
@@ -1133,6 +1132,20 @@
       "delete": ["git::RestoreFile", { "skip_prompt": false }],
       "cmd-backspace": ["git::RestoreFile", { "skip_prompt": true }],
       "cmd-delete": ["git::RestoreFile", { "skip_prompt": true }],
+    },
+  },
+  {
+    "context": "GitPanel && ChangesList && GitRepositoryRow && !GitBranchSelector",
+    "use_key_equivalents": true,
+    "bindings": {
+      "space": "menu::Confirm",
+    },
+  },
+  {
+    "context": "GitPanel && ChangesList && !GitRepositoryRow && !GitBranchSelector",
+    "use_key_equivalents": true,
+    "bindings": {
+      "space": "git::ToggleStaged",
     },
   },
   {
