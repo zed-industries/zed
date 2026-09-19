@@ -32,6 +32,69 @@ Before committing, verify that the docs are formatted in the way Prettier expect
 cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
 ```
 
+## Audit internal links
+
+The internal-link audit finds related documentation pages, asks
+[TypeSafe Jev](https://typesafe.ai/) whether a link would help the reader, and
+selects exact unlinked anchor text from the source page. The scripts require
+Python 3.10 or later and use only the Python standard library.
+
+Set a TypeSafe API key before running the audit:
+
+```sh
+export TYPESAFE_API_KEY="..."
+script/audit-doc-links
+```
+
+The audit sends selected documentation prose to the TypeSafe API. Do not run it
+against private or unreleased documentation without confirming the applicable
+data-handling policy.
+
+Results and validated API responses are cached under `target/doc-link-audit/`.
+The model version is pinned because the review thresholds are calibrated against
+that version. Use `--model` only when validating a new model and its thresholds
+together.
+
+Limit an audit to one documentation area with one or more source globs:
+
+```sh
+script/audit-doc-links --source 'ai/*.md'
+```
+
+Generate a self-contained review page:
+
+```sh
+script/review-doc-links html --open
+```
+
+Reviewers mark each item Pass, Fail, or Defer, then use **Export labels** to
+download `doc-link-review.json`. Browser labels are isolated by the audit report
+hash, so labels from an older audit do not carry into a new review.
+
+Validate an exported review before changing files:
+
+```sh
+script/review-doc-links apply ~/Downloads/doc-link-review.json
+```
+
+Apply approved anchors with `--write`:
+
+```sh
+script/review-doc-links apply ~/Downloads/doc-link-review.json --write
+```
+
+Every anchor records its exact source block and offset. The apply command permits
+unrelated edits elsewhere in a page, but refuses to continue if the reviewed
+source block or target page changed. It validates the complete batch before
+writing any file.
+
+Run the tests after changing this tooling:
+
+```sh
+PYTHONPATH=script python3 -m unittest discover -s script/doc_links/tests -p 'test_*.py'
+node script/doc_links/tests/review_ui_test.mjs
+```
+
 ## Preprocessor
 
 We have a custom mdBook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).

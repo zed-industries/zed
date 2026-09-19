@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+
+import argparse
+import concurrent.futures
+from collections import Counter
+from pathlib import Path
+import sys
+
+from doc_links.corpus import load_pages, select_pages
+from doc_links.io import write_json_atomic, write_text_atomic
+from doc_links.jev import Client, api_key_from_environment, build_request, evaluate_source
+from doc_links.policy import Thresholds, decision_for
+from doc_links.retrieval import Index
+from doc_links.schema import Report
+
+
+def probability(value: str) -> float:
+    parsed = float(value)
+    if not 0 <= parsed <= 1:
+        raise argparse.ArgumentTypeError("must be between 0 and 1")
+    return parsed
+
+
+def positive_integer(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def parse_arguments() -> argparse.Namespace:
+    defaults = Thresholds()
+    parser = argparse.ArgumentParser(
+        description="Find useful missing links between Zed documentation pages."
+    )
+    parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
+    parser.add_argument("--source", action="append", default=[])
+    parser.add_argument("--candidate-count", type=positive_integer, default=15)
+    parser.add_argument("--block-count", type=positive_integer, default=4)
+    parser.add_argument("--anchor-count", type=positive_integer, default=6)
+    parser.add_argument("--model", default="jev-1.13.0")
+    parser.add_argument(
+        "--automatic-reason",
+        type=probability,
+        default=defaults.automatic_reason,
+    )
+    parser.add_argument(
+        "--exact-anchor",
+        type=probability,
+        default=defaults.exact_anchor,
+    )
+    parser.add_argument(
+        "--near-reason",
+        type=probability,
+        default=defaults.near_reason,
+    )
+    parser.add_argument("--workers", type=positive_integer, default=8)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("target/doc-link-audit"),
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    return parser.parse_args()
+
+
+def markdown_report(report: Report) -> str:
+    counts = Counter(decision.queue for decision in report.decisions)
+    lines = [
+        "# Zed documentation link audit",
+        "",
+        f"- Model: {report.model}",
+        f"- Candidate pairs: {len(report.decisions)}",
+        f"- Automatic: {counts['automatic']}",
+        f"- Strong review: {counts['strong_review']}",
+        f"- Near review: {counts['near_review']}",
+        f"- Rejected: {counts['rejected']}",
+        f"- Input tokens: {report.usage['input_tokens']:,}",
+        f"- Output tokens: {report.usage['output_tokens']:,}",
+        "",
+    ]
+    for queue, heading in (
+        ("automatic", "Automatic candidates"),
+        ("strong_review", "Strong reason, uncertain anchor"),
+        ("near_review", "Near-threshold reason"),
+    ):
+        lines.extend((f"## {heading}", ""))
+        matching = [item for item in report.decisions if item.queue == queue]
+        if not matching:
+            lines.extend(("None.", ""))
+            continue
+        for decision in matching:
+            anchor = decision.anchor.text if decision.anchor else decision.anchor_choice
+            lines.extend(
+                (
+                    f"- `{decision.source_path}` → `{decision.target_path}`",
+                    f"  - Reason: {decision.reason_probability:.3f}",
+                    f"  - Anchor: `{anchor}` ({decision.anchor_probability:.3f})",
+                )
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    arguments = parse_arguments()
+    if arguments.near_reason > arguments.automatic_reason:
+        raise SystemExit("--near-reason cannot exceed --automatic-reason")
+    pages = load_pages(arguments.docs_dir)
+    selected = select_pages(pages, tuple(arguments.source))
+    if not selected:
+        raise SystemExit("No published source pages with prose matched.")
+    index = Index(pages)
+    candidates = {
+        page.path: index.candidates(
+            page,
+            arguments.candidate_count,
+            arguments.block_count,
+            arguments.anchor_count,
+        )
+        for page in selected
+    }
+    if arguments.dry_run:
+        request_dir = arguments.output_dir / "requests"
+        for source in selected:
+            if not candidates[source.path]:
+                continue
+            payload, _ = build_request(source, candidates[source.path], arguments.model)
+            filename = str(source.path).replace("/", "__").removesuffix(".md")
+            write_json_atomic(request_dir / f"{filename}.json", payload)
+        pair_count = sum(len(items) for items in candidates.values())
+        print(
+            f"Prepared {len(selected)} requests with {pair_count} candidate pairs "
+            f"in {request_dir}"
+        )
+        return 0
+
+    thresholds = Thresholds(
+        automatic_reason=arguments.automatic_reason,
+        exact_anchor=arguments.exact_anchor,
+        near_reason=arguments.near_reason,
+    )
+    auditable = tuple(source for source in selected if candidates[source.path])
+    client = (
+        Client(api_key_from_environment(), arguments.output_dir / "cache")
+        if auditable
+        else None
+    )
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(arguments.workers, len(auditable)) if auditable else 1
+    ) as executor:
+        futures = {
+            executor.submit(
+                evaluate_source,
+                client,
+                source,
+                candidates[source.path],
+                arguments.model,
+            ): source
+            for source in auditable
+        }
+        for completed, future in enumerate(
+            concurrent.futures.as_completed(futures),
+            start=1,
+        ):
+            source = futures[future]
+            result = future.result()
+            results.append((source, result))
+            print(f"Audited {completed}/{len(auditable)}: {source.path}", file=sys.stderr)
+
+    models = {result.model for _, result in results}
+    if len(models) > 1:
+        raise RuntimeError(f"TypeSafe returned multiple models: {sorted(models)}")
+    response_model = models.pop() if models else arguments.model
+    decisions = tuple(
+        decision_for(source, evaluation, thresholds)
+        for source, result in results
+        for evaluation in result.evaluations
+    )
+    queue_order = {
+        "automatic": 0,
+        "strong_review": 1,
+        "near_review": 2,
+        "rejected": 3,
+    }
+    decisions = tuple(
+        sorted(
+            decisions,
+            key=lambda item: (
+                queue_order[item.queue],
+                -item.reason_probability,
+                -item.anchor_probability,
+                item.source_path,
+                item.target_path,
+            ),
+        )
+    )
+    report = Report(
+        model=response_model,
+        thresholds=thresholds.to_dict(),
+        pages={
+            str(page.path): {
+                "title": page.title,
+                "content_hash": page.content_hash,
+            }
+            for page in pages
+        },
+        decisions=decisions,
+        usage={
+            "input_tokens": sum(result.input_tokens for _, result in results),
+            "output_tokens": sum(result.output_tokens for _, result in results),
+        },
+    )
+    write_json_atomic(arguments.output_dir / "audit.json", report.to_dict())
+    write_text_atomic(arguments.output_dir / "audit.md", markdown_report(report))
+    counts = Counter(item.queue for item in decisions)
+    print(
+        f"Automatic {counts['automatic']}; strong review {counts['strong_review']}; "
+        f"near review {counts['near_review']}; rejected {counts['rejected']}."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

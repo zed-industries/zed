@@ -162,6 +162,11 @@ jobs:
         version: '9'
     - name: steps::prettier
       run: ./script/prettier
+    - name: run_tests::check_style::doc_link_tests
+      run: |-
+        PYTHONPATH=script python3 -m unittest discover -s script/doc_links/tests -p 'test_*.py'
+        node script/doc_links/tests/review_ui_test.mjs
+        pnpm dlx prettier@3.5.0 script/doc_links/ui --check
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
     - name: ./script/check-todos

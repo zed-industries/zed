@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+
+import argparse
+from pathlib import Path
+import webbrowser
+
+from doc_links.apply import apply_plan, build_plan
+from doc_links.review import generate_html
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Review and apply Zed documentation link audit results."
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    html = commands.add_parser("html", help="Generate a self-contained review page.")
+    html.add_argument(
+        "--report",
+        type=Path,
+        default=Path("target/doc-link-audit/audit.json"),
+    )
+    html.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
+    html.add_argument(
+        "--output",
+        type=Path,
+        default=Path("target/doc-link-audit/review.html"),
+    )
+    html.add_argument("--open", action="store_true")
+
+    apply = commands.add_parser("apply", help="Validate an exported review.")
+    apply.add_argument("export", type=Path)
+    apply.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
+    apply.add_argument("--write", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> int:
+    arguments = parse_arguments()
+    if arguments.command == "html":
+        count = generate_html(arguments.report, arguments.docs_dir, arguments.output)
+        print(f"Wrote {arguments.output} with {count} review items.")
+        if arguments.open:
+            webbrowser.open(arguments.output.resolve().as_uri())
+        return 0
+
+    plan = build_plan(arguments.export, arguments.docs_dir)
+    print(
+        f"Validated {len(plan.edits)} approved anchors across "
+        f"{len(plan.files)} files."
+    )
+    if not arguments.write:
+        print("No files changed. Pass --write to apply them.")
+        return 0
+    apply_plan(plan)
+    print(f"Applied {len(plan.edits)} anchors.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
