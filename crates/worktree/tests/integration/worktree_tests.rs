@@ -2067,10 +2067,10 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
-                settings.project.worktree.file_scan_inclusions = Some(vec![
-                    "node_modules/**/package.json".to_string(),
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![
                     "**/.DS_Store".to_string(),
-                ]);
+                    "node_modules/**/package.json".to_string(),
+                ]));
             });
         });
     });
@@ -2109,6 +2109,135 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext) {
+    init_test(cx);
+    let worktree_id = WorktreeId::from_proto(0);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "...".to_string(),
+                    "ignored/**/excluded.project".to_string(),
+                ]));
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![
+                    "...".to_string(),
+                    "ignored/**/*.user".to_string(),
+                ]));
+            });
+            store
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{ "file_scan_inclusions": ["...", "ignored/**/*.project"] }"#),
+                    cx,
+                )
+                .expect("valid project settings");
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".env.local": "",
+            ".git": {},
+            ".gitignore": ".env*\n/ignored/\nunmatched.txt\n",
+            "ignored": {
+                "nested": {
+                    "excluded.project": "",
+                    "included.project": "",
+                    "included.user": "",
+                    "unmatched.txt": ""
+                }
+            },
+            "unmatched.txt": ""
+        }),
+    )
+    .await;
+
+    let tree = build_worktree(fs, path!("/root"), cx).await;
+    tree.read_with(cx, |tree, _| {
+        for path in [
+            ".env.local",
+            "ignored",
+            "ignored/nested",
+            "ignored/nested/included.project",
+            "ignored/nested/included.user",
+        ] {
+            assert!(
+                tree.entry_for_path(rel_path(path))
+                    .is_some_and(|entry| entry.is_ignored && entry.is_always_included),
+                "expected {path} to be ignored by Git and included by settings"
+            );
+        }
+        for path in ["ignored/nested/unmatched.txt", "unmatched.txt"] {
+            assert!(
+                tree.entry_for_path(rel_path(path))
+                    .is_some_and(|entry| entry.is_ignored && !entry.is_always_included),
+                "expected {path} to remain ignored"
+            );
+        }
+        assert_eq!(
+            tree.entry_for_path(rel_path("ignored/nested/excluded.project")),
+            None
+        );
+        assert_eq!(
+            tree.files(false, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(".env.local"),
+                rel_path(".gitignore"),
+                rel_path("ignored/nested/included.project"),
+                rel_path("ignored/nested/included.user"),
+            ]
+        );
+    });
+
+    for (settings, included_paths) in [
+        (
+            r#"{ "file_scan_inclusions": ["ignored/**/*.project"] }"#,
+            vec![
+                rel_path(".gitignore"),
+                rel_path("ignored/nested/included.project"),
+            ],
+        ),
+        (
+            r#"{ "file_scan_inclusions": [] }"#,
+            vec![rel_path(".gitignore")],
+        ),
+    ] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                        LocalSettingsKind::Settings,
+                        Some(settings),
+                        cx,
+                    )
+                    .expect("valid project settings");
+            });
+        });
+        cx.run_until_parked();
+        tree.read_with(cx, |tree, _| {
+            tree.as_local().expect("local worktree").scan_complete()
+        })
+        .await;
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.files(false, 0)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                included_paths
+            );
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2139,7 +2268,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
                 settings.project.worktree.file_scan_exclusions =
                     Some(SplicingVec::from(vec!["**/.DS_Store".to_string()]));
                 settings.project.worktree.file_scan_inclusions =
-                    Some(vec!["**/.DS_Store".to_string()]);
+                    Some(SplicingVec::from(vec!["**/.DS_Store".to_string()]));
             });
         });
     });
@@ -2202,7 +2331,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
                 settings.project.worktree.file_scan_inclusions =
-                    Some(vec!["node_modules/**".to_string()]);
+                    Some(SplicingVec::from(vec!["node_modules/**".to_string()]));
             });
         });
     });
@@ -2236,7 +2365,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
-                settings.project.worktree.file_scan_inclusions = Some(vec![]);
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![]));
             });
         });
     });
@@ -2421,7 +2550,8 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.hidden_files = Some(vec!["**/*.log".to_string()]);
+                settings.project.worktree.hidden_files =
+                    Some(SplicingVec::from(vec!["**/*.log".to_string()]));
             });
         });
     });
@@ -2448,6 +2578,124 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
             ]
         );
     });
+}
+
+#[gpui::test]
+async fn test_hidden_files_from_project_settings(cx: &mut TestAppContext) {
+    init_test(cx);
+    let worktree_id = WorktreeId::from_proto(0);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".hidden_dir": {
+                "nested.rs": ""
+            },
+            ".hidden_file": "",
+            "app.log": "",
+            "generated": {
+                "nested.rs": ""
+            },
+            "visible.rs": ""
+        }),
+    )
+    .await;
+    let tree = build_worktree(fs, path!("/root"), cx).await;
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .filter(|entry| entry.is_hidden)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(".hidden_dir"),
+                rel_path(".hidden_dir/nested.rs"),
+                rel_path(".hidden_file"),
+            ]
+        );
+    });
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.hidden_files = Some(SplicingVec::from(vec![
+                    "**/*.log".to_string(),
+                    SplicingVec::REST.to_string(),
+                ]));
+            });
+        });
+    });
+
+    for (settings, hidden_paths) in [
+        (
+            None,
+            vec![
+                rel_path(".hidden_dir"),
+                rel_path(".hidden_dir/nested.rs"),
+                rel_path(".hidden_file"),
+                rel_path("app.log"),
+            ],
+        ),
+        (
+            Some(r#"{ "hidden_files": ["**/generated", "..."] }"#),
+            vec![
+                rel_path(".hidden_dir"),
+                rel_path(".hidden_dir/nested.rs"),
+                rel_path(".hidden_file"),
+                rel_path("app.log"),
+                rel_path("generated"),
+                rel_path("generated/nested.rs"),
+            ],
+        ),
+        (
+            Some(r#"{ "hidden_files": ["**/generated"] }"#),
+            vec![rel_path("generated"), rel_path("generated/nested.rs")],
+        ),
+        (Some(r#"{ "hidden_files": [] }"#), vec![]),
+    ] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                        LocalSettingsKind::Settings,
+                        settings,
+                        cx,
+                    )
+                    .expect("valid project settings");
+            });
+        });
+        cx.run_until_parked();
+        tree.read_with(cx, |tree, _| {
+            tree.as_local().expect("local worktree").scan_complete()
+        })
+        .await;
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.entries(true, 0)
+                    .filter(|entry| entry.is_hidden)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                hidden_paths
+            );
+            assert_eq!(
+                tree.entries(true, 0)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    rel_path(""),
+                    rel_path(".hidden_dir"),
+                    rel_path(".hidden_dir/nested.rs"),
+                    rel_path(".hidden_file"),
+                    rel_path("app.log"),
+                    rel_path("generated"),
+                    rel_path("generated/nested.rs"),
+                    rel_path("visible.rs"),
+                ]
+            );
+        });
+    }
 }
 
 #[gpui::test]
@@ -6818,7 +7066,7 @@ async fn test_file_scan_depth_pierced_by_inclusions(cx: &mut TestAppContext) {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_depth = Some(1);
                 settings.project.worktree.file_scan_inclusions =
-                    Some(vec!["junk/a/b/c/deep.txt".to_string()]);
+                    Some(SplicingVec::from(vec!["junk/a/b/c/deep.txt".to_string()]));
             });
         });
     });
