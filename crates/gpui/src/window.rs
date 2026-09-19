@@ -9097,6 +9097,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 window.dispatch_event(
                     TouchEvent {
+                        timestamp: None,
                         id,
                         phase,
                         position: point(px(x), px(0.)),

@@ -4928,6 +4928,7 @@ mod tests {
             .update_window(any_window, |_, window, cx| {
                 window.dispatch_event(
                     TouchEvent {
+                        timestamp: None,
                         id: touch_id,
                         phase: TouchPhase::Started,
                         position: touch_position,
@@ -4954,6 +4955,7 @@ mod tests {
             .update_window(any_window, |_, window, cx| {
                 window.dispatch_event(
                     TouchEvent {
+                        timestamp: None,
                         id: touch_id,
                         phase: TouchPhase::Moved,
                         position: moved_position,
@@ -4975,6 +4977,7 @@ mod tests {
             .update_window(any_window, |_, window, cx| {
                 window.dispatch_event(
                     TouchEvent {
+                        timestamp: None,
                         id: touch_id,
                         phase: TouchPhase::Ended,
                         position: moved_position,
