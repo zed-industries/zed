@@ -1316,6 +1316,99 @@ async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_drop_marker_side_follows_group_order_when_rows_shift(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-a", serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree("/project-c", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project_a = project::Project::test(fs.clone(), ["/project-a".as_ref()], cx).await;
+    let project_b = project::Project::test(fs.clone(), ["/project-b".as_ref()], cx).await;
+    let project_c = project::Project::test(fs.clone(), ["/project-c".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_c.clone(), window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b.clone(), window, cx);
+    });
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_a.clone(), window, cx);
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_n_test_threads(1, &project_a, cx).await;
+
+    let key_a = project_a.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_c = project_c.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    // Collapse A so B sits directly below it.
+    sidebar.update_in(cx, |s, window, cx| {
+        s.toggle_collapse(&key_a, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "> [project-a]",
+            "v [project-b]",
+            "v [project-c]",
+        ]
+    );
+
+    // Dragging C over B: B is above C, so the marker goes above B.
+    let marker_side = multi_workspace.read_with(cx, |mw, _| {
+        Sidebar::drop_marker_side(&key_c, &key_b, mw)
+    });
+    assert_eq!(marker_side, Some(DropMarkerSide::Above));
+
+    // Expanding A mid-drag pushes B down one row, past the row C was on
+    // when the drag started. Group order is unchanged, so the marker
+    // must not flip.
+    sidebar.update_in(cx, |s, window, cx| {
+        s.toggle_collapse(&key_a, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [project-a]",
+            "  Thread 1",
+            "v [project-b]",
+            "v [project-c]",
+        ]
+    );
+
+    let marker_side = multi_workspace.read_with(cx, |mw, _| {
+        Sidebar::drop_marker_side(&key_c, &key_b, mw)
+    });
+    assert_eq!(marker_side, Some(DropMarkerSide::Above));
+
+    // Dropping lands C where the marker said it would.
+    multi_workspace.update(cx, |mw, cx| {
+        assert!(mw.move_project_group(&key_c, &key_b, cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [project-a]",
+            "  Thread 1",
+            "v [project-c]",
+            "v [project-b]",
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContext) {
     // When a worktree is added to a project, the project group key changes.
     // The sidebar's collapsed/expanded state is keyed by ProjectGroupKey, so
