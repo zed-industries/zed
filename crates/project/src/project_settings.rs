@@ -549,6 +549,24 @@ impl From<settings::InlineBlameLocation> for InlineBlameLocation {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BlameAgeColoring {
+    #[default]
+    None,
+    Commit,
+    Heatmap,
+}
+
+impl From<settings::BlameAgeColoring> for BlameAgeColoring {
+    fn from(age_coloring: settings::BlameAgeColoring) -> Self {
+        match age_coloring {
+            settings::BlameAgeColoring::None => BlameAgeColoring::None,
+            settings::BlameAgeColoring::Commit => BlameAgeColoring::Commit,
+            settings::BlameAgeColoring::Heatmap => BlameAgeColoring::Heatmap,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
@@ -586,6 +604,10 @@ pub struct BlameSettings {
     ///
     /// Default: true
     pub show_avatar: bool,
+    /// How to color git blame entries based on commit age.
+    ///
+    /// Default: none
+    pub age_coloring: BlameAgeColoring,
 }
 
 impl GitSettings {
@@ -703,6 +725,7 @@ impl Settings for ProjectSettings {
                 let blame = git.blame.unwrap();
                 BlameSettings {
                     show_avatar: blame.show_avatar.unwrap(),
+                    age_coloring: blame.age_coloring.unwrap().into(),
                 }
             },
             branch_picker: {
