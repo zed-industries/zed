@@ -1,8 +1,14 @@
+from datetime import datetime, timedelta, timezone
+from email.message import Message
+from email.utils import format_datetime
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
+import urllib.error
 
 from doc_links.corpus import Page
 from doc_links import markdown
@@ -11,10 +17,13 @@ from doc_links.jev import (
     MaxTokensError,
     build_request,
     evaluate_source,
+    retry_delay,
     validate_response,
 )
 from doc_links.policy import Thresholds, queue_for
 from doc_links.retrieval import AnchorOption, DestinationCandidate
+
+
 
 
 class FakeResponse:
@@ -130,6 +139,40 @@ class JevTest(unittest.TestCase):
                     lambda raw: validate_response(raw, target_map),
                 )
             self.assertEqual(len(list(Path(directory).glob("*.json"))), 1)
+
+    def test_retry_after_http_date(self):
+        headers = Message()
+        headers["Retry-After"] = format_datetime(
+            datetime.now(timezone.utc) + timedelta(seconds=5)
+        )
+        error = SimpleNamespace(headers=headers)
+        self.assertGreaterEqual(retry_delay(error, 0), 0)
+        self.assertLessEqual(retry_delay(error, 0), 5)
+
+    def test_rate_limit_is_retried(self):
+        payload, target_map, response = fixture()
+        headers = Message()
+        headers["Retry-After"] = "0"
+        error = urllib.error.HTTPError(
+            "https://api.typesafe.ai",
+            429,
+            "rate limited",
+            headers,
+            io.BytesIO(b"rate limited"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            client = Client("key", Path(directory))
+            with mock.patch(
+                "urllib.request.urlopen",
+                side_effect=[error, FakeResponse(response)],
+            ) as urlopen, mock.patch("time.sleep"):
+                result = client.evaluate(
+                    payload,
+                    lambda raw: validate_response(raw, target_map),
+                )
+            error.close()
+            self.assertEqual(urlopen.call_count, 2)
+            self.assertEqual(result.model, "jev-1.13.0")
 
     def test_oversized_request_splits_targets_not_anchor_choices(self):
         _, target_map, _ = fixture()

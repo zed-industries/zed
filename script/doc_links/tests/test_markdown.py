@@ -30,7 +30,7 @@ Visible prose.
         self.assertEqual([block.kind for block in blocks], ["list_item"] * 3)
         self.assertEqual(
             [block.visible_text for block in blocks],
-            ["1. First item", "2. Second item", "3. Third item"],
+            ["First item", "Second item", "Third item"],
         )
 
     def test_anchor_options_stay_on_one_line_and_exclude_markup(self):
@@ -61,6 +61,30 @@ Run `command palette` in code.
         anchors = anchor_options(target, source.prose_blocks, 10)
         self.assertFalse(any("\n" in anchor.text for anchor in anchors))
         self.assertFalse(any(anchor.text == "command palette" for anchor in anchors))
+
+    def test_anchor_options_exclude_emphasis_and_list_markers(self):
+        source_text = "1. In the **External Agents** view, open agent settings.\n"
+        target_text = "# External Agents\n\nConfigure external agent settings.\n"
+        source = Page(
+            path=Path("source.md"),
+            title="Source",
+            source=source_text,
+            blocks=markdown.parse(source_text),
+            existing_links=frozenset(),
+        )
+        target = Page(
+            path=Path("target.md"),
+            title="External Agents",
+            source=target_text,
+            blocks=markdown.parse(target_text),
+            existing_links=frozenset(),
+        )
+        anchors = anchor_options(target, source.prose_blocks, 20)
+        self.assertIn("External Agents", {anchor.text for anchor in anchors})
+        self.assertTrue(
+            all(not any(marker in anchor.text for marker in ("*", "_", "~")) for anchor in anchors)
+        )
+        self.assertTrue(all(not anchor.text.startswith("1.") for anchor in anchors))
 
     def test_heading_table_html_and_code_are_not_anchor_blocks(self):
         source = """# Heading

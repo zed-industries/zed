@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -83,7 +84,7 @@ class ReviewTest(unittest.TestCase):
     def test_generated_html_uses_report_scoped_storage(self):
         report = self.report()
         report_path = self.root / "audit.json"
-        report_path.write_text(__import__("json").dumps(report.to_dict()))
+        report_path.write_text(json.dumps(report.to_dict()))
         output = self.root / "review.html"
         generate_html(report_path, self.docs, output)
         html = output.read_text()

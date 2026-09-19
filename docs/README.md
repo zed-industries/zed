@@ -92,6 +92,7 @@ Run the tests after changing this tooling:
 
 ```sh
 PYTHONPATH=script python3 -m unittest discover -s script/doc_links/tests -p 'test_*.py'
+node script/doc_links/tests/review_ui_test.mjs
 ```
 
 ## Preprocessor

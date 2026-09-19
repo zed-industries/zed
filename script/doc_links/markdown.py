@@ -13,6 +13,7 @@ TABLE_DIVIDER_PATTERN = re.compile(
 LINK_PATTERN = re.compile(r"!?\[([^\]]*)\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 CODE_PATTERN = re.compile(r"(`+)(.+?)\1")
 SPECIAL_PATTERN = re.compile(r"\{#[^}]+\}|https?://\S+")
+EMPHASIS_PATTERN = re.compile(r"[*_~]{1,3}")
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,11 @@ def inline_spans(source: str, offset: int = 0) -> tuple[Span, ...]:
                 destination=match.group(2),
             )
         )
-    for pattern, kind in ((CODE_PATTERN, "code"), (SPECIAL_PATTERN, "special")):
+    for pattern, kind in (
+        (CODE_PATTERN, "code"),
+        (SPECIAL_PATTERN, "special"),
+        (EMPHASIS_PATTERN, "emphasis"),
+    ):
         for match in pattern.finditer(source):
             spans.append(
                 Span(
@@ -132,6 +137,15 @@ def make_block(kind: str, source: str, start: int, end: int) -> Block:
         if kind in {"code", "front_matter", "html", "table"}
         else inline_spans(block_source, start)
     )
+    if kind == "list_item":
+        marker = LIST_PATTERN.match(block_source)
+        if marker:
+            excluded = tuple(
+                sorted(
+                    (*excluded, Span(start, start + marker.end(), "list_marker")),
+                    key=lambda span: (span.start, span.end),
+                )
+            )
     return Block(
         kind=kind,
         start=start,

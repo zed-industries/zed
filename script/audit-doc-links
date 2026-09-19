@@ -29,6 +29,7 @@ def positive_integer(value: str) -> int:
 
 
 def parse_arguments() -> argparse.Namespace:
+    defaults = Thresholds()
     parser = argparse.ArgumentParser(
         description="Find useful missing links between Zed documentation pages."
     )
@@ -38,9 +39,21 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--block-count", type=positive_integer, default=4)
     parser.add_argument("--anchor-count", type=positive_integer, default=6)
     parser.add_argument("--model", default="jev-1.13.0")
-    parser.add_argument("--automatic-reason", type=probability, default=0.80)
-    parser.add_argument("--exact-anchor", type=probability, default=0.60)
-    parser.add_argument("--near-reason", type=probability, default=0.75)
+    parser.add_argument(
+        "--automatic-reason",
+        type=probability,
+        default=defaults.automatic_reason,
+    )
+    parser.add_argument(
+        "--exact-anchor",
+        type=probability,
+        default=defaults.exact_anchor,
+    )
+    parser.add_argument(
+        "--near-reason",
+        type=probability,
+        default=defaults.near_reason,
+    )
     parser.add_argument("--workers", type=positive_integer, default=8)
     parser.add_argument(
         "--output-dir",

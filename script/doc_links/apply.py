@@ -19,7 +19,6 @@ class PlannedEdit:
 
 @dataclass(frozen=True)
 class ApplyPlan:
-    report_hash: str
     edits: tuple[PlannedEdit, ...]
     files: dict[Path, str]
 
@@ -71,7 +70,7 @@ def locate_anchor(source: str, decision: Decision) -> tuple[int, int]:
 
 
 def build_plan(export_path: Path, docs_dir: Path) -> ApplyPlan:
-    report_hash, decisions, labels = parse_review_export(read_json(export_path))
+    _, decisions, labels = parse_review_export(read_json(export_path))
     approved = [
         decision
         for decision in decisions
@@ -139,7 +138,6 @@ def build_plan(export_path: Path, docs_dir: Path) -> ApplyPlan:
         updated_files[path] = text
 
     return ApplyPlan(
-        report_hash=report_hash,
         edits=tuple(edits),
         files=updated_files,
     )

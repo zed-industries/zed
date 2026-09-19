@@ -123,7 +123,9 @@ function sourceContext(decision) {
   const block = source.slice(anchor.block_start, anchor.block_end);
   const localStart = anchor.start - anchor.block_start;
   const localEnd = anchor.end - anchor.block_start;
-  return `${renderMarkdown(block.slice(0, localStart))}<mark>${escapeHtml(anchor.text)}</mark>${renderMarkdown(block.slice(localEnd))}`;
+  const marker = "__ZED_ANCHOR_MARK__";
+  const marked = `${block.slice(0, localStart)}${marker}${block.slice(localEnd)}`;
+  return renderMarkdown(marked).replace(marker, `<mark>${escapeHtml(anchor.text)}</mark>`);
 }
 
 function render() {

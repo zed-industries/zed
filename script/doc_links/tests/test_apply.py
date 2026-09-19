@@ -149,6 +149,36 @@ class ApplyTest(unittest.TestCase):
         self.assertIn("[command palette](./target.md)", result)
         self.assertIn("[Agent Panel](./agent.md)", result)
 
+    def test_overlapping_anchors_are_rejected(self):
+        source = "# Source\n\nUse the command palette.\n"
+        (self.docs / "source.md").write_text(source, encoding="utf-8")
+        command = self.decision(source, "command palette")
+        palette = replace(
+            self.decision(source, "palette"),
+            identifier="palette",
+        )
+        with self.assertRaisesRegex(ValueError, "overlap"):
+            build_plan(self.write_export([command, palette]), self.docs)
+
+    def test_relative_target_mismatch_is_rejected(self):
+        source = "# Source\n\nUse the command palette.\n"
+        (self.docs / "source.md").write_text(source, encoding="utf-8")
+        decision = self.decision(source, "command palette")
+        decision = replace(
+            decision,
+            anchor=replace(decision.anchor, relative_target="./wrong.md"),
+        )
+        with self.assertRaisesRegex(ValueError, "invalid target"):
+            build_plan(self.write_export([decision]), self.docs)
+
+    def test_identical_source_blocks_are_ambiguous(self):
+        paragraph = "Use the command palette."
+        source = f"# Source\n\n{paragraph}\n\n{paragraph}\n"
+        (self.docs / "source.md").write_text(source, encoding="utf-8")
+        decision = self.decision(source, "command palette")
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            build_plan(self.write_export([decision]), self.docs)
+
     def test_linked_occurrence_is_rejected(self):
         source = "# Source\n\nUse the [command palette](./old.md).\n"
         (self.docs / "source.md").write_text(source, encoding="utf-8")

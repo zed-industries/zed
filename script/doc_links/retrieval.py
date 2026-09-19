@@ -108,7 +108,6 @@ def anchor_options(
 ) -> tuple[AnchorOption, ...]:
     primary_tokens = set(tokenize(target.title))
     secondary_tokens = set(tokenize(target.overview))
-    title_tokens = set(tokenize(target.title))
     candidates = []
 
     for block_rank, block in enumerate(blocks):
@@ -145,13 +144,12 @@ def anchor_options(
                     ):
                         continue
                     if word_count == 1 and (
-                        first_token not in title_tokens or len(first_token) < 4
+                        first_token not in primary_tokens or len(first_token) < 4
                     ):
                         continue
                     score = (
-                        len(primary_overlap) * 6
+                        len(primary_overlap) * 8
                         + len(secondary_overlap)
-                        + len(phrase_tokens & title_tokens) * 2
                         - abs(word_count - 3) * 0.1
                         - block_rank * 0.05
                     )
