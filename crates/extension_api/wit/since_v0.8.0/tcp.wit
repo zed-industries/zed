@@ -1,0 +1,12 @@
+package zed:extension;
+
+/// Explicitly-authorized TCP connections to loopback endpoints.
+interface tcp {
+    resource tcp-stream {
+        read: func(max-bytes: u32) -> result<list<u8>, string>;
+        write: func(data: list<u8>) -> result<_, string>;
+    }
+
+    /// Opens a TCP stream only after the host validates `network:tcp-local`.
+    connect: func(host: string, port: u16) -> result<own<tcp-stream>, string>;
+}
