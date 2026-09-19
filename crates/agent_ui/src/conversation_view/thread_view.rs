@@ -8028,6 +8028,7 @@ impl ThreadView {
                         .rounded_b_md()
                         .text_ui_sm(cx)
                         .h_full()
+                        .overflow_hidden()
                         .children(terminal_view.map(|terminal_view| {
                             let element = if terminal_view
                                 .read(cx)
