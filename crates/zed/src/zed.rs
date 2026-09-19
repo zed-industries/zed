@@ -5540,6 +5540,70 @@ mod tests {
         })
     }
 
+    /// The actions the Vim keymap resolves for `keystrokes` in `context`.
+    fn vim_bindings_for(keystrokes: &str, context: &str, cx: &mut TestAppContext) -> Vec<String> {
+        cx.update(|cx| {
+            let mut bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-linux.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            let mut vim_bindings =
+                settings::KeymapFile::load_asset_allow_partial_failure("keymaps/vim.json", cx)
+                    .unwrap();
+            for binding in &mut vim_bindings {
+                binding.set_meta(settings::KeybindSource::Vim.meta());
+            }
+            bindings.extend(vim_bindings);
+
+            let keystrokes = keystrokes
+                .split_whitespace()
+                .map(|keystroke| gpui::Keystroke::parse(keystroke).unwrap())
+                .collect::<Vec<_>>();
+            gpui::Keymap::new(bindings)
+                .bindings_for_input(&keystrokes, &[gpui::KeyContext::parse(context).unwrap()])
+                .0
+                .iter()
+                .map(|binding| binding.action().name().to_string())
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    fn test_helix_space_w_window_bindings(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        let expected_bindings = [
+            ("space w w", "workspace::ActivateNextPane"),
+            ("space w left", "workspace::ActivatePaneLeft"),
+            ("space w right", "workspace::ActivatePaneRight"),
+            ("space w up", "workspace::ActivatePaneUp"),
+            ("space w down", "workspace::ActivatePaneDown"),
+            ("space w shift-h", "workspace::MovePaneLeft"),
+            ("space w shift-j", "workspace::MovePaneDown"),
+            ("space w shift-k", "workspace::MovePaneUp"),
+            ("space w shift-l", "workspace::MovePaneRight"),
+            ("space w o", "workspace::CloseInactiveTabsAndPanes"),
+        ];
+        let contexts = [
+            "Workspace Pane Editor VimControl vim_mode=helix_normal",
+            "Workspace Pane ProjectPanel not_editing",
+        ];
+
+        for context in contexts {
+            for (keystrokes, expected_action) in expected_bindings {
+                assert_eq!(
+                    vim_bindings_for(keystrokes, context, cx),
+                    [expected_action],
+                    "unexpected binding for {keystrokes:?} in {context:?}",
+                );
+            }
+        }
+    }
+
     /// `editor::MoveDown` and `editor::MoveUp` propagate when the cursor doesn't move, which at the
     /// ends of a buffer let `ctrl-n` and `ctrl-p` fall through to the default bindings and open a
     /// new file / the file finder.
