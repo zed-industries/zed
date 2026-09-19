@@ -44,7 +44,7 @@ The [command palette](./command-palette.md) (`Cmd+Shift+P`) is your gateway to e
 
 ### Panel Layout
 
-Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) when you want the [Agent Panel](./ai/agent-panel.md) and Threads Sidebar next to each other on the left. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout.
+Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) when you want the [Agent Panel](./ai/agent-panel.md) and Threads Sidebar next to each other on the left. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout, which moves the Agent Panel and Threads Sidebar to the right.
 
 ### 3. Configure Your Editor
 

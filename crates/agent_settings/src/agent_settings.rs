@@ -378,16 +378,32 @@ impl AgentSettings {
         cx: &App,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
         let merged = PanelLayout::read_from(cx.global::<SettingsStore>().merged_settings());
+        let merged_sidebar_position = AgentSettings::get_global(cx).threads_sidebar.position;
 
+        // The Threads Sidebar follows the agent panel to its side, but it isn't
+        // part of `PanelLayout`: otherwise existing users whose sidebar side
+        // differs from the preset would suddenly be detected as `Custom`.
         match layout {
             WindowLayout::Agent(None) => {
                 update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::AGENT.write_diff_to(&merged, settings);
+                    if merged_sidebar_position != SidebarDockPosition::Left {
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .set_threads_sidebar_position(Some(SidebarDockPosition::Left));
+                    }
                 })
             }
             WindowLayout::Editor(None) => {
                 update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::EDITOR.write_diff_to(&merged, settings);
+                    if merged_sidebar_position != SidebarDockPosition::Right {
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .set_threads_sidebar_position(Some(SidebarDockPosition::Right));
+                    }
                 })
             }
             WindowLayout::Agent(Some(saved))
@@ -2143,6 +2159,47 @@ mod tests {
             let layout = AgentSettings::get_layout(cx);
             assert!(matches!(layout, WindowLayout::Agent(_)));
         });
+    }
+
+    #[gpui::test]
+    async fn test_set_layout_moves_threads_sidebar(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.save(
+            paths::settings_file().as_path(),
+            &"{}".into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            project::DisableAiSettings::register(cx);
+            AgentSettings::register(cx);
+        });
+
+        for (layout, expected_side) in [
+            (WindowLayout::editor(), SidebarDockPosition::Right),
+            (WindowLayout::agent(), SidebarDockPosition::Left),
+        ] {
+            cx.update(|cx| AgentSettings::set_layout(layout, fs.clone(), cx))
+                .await
+                .unwrap()
+                .unwrap();
+            cx.run_until_parked();
+
+            let written = fs.load(paths::settings_file().as_path()).await.unwrap();
+            cx.update(|cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.set_user_settings(&written, cx).unwrap();
+                });
+                assert_eq!(
+                    AgentSettings::get_global(cx).threads_sidebar.position,
+                    expected_side
+                );
+            });
+        }
     }
 
     #[gpui::test]
