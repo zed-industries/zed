@@ -9,14 +9,14 @@ Erlang support is available through the [Erlang extension](https://github.com/ze
 
 - Tree-sitter: [WhatsApp/tree-sitter-erlang](https://github.com/WhatsApp/tree-sitter-erlang)
 - Language Servers:
-  - [erlang-ls/erlang_ls](https://github.com/erlang-ls/erlang_ls)
   - [WhatsApp/erlang-language-platform](https://github.com/WhatsApp/erlang-language-platform)
+  - [erlang-ls/erlang_ls](https://github.com/erlang-ls/erlang_ls)
 
 ## Choosing a language server
 
-The Erlang extension offers language server support for `erlang_ls` and `erlang-language-platform`.
+The Erlang extension offers language server support for `erlang-language-platform` and `erlang_ls`.
 
-`erlang_ls` is enabled by default.
+`elp` is enabled by default.
 
 Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Erlang, or add to your settings file:
 
