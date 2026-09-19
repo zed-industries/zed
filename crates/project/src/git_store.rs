@@ -493,6 +493,34 @@ pub struct GitStoreCheckpoint {
     checkpoints_by_work_dir_abs_path: HashMap<Arc<Path>, GitRepositoryCheckpoint>,
 }
 
+/// Bounds how many repositories are snapshotted or restored concurrently.
+/// Each repository shells out to `git` (which spawns its own threads), so an
+/// N-repo workspace would otherwise fan out N git subprocesses at once and peg
+/// every core. Override with `ZED_GIT_CHECKPOINT_CONCURRENCY` to tune.
+const DEFAULT_GIT_CHECKPOINT_CONCURRENCY: usize = 4;
+
+fn git_checkpoint_concurrency() -> usize {
+    std::env::var("ZED_GIT_CHECKPOINT_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_GIT_CHECKPOINT_CONCURRENCY)
+}
+
+/// Drives a set of futures with bounded concurrency, preserving input order
+/// and short-circuiting on the first error. Mirrors `future::try_join_all`,
+/// but polls at most `limit` at a time.
+async fn join_with_concurrency_limit<F, T, E>(futs: Vec<F>, limit: usize) -> Result<Vec<T>, E>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    let results = ::futures::stream::iter(futs)
+        .buffered(limit)
+        .collect::<Vec<_>>()
+        .await;
+    results.into_iter().collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
     pub repo_path: RepoPath,
@@ -2147,7 +2175,8 @@ impl GitStore {
         }
 
         cx.background_executor().spawn(async move {
-            let checkpoints = future::try_join_all(checkpoints).await?;
+            let checkpoints =
+                join_with_concurrency_limit(checkpoints, git_checkpoint_concurrency()).await?;
             Ok(GitStoreCheckpoint {
                 checkpoints_by_work_dir_abs_path: work_directory_abs_paths
                     .into_iter()
@@ -2178,7 +2207,7 @@ impl GitStore {
             }
         }
         cx.background_spawn(async move {
-            future::try_join_all(tasks).await?;
+            join_with_concurrency_limit(tasks, git_checkpoint_concurrency()).await?;
             Ok(())
         })
     }
@@ -2215,7 +2244,7 @@ impl GitStore {
             }
         }
         cx.background_spawn(async move {
-            Ok(future::try_join_all(tasks)
+            Ok(join_with_concurrency_limit(tasks, git_checkpoint_concurrency())
                 .await?
                 .into_iter()
                 .all(|result| result))
@@ -11393,6 +11422,51 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn join_with_concurrency_limit_bounds_inflight_and_preserves_order(
+        cx: &mut TestAppContext,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let executor = cx.background_executor.clone();
+        let in_flight = std::sync::Arc::new(AtomicUsize::new(0));
+        let peak = std::sync::Arc::new(AtomicUsize::new(0));
+
+        let futures = (0..9)
+            .map(|index| {
+                let in_flight = in_flight.clone();
+                let peak = peak.clone();
+                let executor = executor.clone();
+                async move {
+                    let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    executor.timer(Duration::from_millis(5)).await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                    Ok::<usize, ()>(index)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let results = join_with_concurrency_limit(futures, 3).await.unwrap();
+        assert_eq!(results, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(in_flight.load(Ordering::SeqCst), 0);
+        assert_eq!(peak.load(Ordering::SeqCst), 3);
+    }
+
+    #[gpui::test]
+    async fn join_with_concurrency_limit_short_circuits_on_first_error(_cx: &mut TestAppContext) {
+        let futures: Vec<std::future::Ready<Result<i32, &str>>> = vec![
+            std::future::ready(Ok(1)),
+            std::future::ready(Err("first")),
+            std::future::ready(Ok(2)),
+            std::future::ready(Err("second")),
+        ];
+
+        let result: Result<Vec<i32>, &str> = join_with_concurrency_limit(futures, 2).await;
+        assert_eq!(result, Err("first"));
     }
 
     type TestPasswordPrompt = (
