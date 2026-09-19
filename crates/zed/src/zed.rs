@@ -5540,6 +5540,36 @@ mod tests {
         })
     }
 
+    /// The actions the Vim keymap resolves for `keystrokes` in `context`.
+    fn vim_bindings_for(keystrokes: &str, context: &str, cx: &mut TestAppContext) -> Vec<String> {
+        cx.update(|cx| {
+            let bindings =
+                settings::KeymapFile::load_asset_allow_partial_failure("keymaps/vim.json", cx)
+                    .unwrap();
+            let keystrokes = keystrokes
+                .split_whitespace()
+                .map(|keystroke| gpui::Keystroke::parse(keystroke).unwrap())
+                .collect::<Vec<_>>();
+
+            gpui::Keymap::new(bindings)
+                .bindings_for_input(&keystrokes, &[gpui::KeyContext::parse(context).unwrap()])
+                .0
+                .iter()
+                .map(|binding| binding.action().name().to_string())
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    fn test_helix_buffer_picker_opens_in_active_pane(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        assert_eq!(
+            vim_bindings_for("space b", "vim_mode=helix_normal", cx).first(),
+            Some(&"tab_switcher::OpenInActivePane".to_string())
+        );
+    }
+
     /// `editor::MoveDown` and `editor::MoveUp` propagate when the cursor doesn't move, which at the
     /// ends of a buffer let `ctrl-n` and `ctrl-p` fall through to the default bindings and open a
     /// new file / the file finder.
