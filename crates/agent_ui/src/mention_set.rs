@@ -1147,6 +1147,68 @@ pub(crate) fn insert_crease_for_mention(
     Some((crease_id, tx, Some(crease_entity)))
 }
 
+/// Inserts context creases and registers mentions for the given parsed mention
+/// links, loading their content (files, threads, etc.) the same way pasted
+/// mention links are loaded.
+///
+/// `mentions` contains, for each link, the buffer anchor at the start of the
+/// link text, the length of the link text, and the parsed mention URI.
+pub(crate) fn insert_mentions_from_links(
+    editor: &Entity<Editor>,
+    mention_set: &Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
+    mentions: Vec<(text::Anchor, usize, MentionUri)>,
+    supports_images: bool,
+    http_client: Arc<HttpClientWithUrl>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    for (anchor, content_len, mention_uri) in mentions {
+        let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
+            anchor,
+            content_len,
+            mention_uri.name().into(),
+            mention_uri.icon_path(cx),
+            mention_uri.tooltip_text(),
+            Some(mention_uri.clone()),
+            Some(workspace.clone()),
+            None,
+            editor.clone(),
+            window,
+            cx,
+        ) else {
+            continue;
+        };
+
+        // Create the confirmation task based on the mention URI type.
+        // This properly loads file content, fetches URLs, etc.
+        let task = mention_set.update(cx, |mention_set, cx| {
+            mention_set.confirm_mention_for_uri(
+                mention_uri.clone(),
+                supports_images,
+                http_client.clone(),
+                cx,
+            )
+        });
+        let task = cx
+            .spawn(async move |_| task.await.map_err(|e| e.to_string()))
+            .shared();
+
+        mention_set.update(cx, |mention_set, cx| {
+            mention_set.insert_mention(
+                crease_id,
+                mention_uri.clone(),
+                task.clone(),
+                crease_entity,
+                cx,
+            )
+        });
+
+        // Drop the tx after inserting to signal the crease is ready.
+        drop(tx);
+    }
+}
+
 pub(crate) fn crease_for_mention(
     label: SharedString,
     icon_path: SharedString,
