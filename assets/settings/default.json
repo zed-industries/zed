@@ -856,6 +856,7 @@
   // Can be a combination of "left", "right" and "bottom".
   "resize_all_panels_in_dock": ["left"],
   "project_panel": {
+    "show_toolbar": false,
     // Whether to show the project panel button in the status bar
     "button": true,
     // Whether to hide the gitignore entries in the project panel.

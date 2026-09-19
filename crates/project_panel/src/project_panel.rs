@@ -707,9 +707,19 @@ impl ProjectPanel {
         let project = workspace.project().clone();
         let git_store = project.read(cx).git_store().clone();
         let path_style = project.read(cx).path_style(cx);
+        let workspace_entity = cx.entity();
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
+
+            cx.subscribe(&workspace_entity, |_, _, event, cx| {
+                if matches!(event, workspace::Event::ActiveItemChanged)
+                    && ProjectPanelSettings::get_global(cx).show_toolbar
+                {
+                    cx.notify();
+                }
+            })
+            .detach();
 
             cx.subscribe_in(
                 &git_store,
@@ -7293,6 +7303,7 @@ impl Render for ProjectPanel {
         let indent_size = panel_settings.indent_size;
         let show_indent_guides = panel_settings.indent_guides.show == ShowIndentGuides::Always;
         let horizontal_scroll = panel_settings.scrollbar.horizontal_scroll;
+        let show_toolbar = panel_settings.show_toolbar;
         let show_sticky_entries = {
             if panel_settings.sticky_scroll {
                 let is_scrollable = self.scroll_handle.is_scrollable();
@@ -7313,6 +7324,22 @@ impl Render for ProjectPanel {
         // version that understands these messages.
         let is_collab = project.is_via_collab();
         let is_local = project.is_local();
+        let active_entry_id = if show_toolbar {
+            self.workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).active_item(cx))
+                .filter(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_none())
+                .and_then(|item| item.project_path(cx))
+                .and_then(|path| project.entry_for_path(&path, cx))
+                .filter(|entry| {
+                    project
+                        .worktree_for_entry(entry.id, cx)
+                        .is_some_and(|worktree| worktree.read(cx).is_visible())
+                })
+                .map(|entry| entry.id)
+        } else {
+            None
+        };
 
         if has_worktree {
             let item_count = self
@@ -7389,7 +7416,7 @@ impl Render for ProjectPanel {
                     }
                 }));
             }
-            h_flex()
+            let file_tree = h_flex()
                 .id("project-panel")
                 .group("project-panel")
                 .when(panel_settings.drag_and_drop, |this| {
@@ -7899,7 +7926,56 @@ impl Render for ProjectPanel {
                             .child(context_menu.menu.clone()),
                     )
                     .with_priority(3)
-                }))
+                }));
+
+            v_flex()
+                .id("project-panel-wrapper")
+                .size_full()
+                .when(show_toolbar, |panel| {
+                    panel.child(
+                        h_flex()
+                            .w_full()
+                            .flex_none()
+                            .justify_end()
+                            .gap_1()
+                            .px_2()
+                            .py_1()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(
+                                IconButton::new("expand-all-folders", IconName::SquarePlus)
+                                    .tooltip(Tooltip::text("Expand All Folders"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.expand_all_entries(&ExpandAllEntries, window, cx);
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("collapse-all-folders", IconName::SquareMinus)
+                                    .tooltip(Tooltip::text("Collapse All Folders"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.collapse_all_entries(&CollapseAllEntries, window, cx);
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("reveal-active-file", IconName::Crosshair)
+                                    .tooltip(Tooltip::text("Reveal Active File"))
+                                    .disabled(active_entry_id.is_none())
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(entry_id) = active_entry_id {
+                                            this.reveal_entry(
+                                                this.project.clone(),
+                                                entry_id,
+                                                false,
+                                                window,
+                                                cx,
+                                            )
+                                            .notify_app_err(cx);
+                                        }
+                                    })),
+                            ),
+                    )
+                })
+                .child(div().flex_1().min_h_0().w_full().child(file_tree))
         } else {
             let focus_handle = self.focus_handle(cx);
             let workspace = self.workspace.clone();

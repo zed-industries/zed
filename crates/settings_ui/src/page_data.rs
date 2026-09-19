@@ -5338,9 +5338,32 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 30] {
+    fn project_panel_section() -> [SettingsPageItem; 31] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Toolbar",
+                description: "Show buttons to expand all folders, collapse all folders, and reveal the active file.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("project_panel.show_toolbar"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .show_toolbar
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .show_toolbar = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Panel Dock",
                 description: "Where to dock the project panel.",

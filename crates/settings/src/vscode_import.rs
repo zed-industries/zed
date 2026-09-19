@@ -841,6 +841,7 @@ impl VsCodeSettings {
             auto_reveal_entries: self.read_bool("explorer.autoReveal"),
             bold_folder_labels: None,
             button: None,
+            show_toolbar: None,
             title_tooltip_delay: None,
             default_width: None,
             dock: None,

@@ -12,6 +12,7 @@ use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct ProjectPanelSettings {
     pub button: bool,
+    pub show_toolbar: bool,
     pub hide_gitignore: bool,
     pub default_width: Pixels,
     pub title_tooltip_delay: ProjectPanelTitleTooltipDelay,
@@ -98,6 +99,7 @@ impl Settings for ProjectPanelSettings {
         let project_panel = content.project_panel.clone().unwrap();
         Self {
             button: project_panel.button.unwrap(),
+            show_toolbar: project_panel.show_toolbar.unwrap_or(false),
             hide_gitignore: project_panel.hide_gitignore.unwrap(),
             default_width: project_panel.default_width.unwrap().into_gpui(),
             dock: project_panel.dock.unwrap(),
