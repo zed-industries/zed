@@ -26,10 +26,11 @@ pub(crate) fn run_tests() -> Workflow {
     // - script/update_top_ranking_issues/
     // - .github/ISSUE_TEMPLATE/
     // - .github/workflows/  (except .github/workflows/ci.yml)
+    // - .wezel/
     // - extensions/  (these have their own test workflow)
     let should_run_tests = PathCondition::inverted(
         "run_tests",
-        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)",
+        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|[.]wezel/|extensions/)",
     );
     let should_check_docs = PathCondition::new("run_docs", r"^(docs/|crates/.*\.rs)");
     let should_check_scripts = PathCondition::new(
@@ -132,12 +133,15 @@ pub(crate) fn run_tests() -> Workflow {
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
         .map(|mut workflow| {
-            for job in jobs {
+            for mut job in jobs {
+                if !matches!(job.name.as_str(), "orchestrate" | "check_style") {
+                    job.job = job.job.add_need("check_style");
+                }
                 workflow = workflow.add_job(job.name, job.job)
             }
             workflow
         })
-        .add_job(ext_tests.name, ext_tests.job)
+        .add_job(ext_tests.name, ext_tests.job.add_need("check_style"))
         .add_job(tests_pass.name, tests_pass.job)
 }
 

@@ -128,33 +128,68 @@ pub struct WorktreeSettingsContent {
     #[serde(default)]
     pub prevent_sharing_in_public_channels: bool,
 
-    /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
-    /// `file_scan_inclusions`.
+    /// Exclude files matching these glob patterns from file scans, file searches,
+    /// and the project file tree. Takes precedence over `file_scan_inclusions`.
     ///
-    /// A `"..."` entry expands to the value being overridden, so
-    /// `["**/node_modules", "..."]` adds to the inherited globs instead of
-    /// replacing them. Leave `"..."` out to replace them.
+    /// Default:
     ///
-    /// Default: [
-    ///   "**/.git",
-    ///   "**/.svn",
-    ///   "**/.hg",
-    ///   "**/.jj",
-    ///   "**/CVS",
-    ///   "**/.DS_Store",
-    ///   "**/Thumbs.db",
-    ///   "**/.classpath",
-    ///   "**/.settings"
-    /// ]
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": [
+    ///     "**/.git",
+    ///     "**/.svn",
+    ///     "**/.hg",
+    ///     "**/.jj",
+    ///     "**/.sl",
+    ///     "**/.repo",
+    ///     "**/CVS",
+    ///     "**/.DS_Store",
+    ///     "**/Thumbs.db",
+    ///     "**/.classpath",
+    ///     "**/.settings"
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": ["**/node_modules", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub file_scan_exclusions: Option<SplicingVec>,
 
-    /// Always include files that match these globs when scanning for files, even if they're
-    /// ignored by git. This setting is overridden by `file_scan_exclusions`.
-    /// Default: [
-    ///  ".env*",
-    ///  "docker-compose.*.yml",
-    /// ]
-    pub file_scan_inclusions: Option<Vec<String>>,
+    /// Include files matching these glob patterns when scanning, even if ignored
+    /// by Git. Note that broad patterns can slow file scanning.
+    /// `file_scan_exclusions` takes precedence.
+    ///
+    /// Default:
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_inclusions": [".env*"]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_inclusions": ["**/build/**", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    pub file_scan_inclusions: Option<SplicingVec>,
 
     /// When to scan content of linked directories.
     ///
@@ -180,14 +215,30 @@ pub struct WorktreeSettingsContent {
     /// Default: ["**/.*"]
     pub hidden_files: Option<Vec<String>>,
 
-    /// Treat the files matching these globs as read-only. These files can be opened and viewed,
-    /// but cannot be edited. This is useful for generated files, build outputs, or files from
-    /// external dependencies that should not be modified directly.
+    /// Treat files matching these glob patterns as read-only when opened. You can
+    /// view but not edit them, which is useful for build outputs, external
+    /// dependencies, or generated files.
     ///
-    /// A "..." entry expands to the value being overridden. Leave "..." out
-    /// to replace the inherited globs, or use an empty list to clear them.
+    /// Default:
     ///
-    /// Default: []
+    /// ```json
+    /// {
+    ///   "read_only_files": []
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "read_only_files": ["**/build/**", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub read_only_files: Option<SplicingVec>,
 }
 
@@ -1042,6 +1093,74 @@ mod tests {
             settings.file_scan_exclusions.unwrap().0,
             vec![SplicingVec::REST, "**/target"]
         );
+    }
+
+    fn inclusions(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            file_scan_inclusions: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_each_layer() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.user"]));
+        assert_eq!(settings, inclusions(&[".env*", "**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project", SplicingVec::REST]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.project", ".env*", "**/*.user"])
+        );
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_replace_and_clear() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&["**/*.user"]));
+        assert_eq!(settings, inclusions(&["**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project"]));
+
+        settings.merge_from(&inclusions(&[]));
+        assert_eq!(settings, inclusions(&[]));
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.next"]));
+        assert_eq!(settings, inclusions(&["**/*.next"]));
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_preserves_first_occurrence() {
+        let inherited = inclusions(&[".env*", "**/*.user"]);
+        let mut settings = inherited.clone();
+        settings.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[
+            "**/*.user",
+            SplicingVec::REST,
+            ".env*",
+            "**/*.project",
+            SplicingVec::REST,
+            "**/*.project",
+        ]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.user", ".env*", "**/*.project"])
+        );
+
+        settings.merge_from(&inclusions(&["**/*.project", "**/*.user", "**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project", "**/*.user"]));
     }
 
     fn read_only_files(globs: &[&str]) -> WorktreeSettingsContent {
