@@ -17,8 +17,9 @@ use language_model::{
 };
 use menu;
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OLLAMA_API_URL, OllamaFunctionCall,
-    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
+    ApiKeyCheck, ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OLLAMA_API_URL,
+    OllamaFunctionCall, OllamaFunctionTool, OllamaToolCall, check_api_key, get_models, show_model,
+    stream_chat_completion,
 };
 pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -62,11 +63,16 @@ pub struct State {
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<ollama::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
+    api_key_rejected: bool,
 }
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        !self.fetched_models.is_empty()
+        !self.api_key_rejected && !self.fetched_models.is_empty()
+    }
+
+    fn api_key_rejected(&self) -> bool {
+        self.api_key_rejected
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -81,6 +87,7 @@ impl State {
         );
 
         self.fetched_models.clear();
+        self.api_key_rejected = false;
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
@@ -104,8 +111,11 @@ impl State {
         // If API key is needed and not provided, it will fail gracefully
         cx.spawn(async move |this, cx| {
             let result = task.await;
-            this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
-                .ok();
+            this.update(cx, |this, cx| {
+                this.api_key_rejected = false;
+                this.restart_fetch_models_task(cx);
+            })
+            .ok();
             result
         })
     }
@@ -119,6 +129,22 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
+            // `/api/tags` is public on Ollama Cloud, so a successful listing only
+            // proves the server is reachable. When a key is configured, probe an
+            // endpoint that actually enforces auth so an expired or revoked key
+            // isn't reported as "Connected".
+            let api_key_check = match api_key.as_deref() {
+                Some(api_key) => {
+                    check_api_key(http_client.as_ref(), &api_url, api_key, &extra_headers)
+                        .await
+                        .unwrap_or_else(|error| {
+                            log::warn!("Failed to validate Ollama API key: {error:#}");
+                            ApiKeyCheck::Unknown
+                        })
+                }
+                None => ApiKeyCheck::Unknown,
+            };
+
             let models = get_models(
                 http_client.as_ref(),
                 &api_url,
@@ -180,6 +206,7 @@ impl State {
 
             this.update(cx, |this, cx| {
                 this.fetched_models = ollama_models;
+                this.api_key_rejected = api_key_check == ApiKeyCheck::Invalid;
                 cx.notify();
             })
         })
@@ -218,6 +245,7 @@ impl OllamaLanguageModelProvider {
                                     cx,
                                 );
                                 this.fetched_models.clear();
+                                this.api_key_rejected = false;
                                 this.authenticate(cx).detach();
                             }
                             cx.notify();
@@ -230,6 +258,7 @@ impl OllamaLanguageModelProvider {
                     http_client,
                     fetched_models: Default::default(),
                     fetch_model_task: None,
+                    api_key_rejected: false,
                     api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                     credentials_provider,
                 }
@@ -1025,7 +1054,9 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_authenticated = self.state.read(cx).is_authenticated();
+        let state = self.state.read(cx);
+        let is_authenticated = state.is_authenticated();
+        let api_key_rejected = state.api_key_rejected();
 
         v_flex()
             .gap_2()
@@ -1034,6 +1065,21 @@ impl Render for ConfigurationView {
             .child(self.render_api_url_editor(cx))
             .child(self.render_context_window_editor(cx))
             .child(self.render_api_key_editor(cx))
+            .when(api_key_rejected, |this| {
+                this.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::XCircle)
+                                .color(Color::Error)
+                                .size(IconSize::Small),
+                        )
+                        .child(
+                            Label::new("Unable to authenticate with the API key provided")
+                                .color(Color::Muted),
+                        ),
+                )
+            })
             .child(Divider::horizontal())
             .child(
                 h_flex()
@@ -1183,6 +1229,155 @@ fn tool_into_ollama(tool: LanguageModelRequestTool) -> Result<ollama::OllamaTool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+    use parking_lot::Mutex;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    struct FakeCredentialsProvider {
+        api_key: Option<Vec<u8>>,
+    }
+
+    impl CredentialsProvider for FakeCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            let api_key = self.api_key.clone();
+            Box::pin(async move { Ok(api_key.map(|api_key| ("Bearer".to_string(), api_key))) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// Spins up a provider whose fake server answers each path with the given
+    /// status. `/api/tags` always lists one model and `/api/show` returns empty
+    /// metadata, so the only variable under test is the `/api/ps` auth probe.
+    async fn authenticate_with_server(
+        api_key: Option<Vec<u8>>,
+        api_ps_status: u16,
+        cx: &mut TestAppContext,
+    ) -> (Entity<State>, Arc<Mutex<Vec<String>>>) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let requested_paths = Arc::new(Mutex::new(Vec::new()));
+        let http_client = FakeHttpClient::create({
+            let requested_paths = requested_paths.clone();
+            move |request| {
+                let requested_paths = requested_paths.clone();
+                let api_ps_status = api_ps_status;
+                async move {
+                    let path = request.uri().path().to_string();
+                    requested_paths.lock().push(path.clone());
+                    let status = match path.as_str() {
+                        "/api/ps" => api_ps_status,
+                        "/api/tags" => 200,
+                        "/api/show" => 200,
+                        _ => 404,
+                    };
+                    let body = match path.as_str() {
+                        "/api/tags" => {
+                            r#"{"models":[{"name":"test-model","modified_at":"","size":0,"digest":"","details":{"format":"","family":"","parameter_size":"","quantization_level":""}}]}"#
+                        }
+                        _ => "{}",
+                    };
+                    Ok(http_client::Response::builder()
+                        .status(status)
+                        .body(http_client::AsyncBody::from(body))?)
+                }
+            }
+        });
+
+        let credentials_provider = Arc::new(FakeCredentialsProvider { api_key });
+        let provider =
+            cx.update(|cx| OllamaLanguageModelProvider::new(http_client, credentials_provider, cx));
+
+        cx.update(|cx| provider.authenticate(cx)).await.ok();
+        cx.run_until_parked();
+
+        let state = provider.state.clone();
+        (state, requested_paths)
+    }
+
+    #[gpui::test]
+    async fn valid_api_key_connects(cx: &mut TestAppContext) {
+        let (state, requested_paths) =
+            authenticate_with_server(Some(b"valid-key".to_vec()), 200, cx).await;
+
+        cx.update(|cx| {
+            let state = state.read(cx);
+            assert!(
+                !state.api_key_rejected(),
+                "a 200 probe must not reject the key"
+            );
+            assert!(
+                state.is_authenticated(),
+                "models discovered behind a valid key should count as connected"
+            );
+        });
+        assert!(
+            requested_paths.lock().iter().any(|path| path == "/api/ps"),
+            "a configured key must be validated against an auth-enforcing endpoint"
+        );
+    }
+
+    #[gpui::test]
+    async fn rejected_api_key_is_not_connected(cx: &mut TestAppContext) {
+        // Regression test for https://github.com/zed-industries/zed/issues/55475:
+        // `/api/tags` succeeds on Ollama Cloud without a valid key, so "Connected"
+        // must not be derived from model discovery alone.
+        let (state, _) = authenticate_with_server(Some(b"expired-key".to_vec()), 401, cx).await;
+
+        cx.update(|cx| {
+            let state = state.read(cx);
+            assert!(state.api_key_rejected());
+            assert!(
+                !state.is_authenticated(),
+                "a key rejected by the server must not report as connected"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn local_server_without_key_stays_connected(cx: &mut TestAppContext) {
+        // Plain local Ollama legitimately has no key; the probe must be skipped
+        // so it doesn't regress into a false negative.
+        let (state, requested_paths) = authenticate_with_server(None, 401, cx).await;
+
+        cx.update(|cx| {
+            let state = state.read(cx);
+            assert!(!state.api_key_rejected());
+            assert!(
+                state.is_authenticated(),
+                "local Ollama without a key should remain connected"
+            );
+        });
+        assert!(
+            !requested_paths.lock().iter().any(|path| path == "/api/ps"),
+            "the auth probe must not run when no key is configured"
+        );
+    }
 
     #[test]
     fn test_merge_settings_preserves_display_names_for_similar_models() {
