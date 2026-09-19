@@ -1023,22 +1023,14 @@ impl Model {
             ]),
 
             // Meta models
-            Self::MuseSpark1_2 | Self::MuseSpark1_3Contributor | Self::MuseSpark1_2Contributor => {
-                Some(vec![
-                    ReasoningEffort::Minimal,
-                    ReasoningEffort::Low,
-                    ReasoningEffort::Medium,
-                    ReasoningEffort::High,
-                    ReasoningEffort::XHigh,
-                ])
-            }
-
-            Self::MuseSpark1_3 => Some(vec![
+            Self::MuseSpark1_2
+            | Self::MuseSpark1_3
+            | Self::MuseSpark1_3Contributor
+            | Self::MuseSpark1_2Contributor => Some(vec![
                 ReasoningEffort::Minimal,
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
-                ReasoningEffort::Max,
                 ReasoningEffort::XHigh,
             ]),
 
