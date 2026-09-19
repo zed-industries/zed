@@ -1964,7 +1964,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         let mut keystroke =
                             keystroke_from_xkb(keymap_state, state.modifiers, keycode);
                         if let Some(mut compose) = state.compose_state.take() {
-                            compose.feed(keysym);
+                            if !keystroke.modifiers.control && !keystroke.modifiers.platform {
+                                compose.feed(keysym);
+                            }
                             match compose.status() {
                                 xkb::Status::Composing => {
                                     keystroke.key_char = None;
