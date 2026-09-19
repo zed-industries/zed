@@ -227,7 +227,10 @@ def retry_delay(error: urllib.error.HTTPError, attempt: int) -> float:
     try:
         return max(0.0, float(value))
     except ValueError:
-        retry_at = parsedate_to_datetime(value)
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return float(2**attempt)
         if retry_at.tzinfo is None:
             retry_at = retry_at.replace(tzinfo=timezone.utc)
         return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())

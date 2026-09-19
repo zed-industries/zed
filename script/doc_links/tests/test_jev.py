@@ -149,6 +149,11 @@ class JevTest(unittest.TestCase):
         self.assertGreaterEqual(retry_delay(error, 0), 0)
         self.assertLessEqual(retry_delay(error, 0), 5)
 
+    def test_malformed_retry_after_uses_exponential_backoff(self):
+        headers = Message()
+        headers["Retry-After"] = "soon"
+        self.assertEqual(retry_delay(SimpleNamespace(headers=headers), 3), 8)
+
     def test_rate_limit_is_retried(self):
         payload, target_map, response = fixture()
         headers = Message()

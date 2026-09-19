@@ -11,10 +11,10 @@ class IoTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "page.md"
             path.write_text("before", encoding="utf-8")
-            path.chmod(0o644)
+            path.chmod(0o755)
             write_text_atomic(path, "after")
             self.assertEqual(path.read_text(encoding="utf-8"), "after")
-            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o755)
 
     def test_new_atomic_file_is_readable(self):
         with tempfile.TemporaryDirectory() as directory:
