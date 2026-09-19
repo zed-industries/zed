@@ -12,10 +12,11 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, HighlightStyle, ParentElement, Point, Render, Styled, StyledText,
-    Subscription, Task, TextRun, WeakEntity, Window,
+    Subscription, Task, TextRun, TextStyle, WeakEntity, Window,
 };
 use language::{
-    Buffer, CodeLabel, File as _, Language, Location, Rope, ToOffset, ToPoint, lsp_to_symbol_kind,
+    Buffer, CharClassifier, CodeLabel, File as _, Language, Location, Rope, ToOffset, ToPoint,
+    lsp_to_symbol_kind,
 };
 use picker::{Picker, PickerDelegate};
 use project::{CallHierarchyItem, LspStoreEvent, Project};
@@ -59,7 +60,6 @@ pub struct CallDisplay {
     pub detail: Option<SharedString>,
     pub path: Option<SharedString>,
     pub full_signature: SharedString,
-    pub label_text: Option<SharedString>,
     pub needs_tooltip: bool,
 }
 
@@ -757,11 +757,18 @@ impl PickerDelegate for CallHierarchyDelegate {
         let mat = self.matches.get(ix)?;
         let call = self.calls.get(mat.candidate_id)?;
 
-        let (name_styled, detail_styled) = render_item(call, mat.ranges(), cx);
-        let tooltip_label = call.label.clone().zip(call.display.label_text.clone());
+        let mut row_text_style = buffer_text_style(cx);
+        row_text_style.text_overflow = Some(gpui::TextOverflow::Truncate(SharedString::from("…")));
+        let signature = signature_text(
+            call.label.as_deref(),
+            &call.display,
+            mat.ranges(),
+            &row_text_style,
+            cx,
+        );
+        let tooltip_label = call.label.clone();
+        let tooltip_display = call.display.clone();
         let tooltip_max_width = self.modal_width;
-        let full_signature = call.display.full_signature.clone();
-        let full_path = call.display.path.clone();
 
         Some(
             ListItem::new(ix)
@@ -775,8 +782,7 @@ impl PickerDelegate for CallHierarchyDelegate {
                             h_flex()
                                 .overflow_x_hidden()
                                 .text_size(ThemeSettings::get_global(cx).buffer_font_size(cx))
-                                .child(name_styled)
-                                .children(detail_styled),
+                                .child(signature),
                         )
                         .children(call.display.path.clone().map(|path| {
                             Label::new(path)
@@ -789,8 +795,7 @@ impl PickerDelegate for CallHierarchyDelegate {
                     this.tooltip(move |_window, cx| {
                         AnyView::from(cx.new(|_| CallSignatureTooltip {
                             label: tooltip_label.clone(),
-                            full_signature: full_signature.clone(),
-                            path: full_path.clone(),
+                            display: tooltip_display.clone(),
                             max_width: tooltip_max_width,
                         }))
                     })
@@ -800,9 +805,8 @@ impl PickerDelegate for CallHierarchyDelegate {
 }
 
 struct CallSignatureTooltip {
-    label: Option<(Arc<CodeLabel>, SharedString)>,
-    full_signature: SharedString,
-    path: Option<SharedString>,
+    label: Option<Arc<CodeLabel>>,
+    display: CallDisplay,
     max_width: Pixels,
 }
 
@@ -811,18 +815,16 @@ impl Render for CallSignatureTooltip {
         let mut signature_style = buffer_text_style(cx);
         signature_style.line_height =
             relative(ThemeSettings::get_global(cx).buffer_line_height.value());
-        let signature = match &self.label {
-            Some((label, label_text)) => StyledText::new(label_text.clone())
-                .with_default_highlights(
-                    &signature_style,
-                    cx.theme().syntax().resolve_runs(&label.runs),
-                )
-                .into_any_element(),
-            None => div().child(self.full_signature.clone()).into_any_element(),
-        };
+        let signature = signature_text(
+            self.label.as_deref(),
+            &self.display,
+            std::iter::empty(),
+            &signature_style,
+            cx,
+        );
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let max_width = self.max_width;
-        let path = self.path.clone();
+        let path = self.display.path.clone();
         tooltip_container(cx, move |el, _| {
             el.max_w(max_width)
                 .gap_0p5()
@@ -948,13 +950,8 @@ async fn load_and_apply_calls(
             let buffer_font_size = settings.buffer_font_size(cx);
             let path_font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
             for call in calls.iter_mut() {
-                let signature = call
-                    .display
-                    .label_text
-                    .clone()
-                    .unwrap_or_else(|| call.display.full_signature.clone());
                 let signature_width = shaped_width(
-                    signature,
+                    call.display.full_signature.clone(),
                     settings.buffer_font.clone(),
                     buffer_font_size,
                     window,
@@ -1020,7 +1017,8 @@ fn signature_label(item: &CallHierarchyItem, language: &Arc<Language>) -> Option
         .map(str::trim)
         .filter(|detail| !detail.is_empty())?;
     let signature = collapse_whitespace(detail);
-    let name_start = find_symbol_name(&signature, &item.name)?;
+    let classifier = CharClassifier::new(Some(language.default_scope()));
+    let name_start = find_symbol_name(&signature, &item.name, &classifier)?;
     let filter_range = name_start..name_start + item.name.len();
     let source = Rope::from_iter([signature.as_str(), " {}"]);
     let runs = language.highlight_text(&source, 0..signature.len());
@@ -1064,7 +1062,7 @@ fn collapse_whitespace(text: &str) -> String {
     result
 }
 
-fn find_symbol_name(text: &str, symbol_name: &str) -> Option<usize> {
+fn find_symbol_name(text: &str, symbol_name: &str, classifier: &CharClassifier) -> Option<usize> {
     if symbol_name.is_empty() {
         return None;
     }
@@ -1074,11 +1072,11 @@ fn find_symbol_name(text: &str, symbol_name: &str) -> Option<usize> {
             let boundary_before = text[..start]
                 .chars()
                 .next_back()
-                .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+                .is_none_or(|c| !classifier.is_word(c));
             let boundary_after = text[start + symbol_name.len()..]
                 .chars()
                 .next()
-                .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+                .is_none_or(|c| !classifier.is_word(c));
             boundary_before && boundary_after
         })
 }
@@ -1107,56 +1105,54 @@ fn compute_call_display(call: &Call, cx: &App) -> CallDisplay {
         })
     });
 
-    let detail = extract_call_detail(call).map(SharedString::from);
-    let full_signature = SharedString::from(match &detail {
-        Some(detail) => format!("{}{detail}", call.item.name),
-        None => call.item.name.clone(),
-    });
-    let label_text = call
-        .label
-        .as_ref()
-        .map(|label| SharedString::from(label.text.clone()));
+    let classifier = CharClassifier::new(buffer.language().map(Language::default_scope));
+    let detail = extract_call_detail(call, &classifier).map(SharedString::from);
+    let full_signature = SharedString::from(format!(
+        "{}{}",
+        call.label
+            .as_ref()
+            .map_or(call.item.name.as_str(), |label| label.text.as_str()),
+        detail.as_deref().unwrap_or_default()
+    ));
 
     CallDisplay {
         name: SharedString::from(call.item.name.clone()),
         detail,
         path,
         full_signature,
-        label_text,
         needs_tooltip: false,
     }
 }
 
-fn extract_call_detail(call: &Call) -> Option<String> {
-    let detail = if let Some(detail) = call.label.as_deref().and_then(detail_from_label_suffix) {
-        Some(detail)
-    } else {
-        call.item
-            .detail
-            .as_deref()
-            .map(str::trim)
-            .filter(|detail| !detail.is_empty())
-            .and_then(|detail| {
-                trim_detail_after_symbol_name(detail, &call.item.name)
-                    .or_else(|| Some(detail.to_owned()))
-            })
+fn extract_call_detail(call: &Call, classifier: &CharClassifier) -> Option<String> {
+    if call.label.as_deref().is_some_and(label_carries_detail) {
+        return None;
+    }
+    let detail = call
+        .item
+        .detail
+        .as_deref()
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty())?;
+    let Some(name_start) = find_symbol_name(detail, &call.item.name, classifier) else {
+        return Some(format!(" {}", collapse_whitespace(detail)));
     };
-    detail.map(|detail| collapse_whitespace(&detail))
+    let suffix = detail.get(name_start + call.item.name.len()..)?;
+    let collapsed = collapse_whitespace(suffix);
+    if collapsed.is_empty() {
+        None
+    } else if suffix.starts_with(char::is_whitespace) {
+        Some(format!(" {collapsed}"))
+    } else {
+        Some(collapsed)
+    }
 }
 
-fn detail_from_label_suffix(label: &CodeLabel) -> Option<String> {
+fn label_carries_detail(label: &CodeLabel) -> bool {
     label
         .text
         .get(label.filter_range.end..)
-        .map(str::trim)
-        .filter(|suffix| !suffix.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn trim_detail_after_symbol_name(detail: &str, symbol_name: &str) -> Option<String> {
-    let name_start = find_symbol_name(detail, symbol_name)?;
-    let suffix = detail.get(name_start + symbol_name.len()..)?.trim();
-    (!suffix.is_empty()).then(|| suffix.to_owned())
+        .is_some_and(|suffix| !suffix.trim().is_empty())
 }
 
 fn shaped_width(
@@ -1179,57 +1175,40 @@ fn shaped_width(
         .width
 }
 
-fn render_item(
-    call_item: &Call,
+fn signature_text(
+    label: Option<&CodeLabel>,
+    display: &CallDisplay,
     match_ranges: impl IntoIterator<Item = Range<usize>>,
+    text_style: &TextStyle,
     cx: &App,
-) -> (StyledText, Option<StyledText>) {
-    let mut base_text_style = buffer_text_style(cx);
-    base_text_style.text_overflow = Some(gpui::TextOverflow::Truncate(SharedString::from("…")));
-
-    let highlight_style = HighlightStyle {
+) -> StyledText {
+    let match_style = HighlightStyle {
         background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
         ..HighlightStyle::default()
     };
-
-    let label_carries_detail = call_item
-        .label
-        .as_ref()
-        .is_some_and(|label| detail_from_label_suffix(label).is_some());
-    let detail_styled = if label_carries_detail {
-        None
-    } else {
-        call_item.display.detail.clone().map(|detail| {
-            let mut detail_style = base_text_style.clone();
-            detail_style.color = cx.theme().colors().text_muted;
-            StyledText::new(detail).with_default_highlights(&detail_style, std::iter::empty())
-        })
-    };
-
-    let name_styled = if let Some((label, label_text)) = call_item
-        .label
-        .as_ref()
-        .zip(call_item.display.label_text.clone())
-    {
-        let syntax_runs = cx.theme().syntax().resolve_runs(&label.runs);
-        let custom_highlights = match_ranges.into_iter().map(|range| {
-            let start = label.filter_range.start + range.start;
-            let end = label.filter_range.start + range.end;
-            (start..end, highlight_style)
-        });
-
-        StyledText::new(label_text).with_default_highlights(
-            &base_text_style,
-            gpui::combine_highlights(custom_highlights, syntax_runs),
+    let name_start = label.map_or(0, |label| label.filter_range.start);
+    let match_highlights = match_ranges.into_iter().map(|range| {
+        (
+            name_start + range.start..name_start + range.end,
+            match_style,
         )
-    } else {
-        StyledText::new(call_item.display.name.clone()).with_default_highlights(
-            &base_text_style,
-            match_ranges.into_iter().map(|r| (r, highlight_style)),
-        )
-    };
-
-    (name_styled, detail_styled)
+    });
+    let syntax_runs = label
+        .map(|label| cx.theme().syntax().resolve_runs(&label.runs))
+        .into_iter()
+        .flatten();
+    let detail_highlight = display.detail.as_ref().map(|detail| {
+        let end = display.full_signature.len();
+        let detail_style = HighlightStyle {
+            color: Some(cx.theme().colors().text_muted),
+            ..HighlightStyle::default()
+        };
+        (end.saturating_sub(detail.len())..end, detail_style)
+    });
+    StyledText::new(display.full_signature.clone()).with_default_highlights(
+        text_style,
+        gpui::combine_highlights(match_highlights, syntax_runs.chain(detail_highlight)),
+    )
 }
 
 #[cfg(test)]
@@ -1367,7 +1346,8 @@ mod tests {
         )));
 
         let display = cx.update(|cx| compute_call_display(&call, cx));
-        assert_eq!(display.detail.as_deref(), Some("(&self) -> i32"));
+        assert_eq!(display.detail, None);
+        assert_eq!(display.full_signature, "fn helper(&self) -> i32");
     }
 
     #[gpui::test]
@@ -1391,6 +1371,50 @@ mod tests {
 
         let display = cx.update(|cx| compute_call_display(&call, cx));
         assert_eq!(display.detail.as_deref(), Some("(&self, arg: i32) -> i32"));
+        assert_eq!(display.full_signature, "helper(&self, arg: i32) -> i32");
+    }
+
+    #[gpui::test]
+    async fn test_call_display_separates_detail_without_symbol_name(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({"main.go": source()}))
+            .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let call = make_call(
+            "handleInfoMessage",
+            path!("/test/main.go").as_ref(),
+            0,
+            Some("git.xxx.com/team/service/internal/handlers".to_string()),
+            &project,
+            cx,
+        )
+        .await;
+        let display = cx.update(|cx| compute_call_display(&call, cx));
+
+        assert_eq!(
+            display.detail.as_deref(),
+            Some(" git.xxx.com/team/service/internal/handlers")
+        );
+        assert_eq!(
+            display.full_signature,
+            "handleInfoMessage git.xxx.com/team/service/internal/handlers"
+        );
+
+        let call = make_call(
+            "handleInfoMessage",
+            path!("/test/main.go").as_ref(),
+            0,
+            Some("handleInfoMessage".to_string()),
+            &project,
+            cx,
+        )
+        .await;
+        let display = cx.update(|cx| compute_call_display(&call, cx));
+        assert_eq!(display.detail, None);
+        assert_eq!(display.full_signature, "handleInfoMessage");
     }
 
     #[gpui::test]
@@ -1414,7 +1438,7 @@ mod tests {
         let display = cx.update(|cx| compute_call_display(&call, cx));
 
         assert_eq!(display.name, "foo");
-        assert_eq!(display.detail.as_deref(), Some("line1 line2 line3"));
+        assert_eq!(display.detail.as_deref(), Some(" line1 line2 line3"));
     }
 
     #[gpui::test]
@@ -1545,15 +1569,47 @@ mod tests {
 
     #[test]
     fn test_find_symbol_name() {
-        assert_eq!(find_symbol_name("fn f()", "f"), Some(3));
-        assert_eq!(find_symbol_name("static void a(int a)", "a"), Some(12));
+        let plain = CharClassifier::new(None);
+        assert_eq!(find_symbol_name("fn f()", "f", &plain), Some(3));
         assert_eq!(
-            find_symbol_name("fn contains<Q>(q: &Q)", "contains"),
+            find_symbol_name("static void a(int a)", "a", &plain),
+            Some(12)
+        );
+        assert_eq!(
+            find_symbol_name("fn contains<Q>(q: &Q)", "contains", &plain),
             Some(3)
         );
-        assert_eq!(find_symbol_name("fn foo_bar(foo: Foo)", "foo"), Some(11));
-        assert_eq!(find_symbol_name("namespace::Class", "foo"), None);
-        assert_eq!(find_symbol_name("fn foo()", ""), None);
+        assert_eq!(
+            find_symbol_name("fn foo_bar(foo: Foo)", "foo", &plain),
+            Some(11)
+        );
+        assert_eq!(find_symbol_name("namespace::Class", "foo", &plain), None);
+        assert_eq!(find_symbol_name("ns::Foo::bar", "bar", &plain), Some(9));
+        assert_eq!(find_symbol_name("fn foo()", "", &plain), None);
+
+        let dollar_words = CharClassifier::new(Some(
+            Arc::new(Language::new(
+                LanguageConfig {
+                    name: LanguageName::new("TypeScript"),
+                    word_characters: ['$'].into_iter().collect(),
+                    ..LanguageConfig::default()
+                },
+                None,
+            ))
+            .default_scope(),
+        ));
+        assert_eq!(
+            find_symbol_name("function foo$bar()", "foo", &plain),
+            Some(9)
+        );
+        assert_eq!(
+            find_symbol_name("function foo$bar()", "foo", &dollar_words),
+            None
+        );
+        assert_eq!(
+            find_symbol_name("function foo$bar()", "foo$bar", &dollar_words),
+            Some(9)
+        );
     }
 
     #[gpui::test]
