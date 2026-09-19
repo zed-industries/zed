@@ -2264,7 +2264,7 @@
       "tsconfig*.json",
     ],
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
-    "Shell Script": [".env.*"],
+    "Env": [".env.*"],
   },
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
