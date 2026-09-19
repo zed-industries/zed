@@ -5707,6 +5707,94 @@ async fn test_dragging_same_named_files_preserves_one_source_on_conflict(
 }
 
 #[gpui::test]
+async fn test_drag_onto_existing_name_shows_clear_error(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": { "1.json": "from a"},
+            "1.json": "already here"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        let (root_entry_id, worktree_id, entry_id) = {
+            let worktree = panel.project.read(cx).visible_worktrees(cx).next().unwrap();
+            let worktree = worktree.read(cx);
+            (
+                worktree.root_entry().unwrap().id,
+                worktree.id(),
+                worktree.entry_for_path(rel_path("a/1.json")).unwrap().id,
+            )
+        };
+
+        let selection = SelectedEntry {
+            worktree_id,
+            entry_id,
+        };
+        let drag = DraggedSelection {
+            active_selection: selection,
+            marked_selections: Arc::new([selection]),
+        };
+
+        panel.drag_onto(&drag, root_entry_id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        String::from_utf8(fs.read_file_sync(path!("/root/a/1.json")).unwrap()).unwrap(),
+        "from a"
+    );
+    assert_eq!(
+        String::from_utf8(fs.read_file_sync(path!("/root/1.json")).unwrap()).unwrap(),
+        "already here"
+    );
+
+    // The user was told about it.
+    workspace.update_in(cx, |workspace, _, _| {
+        assert_eq!(
+            workspace.notification_ids().len(),
+            1,
+            "Should show one notification explaining the conflict"
+        );
+    });
+}
+
+#[test]
+fn test_explain_move_error() {
+    let names = ("a/1.json".to_string(), "1.json".to_string());
+    let err = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+        .context("renaming \"/root/a/1.json\" intoto \"/root/1.json\"");
+    let explained = explain_move_error(err, Some(&names));
+    assert_eq!(
+        explained.to_string(),
+        "Failed to move `a/1.json` to `1.json`. A file or folder already exists there."
+    );
+
+    // Different error → untouched
+    let err = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+    let explained = explain_move_error(err, Some(&names));
+    assert!(!explained.to_string().contains("already exists"));
+
+    // No names → untouched
+    let err = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
+    let explained = explain_move_error(err, None);
+    assert!(!explained.to_string().contains("Failed to move"));
+}
+
+#[gpui::test]
 async fn test_drag_entries_between_different_worktrees(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
