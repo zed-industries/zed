@@ -389,7 +389,7 @@ With this configuration, you can use commands like:
 
 ### Selecting the correct context
 
-Zed's key bindings are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add [key bindings](./key-bindings.md) to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
+Zed's [key bindings](./key-bindings.md) are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
 
 ```json [keymap]
 {

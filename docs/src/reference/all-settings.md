@@ -4214,7 +4214,7 @@ Non-negative `integer` values
 
 ## Semantic Tokens
 
-- Description: Controls how semantic tokens from language servers are used for syntax highlighting.
+- Description: Controls how [semantic tokens](../semantic-tokens.md) from language servers are used for syntax highlighting.
 - Setting: `semantic_tokens`
 - Default: `off`
 
@@ -4232,7 +4232,7 @@ To enable semantic tokens globally:
 }
 ```
 
-To enable [semantic tokens](../semantic-tokens.md) for a specific language:
+To enable semantic tokens for a specific language:
 
 ```json [settings]
 {

@@ -10,7 +10,7 @@ Zed's AI docs are organized around three areas:
 | Area         | Use it to choose                    | Examples                                                                                   |
 | ------------ | ----------------------------------- | ------------------------------------------------------------------------------------------ |
 | Agents       | How agentic work runs in Zed        | Zed Agent, External Agents, Terminal Threads                                               |
-| Model access | How Zed connects to language models | Zed-hosted [models, API access, subscriptions, gateways](./use-a-gateway.md), local models |
+| Model access | How Zed connects to language models | Zed-hosted models, API access, subscriptions, [gateways](./use-a-gateway.md), local models |
 | Features     | Which AI workflow you want to use   | Agentic editing, inline edits, edit prediction, Git assistance                             |
 
 Start with [AI Quick Start](./quick-start.md) if you know what you want to do. Use [AI by Company](./by-company.md) if you know the company, subscription, model provider, agent, or CLI you want to use.

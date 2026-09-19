@@ -28,7 +28,7 @@ The CLI or TUI running inside the terminal owns its own:
 - skills and instruction files
 - MCP configuration
 
-Zed [Agent profiles](./agent-profiles.md), Zed Agent tool permissions, Zed Skills, and Zed Agent MCP settings do not automatically apply to Terminal Threads.
+[Zed Agent profiles](./agent-profiles.md), Zed Agent tool permissions, Zed Skills, and Zed Agent MCP settings do not automatically apply to Terminal Threads.
 
 ## Opening a Terminal Thread {#opening-a-terminal-thread}
 

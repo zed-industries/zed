@@ -128,7 +128,7 @@ External Agents run as separate processes that communicate with Zed over ACP. Th
 | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Model/provider config                     | Usually owned by the External Agent                                                        |
 | Auth/API keys/subscriptions               | Usually owned by the External Agent                                                        |
-| Zed [Agent profiles](./agent-profiles.md) | Do not apply unless the integration says otherwise                                         |
+| [Zed Agent profiles](./agent-profiles.md) | Do not apply unless the integration says otherwise                                         |
 | Zed Skills                                | Do not apply as Zed Skills                                                                 |
 | Native agent skills/instructions          | Depends on the agent                                                                       |
 | Zed MCP servers                           | May be forwarded over ACP                                                                  |

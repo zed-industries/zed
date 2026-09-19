@@ -53,7 +53,7 @@ Open the Settings Editor with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows). Searc
 Common first changes:
 
 - **Theme**: Press `Cmd+K Cmd+T` (macOS) or `Ctrl+K Ctrl+T` (Linux/Windows) to open the theme selector
-- **Font**: Search for `buffer_font_family` [in Settings](./reference/all-settings.md)
+- **Font**: Search for [`buffer_font_family`](./reference/all-settings.md#buffer-font-family) in Settings
 - **Format on save**: Search for `format_on_save` and set to `on`
 
 ### 4. Set Up Your Language

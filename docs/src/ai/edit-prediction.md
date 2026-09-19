@@ -320,7 +320,7 @@ After adding your API key, Codestral will appear in the provider dropdown in the
 
 ### Local and self-hosted models
 
-You can use [local or self-hosted edit prediction models](./use-a-local-model.md) through Ollama or any server that implements the OpenAI completion API format. This works with Ollama, vLLM, llama.cpp server, LocalAI, and other compatible servers.
+You can use local or self-hosted edit prediction models through Ollama or any server that implements the OpenAI completion API format. This works with Ollama, vLLM, llama.cpp server, LocalAI, and other compatible servers.
 
 #### Ollama
 
