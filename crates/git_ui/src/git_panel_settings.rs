@@ -17,6 +17,7 @@ pub struct ScrollbarSettings {
 #[derive(Debug, Clone, PartialEq, RegisterSetting)]
 pub struct GitPanelSettings {
     pub button: bool,
+    pub show_graph: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
     pub status_style: StatusStyle,
@@ -60,6 +61,7 @@ impl Settings for GitPanelSettings {
         let git_panel = content.git_panel.clone().unwrap();
         Self {
             button: git_panel.button.unwrap(),
+            show_graph: git_panel.show_graph.unwrap(),
             dock: git_panel.dock.unwrap().into(),
             default_width: git_panel.default_width.unwrap().into_gpui(),
             status_style: git_panel.status_style.unwrap(),

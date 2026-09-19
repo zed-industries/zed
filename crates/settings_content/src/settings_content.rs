@@ -728,6 +728,10 @@ pub struct CallSettingsContent {
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct GitPanelSettingsContent {
+    /// Whether to show the compact graph below Changes in the Git panel.
+    ///
+    /// Default: true
+    pub show_graph: Option<bool>,
     /// Whether to show the panel button in the status bar.
     ///
     /// Default: true

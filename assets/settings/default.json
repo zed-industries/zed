@@ -1058,6 +1058,8 @@
     "default_width": 240,
   },
   "git_panel": {
+    // Whether to show the compact commit graph below Changes.
+    "show_graph": true,
     // Whether to show the git panel button in the status bar.
     "button": true,
     // Where to dock the git panel. Can be 'left' or 'right'.

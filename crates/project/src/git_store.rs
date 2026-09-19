@@ -830,6 +830,7 @@ impl PermalinkTarget {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitGraphEvent {
+    Reset,
     CountUpdated(usize),
     FullyLoaded,
     LoadingError,
@@ -7332,6 +7333,18 @@ impl Repository {
             };
         })
         .detach();
+    }
+
+    pub fn retry_graph_data(&mut self, source: LogSource, order: LogOrder, cx: &mut Context<Self>) {
+        let key = (source, order);
+        if self
+            .initial_graph_data
+            .get(&key)
+            .is_some_and(|data| data.error.is_some())
+        {
+            self.initial_graph_data.remove(&key);
+            cx.emit(RepositoryEvent::GraphEvent(key, GitGraphEvent::Reset));
+        }
     }
 
     pub fn graph_data(

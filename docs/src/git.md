@@ -32,6 +32,34 @@ In the panel you can see the state of your project at a glance: which repository
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
+### Commit Graph {#panel-commit-graph}
+
+The **Graph** section below **Changes** shows commit history across branches,
+including branch and merge lines. It follows the active repository and appears
+in either the left or right Git Panel.
+
+Click the section heading to collapse it. Drag the divider above the heading to
+resize it. Zed remembers the section's size and collapsed state for the project.
+The graph and changed files scroll independently.
+
+Click a commit to select it, or double-click it to open its changes. With the
+graph focused, use the arrow keys to navigate and {#action menu::Confirm} to open
+the selected commit. Right-click a commit for more actions. The expand button
+opens the selected commit in the full Git Graph.
+
+To hide this section, turn off **Show Git Graph** in **Panels > Git Panel** or
+the panel's **View Options** menu. Or add this to your settings.json:
+
+```json [settings]
+{
+  "git_panel": {
+    "show_graph": false
+  }
+}
+```
+
+The **History** tab remains available for the active branch's history.
+
 ### Configuration
 
 Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) to customize Git behavior. Settings are spread across two pages:

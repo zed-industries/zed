@@ -7,6 +7,7 @@ use crate::commit_context_menu::{
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
 use crate::commit_view::CommitView;
+use crate::git_graph::GitGraph;
 use crate::git_panel_settings::GitPanelScrollbarAccessor;
 use crate::project_diff::{DeployBranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
@@ -150,6 +151,8 @@ actions!(
         SetGroupByStaging,
         /// Toggles showing entries in tree vs flat view.
         ToggleTreeView,
+        /// Toggles the compact graph below Changes.
+        ToggleGraph,
         /// Expands the selected entry to show its children.
         ExpandSelectedEntry,
         /// Collapses the selected entry to hide its children.
@@ -375,11 +378,20 @@ fn git_panel_view_options_menu(
         tree_view: GitPanelSettings::get_global(cx).tree_view,
     }));
 
-    ContextMenu::build_persistent(window, cx, move |context_menu, _, _| {
+    ContextMenu::build_persistent(window, cx, move |context_menu, _, cx| {
         let state = view_options_menu_state.get();
 
         context_menu
             .context(focus_handle.clone())
+            .item(
+                ContextMenuEntry::new("Show Git Graph")
+                    .toggle(
+                        IconPosition::End,
+                        GitPanelSettings::get_global(cx).show_graph,
+                    )
+                    .handler(|window, cx| window.dispatch_action(Box::new(ToggleGraph), cx)),
+            )
+            .separator()
             .header("View")
             .item({
                 let view_options_menu_state = view_options_menu_state.clone();
@@ -540,6 +552,10 @@ pub enum Event {
 
 #[derive(Default, Serialize, Deserialize)]
 struct SerializedGitPanel {
+    #[serde(default)]
+    graph_collapsed: bool,
+    #[serde(default)]
+    graph_height: Option<f32>,
     #[serde(default)]
     signoff_enabled: bool,
     #[serde(default)]
@@ -1100,7 +1116,13 @@ struct GitPanelContextMenu {
     _subscription: Subscription,
 }
 
+struct DraggedGraphResize;
+
 pub struct GitPanel {
+    graph: Option<Entity<GitGraph>>,
+    graph_collapsed: bool,
+    graph_height: Option<Pixels>,
+    graph_bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
     /// Whether the commit editor should fill the vertical height of the panel.
@@ -1289,8 +1311,17 @@ impl GitPanel {
             .and_then(|draft| draft.message.clone())
             .unwrap_or_default();
         let pending_commit_message_restores = serialized_panel
-            .map(|panel| panel.commit_messages)
+            .as_ref()
+            .map(|panel| panel.commit_messages.clone())
             .unwrap_or_default();
+        let graph_collapsed = serialized_panel
+            .as_ref()
+            .is_some_and(|panel| panel.graph_collapsed);
+        let graph_height = serialized_panel
+            .as_ref()
+            .and_then(|panel| panel.graph_height)
+            .filter(|height| height.is_finite())
+            .map(|height| px(height.clamp(100., 1000.)));
 
         cx.new(|cx| {
             let focus_handle = cx.focus_handle();
@@ -1302,6 +1333,7 @@ impl GitPanel {
             let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
             let mut was_folder_indicator = GitPanelSettings::get_global(cx).folder_indicator;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
+            let mut was_show_graph = GitPanelSettings::get_global(cx).show_graph;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
                 let sort_by = settings.sort_by;
@@ -1310,6 +1342,14 @@ impl GitPanel {
                 let file_icons = settings.file_icons;
                 let folder_indicator = settings.folder_indicator;
                 let diff_stats = settings.diff_stats;
+                let show_graph = settings.show_graph;
+                if show_graph != was_show_graph {
+                    was_show_graph = show_graph;
+                    if !show_graph {
+                        this.graph = None;
+                    }
+                    cx.notify();
+                }
                 if tree_view != was_tree_view {
                     match (&mut this.view_mode, tree_view) {
                         (GitPanelViewMode::Tree(state), false) => {
@@ -1418,6 +1458,10 @@ impl GitPanel {
             .detach();
 
             let mut this = Self {
+                graph: None,
+                graph_collapsed,
+                graph_height,
+                graph_bounds: Rc::new(Cell::new(gpui::Bounds::default())),
                 active_repository,
                 commit_editor,
                 commit_editor_expanded: false,
@@ -1755,6 +1799,8 @@ impl GitPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
+        let graph_collapsed = self.graph_collapsed;
+        let graph_height = self.graph_height.map(f32::from);
         let signoff_enabled = self.signoff_enabled;
         let commit_messages = self.serialized_commit_messages(cx);
         let kvp = KeyValueStore::global(cx);
@@ -1781,6 +1827,8 @@ impl GitPanel {
                     kvp.write_kvp(
                         serialization_key,
                         serde_json::to_string(&SerializedGitPanel {
+                            graph_collapsed,
+                            graph_height,
                             signoff_enabled,
                             commit_messages,
                         })?,
@@ -5085,6 +5133,7 @@ impl GitPanel {
         let active_repository_changed = self.active_repository.as_ref().map(Entity::entity_id)
             != new_active_repository.as_ref().map(Entity::entity_id);
         if active_repository_changed {
+            self.graph = None;
             self.clear_marks();
             self.set_skip_hooks_enabled(false, cx);
             if self.amend_pending {
@@ -8921,6 +8970,104 @@ impl GitPanel {
         }
         Some((repository, entry.repo_path.clone()))
     }
+
+    fn render_graph_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if !self.graph_collapsed && self.graph.is_none() {
+            if let Some(repository) = self.active_repository.as_ref() {
+                let repository_id = repository.read(cx).id;
+                let git_store = self.project.read(cx).git_store().clone();
+                let workspace = self.workspace.clone();
+                self.graph = Some(cx.new(|cx| {
+                    GitGraph::new_compact(repository_id, git_store, workspace, window, cx)
+                }));
+            }
+        }
+
+        let bounds = self.graph_bounds.clone();
+        v_flex()
+            .id("git-panel-graph")
+            .relative()
+            .w_full()
+            .flex_shrink_0()
+            .overflow_hidden()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .when(!self.graph_collapsed, |this| {
+                this.map(|this| {
+                    if self.entries.is_empty() && self.graph_height.is_none() {
+                        this.flex_1().min_h(px(100.))
+                    } else {
+                        this.h(self.graph_height.unwrap_or(px(260.)))
+                            .max_h(gpui::relative(0.6))
+                    }
+                })
+                .child(
+                    gpui::canvas(
+                        move |bounds_value, _, _| bounds.set(bounds_value),
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+                .child(
+                    div()
+                        .id("git-panel-graph-resize")
+                        .h(px(4.))
+                        .w_full()
+                        .cursor_row_resize()
+                        .hover(|style| style.bg(cx.theme().colors().border_focused))
+                        .on_drag(DraggedGraphResize, |_, _, _, cx| cx.new(|_| Empty)),
+                )
+            })
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_1()
+                    .gap_1()
+                    .child(
+                        Button::new("toggle-graph-section", "Graph")
+                            .start_icon(
+                                Icon::new(if self.graph_collapsed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .size(IconSize::Small),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.graph_collapsed = !this.graph_collapsed;
+                                if this.graph_collapsed {
+                                    this.graph = None;
+                                }
+                                this.serialize(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        IconButton::new("expand-panel-graph", IconName::Maximize)
+                            .tooltip(Tooltip::text("Open Git Graph"))
+                            .disabled(self.active_repository.is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Some(graph) = this.graph.as_ref() {
+                                    graph.update(cx, |graph, cx| graph.open_full_graph(window, cx));
+                                } else {
+                                    window.dispatch_action(Box::new(crate::git_graph::Open), cx);
+                                }
+                            })),
+                    ),
+            )
+            .when(!self.graph_collapsed, |this| {
+                this.child(div().flex_1().min_h_0().overflow_hidden().map(|this| {
+                    if let Some(graph) = &self.graph {
+                        this.child(graph.clone())
+                    } else {
+                        this.child(Self::render_history_placeholder("No repository found"))
+                    }
+                }))
+            })
+            .into_any_element()
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -8943,6 +9090,14 @@ impl Render for GitPanel {
         let project = self.project.read(cx);
         let has_entries = !self.entries.is_empty();
         let has_write_access = self.has_write_access(cx);
+        let show_graph = GitPanelSettings::get_global(cx).show_graph
+            && self.active_tab == GitPanelTab::Changes
+            && !self.commit_editor_expanded;
+        let expand_empty_graph =
+            show_graph && !has_entries && !self.graph_collapsed && self.graph_height.is_none();
+        if !show_graph {
+            self.graph = None;
+        }
 
         #[cfg(feature = "call")]
         let has_co_authors = self
@@ -9020,6 +9175,12 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::set_group_by_status))
             .on_action(cx.listener(Self::set_group_by_staging))
             .on_action(cx.listener(Self::toggle_tree_view))
+            .on_action(cx.listener(|this, _: &ToggleGraph, _, cx| {
+                let show_graph = !GitPanelSettings::get_global(cx).show_graph;
+                update_settings_file(this.fs.clone(), cx, move |settings, _| {
+                    settings.git_panel.get_or_insert_default().show_graph = Some(show_graph);
+                });
+            }))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
@@ -9028,6 +9189,17 @@ impl Render for GitPanel {
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
+            .on_drag_move::<DraggedGraphResize>(cx.listener(
+                |this, event: &gpui::DragMoveEvent<DraggedGraphResize>, window, cx| {
+                    let height = this.graph_bounds.get().bottom() - event.event.position.y;
+                    this.graph_height = Some(height.clamp(
+                        px(100.),
+                        (window.viewport_size().height * 0.6).max(px(100.)),
+                    ));
+                    this.serialize(cx);
+                    cx.notify();
+                },
+            ))
             .child(
                 v_flex()
                     .size_full()
@@ -9035,32 +9207,45 @@ impl Render for GitPanel {
                         this.child(self.render_tab_bar(cx))
                     })
                     .map(|this| match self.active_tab {
-                        GitPanelTab::Changes => this
-                            .children(self.render_changes_header(window, cx))
-                            .when(!self.commit_editor_expanded, |this| {
-                                this.map(|this| {
-                                    if let Some(repo) = self.active_repository.clone()
-                                        && has_entries
-                                    {
-                                        this.child(self.render_entries(
-                                            has_write_access,
-                                            repo,
-                                            window,
-                                            cx,
-                                        ))
-                                    } else {
-                                        this.child(self.render_empty_state(cx).into_any_element())
-                                    }
+                        GitPanelTab::Changes => this.child(
+                            v_flex()
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_hidden()
+                                .when(expand_empty_graph, |this| {
+                                    this.flex_grow_0().flex_shrink_0()
                                 })
-                            })
-                            .children(self.render_footer(window, cx))
-                            .when(self.amend_pending, |this| {
-                                this.child(self.render_pending_amend(cx))
-                            })
-                            .when(!self.amend_pending, |this| {
-                                this.children(self.render_previous_commit(window, cx))
-                            }),
+                                .children(self.render_changes_header(window, cx))
+                                .when(!self.commit_editor_expanded, |this| {
+                                    this.map(|this| {
+                                        if let Some(repo) = self.active_repository.clone()
+                                            && has_entries
+                                        {
+                                            this.child(self.render_entries(
+                                                has_write_access,
+                                                repo,
+                                                window,
+                                                cx,
+                                            ))
+                                        } else {
+                                            this.child(
+                                                self.render_empty_state(cx).into_any_element(),
+                                            )
+                                        }
+                                    })
+                                })
+                                .children(self.render_footer(window, cx))
+                                .when(self.amend_pending, |this| {
+                                    this.child(self.render_pending_amend(cx))
+                                })
+                                .when(!self.amend_pending, |this| {
+                                    this.children(self.render_previous_commit(window, cx))
+                                }),
+                        ),
                         GitPanelTab::History => this.child(self.render_history_tab(window, cx)),
+                    })
+                    .when(show_graph, |this| {
+                        this.child(self.render_graph_section(window, cx))
                     })
                     .into_any_element(),
             )
@@ -10247,6 +10432,65 @@ mod tests {
             cx.read_from_clipboard().and_then(|item| item.text()),
             Some(path!("/project/src").to_owned())
         );
+    }
+
+    #[gpui::test]
+    async fn test_panel_graph_restores_layout_and_replaces_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({"first": {".git": {}}, "second": {".git": {}}}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let serialized: SerializedGitPanel =
+            serde_json::from_str(r#"{"graph_collapsed":true,"graph_height":320}"#)
+                .expect("panel state");
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            GitPanel::new_with_serialized_panel(workspace, Some(serialized), window, cx)
+        });
+        cx.run_until_parked();
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(panel.graph_collapsed);
+            assert_eq!(panel.graph_height, Some(px(320.)));
+            drop(panel.render_graph_section(window, cx));
+            assert!(panel.graph.is_none());
+            panel.graph_collapsed = false;
+            drop(panel.render_graph_section(window, cx));
+            assert!(panel.graph.is_some());
+        });
+        let old_graph = panel.read_with(cx, |panel, _| {
+            panel.graph.clone().expect("graph").downgrade()
+        });
+        let repository = project.read_with(cx, |project, cx| {
+            let active = project.active_repository(cx).expect("active repository");
+            project
+                .repositories(cx)
+                .values()
+                .find(|repository| **repository != active)
+                .cloned()
+                .expect("second repository")
+        });
+        repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        cx.run_until_parked();
+        panel.update_in(cx, |panel, window, cx| {
+            assert_eq!(panel.active_repository.as_ref(), Some(&repository));
+            assert!(panel.graph.is_none());
+            drop(panel.render_graph_section(window, cx));
+            assert_ne!(
+                panel.graph.as_ref().map(Entity::entity_id),
+                Some(old_graph.entity_id())
+            );
+        });
+        let legacy: SerializedGitPanel =
+            serde_json::from_str(r#"{"signoff_enabled":false}"#).expect("legacy state");
+        assert!(!legacy.graph_collapsed);
+        assert!(legacy.graph_height.is_none());
     }
 
     async fn history_panel_for_project(
@@ -12106,6 +12350,7 @@ mod tests {
             SerializedGitPanel {
                 signoff_enabled: false,
                 commit_messages: panel.serialized_commit_messages(cx),
+                ..Default::default()
             }
         });
 
@@ -12157,6 +12402,7 @@ mod tests {
                     ..Default::default()
                 },
             )]),
+            ..Default::default()
         };
         let mismatched_panel = workspace.update_in(cx, |workspace, window, cx| {
             GitPanel::new_with_serialized_panel(
@@ -12247,6 +12493,7 @@ mod tests {
         let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
             signoff_enabled: false,
             commit_messages: panel.serialized_commit_messages(cx),
+            ..Default::default()
         });
         let buffer = repository.read_with(cx, |repository, _| {
             repository.commit_message_buffer().unwrap().clone()
@@ -12342,6 +12589,7 @@ mod tests {
         let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
             signoff_enabled: false,
             commit_messages: panel.serialized_commit_messages(cx),
+            ..Default::default()
         });
 
         // Simulate a restart and restore from the serialized state.

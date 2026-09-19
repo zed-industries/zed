@@ -56,6 +56,9 @@ crates/docs_preprocessor/actions.json
 /december-2025-releases.md
 /docs/december-2025-documentation-gaps.md
 
+# Local agent plan documents
+/.plans/
+
 # NixOS integration test state
 .nixos-test-history
 
