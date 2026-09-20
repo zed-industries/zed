@@ -974,15 +974,27 @@ impl settings::Settings for AllLanguageSettings {
             let mut builder = GlobSetBuilder::new();
 
             for pattern in &patterns.0 {
-                builder.add(Glob::new(pattern).unwrap());
+                match Glob::new(pattern) {
+                    Ok(glob) => {
+                        builder.add(glob);
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "Failed to parse a `file_types` pattern for {language}. Skipping this pattern:\n\n{error}"
+                        );
+                    }
+                }
             }
 
+            let matcher = builder.build().unwrap_or_else(|error| {
+                log::error!(
+                    "Failed to compile `file_types` patterns for {language}. Using an empty matcher:\n\n{error}"
+                );
+                GlobSet::empty()
+            });
             file_types.insert(
                 language.clone(),
-                (
-                    builder.build().unwrap(),
-                    patterns.0.iter().cloned().collect(),
-                ),
+                (matcher, patterns.0.iter().cloned().collect()),
             );
         }
 
@@ -1035,6 +1047,54 @@ mod tests {
     use gpui::TestAppContext;
     use settings::{LocalSettingsKind, LocalSettingsPath, WorktreeId};
     use util::rel_path::rel_path;
+
+    #[gpui::test]
+    fn test_file_types_preserves_valid_patterns(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &settings::default_settings());
+            store.register_setting::<AllLanguageSettings>();
+
+            for patterns in [
+                vec!["*.rs", "[", "config.*"],
+                vec!["[", "{"],
+                vec![],
+                vec!["*.rs", "config.*"],
+            ] {
+                store
+                    .set_user_settings(
+                        &serde_json::json!({
+                            "file_types": {
+                                "Python": ["*.py"],
+                                "Rust": patterns,
+                            },
+                        })
+                        .to_string(),
+                        cx,
+                    )
+                    .unwrap();
+
+                let settings = store.get::<AllLanguageSettings>(None);
+                let (matcher, sources) = settings.file_types.get("Rust").unwrap();
+                assert_eq!(sources, &patterns);
+                assert_eq!(matcher.is_match("main.rs"), patterns.contains(&"*.rs"));
+                assert_eq!(
+                    matcher.is_match("config.custom"),
+                    patterns.contains(&"config.*")
+                );
+                assert!(!matcher.is_match("main.py"));
+                assert!(!matcher.is_match("unrelated.txt"));
+                assert!(!matcher.is_match("["));
+                assert!(!matcher.is_match("{"));
+                assert_eq!(matcher.is_empty(), !patterns.contains(&"*.rs"));
+
+                let (matcher, sources) = settings.file_types.get("Python").unwrap();
+                assert_eq!(sources, &["*.py"]);
+                assert!(matcher.is_match("main.py"));
+                assert!(!matcher.is_match("main.rs"));
+                assert!(!matcher.is_match("config.custom"));
+            }
+        });
+    }
 
     #[gpui::test]
     fn test_edit_predictions_enabled_for_file(cx: &mut TestAppContext) {
