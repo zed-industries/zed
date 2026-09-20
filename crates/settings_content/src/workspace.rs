@@ -23,6 +23,24 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: contained
     pub bottom_dock_layout: Option<BottomDockLayout>,
+    /// Visual treatment of the workspace shell: the docks and the editor area.
+    ///
+    /// Default: classic
+    pub ui_layout: Option<UiLayout>,
+    /// Space, in pixels, left between the cards of the "floating" UI layout.
+    /// Ignored when `ui_layout` is "classic".
+    ///
+    /// Default: `8.0`
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
+    #[schemars(range(min = 0.0, max = 32.0))]
+    pub ui_card_gap: Option<f32>,
+    /// Corner radius, in pixels, of the cards of the "floating" UI layout.
+    /// Ignored when `ui_layout` is "classic".
+    ///
+    /// Default: `10.0`
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
+    #[schemars(range(min = 0.0, max = 32.0))]
+    pub ui_card_radius: Option<f32>,
     /// Direction to split horizontally.
     ///
     /// Default: "up"
@@ -342,6 +360,30 @@ pub struct ActivePaneModifiers {
     /// Default: `1.0`
     #[schemars(range(min = 0.0, max = 1.0))]
     pub inactive_opacity: Option<InactiveOpacity>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum UiLayout {
+    /// Docks and the editor area fill the window edge to edge, separated by
+    /// single-pixel borders.
+    #[default]
+    Classic,
+    /// Docks and the editor area are drawn as rounded, elevated cards, with the
+    /// window background showing through the gaps between them.
+    Floating,
 }
 
 #[derive(

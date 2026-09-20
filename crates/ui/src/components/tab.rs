@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use gpui::{AnyElement, IntoElement, Stateful};
 use smallvec::SmallVec;
 
+use crate::ElevationIndex;
 use crate::prelude::*;
 
 const START_TAB_SLOT_SIZE: Pixels = px(12.);
@@ -35,6 +36,7 @@ pub struct Tab {
     selected: bool,
     position: TabPosition,
     close_side: TabCloseSide,
+    card_radius: Option<Pixels>,
     start_slot: Option<AnyElement>,
     end_slot: Option<AnyElement>,
     children: SmallVec<[AnyElement; 2]>,
@@ -50,6 +52,7 @@ impl Tab {
             selected: false,
             position: TabPosition::First,
             close_side: TabCloseSide::End,
+            card_radius: None,
             start_slot: None,
             end_slot: None,
             children: SmallVec::new(),
@@ -63,6 +66,13 @@ impl Tab {
 
     pub fn close_side(mut self, close_side: TabCloseSide) -> Self {
         self.close_side = close_side;
+        self
+    }
+
+    /// Draws the tab as a rounded card floating inside the tab bar rather than
+    /// as a cell separated from its neighbours by hairlines.
+    pub fn card_radius(mut self, radius: impl Into<Option<Pixels>>) -> Self {
+        self.card_radius = radius.into();
         self
     }
 
@@ -82,6 +92,12 @@ impl Tab {
 
     pub fn container_height(cx: &App) -> Pixels {
         DynamicSpacing::Base32.px(cx)
+    }
+
+    /// The height of a tab drawn as a card, which is shorter than the tab bar so
+    /// that the bar shows through above and below it.
+    pub fn card_height(cx: &App) -> Pixels {
+        DynamicSpacing::Base24.px(cx)
     }
 }
 
@@ -141,35 +157,56 @@ impl RenderOnce for Tab {
             }
         };
 
+        let (selected, position, card_radius) = (self.selected, self.position, self.card_radius);
+        let content_height = match card_radius {
+            Some(_) => Tab::card_height(cx),
+            None => Tab::content_height(cx),
+        };
+
         self.div
-            .h(Tab::container_height(cx))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
-            .map(|this| match self.position {
-                TabPosition::First => {
-                    if self.selected {
-                        this.pl_px().border_r_1().pb_px()
-                    } else {
-                        this.pl_px().pr_px().border_b_1()
-                    }
-                }
-                TabPosition::Last => {
-                    if self.selected {
-                        this.border_l_1().border_r_1().pb_px()
-                    } else {
-                        this.pl_px().border_b_1().border_r_1()
-                    }
-                }
-                TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
-                TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
-                TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
+            .map(|this| match card_radius {
+                Some(radius) => this
+                    .h(Tab::card_height(cx))
+                    .rounded(radius)
+                    .when(selected, |this| {
+                        this.shadow(ElevationIndex::ElevatedSurface.shadow(cx))
+                    }),
+                None => this
+                    .h(Tab::container_height(cx))
+                    .map(|this| match position {
+                        TabPosition::First => {
+                            if selected {
+                                this.pl_px().border_r_1().pb_px()
+                            } else {
+                                this.pl_px().pr_px().border_b_1()
+                            }
+                        }
+                        TabPosition::Last => {
+                            if selected {
+                                this.border_l_1().border_r_1().pb_px()
+                            } else {
+                                this.pl_px().border_b_1().border_r_1()
+                            }
+                        }
+                        TabPosition::Middle(Ordering::Equal) => {
+                            this.border_l_1().border_r_1().pb_px()
+                        }
+                        TabPosition::Middle(Ordering::Less) => {
+                            this.border_l_1().pr_px().border_b_1()
+                        }
+                        TabPosition::Middle(Ordering::Greater) => {
+                            this.border_r_1().pl_px().border_b_1()
+                        }
+                    }),
             })
             .cursor_pointer()
             .child(
                 h_flex()
                     .group("")
                     .relative()
-                    .h(Tab::content_height(cx))
+                    .h(content_height)
                     .px(DynamicSpacing::Base04.px(cx))
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .text_color(text_color)

@@ -1,5 +1,6 @@
 pub mod active_file_name;
 pub mod dock;
+pub mod floating_layout;
 pub mod history_manager;
 pub mod invalid_item_view;
 pub mod item;
@@ -30,6 +31,7 @@ pub mod workspace_error;
 mod workspace_settings;
 
 pub use dock::Panel;
+pub use floating_layout::FloatingLayout;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveProjectDown,
     MoveProjectToNewWindow, MoveProjectUp, MultiWorkspace, MultiWorkspaceEvent, NewThread,
@@ -8668,7 +8670,11 @@ impl Workspace {
                     })
             })
             .flex()
-            .overflow_hidden()
+            // The card's shadow is painted outside its own bounds, so the wrapper
+            // must not clip it back to them in the floating layout.
+            .when(FloatingLayout::get(cx).is_none(), |this| {
+                this.overflow_hidden()
+            })
             .flex_none()
             .child(dock.clone())
             .children(leader_border);
@@ -8678,6 +8684,17 @@ impl Workspace {
         // this, toggle_panel_focus cannot focus the panel when the dock is closed.
         let dock = dock.read(cx);
         if let Some(panel) = dock.visible_panel() {
+            // The gap of the floating layout belongs to the open dock rather than
+            // to the flex container, so that a closed dock — which stays in the
+            // element tree to keep its focus handle mounted — leaves no gap behind.
+            if let Some(floating) = FloatingLayout::get(cx) {
+                container = match position {
+                    DockPosition::Left => container.mr(floating.gap),
+                    DockPosition::Right => container.ml(floating.gap),
+                    DockPosition::Bottom => container.mt(floating.gap),
+                };
+            }
+
             let size_state = dock.stored_panel_size_state(panel.as_ref());
             let min_size = panel.min_size(window, cx);
             if position.axis() == Axis::Horizontal {
@@ -8869,6 +8886,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
+        let floating = FloatingLayout::get(cx);
+
         div()
             .id("editor-region")
             .role(gpui::Role::Main)
@@ -8877,6 +8896,9 @@ impl Workspace {
                 this.track_focus(&self.region_focus_handles.editor)
             })
             .size_full()
+            .when_some(floating, |this, floating| {
+                floating.style_card(this.relative().overflow_hidden(), cx)
+            })
             .child(self.center.render(
                 self.zoomed.as_ref(),
                 self.maximized_pane.as_ref(),
@@ -8884,6 +8906,10 @@ impl Workspace {
                 window,
                 cx,
             ))
+            .when_some(floating, |this, floating| {
+                this.child(floating.corner_mask(cx))
+                    .child(floating.outline(cx))
+            })
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {
@@ -9577,6 +9603,9 @@ impl Render for Workspace {
 
         let theme = cx.theme().clone();
         let colors = theme.colors();
+        // The containers that wrap the editor area clip to their own bounds, which
+        // would swallow the shadow the center card paints outside of them.
+        let clip_center = FloatingLayout::get(cx).is_none();
         let notification_entities = self
             .notifications
             .iter()
@@ -9655,16 +9684,22 @@ impl Render for Workspace {
                     .child(
                         div()
                             .id("workspace")
-                            .bg(colors.background)
                             .relative()
                             .flex_1()
                             .w_full()
                             .flex()
                             .flex_col()
                             .overflow_hidden()
-                            .border_t_1()
-                            .border_b_1()
-                            .border_color(colors.border)
+                            .map(|this| match FloatingLayout::get(cx) {
+                                Some(floating) => {
+                                    this.bg(floating.canvas_background(cx)).p(floating.gap)
+                                }
+                                None => this
+                                    .bg(colors.background)
+                                    .border_t_1()
+                                    .border_b_1()
+                                    .border_color(colors.border),
+                            })
                             .child({
                                 let this = cx.entity();
                                 canvas(
@@ -9768,7 +9803,9 @@ impl Render for Workspace {
                                                         .flex()
                                                         .flex_col()
                                                         .flex_1()
-                                                        .overflow_hidden()
+                                                        .when(clip_center, |this| {
+                                                            this.overflow_hidden()
+                                                        })
                                                         .child(
                                                             h_flex()
                                                                 .flex_1()
@@ -9828,7 +9865,9 @@ impl Render for Workspace {
                                                                 .flex()
                                                                 .flex_col()
                                                                 .flex_1()
-                                                                .overflow_hidden()
+                                                                .when(clip_center, |this| {
+                                                                    this.overflow_hidden()
+                                                                })
                                                                 .child(
                                                                     h_flex()
                                                                         .flex_1()
@@ -9895,7 +9934,9 @@ impl Render for Workspace {
                                                                 .flex()
                                                                 .flex_col()
                                                                 .flex_1()
-                                                                .overflow_hidden()
+                                                                .when(clip_center, |this| {
+                                                                    this.overflow_hidden()
+                                                                })
                                                                 .child(
                                                                     h_flex()
                                                                         .flex_1()
@@ -9951,7 +9992,7 @@ impl Render for Workspace {
                                                 .flex()
                                                 .flex_col()
                                                 .flex_1()
-                                                .overflow_hidden()
+                                                .when(clip_center, |this| this.overflow_hidden())
                                                 .child(
                                                     h_flex()
                                                         .flex_1()

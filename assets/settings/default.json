@@ -92,6 +92,14 @@
   // Layout mode of the bottom dock. Defaults to "contained"
   //   choices: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
+  // Visual treatment of the docks and the editor area. Defaults to "classic"
+  //   "classic":  regions fill the window edge to edge, separated by hairline borders
+  //   "floating": regions are rounded, elevated cards separated by gaps
+  "ui_layout": "classic",
+  // Space left between the cards of the "floating" layout, in pixels.
+  "ui_card_gap": 8.0,
+  // Corner radius of the cards of the "floating" layout, in pixels.
+  "ui_card_radius": 10.0,
   // The direction that you want to split panes horizontally. Defaults to "down"
   "pane_split_direction_horizontal": "down",
   // The direction that you want to split panes vertically. Defaults to "right"

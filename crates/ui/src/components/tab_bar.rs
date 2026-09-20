@@ -11,6 +11,7 @@ pub struct TabBar {
     children: SmallVec<[AnyElement; 2]>,
     end_children: SmallVec<[AnyElement; 2]>,
     scroll_handle: Option<ScrollHandle>,
+    card_gap: Option<Pixels>,
 }
 
 impl TabBar {
@@ -21,7 +22,16 @@ impl TabBar {
             children: SmallVec::new(),
             end_children: SmallVec::new(),
             scroll_handle: None,
+            card_gap: None,
         }
+    }
+
+    /// Lays the bar out for tabs drawn as cards: the hairlines that separate the
+    /// bar from its tabs and from its start and end slots are dropped, and the
+    /// tabs are inset by `gap` so they read as floating on the bar.
+    pub fn card_gap(mut self, gap: impl Into<Option<Pixels>>) -> Self {
+        self.card_gap = gap.into();
+        self
     }
 
     pub fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
@@ -91,6 +101,8 @@ impl ParentElement for TabBar {
 
 impl RenderOnce for TabBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let card_gap = self.card_gap;
+
         div()
             .id(self.id)
             .group("tab_bar")
@@ -105,9 +117,11 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
-                        .border_b_1()
-                        .border_r_1()
-                        .border_color(cx.theme().colors().border)
+                        .when(card_gap.is_none(), |this| {
+                            this.border_b_1()
+                                .border_r_1()
+                                .border_color(cx.theme().colors().border)
+                        })
                         .children(self.start_children),
                 )
             })
@@ -117,20 +131,24 @@ impl RenderOnce for TabBar {
                     .flex_1()
                     .h_full()
                     .overflow_x_hidden()
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .size_full()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border),
-                    )
+                    .when(card_gap.is_none(), |this| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border),
+                        )
+                    })
                     .child(
                         h_flex()
                             .id("tabs")
                             .flex_grow_1()
+                            .h_full()
                             .overflow_x_scroll()
+                            .when_some(card_gap, |this, gap| this.gap(gap).px(gap))
                             .when_some(self.scroll_handle, |cx, scroll_handle| {
                                 cx.track_scroll(&scroll_handle)
                             })
@@ -143,9 +161,11 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
-                        .border_color(cx.theme().colors().border)
-                        .border_b_1()
-                        .border_l_1()
+                        .when(card_gap.is_none(), |this| {
+                            this.border_color(cx.theme().colors().border)
+                                .border_b_1()
+                                .border_l_1()
+                        })
                         .children(self.end_children),
                 )
             })
