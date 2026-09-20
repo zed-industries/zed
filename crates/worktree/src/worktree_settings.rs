@@ -86,13 +86,10 @@ impl Settings for WorktreeSettings {
 }
 
 fn valid_path_matchers(mut values: Vec<String>, context: &'static str) -> PathMatcher {
-    values.retain(|pattern| {
-        PathMatcher::new([pattern], PathStyle::local())
-            .with_context(|| format!("Ignoring invalid pattern {pattern:?} in `{context}`"))
-            .log_err()
-            .is_some()
-    });
-    path_matchers(values, context).log_err().unwrap_or_default()
+    values.sort();
+    PathMatcher::new_lenient(values, PathStyle::local(), |error| {
+        log::error!("Failed to compile patterns in `{context}`: {error}");
+    })
 }
 
 fn file_scan_inclusion_matchers(values: Vec<String>) -> (PathMatcher, PathMatcher) {
