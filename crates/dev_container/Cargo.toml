@@ -4,6 +4,9 @@ version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
 
+[lib]
+doctest = false
+
 [dependencies]
 anyhow.workspace = true
 async-tar.workspace = true

@@ -713,7 +713,7 @@ pub fn dev_repo_root() -> Option<&'static std::path::Path> {
 /// detail). Hidden from the public API.
 #[doc(hidden)]
 pub mod __rust_embed {
-    pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, utils};
+    pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, flate, utils};
 }
 
 /// Backs the dev arm of [`fs_embed!`]'s `iter`: every file under the root-relative

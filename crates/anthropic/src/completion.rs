@@ -290,6 +290,9 @@ pub fn into_anthropic(
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
+    let max_output_tokens = request
+        .max_output_tokens
+        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
     let mut any_message_wants_cache = false;
@@ -892,6 +895,7 @@ mod tests {
                 },
             ],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -907,6 +911,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: Some(1024),
         };
 
         let anthropic_request = into_anthropic(
@@ -920,6 +925,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            1024
+        );
         // No message content block should carry cache_control anymore; the
         // conversation breakpoint is set via top-level automatic caching.
         assert_eq!(anthropic_request.messages.len(), 1);
@@ -1000,6 +1009,7 @@ mod tests {
                 },
             ],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1015,6 +1025,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: Some(8192),
         };
 
         let anthropic_request = into_anthropic(
@@ -1028,6 +1039,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,
@@ -1065,6 +1080,7 @@ mod tests {
                 reasoning_details: None,
             }],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1075,6 +1091,7 @@ mod tests {
             thinking_effort: Some("xhigh".into()),
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1116,6 +1133,7 @@ mod tests {
                     reasoning_details: None,
                 }],
                 thread_id: None,
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: None,
                 stop: vec![],
@@ -1126,6 +1144,7 @@ mod tests {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             };
 
             let anthropic_request = into_anthropic(
@@ -1185,6 +1204,7 @@ mod tests {
                     reasoning_details: None,
                 }],
                 thread_id: None,
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: None,
                 stop: vec![],
@@ -1195,6 +1215,7 @@ mod tests {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             };
 
             let anthropic_request = into_anthropic(
@@ -1246,6 +1267,7 @@ mod tests {
                 },
             ],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1261,6 +1283,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1274,6 +1297,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,
@@ -1292,6 +1319,7 @@ mod tests {
             }],
             thinking_effort: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1301,6 +1329,7 @@ mod tests {
             thinking_allowed: true,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,
