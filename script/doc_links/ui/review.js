@@ -199,7 +199,7 @@ function updateChrome() {
 function setLabel(name) {
   if (!filtered.length) return;
   const decision = filtered[index];
-  if (name === "pass" && !decision.anchor) return;
+  if (name === "pass" && (!decision.anchor || decision.queue === "superseded")) return;
   const previous = { ...currentLabel(decision.id) };
   history.push({ id: decision.id, previous });
   labels[decision.id] = { label: name, notes: document.getElementById("notes").value };

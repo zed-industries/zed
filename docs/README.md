@@ -70,25 +70,22 @@ wins.
 Run reviewed regressions through Jev before opening the review page:
 
 ```sh
-script/evaluate-doc-links live
+script/evaluate-doc-links
 ```
 
-Each case forces the reviewed source, destination, and anchor through the model,
-so missing retrieval candidates cannot pass silently. To verify that a complete
-audit report exercised the same cases, run:
-
-```sh
-script/evaluate-doc-links report
-```
-
-The default cases come from review feedback on PR #64481 and include expected
+Each case forces the reviewed source, destination, and exact anchor occurrence
+through the model. This command tests Jev's semantic decisions independently of
+the audit's lexical candidate retrieval. The default cases come from review
+feedback on PR #64481 and include expected
 links, expected rejections, and explicitly out-of-scope table links. Add new
 review outcomes to `script/doc_links/evals/pr_64481_review.json` or pass another
 case file with `--cases`.
-The default thresholds and their latest labeled results are recorded in
-`script/doc_links/evals/jev-1.13.0-calibration.json`. Re-run the live evaluation
-and update that file when changing the model, prompts, candidate shape, or
-thresholds.
+The default thresholds and the latest per-case model outputs are recorded in
+`script/doc_links/evals/jev-1.13.0-calibration.json`. Refresh that evidence with
+`--output script/doc_links/evals/jev-1.13.0-calibration.json` when changing the
+model, prompts, candidate shape, or thresholds. Jev can vary between runs, so
+review each recorded anchor and probability instead of relying only on the pass
+count.
 
 Generate a self-contained review page:
 

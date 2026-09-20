@@ -106,6 +106,15 @@ def fixture():
 
 
 class JevTest(unittest.TestCase):
+    def test_anchor_candidate_includes_exact_local_context(self):
+        _, _, payload, _, _, _ = fixture()
+        anchor = payload["state"]["targets"]["target_000"]["anchor_candidates"][
+            "anchor_000"
+        ]
+        self.assertEqual(anchor["before"], "Use the ")
+        self.assertEqual(anchor["after"], ".\n")
+        self.assertEqual(anchor["offset_in_block"], len("Use the "))
+
     def test_validates_complete_response(self):
         _, _, _, target_map, response, _ = fixture()
         result = validate_response(response, target_map)

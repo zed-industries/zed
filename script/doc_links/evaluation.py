@@ -1,12 +1,12 @@
+from collections import Counter
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
-from typing import Any
 
 from .corpus import Page, load_pages
-from .jev import Client, evaluate_source
-from .policy import Thresholds, decision_for
+from .jev import Client, Evaluation, evaluate_source
+from .policy import Thresholds, decisions_for_source
 from .retrieval import (
     BOUNDARY_STOP_WORDS,
     WORD_PATTERN,
@@ -17,7 +17,7 @@ from .retrieval import (
     overlaps_excluded,
     top_blocks,
 )
-from .review import load_report
+from .schema import canonical_hash
 
 OUTCOMES = {"link", "no_link", "out_of_scope"}
 
@@ -37,6 +37,76 @@ class EvaluationCase:
     anchor_text: str
     reason: str
     context_contains: str | None = None
+
+
+@dataclass(frozen=True)
+class EvaluationObservation:
+    case: EvaluationCase
+    passed: bool
+    message: str | None
+    queue: str | None = None
+    selected_anchor: str | None = None
+    anchor_choice: str | None = None
+    reason_probability: float | None = None
+    destination_probability: float | None = None
+    anchor_probability: float | None = None
+    anchor_quality_probability: float | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.case.identifier,
+            "outcome": self.case.outcome,
+            "passed": self.passed,
+            "message": self.message,
+            "queue": self.queue,
+            "selected_anchor": self.selected_anchor,
+            "anchor_choice": self.anchor_choice,
+            "reason_probability": self.reason_probability,
+            "destination_probability": self.destination_probability,
+            "anchor_probability": self.anchor_probability,
+            "anchor_quality_probability": self.anchor_quality_probability,
+        }
+
+
+@dataclass(frozen=True)
+class EvaluationRun:
+    model: str
+    dataset: str
+    corpus_hash: str
+    thresholds: Thresholds
+    observations: tuple[EvaluationObservation, ...]
+    input_tokens: int
+    output_tokens: int
+
+    @property
+    def failures(self) -> tuple[EvaluationFailure, ...]:
+        return tuple(
+            EvaluationFailure(item.case.identifier, item.message or "case failed")
+            for item in self.observations
+            if not item.passed
+        )
+
+    def to_dict(self) -> dict:
+        counts = Counter(item.case.outcome for item in self.observations)
+        passed = Counter(
+            item.case.outcome for item in self.observations if item.passed
+        )
+        return {
+            "schema_version": 2,
+            "model": self.model,
+            "dataset": self.dataset,
+            "corpus_hash": self.corpus_hash,
+            "thresholds": self.thresholds.to_dict(),
+            "usage": {
+                "input_tokens": self.input_tokens,
+                "output_tokens": self.output_tokens,
+            },
+            "summary": {
+                outcome: {"passed": passed[outcome], "total": counts[outcome]}
+                for outcome in sorted(OUTCOMES)
+            },
+            "cases": [item.to_dict() for item in self.observations],
+        }
 
 
 def load_cases(path: Path) -> tuple[EvaluationCase, ...]:
@@ -64,15 +134,14 @@ def load_cases(path: Path) -> tuple[EvaluationCase, ...]:
         if not required <= set(raw_case):
             raise ValueError("evaluation case is missing required fields")
         if not all(
-            isinstance(raw_case[key], str) and raw_case[key]
-            for key in required
+            isinstance(raw_case[key], str) and raw_case[key] for key in required
         ):
             raise ValueError("evaluation case fields must be non-empty strings")
         if raw_case["outcome"] not in OUTCOMES:
             raise ValueError(f"unknown evaluation outcome: {raw_case['outcome']}")
         context = raw_case.get("context_contains")
-        if context is not None and not isinstance(context, str):
-            raise ValueError("context_contains must be a string")
+        if context is not None and (not isinstance(context, str) or not context):
+            raise ValueError("context_contains must be a non-empty string")
         result.append(
             EvaluationCase(
                 identifier=raw_case["id"],
@@ -84,90 +153,37 @@ def load_cases(path: Path) -> tuple[EvaluationCase, ...]:
                 context_contains=context,
             )
         )
+    identifiers = {case.identifier for case in result}
+    if len(identifiers) != len(result):
+        raise ValueError("evaluation cases must have unique IDs")
     return tuple(result)
 
 
-def matching_decisions(report, case: EvaluationCase):
-    return tuple(
-        decision
-        for decision in report.decisions
-        if decision.source_path == case.source_path
-        and decision.target_path == case.target_path
-        and decision.anchor is not None
-        and decision.anchor.text == case.anchor_text
-    )
-
-
-def context_matches(source: str, case: EvaluationCase, decision) -> bool:
-    if case.context_contains is None:
-        return True
-    context = source[decision.anchor.block_start : decision.anchor.block_end]
-    return case.context_contains in context
-
-
-def check_decision(case: EvaluationCase, decision) -> str | None:
-    if case.outcome == "link":
-        if decision.queue in {"rejected", "superseded"}:
-            return f"expected an actionable link, got {decision.queue}"
+def context_span(source: str, context: str | None) -> tuple[int, int] | None:
+    if context is None:
         return None
-    if decision.queue == "automatic":
-        return "forbidden link returned as automatic"
-    return None
-
-
-def evaluate_report(
-    report_path: Path,
-    cases_path: Path,
-    docs_dir: Path,
-) -> tuple[EvaluationFailure, ...]:
-    report = load_report(report_path)
-    cases = load_cases(cases_path)
-    failures = []
-    for case in cases:
-        metadata = report.pages.get(case.source_path)
-        source_path = docs_dir / case.source_path
-        if metadata is None or not source_path.is_file():
-            failures.append(EvaluationFailure(case.identifier, "source page was not audited"))
-            continue
-        source = source_path.read_text(encoding="utf-8")
-        from .schema import content_hash
-
-        if content_hash(source) != metadata["content_hash"]:
-            failures.append(EvaluationFailure(case.identifier, "source page changed after audit"))
-            continue
-        matches = tuple(
-            decision
-            for decision in matching_decisions(report, case)
-            if context_matches(source, case, decision)
-        )
-        if case.outcome == "out_of_scope":
-            if matches:
-                failures.append(
-                    EvaluationFailure(case.identifier, "out-of-scope anchor was proposed")
-                )
-            continue
-        if not matches:
-            failures.append(EvaluationFailure(case.identifier, "case was not exercised"))
-            continue
-        for decision in matches:
-            message = check_decision(case, decision)
-            if message:
-                failures.append(EvaluationFailure(case.identifier, message))
-                break
-    return tuple(failures)
+    starts = [match.start() for match in re.finditer(re.escape(context), source)]
+    if len(starts) != 1:
+        return None
+    return starts[0], starts[0] + len(context)
 
 
 def exact_anchor(source: Page, case: EvaluationCase) -> AnchorOption | None:
+    required_context = context_span(source.source, case.context_contains)
+    if case.context_contains is not None and required_context is None:
+        return None
     pattern = re.compile(
         rf"(?<![A-Za-z0-9]){re.escape(case.anchor_text)}(?![A-Za-z0-9])"
     )
     for block in source.prose_blocks:
-        if case.context_contains and case.context_contains not in block.source:
-            continue
         for match in pattern.finditer(block.source):
             start = block.start + match.start()
             end = block.start + match.end()
-            if any(start < span.end and end > span.start for span in block.excluded):
+            if required_context and not (
+                required_context[0] <= start and end <= required_context[1]
+            ):
+                continue
+            if overlaps_excluded(block, start, end):
                 continue
             return AnchorOption(
                 identifier="anchor_000",
@@ -182,8 +198,6 @@ def exact_anchor(source: Page, case: EvaluationCase) -> AnchorOption | None:
     return None
 
 
-
-
 def filler_anchors(
     source: Page,
     selected: list[AnchorOption],
@@ -192,9 +206,7 @@ def filler_anchors(
     seen = {anchor.text.casefold() for anchor in selected}
     for block in source.prose_blocks:
         for line_start, line_end in block.line_ranges():
-            line = block.source[
-                line_start - block.start : line_end - block.start
-            ]
+            line = block.source[line_start - block.start : line_end - block.start]
             words = list(WORD_PATTERN.finditer(line))
             for first_index, first_word in enumerate(words):
                 for word_count in range(1, 5):
@@ -235,6 +247,7 @@ def filler_anchors(
                     seen.add(phrase.casefold())
                     if len(selected) == count:
                         return
+
 
 def forced_candidate(
     source: Page,
@@ -298,6 +311,48 @@ def forced_candidate(
     )
 
 
+def check_evaluation(
+    case: EvaluationCase,
+    evaluation: Evaluation,
+    queue: str,
+    thresholds: Thresholds,
+) -> str | None:
+    if case.outcome == "link":
+        if evaluation.anchor_choice != "anchor_000":
+            return f"expected anchor_000, chose {evaluation.anchor_choice}"
+        if queue in {"rejected", "superseded"}:
+            return f"expected an actionable link, got {queue}"
+        return None
+    if (
+        evaluation.anchor_choice == "anchor_000"
+        and evaluation.anchor_quality_probability is not None
+        and evaluation.anchor_quality_probability >= thresholds.anchor_quality
+    ):
+        return "forbidden anchor selected with passing anchor quality"
+    return None
+
+
+def observation_for_failure(
+    case: EvaluationCase,
+    message: str,
+) -> EvaluationObservation:
+    return EvaluationObservation(case=case, passed=False, message=message)
+
+
+def evaluation_corpus_hash(
+    cases: tuple[EvaluationCase, ...],
+    pages: dict[str, Page],
+) -> str:
+    return canonical_hash(
+        {
+            path: pages[path].content_hash
+            for case in cases
+            for path in (case.source_path, case.target_path)
+            if path in pages
+        }
+    )
+
+
 def evaluate_live(
     client: Client,
     cases_path: Path,
@@ -305,33 +360,68 @@ def evaluate_live(
     model: str,
     thresholds: Thresholds,
     anchor_count: int = 6,
-) -> tuple[EvaluationFailure, ...]:
+) -> EvaluationRun:
     cases = load_cases(cases_path)
     pages = load_pages(docs_dir)
     by_path = {str(page.path): page for page in pages}
     index = Index(pages)
-    failures = []
+    observations = []
+    models = set()
+    input_tokens = 0
+    output_tokens = 0
     for case in cases:
         source = by_path.get(case.source_path)
         target = by_path.get(case.target_path)
         if source is None or target is None:
-            failures.append(EvaluationFailure(case.identifier, "page does not exist"))
+            observations.append(observation_for_failure(case, "page does not exist"))
             continue
         candidate = forced_candidate(source, target, case, index, anchor_count)
         if case.outcome == "out_of_scope":
-            if candidate is not None:
-                failures.append(
-                    EvaluationFailure(case.identifier, "out-of-scope anchor is eligible")
+            message = "out-of-scope anchor is eligible" if candidate else None
+            observations.append(
+                EvaluationObservation(
+                    case=case,
+                    passed=message is None,
+                    message=message,
                 )
+            )
             continue
         if candidate is None:
-            failures.append(EvaluationFailure(case.identifier, "case was not exercised"))
+            observations.append(
+                observation_for_failure(case, "case anchor is not eligible")
+            )
             continue
         result = evaluate_source(client, source, (candidate,), model)
-        from .policy import decisions_for_source
-
-        decision = decisions_for_source(source, result.evaluations, thresholds)[0]
-        message = check_decision(case, decision)
-        if message:
-            failures.append(EvaluationFailure(case.identifier, message))
-    return tuple(failures)
+        models.add(result.model)
+        input_tokens += result.input_tokens
+        output_tokens += result.output_tokens
+        evaluation = result.evaluations[0]
+        decision = decisions_for_source(source, (evaluation,), thresholds)[0]
+        message = check_evaluation(case, evaluation, decision.queue, thresholds)
+        observations.append(
+            EvaluationObservation(
+                case=case,
+                passed=message is None,
+                message=message,
+                queue=decision.queue,
+                selected_anchor=(
+                    evaluation.anchor.text if evaluation.anchor is not None else None
+                ),
+                anchor_choice=evaluation.anchor_choice,
+                reason_probability=evaluation.reason_probability,
+                destination_probability=evaluation.destination_probability,
+                anchor_probability=evaluation.anchor_probability,
+                anchor_quality_probability=evaluation.anchor_quality_probability,
+            )
+        )
+    if len(models) > 1:
+        raise RuntimeError(f"TypeSafe returned multiple models: {sorted(models)}")
+    return EvaluationRun(
+        model=models.pop() if models else model,
+        dataset=cases_path.name,
+        corpus_hash=evaluation_corpus_hash(cases, by_path),
+        thresholds=thresholds,
+        observations=tuple(observations),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )

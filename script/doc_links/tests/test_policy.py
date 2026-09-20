@@ -100,6 +100,29 @@ class PolicyTest(unittest.TestCase):
             ["automatic", "superseded"],
         )
 
+    def test_transitive_overlap_does_not_supersede_non_overlapping_anchor(self):
+        source_text = "# Source\n\nabcdefghijklmno\n"
+        source = self.page("source.md", source_text)
+        first = self.page("first.md", "# First\n\nDetails.\n")
+        bridge = self.page("bridge.md", "# Bridge\n\nDetails.\n")
+        last = self.page("last.md", "# Last\n\nDetails.\n")
+        base = source_text.index("abcdefghijklmno")
+        decisions = decisions_for_source(
+            source,
+            (
+                self.evaluation(
+                    source, first, base, "abcdefghij", destination_probability=0.95
+                ),
+                self.evaluation(source, bridge, base + 8, "ijkl"),
+                self.evaluation(source, last, base + 11, "lmno"),
+            ),
+            Thresholds(),
+        )
+        queues = {item.target_path: item.queue for item in decisions}
+        self.assertEqual(queues["first.md"], "automatic")
+        self.assertEqual(queues["bridge.md"], "superseded")
+        self.assertEqual(queues["last.md"], "automatic")
+
 
 if __name__ == "__main__":
     unittest.main()

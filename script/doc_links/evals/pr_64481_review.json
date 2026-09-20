@@ -63,7 +63,7 @@
       "source_path": "languages/cpp.md",
       "target_path": "debugger.md",
       "anchor_text": "examples of debug configurations",
-      "context_contains": "See below",
+      "context_contains": "See below for examples of debug configurations",
       "reason": "The phrase refers to examples later on the same page."
     },
     {
@@ -169,7 +169,7 @@
       "source_path": "key-bindings.md",
       "target_path": "command-palette.md",
       "anchor_text": "command palette",
-      "context_contains": "action from the command palette",
+      "context_contains": "zed::OpenKeymap} action from the command palette",
       "reason": "The first non-possessive mention is the natural placement."
     },
     {

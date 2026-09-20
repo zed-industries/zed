@@ -90,6 +90,21 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(anchor.start, source.source.index("Agent Panel"))
         self.assertIn(anchor.block_start, {block.start for block in candidate.blocks})
 
+    def test_anchor_options_do_not_include_trailing_period(self):
+        source = self.page(
+            "source.md",
+            "Source",
+            "# Source\n\nOpen the command palette. Save the file.\n",
+        )
+        target = self.page(
+            "command-palette.md",
+            "Command Palette",
+            "# Command Palette\n\nRun commands.\n",
+        )
+        anchors = anchor_options(target, source.prose_blocks, 6)
+        self.assertTrue(anchors)
+        self.assertFalse(any(anchor.text.endswith(".") for anchor in anchors))
+
 
 if __name__ == "__main__":
     unittest.main()

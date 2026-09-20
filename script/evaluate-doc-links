@@ -3,37 +3,30 @@
 import argparse
 from pathlib import Path
 
-from doc_links.evaluation import evaluate_live, evaluate_report, load_cases
+from doc_links.evaluation import evaluate_live, load_cases
+from doc_links.io import write_json_atomic
 from doc_links.jev import Client, api_key_from_environment
 from doc_links.policy import Thresholds
 
 DEFAULT_CASES = Path("script/doc_links/evals/pr_64481_review.json")
 
 
-def common_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
-    parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
-
-
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Check link audit behavior against reviewed regressions."
+        description="Check Jev behavior against reviewed link decisions."
     )
-    commands = parser.add_subparsers(dest="command", required=True)
-    report = commands.add_parser("report", help="Check coverage in an audit report.")
-    common_arguments(report)
-    report.add_argument(
-        "--report",
-        type=Path,
-        default=Path("target/doc-link-audit/audit.json"),
-    )
-    live = commands.add_parser("live", help="Run every reviewed case through Jev.")
-    common_arguments(live)
-    live.add_argument("--model", default="jev-1.13.0")
-    live.add_argument(
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
+    parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
+    parser.add_argument("--model", default="jev-1.13.0")
+    parser.add_argument(
         "--cache-dir",
         type=Path,
         default=Path("target/doc-link-audit/evaluation-cache"),
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Write per-case probabilities and selections as JSON.",
     )
     return parser.parse_args()
 
@@ -41,25 +34,20 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> int:
     arguments = parse_arguments()
     cases = load_cases(arguments.cases)
-    if arguments.command == "report":
-        failures = evaluate_report(
-            arguments.report,
-            arguments.cases,
-            arguments.docs_dir,
-        )
-    else:
-        client = Client(api_key_from_environment(), arguments.cache_dir)
-        failures = evaluate_live(
-            client,
-            arguments.cases,
-            arguments.docs_dir,
-            arguments.model,
-            Thresholds(),
-        )
-    if failures:
-        for failure in failures:
+    client = Client(api_key_from_environment(), arguments.cache_dir)
+    run = evaluate_live(
+        client,
+        arguments.cases,
+        arguments.docs_dir,
+        arguments.model,
+        Thresholds(),
+    )
+    if arguments.output:
+        write_json_atomic(arguments.output, run.to_dict())
+    if run.failures:
+        for failure in run.failures:
             print(f"FAIL {failure.identifier}: {failure.message}")
-        print(f"{len(failures)} of {len(cases)} reviewed cases failed.")
+        print(f"{len(run.failures)} of {len(cases)} reviewed cases failed.")
         return 1
     print(f"Passed {len(cases)} reviewed regression cases.")
     return 0

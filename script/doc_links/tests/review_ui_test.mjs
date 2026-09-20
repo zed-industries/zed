@@ -71,8 +71,6 @@ const decision = {
 context.window.REVIEW_DATA.pages["source.md"] = { markdown };
 const rendered = vm.runInContext(`sourceContext(${JSON.stringify(decision)})`, context);
 assert.equal(rendered, "<ul><li>Use the <mark>command palette</mark> for <strong>actions</strong>.</li></ul>");
-console.log("review UI tests passed");
-
 const superseded = {
   id: "loser",
   queue: "superseded",
@@ -100,3 +98,7 @@ vm.runInContext(
 const card = elements.get("main").innerHTML;
 assert.match(card, /Superseded by:/);
 assert.match(card, /data-label="pass" disabled/);
+vm.runInContext('setLabel("pass")', context);
+assert.equal(vm.runInContext("labels.loser", context), undefined);
+
+console.log("review UI tests passed");

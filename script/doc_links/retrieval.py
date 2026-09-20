@@ -7,7 +7,9 @@ from .corpus import Page
 from .markdown import Block
 
 TOKEN_PATTERN = re.compile(r"[a-z][a-z0-9+#.-]{1,}")
-WORD_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+#.'’/-]*")
+WORD_PATTERN = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9+#.'’/-]*[A-Za-z0-9+#'’/-])?"
+)
 RETRIEVAL_STOP_WORDS = {
     "about", "after", "again", "also", "and", "are", "because", "before",
     "being", "can", "code", "does", "docs", "documentation", "each", "for",

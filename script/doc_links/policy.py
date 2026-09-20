@@ -98,48 +98,51 @@ def queue_rank(queue: str) -> int:
     }[queue]
 
 
-def overlapping_clusters(decisions: list[Decision]) -> tuple[tuple[int, ...], ...]:
-    candidates = sorted(
-        (
-            (index, decision)
-            for index, decision in enumerate(decisions)
-            if decision.queue != "rejected" and decision.anchor is not None
-        ),
-        key=lambda item: (item[1].anchor.start, item[1].anchor.end),
+def decisions_overlap(left: Decision, right: Decision) -> bool:
+    return (
+        left.anchor is not None
+        and right.anchor is not None
+        and left.anchor.start < right.anchor.end
+        and left.anchor.end > right.anchor.start
     )
-    clusters = []
-    current = []
-    current_end = -1
-    for index, decision in candidates:
-        if current and decision.anchor.start >= current_end:
-            if len(current) > 1:
-                clusters.append(tuple(current))
-            current = []
-            current_end = -1
-        current.append(index)
-        current_end = max(current_end, decision.anchor.end)
-    if len(current) > 1:
-        clusters.append(tuple(current))
-    return tuple(clusters)
+
+
+def competition_rank(decision: Decision) -> tuple:
+    return (
+        queue_rank(decision.queue),
+        -decision.reason_probability,
+        -decision.destination_probability,
+        -(decision.anchor_quality_probability or 0.0),
+        -decision.anchor_probability,
+        decision.target_path,
+    )
 
 
 def supersede_competing(decisions: list[Decision]) -> list[Decision]:
+    ranked = sorted(
+        (
+            index
+            for index, decision in enumerate(decisions)
+            if decision.queue != "rejected" and decision.anchor is not None
+        ),
+        key=lambda index: competition_rank(decisions[index]),
+    )
+    winners = []
     superseded = {}
-    for indexes in overlapping_clusters(decisions):
-        winner = min(
-            indexes,
-            key=lambda index: (
-                queue_rank(decisions[index].queue),
-                -decisions[index].reason_probability,
-                -decisions[index].destination_probability,
-                -decisions[index].anchor_quality_probability,
-                -decisions[index].anchor_probability,
-                decisions[index].target_path,
-            ),
-        )
-        for index in indexes:
-            if index != winner:
-                superseded[index] = decisions[winner].identifier
+    for index in ranked:
+        competing_winners = [
+            winner
+            for winner in winners
+            if decisions_overlap(decisions[index], decisions[winner])
+        ]
+        if competing_winners:
+            winner = min(
+                competing_winners,
+                key=lambda item: competition_rank(decisions[item]),
+            )
+            superseded[index] = decisions[winner].identifier
+        else:
+            winners.append(index)
     return [
         replace(
             decision,

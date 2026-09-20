@@ -60,7 +60,22 @@ class QualityResult:
     output_tokens: int
 
 
-def target_state(candidate: DestinationCandidate) -> dict[str, Any]:
+def anchor_state(source: Page, anchor: AnchorOption) -> dict[str, Any]:
+    block = source.source[anchor.block_start : anchor.block_end]
+    offset = anchor.start - anchor.block_start
+    return {
+        "text": anchor.text,
+        "block": f"block_{anchor.block_start}",
+        "start": anchor.start,
+        "offset_in_block": offset,
+        "before": block[max(0, offset - 80) : offset],
+        "after": block[
+            offset + len(anchor.text) : offset + len(anchor.text) + 80
+        ],
+    }
+
+
+def target_state(source: Page, candidate: DestinationCandidate) -> dict[str, Any]:
     return {
         "path": str(candidate.target.path),
         "title": candidate.target.title,
@@ -68,11 +83,7 @@ def target_state(candidate: DestinationCandidate) -> dict[str, Any]:
         "overview": candidate.target.overview,
         "outbound_links": sorted(str(path) for path in candidate.target.existing_links),
         "anchor_candidates": {
-            anchor.identifier: {
-                "text": anchor.text,
-                "block": f"block_{anchor.block_start}",
-                "start": anchor.start,
-            }
+            anchor.identifier: anchor_state(source, anchor)
             for anchor in candidate.anchors
         },
     }
@@ -94,7 +105,7 @@ def build_request(
     for index, candidate in enumerate(candidates):
         identifier = f"target_{index:03d}"
         target_map[identifier] = candidate
-        targets[identifier] = target_state(candidate)
+        targets[identifier] = target_state(source, candidate)
         questions[f"reason_{identifier}"] = {
             "type": "noul",
             "instructions": {
@@ -307,7 +318,8 @@ def build_quality_request(
         proposals[identifier] = {
             "anchor": anchor.text,
             "source_block": block,
-            "target": target_state(evaluation.target),
+            "target": target_state(source, evaluation.target),
+            "anchor_context": anchor_state(source, anchor),
         }
         questions[f"quality_{identifier}"] = {
             "type": "noul",
