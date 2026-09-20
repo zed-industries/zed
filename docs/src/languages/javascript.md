@@ -237,7 +237,7 @@ The following can be debugged without writing additional configuration:
 - Tasks from `package.json`
 - Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine, Bun, Node)
 
-Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
+Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined [debug tasks](../debugger.md).
 
 > **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
 

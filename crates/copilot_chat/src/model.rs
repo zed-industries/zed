@@ -1091,6 +1091,7 @@ fn into_copilot_responses(
         .and_then(|_| request.effective_max_output_tokens(model.max_output_tokens()));
     let LanguageModelRequest {
         thread_id: _,
+        prompt_cache_key: _,
         prompt_id: _,
         intent: _,
         messages,
