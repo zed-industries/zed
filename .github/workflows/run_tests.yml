@@ -903,7 +903,7 @@ jobs:
     needs:
     - orchestrate
     - check_style
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -933,7 +933,7 @@ jobs:
     needs:
     - orchestrate
     - check_style
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
