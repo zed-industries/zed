@@ -17,7 +17,7 @@ use crate::{
     SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
-    cursor_animation::{CursorViewport, LogicalCursorPosition},
+    cursor_animation::{CursorViewport, LogicalCursorPosition, animated_corners_overlap_target},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
         HighlightKey, HighlightedChunk, ToDisplayPoint,
@@ -11103,10 +11103,7 @@ impl CursorLayout {
                 }
                 window.paint_path(path, self.color);
 
-                if !corners
-                    .iter()
-                    .any(|p| bounds.dilate(bounds.size.height).contains(p))
-                {
+                if !animated_corners_overlap_target(bounds, &corners) {
                     return;
                 }
             }
