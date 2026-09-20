@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import hashlib
@@ -16,30 +16,11 @@ from .retrieval import AnchorOption, DestinationCandidate
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
 T = TypeVar("T")
+R = TypeVar("R")
 
 
 class MaxTokensError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True)
-class PreliminaryEvaluation:
-    target: DestinationCandidate
-    reason_probability: float
-    destination_probability: float
-    anchor_choice: str
-    anchor_probability: float
-
-    @property
-    def anchor(self) -> AnchorOption | None:
-        return next(
-            (
-                option
-                for option in self.target.anchors
-                if option.identifier == self.anchor_choice
-            ),
-            None,
-        )
 
 
 @dataclass(frozen=True)
@@ -49,7 +30,7 @@ class Evaluation:
     destination_probability: float
     anchor_choice: str
     anchor_probability: float
-    anchor_quality_probability: float
+    anchor_quality_probability: float | None = None
 
     @property
     def anchor(self) -> AnchorOption | None:
@@ -72,17 +53,9 @@ class EvaluationResult:
 
 
 @dataclass(frozen=True)
-class PreliminaryResult:
-    model: str
-    evaluations: tuple[PreliminaryEvaluation, ...]
-    input_tokens: int
-    output_tokens: int
-
-
-@dataclass(frozen=True)
 class QualityResult:
-    model: str
-    probabilities: dict[PreliminaryEvaluation, float]
+    model: str | None
+    probabilities: tuple[float | None, ...]
     input_tokens: int
     output_tokens: int
 
@@ -263,7 +236,7 @@ def noul_answer(answers: dict[str, Any], key: str) -> float:
 def validate_response(
     raw: Any,
     target_map: dict[str, DestinationCandidate],
-) -> PreliminaryResult:
+) -> EvaluationResult:
     model, answers, input_tokens, output_tokens = response_parts(raw)
     expected = {
         f"{kind}_{identifier}"
@@ -298,7 +271,7 @@ def validate_response(
         if not 0.98 <= sum(parsed_probabilities.values()) <= 1.02:
             raise ValueError(f"anchor_{identifier} probabilities do not sum to 1")
         evaluations.append(
-            PreliminaryEvaluation(
+            Evaluation(
                 target=candidate,
                 reason_probability=noul_answer(answers, f"reason_{identifier}"),
                 destination_probability=noul_answer(
@@ -308,7 +281,7 @@ def validate_response(
                 anchor_probability=parsed_probabilities[choice],
             )
         )
-    return PreliminaryResult(
+    return EvaluationResult(
         model=model,
         evaluations=tuple(evaluations),
         input_tokens=input_tokens,
@@ -318,18 +291,18 @@ def validate_response(
 
 def build_quality_request(
     source: Page,
-    evaluations: tuple[PreliminaryEvaluation, ...],
+    evaluations: tuple[Evaluation, ...],
     model: str,
-) -> tuple[dict[str, Any], dict[str, PreliminaryEvaluation]]:
+) -> tuple[dict[str, Any], dict[str, int]]:
     proposals = {}
     questions = {}
     proposal_map = {}
-    for index, evaluation in enumerate(item for item in evaluations if item.anchor):
-        identifier = f"proposal_{index:03d}"
+    for index, evaluation in enumerate(evaluations):
         anchor = evaluation.anchor
         if anchor is None:
             continue
-        proposal_map[identifier] = evaluation
+        identifier = f"proposal_{index:03d}"
+        proposal_map[identifier] = index
         block = source.source[anchor.block_start : anchor.block_end]
         proposals[identifier] = {
             "anchor": anchor.text,
@@ -365,7 +338,8 @@ def build_quality_request(
 
 def validate_quality_response(
     raw: Any,
-    proposal_map: dict[str, PreliminaryEvaluation],
+    proposal_map: dict[str, int],
+    evaluation_count: int,
 ) -> QualityResult:
     model, answers, input_tokens, output_tokens = response_parts(raw)
     expected = {f"quality_{identifier}" for identifier in proposal_map}
@@ -375,12 +349,12 @@ def validate_quality_response(
             f"missing={sorted(expected - set(answers))}, "
             f"unexpected={sorted(set(answers) - expected)}"
         )
+    probabilities: list[float | None] = [None] * evaluation_count
+    for identifier, index in proposal_map.items():
+        probabilities[index] = noul_answer(answers, f"quality_{identifier}")
     return QualityResult(
         model=model,
-        probabilities={
-            evaluation: noul_answer(answers, f"quality_{identifier}")
-            for identifier, evaluation in proposal_map.items()
-        },
+        probabilities=tuple(probabilities),
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )
@@ -456,35 +430,51 @@ class Client:
         raise RuntimeError("TypeSafe request failed without an error")
 
 
+def split_on_max_tokens(
+    items: tuple[T, ...],
+    evaluate: Callable[[tuple[T, ...]], R],
+    merge: Callable[[R, R], R],
+) -> R:
+    try:
+        return evaluate(items)
+    except MaxTokensError:
+        if len(items) == 1:
+            raise
+        midpoint = len(items) // 2
+        return merge(
+            split_on_max_tokens(items[:midpoint], evaluate, merge),
+            split_on_max_tokens(items[midpoint:], evaluate, merge),
+        )
+
+
+def merge_quality(left: QualityResult, right: QualityResult) -> QualityResult:
+    models = {model for model in (left.model, right.model) if model is not None}
+    if len(models) > 1:
+        raise RuntimeError("TypeSafe returned different models for quality checks")
+    return QualityResult(
+        model=models.pop() if models else None,
+        probabilities=left.probabilities + right.probabilities,
+        input_tokens=left.input_tokens + right.input_tokens,
+        output_tokens=left.output_tokens + right.output_tokens,
+    )
+
+
 def evaluate_quality(
     client: Client,
     source: Page,
-    evaluations: tuple[PreliminaryEvaluation, ...],
+    evaluations: tuple[Evaluation, ...],
     model: str,
 ) -> QualityResult:
-    exact = tuple(item for item in evaluations if item.anchor)
-    if not exact:
-        return QualityResult(model, {}, 0, 0)
-    payload, proposal_map = build_quality_request(source, exact, model)
-    try:
+    def evaluate(items: tuple[Evaluation, ...]) -> QualityResult:
+        if not any(item.anchor for item in items):
+            return QualityResult(None, (None,) * len(items), 0, 0)
+        payload, proposal_map = build_quality_request(source, items, model)
         return client.evaluate(
             payload,
-            lambda raw: validate_quality_response(raw, proposal_map),
+            lambda raw: validate_quality_response(raw, proposal_map, len(items)),
         )
-    except MaxTokensError:
-        if len(exact) == 1:
-            raise
-        midpoint = len(exact) // 2
-        left = evaluate_quality(client, source, exact[:midpoint], model)
-        right = evaluate_quality(client, source, exact[midpoint:], model)
-        if left.model != right.model:
-            raise RuntimeError("TypeSafe returned different models for quality checks")
-        return QualityResult(
-            model=left.model,
-            probabilities=left.probabilities | right.probabilities,
-            input_tokens=left.input_tokens + right.input_tokens,
-            output_tokens=left.output_tokens + right.output_tokens,
-        )
+
+    return split_on_max_tokens(evaluations, evaluate, merge_quality)
 
 
 def evaluate_batch(
@@ -499,23 +489,30 @@ def evaluate_batch(
         lambda raw: validate_response(raw, target_map),
     )
     quality = evaluate_quality(client, source, preliminary.evaluations, model)
-    if preliminary.model != quality.model:
+    if quality.model is not None and preliminary.model != quality.model:
         raise RuntimeError("TypeSafe returned different models for one source page")
     return EvaluationResult(
         model=preliminary.model,
         evaluations=tuple(
-            Evaluation(
-                target=item.target,
-                reason_probability=item.reason_probability,
-                destination_probability=item.destination_probability,
-                anchor_choice=item.anchor_choice,
-                anchor_probability=item.anchor_probability,
-                anchor_quality_probability=quality.probabilities.get(item, 0.0),
-            )
-            for item in preliminary.evaluations
+            replace(item, anchor_quality_probability=quality.probabilities[index])
+            for index, item in enumerate(preliminary.evaluations)
         ),
         input_tokens=preliminary.input_tokens + quality.input_tokens,
         output_tokens=preliminary.output_tokens + quality.output_tokens,
+    )
+
+
+def merge_evaluations(
+    left: EvaluationResult,
+    right: EvaluationResult,
+) -> EvaluationResult:
+    if left.model != right.model:
+        raise RuntimeError("TypeSafe returned different models for one source page")
+    return EvaluationResult(
+        model=left.model,
+        evaluations=left.evaluations + right.evaluations,
+        input_tokens=left.input_tokens + right.input_tokens,
+        output_tokens=left.output_tokens + right.output_tokens,
     )
 
 
@@ -525,22 +522,11 @@ def evaluate_source(
     candidates: tuple[DestinationCandidate, ...],
     model: str,
 ) -> EvaluationResult:
-    try:
-        return evaluate_batch(client, source, candidates, model)
-    except MaxTokensError:
-        if len(candidates) == 1:
-            raise
-        midpoint = len(candidates) // 2
-        left = evaluate_source(client, source, candidates[:midpoint], model)
-        right = evaluate_source(client, source, candidates[midpoint:], model)
-        if left.model != right.model:
-            raise RuntimeError("TypeSafe returned different models for one source page")
-        return EvaluationResult(
-            model=left.model,
-            evaluations=left.evaluations + right.evaluations,
-            input_tokens=left.input_tokens + right.input_tokens,
-            output_tokens=left.output_tokens + right.output_tokens,
-        )
+    return split_on_max_tokens(
+        candidates,
+        lambda items: evaluate_batch(client, source, items, model),
+        merge_evaluations,
+    )
 
 
 def api_key_from_environment() -> str:

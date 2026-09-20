@@ -3,35 +3,63 @@
 import argparse
 from pathlib import Path
 
-from doc_links.evaluation import evaluate_report, load_cases
+from doc_links.evaluation import evaluate_live, evaluate_report, load_cases
+from doc_links.jev import Client, api_key_from_environment
+from doc_links.policy import Thresholds
+
+DEFAULT_CASES = Path("script/doc_links/evals/pr_64481_review.json")
+
+
+def common_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
+    parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Check an audit report against reviewed link regressions."
+        description="Check link audit behavior against reviewed regressions."
     )
-    parser.add_argument(
+    commands = parser.add_subparsers(dest="command", required=True)
+    report = commands.add_parser("report", help="Check coverage in an audit report.")
+    common_arguments(report)
+    report.add_argument(
         "--report",
         type=Path,
         default=Path("target/doc-link-audit/audit.json"),
     )
-    parser.add_argument(
-        "--cases",
+    live = commands.add_parser("live", help="Run every reviewed case through Jev.")
+    common_arguments(live)
+    live.add_argument("--model", default="jev-1.13.0")
+    live.add_argument(
+        "--cache-dir",
         type=Path,
-        default=Path("script/doc_links/evals/pr_64481_review.json"),
+        default=Path("target/doc-link-audit/evaluation-cache"),
     )
-    parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
     return parser.parse_args()
 
 
 def main() -> int:
     arguments = parse_arguments()
     cases = load_cases(arguments.cases)
-    failures = evaluate_report(arguments.report, arguments.cases, arguments.docs_dir)
+    if arguments.command == "report":
+        failures = evaluate_report(
+            arguments.report,
+            arguments.cases,
+            arguments.docs_dir,
+        )
+    else:
+        client = Client(api_key_from_environment(), arguments.cache_dir)
+        failures = evaluate_live(
+            client,
+            arguments.cases,
+            arguments.docs_dir,
+            arguments.model,
+            Thresholds(),
+        )
     if failures:
         for failure in failures:
             print(f"FAIL {failure.identifier}: {failure.message}")
-        print(f"{len(failures)} of {len(cases)} reviewed regressions returned.")
+        print(f"{len(failures)} of {len(cases)} reviewed cases failed.")
         return 1
     print(f"Passed {len(cases)} reviewed regression cases.")
     return 0

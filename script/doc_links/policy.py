@@ -1,4 +1,3 @@
-from collections import defaultdict
 from dataclasses import dataclass, replace
 import hashlib
 
@@ -10,10 +9,10 @@ from .schema import Anchor, Decision
 @dataclass(frozen=True)
 class Thresholds:
     automatic_reason: float = 0.80
-    direct_destination: float = 0.70
+    direct_destination: float = 0.75
     exact_anchor: float = 0.60
-    anchor_quality: float = 0.80
-    near_reason: float = 0.75
+    anchor_quality: float = 0.75
+    near_reason: float = 0.70
 
     def to_dict(self) -> dict[str, float]:
         return {
@@ -38,13 +37,9 @@ def queue_for(evaluation: Evaluation, thresholds: Thresholds) -> str:
         and exact_anchor
     ):
         return "automatic"
-    if evaluation.reason_probability >= thresholds.automatic_reason and direct:
+    if evaluation.reason_probability >= thresholds.automatic_reason:
         return "strong_review"
-    if (
-        evaluation.reason_probability >= thresholds.near_reason
-        and direct
-        and exact_anchor
-    ):
+    if evaluation.reason_probability >= thresholds.near_reason and exact_anchor:
         return "near_review"
     return "rejected"
 
@@ -93,56 +88,66 @@ def decision_for(
     )
 
 
-def decision_score(decision: Decision) -> float:
-    return min(
-        decision.reason_probability,
-        decision.destination_probability,
-        decision.anchor_probability,
-        decision.anchor_quality_probability,
-    )
-
-
 def queue_rank(queue: str) -> int:
     return {
         "automatic": 0,
         "strong_review": 1,
         "near_review": 2,
-        "rejected": 3,
+        "superseded": 3,
+        "rejected": 4,
     }[queue]
 
 
-def reject_competing(
-    decisions: list[Decision],
-    key,
-    prefer_first: bool = False,
-) -> list[Decision]:
-    groups = defaultdict(list)
-    for index, decision in enumerate(decisions):
-        if decision.queue != "rejected" and decision.anchor is not None:
-            groups[key(decision)].append(index)
-    rejected = set()
-    for indexes in groups.values():
-        if len(indexes) < 2:
-            continue
-        def rank(index: int):
-            decision = decisions[index]
-            if prefer_first:
-                return (
-                    queue_rank(decision.queue),
-                    decision.anchor.start,
-                    -decision_score(decision),
-                )
-            return (
-                queue_rank(decision.queue),
-                -decision_score(decision),
-                decision.anchor.start,
-                decision.target_path,
-            )
+def overlapping_clusters(decisions: list[Decision]) -> tuple[tuple[int, ...], ...]:
+    candidates = sorted(
+        (
+            (index, decision)
+            for index, decision in enumerate(decisions)
+            if decision.queue != "rejected" and decision.anchor is not None
+        ),
+        key=lambda item: (item[1].anchor.start, item[1].anchor.end),
+    )
+    clusters = []
+    current = []
+    current_end = -1
+    for index, decision in candidates:
+        if current and decision.anchor.start >= current_end:
+            if len(current) > 1:
+                clusters.append(tuple(current))
+            current = []
+            current_end = -1
+        current.append(index)
+        current_end = max(current_end, decision.anchor.end)
+    if len(current) > 1:
+        clusters.append(tuple(current))
+    return tuple(clusters)
 
-        winner = min(indexes, key=rank)
-        rejected.update(index for index in indexes if index != winner)
+
+def supersede_competing(decisions: list[Decision]) -> list[Decision]:
+    superseded = {}
+    for indexes in overlapping_clusters(decisions):
+        winner = min(
+            indexes,
+            key=lambda index: (
+                queue_rank(decisions[index].queue),
+                -decisions[index].reason_probability,
+                -decisions[index].destination_probability,
+                -decisions[index].anchor_quality_probability,
+                -decisions[index].anchor_probability,
+                decisions[index].target_path,
+            ),
+        )
+        for index in indexes:
+            if index != winner:
+                superseded[index] = decisions[winner].identifier
     return [
-        replace(decision, queue="rejected") if index in rejected else decision
+        replace(
+            decision,
+            queue="superseded",
+            superseded_by=superseded[index],
+        )
+        if index in superseded
+        else decision
         for index, decision in enumerate(decisions)
     ]
 
@@ -153,13 +158,4 @@ def decisions_for_source(
     thresholds: Thresholds,
 ) -> tuple[Decision, ...]:
     decisions = [decision_for(source, item, thresholds) for item in evaluations]
-    decisions = reject_competing(
-        decisions,
-        lambda item: (item.anchor.start, item.anchor.end),
-    )
-    decisions = reject_competing(
-        decisions,
-        lambda item: item.target_path,
-        prefer_first=True,
-    )
-    return tuple(decisions)
+    return tuple(supersede_competing(decisions))

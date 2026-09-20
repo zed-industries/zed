@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "model": "jev-1.13.0",
+  "source_commit": "916fc2b8cb3a815cbef4a3b40e13081be72036b6",
+  "dataset": "pr_64481_review.json",
+  "thresholds": {
+    "automatic_reason": 0.8,
+    "direct_destination": 0.75,
+    "exact_anchor": 0.6,
+    "anchor_quality": 0.75,
+    "near_reason": 0.7
+  },
+  "results": {
+    "link": {
+      "passed": 10,
+      "total": 10
+    },
+    "no_link": {
+      "passed": 10,
+      "total": 10
+    },
+    "out_of_scope": {
+      "passed": 4,
+      "total": 4
+    }
+  }
+}

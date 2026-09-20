@@ -84,6 +84,7 @@ def markdown_report(report: Report) -> str:
         f"- Automatic: {counts['automatic']}",
         f"- Strong review: {counts['strong_review']}",
         f"- Near review: {counts['near_review']}",
+        f"- Superseded: {counts['superseded']}",
         f"- Rejected: {counts['rejected']}",
         f"- Input tokens: {report.usage['input_tokens']:,}",
         f"- Output tokens: {report.usage['output_tokens']:,}",
@@ -93,6 +94,7 @@ def markdown_report(report: Report) -> str:
         ("automatic", "Automatic candidates"),
         ("strong_review", "Strong reason, uncertain anchor"),
         ("near_review", "Near-threshold reason"),
+        ("superseded", "Competing destinations"),
     ):
         lines.extend((f"## {heading}", ""))
         matching = [item for item in report.decisions if item.queue == queue]
@@ -107,7 +109,12 @@ def markdown_report(report: Report) -> str:
                     f"  - Reason: {decision.reason_probability:.3f}",
                     f"  - Destination: {decision.destination_probability:.3f}",
                     f"  - Anchor: `{anchor}` ({decision.anchor_probability:.3f})",
-                    f"  - Anchor quality: {decision.anchor_quality_probability:.3f}",
+                    "  - Anchor quality: "
+                    + (
+                        f"{decision.anchor_quality_probability:.3f}"
+                        if decision.anchor_quality_probability is not None
+                        else "n/a"
+                    ),
                 )
             )
         lines.append("")
@@ -196,7 +203,8 @@ def main() -> int:
         "automatic": 0,
         "strong_review": 1,
         "near_review": 2,
-        "rejected": 3,
+        "superseded": 3,
+        "rejected": 4,
     }
     decisions = tuple(
         sorted(
@@ -205,7 +213,7 @@ def main() -> int:
                 queue_order[item.queue],
                 -item.reason_probability,
                 -item.destination_probability,
-                -item.anchor_quality_probability,
+                -(item.anchor_quality_probability or 0.0),
                 -item.anchor_probability,
                 item.source_path,
                 item.target_path,
@@ -233,7 +241,8 @@ def main() -> int:
     counts = Counter(item.queue for item in decisions)
     print(
         f"Automatic {counts['automatic']}; strong review {counts['strong_review']}; "
-        f"near review {counts['near_review']}; rejected {counts['rejected']}."
+        f"near review {counts['near_review']}; superseded {counts['superseded']}; "
+        f"rejected {counts['rejected']}."
     )
     return 0
 

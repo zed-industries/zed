@@ -151,6 +151,17 @@ class ApplyTest(unittest.TestCase):
         self.assertIn("[command palette](./target.md)", result)
         self.assertIn("[Agent Panel](./agent.md)", result)
 
+    def test_superseded_decision_cannot_be_applied(self):
+        source = "# Source\n\nUse the command palette.\n"
+        (self.docs / "source.md").write_text(source, encoding="utf-8")
+        decision = replace(
+            self.decision(source, "command palette"),
+            queue="superseded",
+            superseded_by="winner",
+        )
+        with self.assertRaisesRegex(ValueError, "non-actionable"):
+            build_plan(self.write_export([decision]), self.docs)
+
     def test_overlapping_anchors_are_rejected(self):
         source = "# Source\n\nUse the command palette.\n"
         (self.docs / "source.md").write_text(source, encoding="utf-8")

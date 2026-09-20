@@ -73,40 +73,32 @@ class PolicyTest(unittest.TestCase):
         )
         queues = {item.target_path: item.queue for item in decisions}
         self.assertEqual(queues["command-palette.md"], "automatic")
-        self.assertEqual(queues["navigation.md"], "rejected")
-
-    def test_same_target_uses_first_qualified_occurrence(self):
-        source_text = (
-            "# Source\n\nThe command palette runs actions.\n\n"
-            "Open the command palette again.\n"
+        self.assertEqual(queues["navigation.md"], "superseded")
+        loser = next(item for item in decisions if item.target_path == "navigation.md")
+        winner = next(
+            item for item in decisions if item.target_path == "command-palette.md"
         )
+        self.assertEqual(loser.superseded_by, winner.identifier)
+
+    def test_overlapping_phrases_compete(self):
+        source_text = "# Source\n\nUse the command palette.\n"
         source = self.page("source.md", source_text)
-        first = source_text.index("command palette")
-        second = source_text.rindex("command palette")
-        target = self.page("command-palette.md", "# Target\n\nDetails.\n")
+        broad = source_text.index("the command palette")
+        narrow = source_text.index("command palette")
+        direct = self.page("command-palette.md", "# Direct\n\nDetails.\n")
+        other = self.page("navigation.md", "# Navigation\n\nDetails.\n")
         decisions = decisions_for_source(
             source,
             (
-                self.evaluation(
-                    source,
-                    target,
-                    first,
-                    "command palette",
-                    anchor_quality_probability=0.81,
-                ),
-                self.evaluation(
-                    source,
-                    target,
-                    second,
-                    "command palette",
-                    anchor_quality_probability=0.99,
-                ),
+                self.evaluation(source, direct, narrow, "command palette"),
+                self.evaluation(source, other, broad, "the command palette"),
             ),
             Thresholds(),
         )
-        automatic = [item for item in decisions if item.queue == "automatic"]
-        self.assertEqual(len(automatic), 1)
-        self.assertEqual(automatic[0].anchor.start, first)
+        self.assertEqual(
+            sorted(item.queue for item in decisions),
+            ["automatic", "superseded"],
+        )
 
 
 if __name__ == "__main__":

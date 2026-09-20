@@ -443,7 +443,7 @@ fn check_style() -> NamedJob {
             "PYTHONPATH=script python3 -m unittest discover -s script/doc_links/tests -p 'test_*.py'\n\
              python3 -m py_compile script/audit-doc-links script/review-doc-links script/evaluate-doc-links script/doc_links/*.py\n\
              node script/doc_links/tests/review_ui_test.mjs\n\
-             pnpm dlx prettier@3.5.0 script/doc_links/ui script/doc_links/evals --check",
+             pnpm dlx prettier@3.5.0 script/doc_links/ui script/doc_links/evals script/doc_links/tests/review_ui_test.mjs --check",
         )
     }
 

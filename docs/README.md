@@ -67,15 +67,28 @@ the same phrase, only the strongest result remains actionable. When the same
 phrase points to one destination more than once, the first qualified occurrence
 wins.
 
-Check the report against reviewed regressions before opening the review page:
+Run reviewed regressions through Jev before opening the review page:
 
 ```sh
-script/evaluate-doc-links
+script/evaluate-doc-links live
 ```
 
-The default cases come from review feedback on PR #64481. Add new false
-positives to `script/doc_links/evals/pr_64481_review.json` or pass another case
-file with `--cases`.
+Each case forces the reviewed source, destination, and anchor through the model,
+so missing retrieval candidates cannot pass silently. To verify that a complete
+audit report exercised the same cases, run:
+
+```sh
+script/evaluate-doc-links report
+```
+
+The default cases come from review feedback on PR #64481 and include expected
+links, expected rejections, and explicitly out-of-scope table links. Add new
+review outcomes to `script/doc_links/evals/pr_64481_review.json` or pass another
+case file with `--cases`.
+The default thresholds and their latest labeled results are recorded in
+`script/doc_links/evals/jev-1.13.0-calibration.json`. Re-run the live evaluation
+and update that file when changing the model, prompts, candidate shape, or
+thresholds.
 
 Generate a self-contained review page:
 
@@ -84,8 +97,9 @@ script/review-doc-links html --open
 ```
 
 Reviewers mark each item Pass, Fail, or Defer, then use **Export labels** to
-download `doc-link-review.json`. Browser labels are isolated by the audit report
-hash, so labels from an older audit do not carry into a new review.
+download `doc-link-review.json`. Competing destinations remain visible as
+`superseded` items but cannot be approved. Browser labels are isolated by the
+audit report hash, so labels from an older audit do not carry into a new review.
 
 Validate an exported review before changing files:
 

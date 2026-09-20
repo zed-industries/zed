@@ -1,3 +1,3 @@
 """Internal-link audit tooling for Zed documentation."""
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3

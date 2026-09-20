@@ -8,13 +8,19 @@ from .markdown import Block
 
 TOKEN_PATTERN = re.compile(r"[a-z][a-z0-9+#.-]{1,}")
 WORD_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+#.'’/-]*")
-STOP_WORDS = {
+RETRIEVAL_STOP_WORDS = {
     "about", "after", "again", "also", "and", "are", "because", "before",
     "being", "can", "code", "does", "docs", "documentation", "each", "for",
     "from", "have", "how", "into", "linux", "macos", "more", "not", "only",
     "page", "section", "that", "the", "their", "then", "these", "this",
     "through", "use", "using", "when", "where", "which", "will", "windows",
     "with", "you", "your", "zed",
+}
+BOUNDARY_STOP_WORDS = RETRIEVAL_STOP_WORDS - {
+    "zed",
+    "windows",
+    "linux",
+    "macos",
 }
 
 
@@ -42,7 +48,7 @@ def tokenize(text: str) -> Counter[str]:
     return Counter(
         token
         for token in TOKEN_PATTERN.findall(text.lower())
-        if token not in STOP_WORDS
+        if token not in RETRIEVAL_STOP_WORDS
     )
 
 
@@ -105,8 +111,11 @@ def earliest_occurrence(
     phrase: str,
     blocks: tuple[Block, ...],
 ) -> tuple[int, int, Block] | None:
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])"
+    )
     for block in blocks:
-        for match in re.finditer(re.escape(phrase), block.source):
+        for match in pattern.finditer(block.source):
             start = block.start + match.start()
             end = block.start + match.end()
             if not overlaps_excluded(block, start, end):
@@ -143,6 +152,8 @@ def anchor_options(
                     phrase = block.source[
                         start - block.start : end - block.start
                     ]
+                    if "," in phrase or ";" in phrase:
+                        continue
                     phrase_tokens = set(tokenize(phrase))
                     primary_overlap = phrase_tokens & primary_tokens
                     secondary_overlap = phrase_tokens & secondary_tokens
@@ -153,8 +164,8 @@ def anchor_options(
                     if (
                         not first_token
                         or not last_token
-                        or first_token in STOP_WORDS
-                        or last_token in STOP_WORDS
+                        or first_token in BOUNDARY_STOP_WORDS
+                        or last_token in BOUNDARY_STOP_WORDS
                     ):
                         continue
                     if word_count == 1 and (
@@ -169,14 +180,23 @@ def anchor_options(
                     )
                     if phrase.casefold() == target.title.casefold():
                         score += 8
+                    if (
+                        phrase.casefold().startswith("zed ")
+                        and target.title.casefold() in phrase.casefold()
+                    ):
+                        score += 12
                     candidates.append((score, start, end, phrase, block))
 
     candidates.sort(
         key=lambda item: (-item[0], len(item[3].split()), item[1])
     )
     selected = []
+    seen_phrases = set()
     search_blocks = all_blocks or blocks
     for score, start, end, phrase, block in candidates:
+        phrase_key = phrase.casefold()
+        if phrase_key in seen_phrases:
+            continue
         earliest = earliest_occurrence(phrase, search_blocks)
         if earliest:
             start, end, block = earliest
@@ -188,6 +208,7 @@ def anchor_options(
         )
         if overlaps_selected:
             continue
+        seen_phrases.add(phrase_key)
         selected.append(
             AnchorOption(
                 identifier=f"anchor_{len(selected):03d}",
@@ -243,11 +264,22 @@ class Index:
             )
             if len(anchors) != anchor_count:
                 continue
+            block_by_start = {block.start: block for block in source.prose_blocks}
+            anchor_blocks = {
+                anchor.block_start: block_by_start[anchor.block_start]
+                for anchor in anchors
+            }
+            supplied_blocks = tuple(
+                sorted(
+                    {block.start: block for block in (*blocks, *anchor_blocks.values())}.values(),
+                    key=lambda block: block.start,
+                )
+            )
             result.append(
                 DestinationCandidate(
                     target=target,
                     similarity=similarity,
-                    blocks=blocks,
+                    blocks=supplied_blocks,
                     anchors=anchors,
                 )
             )

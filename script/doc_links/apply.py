@@ -76,6 +76,15 @@ def build_plan(export_path: Path, docs_dir: Path) -> ApplyPlan:
         for decision in decisions
         if labels.get(decision.identifier, {}).get("label") == "pass"
     ]
+    invalid = [
+        decision.identifier
+        for decision in approved
+        if decision.queue not in {"automatic", "strong_review", "near_review"}
+    ]
+    if invalid:
+        raise ValueError(
+            f"non-actionable decisions were approved: {sorted(invalid)}"
+        )
     by_source = defaultdict(list)
     for decision in approved:
         by_source[decision.source_path].append(decision)

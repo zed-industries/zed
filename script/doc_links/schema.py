@@ -5,7 +5,13 @@ from typing import Any
 
 from . import SCHEMA_VERSION
 
-QUEUES = {"automatic", "strong_review", "near_review", "rejected"}
+QUEUES = {
+    "automatic",
+    "strong_review",
+    "near_review",
+    "superseded",
+    "rejected",
+}
 LABELS = {"pass", "fail", "defer"}
 
 
@@ -98,8 +104,9 @@ class Decision:
     destination_probability: float
     anchor_choice: str
     anchor_probability: float
-    anchor_quality_probability: float
+    anchor_quality_probability: float | None
     anchor: Anchor | None
+    superseded_by: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -114,6 +121,7 @@ class Decision:
             "anchor_probability": self.anchor_probability,
             "anchor_quality_probability": self.anchor_quality_probability,
             "anchor": self.anchor.to_dict() if self.anchor else None,
+            "superseded_by": self.superseded_by,
         }
 
     @classmethod
@@ -123,6 +131,9 @@ class Decision:
         if queue not in QUEUES:
             raise ValueError(f"unknown decision queue: {queue}")
         anchor_raw = value.get("anchor")
+        superseded_by = value.get("superseded_by")
+        if superseded_by is not None and not isinstance(superseded_by, str):
+            raise ValueError("decision.superseded_by must be a string or null")
         return cls(
             identifier=require_string(value.get("id"), "decision.id"),
             queue=queue,
@@ -154,11 +165,16 @@ class Decision:
                 value.get("anchor_probability"),
                 "decision.anchor_probability",
             ),
-            anchor_quality_probability=require_probability(
-                value.get("anchor_quality_probability"),
-                "decision.anchor_quality_probability",
+            anchor_quality_probability=(
+                None
+                if value.get("anchor_quality_probability") is None
+                else require_probability(
+                    value.get("anchor_quality_probability"),
+                    "decision.anchor_quality_probability",
+                )
             ),
             anchor=Anchor.from_dict(anchor_raw) if anchor_raw is not None else None,
+            superseded_by=superseded_by,
         )
 
 

@@ -234,7 +234,7 @@ class JevTest(unittest.TestCase):
         self.assertEqual(queue_for(self.evaluation(), thresholds), "automatic")
         self.assertEqual(
             queue_for(self.evaluation(destination_probability=0.5), thresholds),
-            "rejected",
+            "strong_review",
         )
         self.assertEqual(
             queue_for(self.evaluation(anchor_quality_probability=0.5), thresholds),
@@ -245,7 +245,7 @@ class JevTest(unittest.TestCase):
             "near_review",
         )
         self.assertEqual(
-            queue_for(self.evaluation(reason_probability=0.7), thresholds),
+            queue_for(self.evaluation(reason_probability=0.69), thresholds),
             "rejected",
         )
 

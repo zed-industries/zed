@@ -72,3 +72,31 @@ context.window.REVIEW_DATA.pages["source.md"] = { markdown };
 const rendered = vm.runInContext(`sourceContext(${JSON.stringify(decision)})`, context);
 assert.equal(rendered, "<ul><li>Use the <mark>command palette</mark> for <strong>actions</strong>.</li></ul>");
 console.log("review UI tests passed");
+
+const superseded = {
+  id: "loser",
+  queue: "superseded",
+  source_path: "source.md",
+  target_path: "target.md",
+  reason_probability: 0.9,
+  destination_probability: 0.8,
+  anchor_choice: "anchor_000",
+  anchor_probability: 0.8,
+  anchor_quality_probability: 0.9,
+  superseded_by: "winner",
+  anchor: {
+    text: "command palette",
+    start,
+    end: start + "command palette".length,
+    block_start: 0,
+    block_end: markdown.length,
+    relative_target: "./target.md",
+  },
+};
+vm.runInContext(
+  `decisions.push(${JSON.stringify(superseded)}); pages["target.md"] = ${JSON.stringify({ markdown: "# Target\n" })}; document.getElementById("status").value = "all"; document.getElementById("search").value = ""; applyFilters()`,
+  context,
+);
+const card = elements.get("main").innerHTML;
+assert.match(card, /Superseded by:/);
+assert.match(card, /data-label="pass" disabled/);

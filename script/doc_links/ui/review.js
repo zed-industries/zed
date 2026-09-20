@@ -139,7 +139,7 @@ function render() {
   const label = currentLabel(decision.id);
   const source = pages[decision.source_path];
   const target = pages[decision.target_path];
-  const canPass = Boolean(decision.anchor);
+  const canPass = Boolean(decision.anchor) && decision.queue !== "superseded";
   const proposal = decision.anchor
     ? `<code>[${escapeHtml(decision.anchor.text)}](${escapeHtml(decision.anchor.relative_target)})</code>`
     : `<strong>${escapeHtml(decision.anchor_choice)}</strong>`;
@@ -156,8 +156,9 @@ function render() {
           <span class="badge">Reason: <strong>${decision.reason_probability.toFixed(2)}</strong></span>
           <span class="badge">Destination: <strong>${decision.destination_probability.toFixed(2)}</strong></span>
           <span class="badge">Anchor: <strong>${decision.anchor_probability.toFixed(2)}</strong></span>
-          <span class="badge">Anchor quality: <strong>${decision.anchor_quality_probability.toFixed(2)}</strong></span>
+          <span class="badge">Anchor quality: <strong>${decision.anchor_quality_probability == null ? "n/a" : decision.anchor_quality_probability.toFixed(2)}</strong></span>
           <span class="badge">Choice: <strong>${escapeHtml(decision.anchor_choice)}</strong></span>
+          ${decision.superseded_by ? `<span class="badge">Superseded by: <strong>${escapeHtml(decision.superseded_by)}</strong></span>` : ""}
         </div>
       </div>
       <div class="content">
