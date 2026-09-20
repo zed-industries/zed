@@ -3,13 +3,13 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer, MultiBuffer,
-    SplittableEditor,
+    DiffStyleControls, Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer,
+    MultiBuffer, SplittableEditor,
 };
 use futures::{FutureExt, select_biased};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
-    IntoElement, Render, Task, WeakEntity, Window,
+    App, AppContext as _, AsyncApp, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    Font, IntoElement, Render, Task, WeakEntity, Window,
 };
 use language::{Buffer, HighlightedText, Point};
 use project::{Project, ProjectPath};
@@ -21,10 +21,11 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Color, Icon, IconName, SharedString};
+use ui::{Color, Icon, IconName, SharedString, prelude::*};
 use util::paths::PathExt as _;
 use workspace::{
-    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
+    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
     item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
@@ -391,6 +392,57 @@ impl Item for FileDiffView {
 impl Render for FileDiffView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.editor.clone()
+    }
+}
+
+pub struct FileDiffStyleToolbar {
+    file_diff: Option<WeakEntity<FileDiffView>>,
+}
+
+impl FileDiffStyleToolbar {
+    pub fn new(_: &mut Context<Self>) -> Self {
+        Self { file_diff: None }
+    }
+
+    fn file_diff(&self) -> Option<Entity<FileDiffView>> {
+        self.file_diff.as_ref()?.upgrade()
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for FileDiffStyleToolbar {}
+
+impl ToolbarItemView for FileDiffStyleToolbar {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.file_diff = active_pane_item
+            .and_then(|item| item.act_as::<FileDiffView>(cx))
+            .map(|entity| entity.downgrade());
+
+        if self.file_diff.is_some() {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+}
+
+impl Render for FileDiffStyleToolbar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(file_diff) = self.file_diff() else {
+            return Empty.into_any_element();
+        };
+
+        let editor = file_diff.read(cx).editor.clone();
+
+        h_flex()
+            .pl_0p5()
+            .gap_1()
+            .child(DiffStyleControls::new(editor))
+            .into_any_element()
     }
 }
 
