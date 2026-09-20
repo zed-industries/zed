@@ -169,6 +169,15 @@ To disable this behavior use:
   // Layout mode of the bottom dock: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
 
+  // Visual treatment of the docks and the editor area: classic, floating.
+  // "classic" fills the window edge to edge, separating regions with hairline
+  // borders; "floating" draws each region as a rounded, elevated card.
+  "ui_layout": "classic",
+  // Space between the cards of the "floating" layout, in pixels.
+  "ui_card_gap": 8.0,
+  // Corner radius of the cards of the "floating" layout, in pixels.
+  "ui_card_radius": 10.0,
+
   // Whether to resize all the panels in a dock when resizing the dock.
   // Can be a combination of "left", "right" and "bottom".
   "resize_all_panels_in_dock": ["left"]
