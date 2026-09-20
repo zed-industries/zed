@@ -221,16 +221,20 @@ mod tests {
 
     use super::*;
 
+    fn parse_keystrokes(keystrokes: &str) -> Vec<KeybindingKeystroke> {
+        keystrokes
+            .split_whitespace()
+            .map(|keystroke| {
+                KeybindingKeystroke::from_keystroke(
+                    Keystroke::parse(keystroke).expect("valid test keystroke"),
+                )
+            })
+            .collect()
+    }
+
     fn binding(keystrokes: &str, action_name: &str) -> PendingBinding {
         PendingBinding {
-            remaining_keystrokes: keystrokes
-                .split_whitespace()
-                .map(|keystroke| {
-                    KeybindingKeystroke::from_keystroke(
-                        Keystroke::parse(keystroke).expect("valid test keystroke"),
-                    )
-                })
-                .collect(),
+            remaining_keystrokes: parse_keystrokes(keystrokes),
             action_name: action_name.into(),
         }
     }
@@ -432,8 +436,11 @@ mod tests {
         );
 
         assert_eq!(
-            bindings.iter().map(unparsed_keystrokes).collect::<Vec<_>>(),
-            vec![vec!["cmd-shift-t"], vec!["z", "a"]],
+            bindings
+                .iter()
+                .map(|row| row.keystrokes.to_vec())
+                .collect::<Vec<_>>(),
+            vec![parse_keystrokes("cmd-shift-t"), parse_keystrokes("z a")],
         );
     }
 
@@ -451,8 +458,10 @@ mod tests {
         );
 
         assert_eq!(
-            rows.iter().map(unparsed_keystrokes).collect::<Vec<_>>(),
-            vec![vec!["z"], vec!["cmd-left"]],
+            rows.iter()
+                .map(|row| row.keystrokes.to_vec())
+                .collect::<Vec<_>>(),
+            vec![parse_keystrokes("z"), parse_keystrokes("cmd-left")],
         );
     }
 
@@ -547,14 +556,14 @@ mod tests {
         assert_eq!(
             rows.iter()
                 .map(|row| (
-                    unparsed_keystrokes(row),
+                    row.keystrokes.to_vec(),
                     row.action_name.as_ref(),
                     row.is_group,
                 ))
                 .collect::<Vec<_>>(),
             vec![
-                (vec!["cmd-t".to_owned()], "theme selector: toggle", false),
-                (vec!["cmd-s".to_owned()], "+2 keybinds", true),
+                (parse_keystrokes("cmd-t"), "theme selector: toggle", false),
+                (parse_keystrokes("cmd-s"), "+2 keybinds", true),
             ],
         );
     }
