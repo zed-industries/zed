@@ -758,11 +758,7 @@ fn run_visual_test(
         comparison.diff_pixel_count
     );
 
-    let match_threshold = if test_name.starts_with("git_panel_graph_") {
-        1.0
-    } else {
-        MATCH_THRESHOLD
-    };
+    let match_threshold = MATCH_THRESHOLD;
     if comparison.match_percentage >= match_threshold {
         Ok(TestResult::Passed)
     } else {

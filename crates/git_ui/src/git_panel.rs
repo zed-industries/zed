@@ -8993,14 +8993,8 @@ impl GitPanel {
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .when(!self.graph_collapsed, |this| {
-                this.map(|this| {
-                    if self.entries.is_empty() && self.graph_height.is_none() {
-                        this.flex_1().min_h(px(100.))
-                    } else {
-                        this.h(self.graph_height.unwrap_or(px(260.)))
-                            .max_h(gpui::relative(0.6))
-                    }
-                })
+                this.h(self.graph_height.unwrap_or(px(260.)))
+                    .max_h(gpui::relative(0.6))
                 .child(
                     gpui::canvas(
                         move |bounds_value, _, _| bounds.set(bounds_value),
@@ -9099,8 +9093,6 @@ impl Render for GitPanel {
         let show_graph = GitPanelSettings::get_global(cx).show_graph
             && self.active_tab == GitPanelTab::Changes
             && !self.commit_editor_expanded;
-        let expand_empty_graph =
-            show_graph && !has_entries && !self.graph_collapsed && self.graph_height.is_none();
         if !show_graph {
             self.graph = None;
         }
@@ -9218,9 +9210,6 @@ impl Render for GitPanel {
                                 .flex_1()
                                 .min_h_0()
                                 .overflow_hidden()
-                                .when(expand_empty_graph, |this| {
-                                    this.flex_grow_0().flex_shrink_0()
-                                })
                                 .children(self.render_changes_header(window, cx))
                                 .when(!self.commit_editor_expanded, |this| {
                                     this.map(|this| {
