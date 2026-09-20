@@ -11,7 +11,6 @@ workspace = true
 [lib]
 path = "src/project.rs"
 doctest = false
-test = false
 
 [[test]]
 name = "integration"
@@ -38,6 +37,7 @@ aho-corasick.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 async-channel.workspace = true
+async-lock.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 buffer_diff.workspace = true

@@ -145,6 +145,28 @@ If you haven’t manually resized the sidebar, its width follows changes to this
 
 Widths saved by older versions of Zed are preserved if they differ from the previous default of 300 pixels. A saved width of 300 pixels uses this setting instead.
 
+### Threads Sidebar Auto Open {#agent-threads-sidebar-auto-open}
+
+- Description: Whether opening a folder in an existing window automatically opens the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
+- Setting: `agent.threads_sidebar_auto_open`
+- Default: `true`
+
+**Options**
+
+`true` or `false`.
+
+This applies when a folder opens in an existing window instead of a new one, which happens when `default_open_behavior` or `cli_default_open_behavior` is set to `existing_window`. With `false`, the folder still opens in that window, but the sidebar stays closed until you open it with {#action multi_workspace::ToggleWorkspaceSidebar}.
+
+Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads_sidebar_auto_open": false
+  }
+}
+```
+
 ## Agent UI Font Size
 
 - Description: The font size for text in the agent panel. Inherits the UI font size if unset.
@@ -187,7 +209,7 @@ Widths saved by older versions of Zed are preserved if they differ from the prev
 }
 ```
 
-> Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> Note: This setting has no effect in [Vim mode](../vim.md), as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
@@ -2014,7 +2036,7 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 - `cursor_position_button`: Whether to show the cursor position button (clicking it opens the go-to-line/column input)
 - `line_endings_button`: Whether to show the active line endings button (clicking it opens the line-ending selector)
 - `active_encoding_button`: When to show the active encoding button: `"enabled"`, `"disabled"`, or `"non_utf8"` (only for encodings other than UTF-8 without BOM)
-- `pending_keystrokes_indicator`: Whether to show an indicator with a countdown while timed multi-stroke input is pending. Hovering the indicator pauses the timeout. Its binding preview popover is disabled when the which-key popup is enabled (see [key bindings](../key-bindings.md#precedence))
+- `pending_keystrokes_indicator`: Whether to show an indicator while multi-stroke input is pending. If the input has a timeout, a countdown is shown and hovering the indicator pauses it. Its binding preview popover is disabled when the which-key popup is enabled (see [key bindings](../key-bindings.md#precedence))
 
 There is an experimental setting that completely hides the status bar. This causes major usability problems (you will be unable to use many of Zed's features), but is provided for those who value screen real-estate above all else.
 
@@ -2310,7 +2332,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Scan Exclusions
 
 - Setting: `file_scan_exclusions`
-- Description: Files or globs of files that will be excluded by Zed entirely. They will be skipped during file scans, file searches, and not be displayed in the project file tree. Overrides `file_scan_inclusions`.
+- Description: Exclude files matching these glob patterns from file scans, file searches, and the project file tree. Takes precedence over `file_scan_inclusions`.
 - Default:
 
 ```json [settings]
@@ -2331,7 +2353,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 }
 ```
 
-Note that specifying `file_scan_exclusions` in `settings.json` will override the defaults (listed above). Use `"..."` to keep them:
+Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
@@ -2339,20 +2361,12 @@ Note that specifying `file_scan_exclusions` in `settings.json` will override the
 }
 ```
 
-The `"..."` entry expands to the list you are overriding, so the example above excludes `node_modules` in addition to every default. Entries you list by name keep their position, and `"..."` fills in the inherited ones at that point in the list. If you want full control over what is excluded, omit `"..."` — only the entries you list by name will be used.
-
-| Configuration                | Result                               |
-| ---------------------------- | ------------------------------------ |
-| `["..."]`                    | The defaults, unchanged              |
-| `["**/node_modules", "..."]` | `**/node_modules`, then the defaults |
-| `["**/node_modules"]`        | `**/node_modules` only               |
-
-> Note: `"..."` resolves one settings layer at a time. In a project’s `.zed/settings.json` it expands to whatever your user settings resolved to, rather than to Zed’s defaults.
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## File Scan Inclusions
 
 - Setting: `file_scan_inclusions`
-- Description: Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes precedence over these inclusions.
+- Description: Include files matching these glob patterns when scanning, even if ignored by Git. Note that broad patterns can slow file scanning. `file_scan_exclusions` takes precedence.
 - Default:
 
 ```json [settings]
@@ -2360,6 +2374,16 @@ The `"..."` entry expands to the list you are overriding, so the example above e
   "file_scan_inclusions": [".env*"]
 }
 ```
+
+Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+
+```json [settings]
+{
+  "file_scan_inclusions": ["**/build/**", "..."]
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## File Scan Depth
 
@@ -2907,6 +2931,31 @@ Example:
 **Options**
 
 `boolean` values
+
+## Hidden Files {#hidden-files}
+
+- Setting: `hidden_files`
+- Description: Treat files and folders matching these glob patterns as hidden, including files inside matching folders. To [hide these entries](../project-panel.md#hiding-files), run `project panel: toggle hide hidden` from the command palette or set `project_panel.hide_hidden` to `true`.
+- Default:
+
+```json [settings]
+{
+  "hidden_files": ["**/.*"]
+}
+```
+
+Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+
+```json [settings]
+{
+  "hidden_files": ["**/*.log", "..."],
+  "project_panel": {
+    "hide_hidden": true
+  }
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## Indent Guides
 
@@ -3849,21 +3898,25 @@ List of `string` glob patterns
 
 ## Read-Only Files {#read-only-files}
 
-- Default: `[]`
-- Description: Glob patterns for files you can open and view but cannot edit, such as generated files or external dependencies.
 - Setting: `read_only_files`
-
-Add this to your project’s `.zed/settings.json`:
+- Description: Treat files matching these glob patterns as read-only when opened. You can view but not edit them, which is useful for build outputs, external dependencies, or generated files.
+- Default:
 
 ```json [settings]
 {
-  "read_only_files": ["**/generated/**", "..."]
+  "read_only_files": []
 }
 ```
 
-Like [File Scan Exclusions](#file-scan-exclusions), `"..."` expands to the list inherited from the preceding settings layer. This example adds generated files to the read-only patterns from your user settings without repeating them. Duplicate entries collapse to their first occurrence.
+Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
-Omit `"..."` to replace the inherited list, or use `[]` to clear it. These patterns apply when you open a file.
+```json [settings]
+{
+  "read_only_files": ["**/build/**", "..."]
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## Read SSH Config
 
@@ -4161,7 +4214,7 @@ Non-negative `integer` values
 
 ## Semantic Tokens
 
-- Description: Controls how semantic tokens from language servers are used for syntax highlighting.
+- Description: Controls how [semantic tokens](../semantic-tokens.md) from language servers are used for syntax highlighting.
 - Setting: `semantic_tokens`
 - Default: `off`
 
@@ -5924,7 +5977,7 @@ Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more 
 {
   "collaboration_panel": {
     "button": true,
-    "dock": "left",
+    "dock": "right",
     "default_width": 240
   }
 }
@@ -5965,17 +6018,24 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 {
   "git_panel": {
     "button": true,
-    "dock": "left",
+    "dock": "right",
     "default_width": 360,
     "status_style": "icon",
+    "file_icons": false,
+    "folder_indicator": "icon",
     "fallback_branch_name": "main",
     "sort_by": "path",
     "group_by": "status",
     "collapse_untracked_diff": false,
+    "tree_view": false,
     "scrollbar": {
       "show": null
     },
-    "starts_open": false
+    "starts_open": false,
+    "show_count_badge": false,
+    "diff_stats": true,
+    "commit_title_max_length": 0,
+    "entry_primary_click_action": "project_diff"
   }
 }
 ```
@@ -5986,12 +6046,19 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `dock`: Where to dock the git panel. Can be `left` or `right`
 - `default_width`: Default width of the git panel
 - `status_style`: How to display git status. Can be `label_color` or `icon`
+- `file_icons`: Whether to show file icons in the git panel
+- `folder_indicator`: What to show for directories in the git panel. Can be `icon`, `chevron`, or `both`
 - `fallback_branch_name`: What branch name to use if `init.defaultBranch` is not set
 - `sort_by`: How to sort entries in the git panel. Can be `path` or `name`
 - `group_by`: How to group entries in the git panel. Can be `none` or `status`
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
+- `tree_view`: Whether to show entries in tree or flat view in the panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+- `show_count_badge`: Whether to show a badge on the git panel icon with the count of uncommitted changes
+- `diff_stats`: Whether to show the addition/deletion change count next to each file in the git panel
+- `commit_title_max_length`: Maximum length of the commit message title before a warning is shown. Set to `0` to disable
+- `entry_primary_click_action`: Default action when clicking a changed file in the git panel. Can be `project_diff`, `file_diff`, or `view_file`
 
 ## Git Worktree Directory
 
@@ -6049,7 +6116,7 @@ You can define these in user or project settings; project settings are merged on
 
 ## Outline Panel
 
-- Description: Customize outline Panel
+- Description: Customize outline panel
 - Setting: `outline_panel`
 - Default:
 
@@ -6058,7 +6125,7 @@ You can define these in user or project settings; project settings are merged on
   "outline_panel": {
     "button": true,
     "default_width": 300,
-    "dock": "left",
+    "dock": "right",
     "file_icons": true,
     "folder_indicator": "icon",
     "git_status": true,
