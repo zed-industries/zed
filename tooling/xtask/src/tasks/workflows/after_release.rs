@@ -4,7 +4,9 @@ use crate::tasks::workflows::{
     deploy_docs::deploy_docs_workflow_call,
     release::{self, notify_on_failure},
     runners,
-    steps::{CommonJobConditions, NamedJob, checkout_repo, dependant_job, named},
+    steps::{
+        CommonJobConditions, CommonPermissionSets, NamedJob, checkout_repo, dependant_job, named,
+    },
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -39,6 +41,7 @@ pub fn after_release() -> Workflow {
     };
 
     named::workflow()
+        .with_minimal_permissions()
         .add_env(("TAG_NAME", TAG_NAME_ENV))
         .add_env(("IS_PRERELEASE", IS_PRERELEASE_ENV))
         .on(Event::default()
@@ -62,8 +65,11 @@ fn rebuild_releases_page() -> NamedJob {
         named::bash("curl -fX POST \"https://cloud.zed.dev/releases/refresh?expect_tag=$TAG_NAME\"")
     }
 
-    fn redeploy_zed_dev() -> Step<Run> {
-        named::bash("./script/redeploy-vercel").add_env(("VERCEL_TOKEN", vars::VERCEL_TOKEN))
+    fn revalidate_zed_dev() -> Step<Run> {
+        named::bash(
+            "curl -fX GET \"https://zed.dev/api/revalidate?tag=releases\" -H \"Authorization: Bearer $ZED_DEV_REVALIDATE_TOKEN\"",
+        )
+        .add_env(("ZED_DEV_REVALIDATE_TOKEN", vars::ZED_DEV_REVALIDATE_TOKEN))
     }
 
     named::job(
@@ -71,8 +77,7 @@ fn rebuild_releases_page() -> NamedJob {
             .runs_on(runners::LINUX_SMALL)
             .with_repository_owner_guard()
             .add_step(refresh_cloud_releases())
-            .add_step(checkout_repo())
-            .add_step(redeploy_zed_dev()),
+            .add_step(revalidate_zed_dev()),
     )
 }
 

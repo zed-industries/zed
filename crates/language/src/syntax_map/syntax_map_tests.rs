@@ -1,9 +1,10 @@
 use super::*;
 use crate::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, buffer_tests::markdown_inline_lang,
-    markdown_lang, rust_lang,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries,
+    buffer_tests::markdown_inline_lang, markdown_lang, rust_lang,
 };
 use gpui::App;
+use indoc::indoc;
 use pretty_assertions::assert_eq;
 use rand::rngs::StdRng;
 use std::borrow::Cow;
@@ -930,6 +931,71 @@ fn test_empty_combined_injections_inside_injections(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_combined_injection_with_leading_content_layer_ordering(cx: &mut App) {
+    // Regression test for "layers out of order".
+    //
+    // A combined injection stores its layer `range` as the parent's full
+    // `outer_range`, but the parse queue orders steps by `ParseStep::range()`,
+    // which for a combined injection is the parsed node span. When the parent
+    // layer has content before its first injected range (here: leading HEEx
+    // markup before the first `<% %>` directive), those two ranges start at
+    // different offsets. A nested combined injection then inherits the wide
+    // `outer_range` (starting at 0) but is ordered by the narrow node span,
+    // landing after a sibling injection and breaking the sorted-by-start
+    // invariant.
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let heex = Arc::new(heex_lang());
+    let elixir = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: LanguageName::new_static("Elixir"),
+                matcher: Arc::new(LanguageMatcher {
+                    path_suffixes: vec![String::from("ex")],
+                    ..Default::default()
+                }),
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter::Language::new(tree_sitter_elixir::LANGUAGE)),
+        )
+        .with_injection_query(
+            r#"
+            ((string (quoted_content) @injection.content)
+             (#set! injection.language "html")
+             (#set! injection.combined))
+            ((string (quoted_content) @injection.content)
+             (#set! injection.language "Markdown")
+             (#set! injection.combined))
+            "#,
+        )
+        .unwrap(),
+    );
+    registry.add(heex.clone());
+    registry.add(elixir);
+    registry.add(Arc::new(html_lang()));
+    registry.add(markdown_lang());
+
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"
+<div>leading markup before any directive</div>
+<a href={"early-attr"}>x</a>
+<%= "mid" %>
+<% y = "code" %>
+<b class={"late-attr"}>z</b>
+<%= "tail" %>
+"#
+        .unindent(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    // In debug builds, `reparse` runs `check_invariants`, which panics with
+    // "layers out of order" if the produced layers are not correctly sorted.
+    syntax_map.reparse(heex, &buffer);
+}
+
+#[gpui::test]
 fn test_comment_triggered_injection_toggle(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
@@ -982,6 +1048,99 @@ fn test_comment_triggered_injection_toggle(cx: &mut App) {
         !syntax_map.contains_unknown_injections(),
         "Expected no unknown injections after removing 'l' from #sql comment"
     );
+}
+
+#[gpui::test]
+fn test_injection_grouped_by_host(cx: &mut App) {
+    // Each SQL layer is described by the buffer text of the fragments it is parsed from,
+    // so that interpolated strings are asserted to produce a single layer covering every
+    // fragment of the string.
+    let cases: &[(&str, &[&[&str]])] = &[
+        (
+            indoc! {r#"
+                # sql
+                cmd = "SELECT col1, col2 FROM tbl"
+            "#},
+            &[&["SELECT col1, col2 FROM tbl"]],
+        ),
+        (
+            indoc! {r#"
+                # sql
+                cmd = f"SELECT col1 FROM tbl WHERE col2 = '{my_var}'"
+            "#},
+            &[&["SELECT col1 FROM tbl WHERE col2 = '", "'"]],
+        ),
+        (
+            indoc! {r#"
+                # sql
+                cmd = f"SELECT {col1}, {col2} FROM {tbl}"
+            "#},
+            &[&["SELECT ", ", ", " FROM "]],
+        ),
+        (
+            indoc! {r#"
+                cursor.execute(
+                    # sql
+                    f"SELECT col1 FROM tbl WHERE col2 = '{my_var}'"
+                )
+            "#},
+            &[&["SELECT col1 FROM tbl WHERE col2 = '", "'"]],
+        ),
+        (
+            indoc! {r#"
+                cursor.execute(
+                    # sql
+                    f"SELECT col1 FROM tbl WHERE col2 = '{my_var}'"
+                )
+
+                cursor.execute(
+                    # sql
+                    f"INSERT INTO tbl VALUES ('{val1}')"
+                )
+            "#},
+            &[
+                &["SELECT col1 FROM tbl WHERE col2 = '", "'"],
+                &["INSERT INTO tbl VALUES ('", "')"],
+            ],
+        ),
+    ];
+
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let python = Arc::new(python_lang());
+    registry.add(python.clone());
+    registry.add(Arc::new(comment_lang()));
+    registry.add(Arc::new(sql_lang()));
+
+    for (buffer_index, (text, expected_layers)) in cases.iter().enumerate() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(buffer_index as u64 + 1).unwrap(),
+            text.to_string(),
+        );
+        let mut syntax_map = SyntaxMap::new(&buffer);
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(python.clone(), &buffer);
+
+        let sql_layers = syntax_map
+            .layers_for_range(0..buffer.len(), &buffer, true)
+            .filter(|layer| layer.language.name() == "SQL")
+            .map(|layer| match layer.included_sub_ranges {
+                Some(sub_ranges) => sub_ranges
+                    .iter()
+                    .map(|range| buffer.text_for_range(range.clone()).collect::<String>())
+                    .collect::<Vec<_>>(),
+                None => {
+                    vec![
+                        buffer
+                            .text_for_range(layer.node().byte_range())
+                            .collect::<String>(),
+                    ]
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(sql_layers, *expected_layers, "buffer text:\n{text}");
+    }
 }
 
 #[gpui::test]
@@ -1124,6 +1283,32 @@ fn test_random_syntax_map_edits_with_erb(rng: StdRng, cx: &mut App) {
 }
 
 #[gpui::test(iterations = 50)]
+fn test_random_syntax_map_edits_with_python_sql(rng: StdRng, cx: &mut App) {
+    let text = r#"
+        # sql
+        query = f"SELECT {col} FROM tbl WHERE name = '{name}' AND id = {id}"
+
+        cursor.execute(
+            # sql
+            f"""
+                INSERT INTO tbl (col1, col2)
+                VALUES ('{one}', '{two}')
+            """
+        )
+    "#
+    .unindent()
+    .repeat(5);
+
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let language = Arc::new(python_lang());
+    registry.add(language.clone());
+    registry.add(Arc::new(comment_lang()));
+    registry.add(Arc::new(sql_lang()));
+
+    test_random_edits(text, registry, language, rng);
+}
+
+#[gpui::test(iterations = 50)]
 fn test_random_syntax_map_edits_with_heex(rng: StdRng, cx: &mut App) {
     let text = r#"
         defmodule TheModule do
@@ -1154,6 +1339,48 @@ fn test_random_syntax_map_edits_with_heex(rng: StdRng, cx: &mut App) {
     registry.add(Arc::new(html_lang()));
 
     test_random_edits(text, registry, language, rng);
+}
+
+#[test]
+fn test_flatten_capture_regions_with_nested_captures() {
+    let outer = capture_ref(1);
+    let inner = capture_ref(2);
+    assert_eq!(
+        flattened(0..12, &[(0..10, outer), (2..5, inner)]),
+        vec![
+            (0..2, vec![outer]),
+            (2..5, vec![outer, inner]),
+            (5..10, vec![outer]),
+        ],
+    );
+}
+
+#[test]
+fn test_flatten_capture_regions_with_overlapping_captures() {
+    let first = capture_ref(1);
+    let second = capture_ref(2);
+    assert_eq!(
+        flattened(0..25, &[(0..10, first), (2..20, second)]),
+        vec![
+            (0..2, vec![first]),
+            (2..10, vec![first, second]),
+            (10..20, vec![second]),
+        ],
+        "a capture must not extend past its own end when overlapping another capture"
+    );
+}
+
+#[test]
+fn test_flatten_capture_regions_clips_to_the_requested_range() {
+    let capture = capture_ref(1);
+    assert_eq!(
+        flattened(5..8, &[(0..10, capture)]),
+        vec![(5..8, vec![capture])],
+    );
+    assert_eq!(
+        flattened(0..6, &[(4..10, capture)]),
+        vec![(4..6, vec![capture])],
+    );
 }
 
 fn test_random_edits(
@@ -1321,8 +1548,8 @@ fn check_interpolation(
             check_node_edits(
                 depth,
                 range,
-                old_node.child(i as u32).unwrap(),
-                new_node.child(i as u32).unwrap(),
+                old_node.child(i).unwrap(),
+                new_node.child(i).unwrap(),
                 old_buffer,
                 new_buffer,
                 edits,
@@ -1397,10 +1624,11 @@ fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_html::LANGUAGE.into()),
@@ -1419,10 +1647,11 @@ fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Ruby".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_ruby::LANGUAGE.into()),
@@ -1441,10 +1670,11 @@ fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "ERB".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_embedded_template::LANGUAGE.into()),
@@ -1477,10 +1707,11 @@ fn elixir_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Elixir".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ex".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_elixir::LANGUAGE.into()),
@@ -1497,10 +1728,11 @@ fn heex_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HEEx".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["heex".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_heex::LANGUAGE.into()),
@@ -1529,10 +1761,11 @@ fn python_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Python".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["py".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             line_comments: vec!["# ".into()],
             ..Default::default()
         },
@@ -1557,6 +1790,35 @@ fn comment_lang() -> Language {
         },
         Some(tree_sitter_json::LANGUAGE.into()),
     )
+}
+
+/// Stands in for the real SQL language, which this crate doesn't depend on. The grammar
+/// is irrelevant here; only the layers Python's injection query produces are asserted on.
+fn sql_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "SQL".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_json::LANGUAGE.into()),
+    )
+}
+
+fn capture_ref(capture_id: u32) -> HighlightCaptureRef {
+    HighlightCaptureRef {
+        grammar_index: 0,
+        capture_id: CaptureId(capture_id),
+    }
+}
+
+fn flattened(
+    range: Range<usize>,
+    captures: &[(Range<usize>, HighlightCaptureRef)],
+) -> Vec<(Range<usize>, Vec<HighlightCaptureRef>)> {
+    flatten_capture_regions(range, captures.iter().cloned())
+        .into_iter()
+        .map(|region| (region.range, region.stack.to_vec()))
+        .collect()
 }
 
 fn range_for_text(buffer: &Buffer, text: &str) -> Range<usize> {

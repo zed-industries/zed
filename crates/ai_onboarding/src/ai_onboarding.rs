@@ -86,8 +86,8 @@ impl ZedAiOnboarding {
         div().absolute().bottom_1().right_1().child(
             Vector::new(
                 VectorName::ProUserStamp,
-                rems_from_px(156.),
-                rems_from_px(60.),
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
             )
             .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.8))),
         )
@@ -97,8 +97,8 @@ impl ZedAiOnboarding {
         div().absolute().bottom_1().right_1().child(
             Vector::new(
                 VectorName::ProTrialStamp,
-                rems_from_px(156.),
-                rems_from_px(60.),
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
             )
             .color(Color::Custom(cx.theme().colors().text.alpha(0.8))),
         )
@@ -108,10 +108,21 @@ impl ZedAiOnboarding {
         div().absolute().bottom_1().right_1().child(
             Vector::new(
                 VectorName::BusinessStamp,
-                rems_from_px(156.),
-                rems_from_px(60.),
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
             )
             .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.8))),
+        )
+    }
+
+    fn vip_stamp(cx: &App) -> impl IntoElement {
+        div().absolute().bottom_1().right_1().child(
+            Vector::new(
+                VectorName::VipStamp,
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
+            )
+            .color(Color::Custom(cx.theme().colors().text.alpha(0.8))),
         )
     }
 
@@ -119,8 +130,8 @@ impl ZedAiOnboarding {
         div().absolute().bottom_1().right_1().child(
             Vector::new(
                 VectorName::StudentStamp,
-                rems_from_px(156.),
-                rems_from_px(60.),
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
             )
             .color(Color::Custom(cx.theme().colors().text.alpha(0.8))),
         )
@@ -156,13 +167,13 @@ impl ZedAiOnboarding {
             .gap_1()
             .child(Headline::new("Welcome to Zed AI"))
             .child(
-                Label::new("Sign in to try Zed Pro free for 14 days.")
+                Label::new("Sign in to try GPT Luna. Your 14 days begin when you start the trial.")
                     .color(Color::Muted)
                     .mb_2(),
             )
             .child(PlanDefinitions.sign_in_upsell())
             .child(
-                Button::new("sign_in", "Try Zed Pro for Free")
+                Button::new("sign_in", "Sign In to Try GPT Luna")
                     .disabled(signing_in)
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -289,7 +300,7 @@ impl ZedAiOnboarding {
             .child(Self::pro_trial_stamp(cx))
             .child(Headline::new("Welcome to the Zed Pro Trial"))
             .child(
-                Label::new("Here's what you get for the next 14 days:")
+                Label::new("Included for 14 days from when your trial started:")
                     .color(Color::Muted)
                     .mb_2(),
             )
@@ -332,6 +343,23 @@ impl ZedAiOnboarding {
             .into_any_element()
     }
 
+    fn render_vip_plan_state(&self, cx: &mut App) -> AnyElement {
+        v_flex()
+            .w_full()
+            .relative()
+            .gap_1()
+            .child(Self::vip_stamp(cx))
+            .child(Headline::new("Welcome to Zed VIP"))
+            .child(
+                Label::new("Here's what you get:")
+                    .color(Color::Muted)
+                    .mb_2(),
+            )
+            .child(PlanDefinitions.vip_plan())
+            .children(self.render_dismiss_button())
+            .into_any_element()
+    }
+
     fn render_student_plan_state(&self, cx: &mut App) -> AnyElement {
         v_flex()
             .w_full()
@@ -359,6 +387,7 @@ impl RenderOnce for ZedAiOnboarding {
                 Some(Plan::ZedProTrial) => self.render_trial_state(cx),
                 Some(Plan::ZedPro) => self.render_pro_plan_state(cx),
                 Some(Plan::ZedBusiness) => self.render_business_plan_state(cx),
+                Some(Plan::ZedVip) => self.render_vip_plan_state(cx),
                 Some(Plan::ZedStudent) => self.render_student_plan_state(cx),
             }
         } else {
@@ -435,6 +464,10 @@ impl Component for ZedAiOnboarding {
                 single_example(
                     "Business Plan",
                     onboarding(SignInStatus::SignedIn, Some(Plan::ZedBusiness), false),
+                ),
+                single_example(
+                    "VIP Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedVip), false),
                 ),
                 single_example(
                     "Student Plan",

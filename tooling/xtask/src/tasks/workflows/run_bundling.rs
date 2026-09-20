@@ -3,8 +3,11 @@ use std::path::Path;
 use crate::tasks::workflows::{
     release::ReleaseBundleJobs,
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{FluentBuilder, IfNoFilesFound, NamedJob, UploadArtifactStep, dependant_job, named},
-    vars::{assets, bundle_envs},
+    steps::{
+        CommonPermissionSets, FluentBuilder, IfNoFilesFound, NamedJob, UploadArtifactStep,
+        dependant_job, named,
+    },
+    vars::{self, assets, bundle_envs},
 };
 
 use super::{runners, steps};
@@ -15,12 +18,15 @@ pub fn run_bundling() -> Workflow {
     let bundle = ReleaseBundleJobs {
         linux_aarch64: bundle_linux(Arch::AARCH64, None, &[]),
         linux_x86_64: bundle_linux(Arch::X86_64, None, &[]),
+        bwrap_linux_aarch64: build_static_bwrap(Arch::AARCH64, &[]),
+        bwrap_linux_x86_64: build_static_bwrap(Arch::X86_64, &[]),
         mac_aarch64: bundle_mac(Arch::AARCH64, None, &[]),
         mac_x86_64: bundle_mac(Arch::X86_64, None, &[]),
         windows_aarch64: bundle_windows(Arch::AARCH64, None, &[]),
         windows_x86_64: bundle_windows(Arch::X86_64, None, &[]),
     };
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default().pull_request(
             PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
         ))
@@ -56,10 +62,26 @@ pub(crate) fn bundle_mac(
     release_channel: Option<ReleaseChannel>,
     deps: &[&NamedJob],
 ) -> NamedJob {
+    pub fn print_macos_toolchain() -> Step<Run> {
+        named::bash(indoc! {r#"
+            sw_vers
+            xcode-select -p
+            xcodebuild -version
+            xcrun --sdk macosx --show-sdk-version
+            xcrun --sdk macosx --show-sdk-path
+            xcrun clang --version
+            printf 'DEVELOPER_DIR=%s\n' "${DEVELOPER_DIR-<unset>}"
+            printf 'SDKROOT=%s\n' "${SDKROOT-<unset>}"
+            printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "${MACOSX_DEPLOYMENT_TARGET-<unset>}"
+        "#})
+    }
+
     pub fn bundle_mac(arch: Arch) -> Step<Run> {
-        named::bash(&format!("./script/bundle-mac {arch}-apple-darwin"))
+        let target = Platform::Mac.target_triple(arch);
+        named::bash(&format!("./script/bundle-mac {target}"))
     }
     let platform = Platform::Mac;
+    let target = platform.target_triple(arch);
     let artifact_name = match arch {
         Arch::X86_64 => assets::MAC_X86_64,
         Arch::AARCH64 => assets::MAC_AARCH64,
@@ -81,9 +103,10 @@ pub(crate) fn bundle_mac(
             .add_step(steps::setup_node())
             .add_step(steps::setup_sentry())
             .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
+            .add_step(print_macos_toolchain())
             .add_step(bundle_mac(arch))
             .add_step(upload_artifact(&format!(
-                "target/{arch}-apple-darwin/release/{artifact_name}"
+                "target/{target}/release/{artifact_name}"
             )))
             .add_step(upload_artifact(&format!(
                 "target/{remote_server_artifact_name}"
@@ -94,6 +117,50 @@ pub(crate) fn bundle_mac(
 pub fn upload_artifact(path: &str) -> UploadArtifactStep {
     let name = Path::new(path).file_name().unwrap().to_str().unwrap();
     steps::upload_artifact(name, path).if_no_files_found(IfNoFilesFound::Error)
+}
+
+pub(crate) fn build_static_bwrap(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
+    let artifact_name = match arch {
+        Arch::X86_64 => assets::BWRAP_LINUX_X86_64,
+        Arch::AARCH64 => assets::BWRAP_LINUX_AARCH64,
+    };
+    let binary_name = artifact_name
+        .strip_suffix(".gz")
+        .expect("static bwrap artifact name should end in .gz");
+    let copy_artifact = indoc::formatdoc! {r#"
+        cp result/bin/bwrap {binary_name}
+        chmod 755 {binary_name}
+        gzip -f --stdout --best {binary_name} > {artifact_name}
+    "#};
+
+    NamedJob {
+        name: format!("build_static_bwrap_linux_{arch}"),
+        job: bundle_job(deps)
+            .runs_on(arch.linux_bundler())
+            .timeout_minutes(60u32)
+            .add_step(steps::cache_nix_dependencies_namespace())
+            .add_step(
+                named::uses(
+                    "cachix",
+                    "install-nix-action",
+                    "02a151ada4993995686f9ed4f1be7cfbb229e56f", // v31
+                )
+                .add_with(("github_access_token", vars::GITHUB_TOKEN)),
+            )
+            .add_step(
+                named::uses(
+                    "cachix",
+                    "cachix-action",
+                    "0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad", // v16
+                )
+                .add_with(("name", "zed"))
+                .add_with(("authToken", vars::CACHIX_AUTH_TOKEN))
+                .add_with(("cachixArgs", "-v")),
+            )
+            .add_step(named::bash("nix build nixpkgs#pkgsStatic.bubblewrap -L"))
+            .add_step(named::bash(&copy_artifact))
+            .add_step(upload_artifact(artifact_name)),
+    }
 }
 
 pub(crate) fn bundle_linux(

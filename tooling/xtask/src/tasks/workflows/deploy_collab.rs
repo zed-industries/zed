@@ -3,7 +3,8 @@ use indoc::indoc;
 
 use crate::tasks::workflows::runners::{self, Platform};
 use crate::tasks::workflows::steps::{
-    self, CommonJobConditions, FluentBuilder as _, NamedJob, dependant_job, named, use_clang,
+    self, CommonJobConditions, CommonPermissionSets, FluentBuilder as _, NamedJob, dependant_job,
+    named, use_clang,
 };
 use crate::tasks::workflows::vars;
 
@@ -14,6 +15,7 @@ pub(crate) fn deploy_collab() -> Workflow {
     let deploy = deploy(&[&publish]);
 
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default().push(Push::default().add_tag("collab-production")))
         .add_env(("DOCKER_BUILDKIT", "1"))
         .add_job(style.name, style.job)

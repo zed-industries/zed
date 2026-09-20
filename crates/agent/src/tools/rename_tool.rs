@@ -1,7 +1,7 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use collections::HashSet;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
@@ -81,6 +81,7 @@ impl AgentTool for RenameTool {
                     resolved.buffer.clone(),
                     resolved.position,
                     input.new_name.clone(),
+                    None,
                     cx,
                 )
             });

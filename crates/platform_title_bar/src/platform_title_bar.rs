@@ -229,18 +229,23 @@ impl Render for PlatformTitleBar {
                             }
                         })
                     })
-                    .when(self.platform_style == PlatformStyle::Linux, |this| {
-                        this.on_click(|event, window, _| {
-                            if event.click_count() == 2 {
-                                window.zoom_window();
-                            }
-                        })
-                    })
+                    .when(
+                        self.platform_style == PlatformStyle::Linux
+                            && supported_controls.maximize
+                            && window.is_resizable(),
+                        |this| {
+                            this.on_click(|event, window, _| {
+                                if event.click_count() == 2 {
+                                    window.zoom_window();
+                                }
+                            })
+                        },
+                    )
             })
             .map(|this| {
                 let show_left_controls = !(sidebar.open && sidebar.side == SidebarSide::Left);
 
-                if window.is_fullscreen() {
+                if window.is_fullscreen() || window.is_simple_fullscreen() {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac && show_left_controls {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
@@ -291,33 +296,36 @@ impl Render for PlatformTitleBar {
                     .w_full()
                     .children(children),
             )
-            .when(!window.is_fullscreen(), |title_bar| {
-                let show_right_controls = !(sidebar.open && sidebar.side == SidebarSide::Right);
+            .when(
+                !window.is_fullscreen() && !window.is_simple_fullscreen(),
+                |title_bar| {
+                    let show_right_controls = !(sidebar.open && sidebar.side == SidebarSide::Right);
 
-                let title_bar = title_bar.children(
-                    show_right_controls
-                        .then(|| {
-                            render_right_window_controls(
-                                button_layout,
-                                close_action.as_ref().boxed_clone(),
-                                window,
-                            )
-                        })
-                        .flatten(),
-                );
+                    let title_bar = title_bar.children(
+                        show_right_controls
+                            .then(|| {
+                                render_right_window_controls(
+                                    button_layout,
+                                    close_action.as_ref().boxed_clone(),
+                                    window,
+                                )
+                            })
+                            .flatten(),
+                    );
 
-                if self.platform_style == PlatformStyle::Linux
-                    && matches!(decorations, Decorations::Client { .. })
-                {
-                    title_bar.when(supported_controls.window_menu, |titlebar| {
-                        titlebar.on_mouse_down(MouseButton::Right, move |ev, window, _| {
-                            window.show_window_menu(ev.position)
+                    if self.platform_style == PlatformStyle::Linux
+                        && matches!(decorations, Decorations::Client { .. })
+                    {
+                        title_bar.when(supported_controls.window_menu, |titlebar| {
+                            titlebar.on_mouse_down(MouseButton::Right, move |ev, window, _| {
+                                window.show_window_menu(ev.position)
+                            })
                         })
-                    })
-                } else {
-                    title_bar
-                }
-            });
+                    } else {
+                        title_bar
+                    }
+                },
+            );
 
         v_flex()
             .w_full()

@@ -4,12 +4,12 @@ use crate::tasks::workflows::{
         ReleaseBundleJobs, create_sentry_release, download_workflow_artifacts, notify_on_failure,
         prep_release_artifacts,
     },
-    run_bundling::{bundle_linux, bundle_mac, bundle_windows},
+    run_bundling::{build_static_bwrap, bundle_linux, bundle_mac, bundle_windows},
     run_tests::run_platform_tests_no_filter,
     runners::{Arch, Platform, ReleaseChannel},
     steps::{
-        CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, GitRef, NamedJob,
-        RefSha, RepositoryTarget, TokenPermissions,
+        CommonJobConditions, CommonPermissionSets, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder,
+        GitRef, NamedJob, RefSha, RepositoryTarget, TokenPermissions,
     },
 };
 
@@ -33,6 +33,8 @@ pub fn release_nightly() -> Workflow {
     let bundle = ReleaseBundleJobs {
         linux_aarch64: bundle_linux(Arch::AARCH64, NIGHTLY, &[&tests]),
         linux_x86_64: bundle_linux(Arch::X86_64, NIGHTLY, &[&tests]),
+        bwrap_linux_aarch64: build_static_bwrap(Arch::AARCH64, &[&tests]),
+        bwrap_linux_x86_64: build_static_bwrap(Arch::X86_64, &[&tests]),
         mac_aarch64: bundle_mac(Arch::AARCH64, NIGHTLY, &[&tests]),
         mac_x86_64: bundle_mac(Arch::X86_64, NIGHTLY, &[&tests]),
         windows_aarch64: bundle_windows(Arch::AARCH64, NIGHTLY, &[&tests]),
@@ -45,6 +47,7 @@ pub fn release_nightly() -> Workflow {
     let notify_on_failure = notify_on_failure(&bundle.jobs());
 
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default()
             // Fire 6 times a day
             .schedule([Schedule::new("0 */4 * * *")])

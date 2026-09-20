@@ -10,8 +10,9 @@ workspace = true
 
 [lib]
 path = "src/credentials_provider.rs"
+test = false
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-serde.workspace = true

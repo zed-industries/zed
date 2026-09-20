@@ -1,6 +1,11 @@
 export default {
   async fetch(request, _env, _ctx) {
     const url = new URL(request.url);
+    const acceptHeader = request.headers.get("Accept") || "";
+    const wantsMarkdown = acceptHeader
+      .split(",")
+      .map((mediaType) => mediaType.split(";")[0].trim().toLowerCase())
+      .includes("text/markdown");
 
     if (url.pathname === "/docs/nightly") {
       url.hostname = "docs-nightly.pages.dev";
@@ -18,6 +23,14 @@ export default {
       url.hostname = "docs-anw.pages.dev";
     }
 
+    if (url.pathname === "/docs.md") {
+      url.pathname = "/docs/getting-started.md";
+    }
+
+    if (wantsMarkdown) {
+      url.pathname = markdownPathFor(url.pathname);
+    }
+
     let res = await fetch(url, request);
 
     if (res.status === 404) {
@@ -27,3 +40,31 @@ export default {
     return res;
   },
 };
+
+function markdownPathFor(pathname) {
+  if (pathname === "/docs" || pathname === "/docs/") {
+    return "/docs/getting-started.md";
+  }
+
+  if (pathname.endsWith("/index.md")) {
+    return pathname.replace(/\/index\.md$/, "/getting-started.md");
+  }
+
+  if (pathname.endsWith(".md")) {
+    return pathname;
+  }
+
+  if (pathname.endsWith(".html")) {
+    return pathname.replace(/\.html$/, ".md");
+  }
+
+  if (pathname.split("/").pop().includes(".")) {
+    return pathname;
+  }
+
+  if (pathname.endsWith("/")) {
+    return `${pathname}getting-started.md`;
+  }
+
+  return `${pathname}.md`;
+}

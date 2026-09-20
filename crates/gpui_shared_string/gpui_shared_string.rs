@@ -1,5 +1,6 @@
 use std::{
     borrow::{Borrow, Cow},
+    iter,
     sync::Arc,
 };
 
@@ -117,6 +118,13 @@ impl From<&str> for SharedString {
     #[inline]
     fn from(s: &str) -> SharedString {
         SharedString(SmolStr::from(s))
+    }
+}
+
+impl From<char> for SharedString {
+    #[inline]
+    fn from(c: char) -> SharedString {
+        SharedString(SmolStr::from_iter(iter::once(c)))
     }
 }
 
