@@ -87,10 +87,10 @@ The following VS Code settings are automatically imported when you use **Import 
 | `files.associations`        | `file_types`                   |
 | `files.autoSave`            | `autosave`                     |
 | `files.autoSaveDelay`       | `autosave.milliseconds`        |
+| `files.exclude`             | `file_scan_exclusions`         |
 | `files.insertFinalNewline`  | `ensure_final_newline_on_save` |
 | `files.readonlyInclude`     | `read_only_files`              |
 | `files.simpleDialog.enable` | `use_system_path_prompts`      |
-| `files.watcherExclude`      | `file_scan_exclusions`         |
 | `search.smartCase`          | `use_smartcase_search`         |
 | `search.useIgnoreFiles`     | `search.include_ignored`       |
 
