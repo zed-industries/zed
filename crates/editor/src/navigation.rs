@@ -2359,10 +2359,11 @@ impl Editor {
             .iter()
             .flat_map(|selection| {
                 snapshot
-                    .range_to_buffer_ranges(selection.range())
-                    .into_iter()
-                    .filter_map(|(buffer_snapshot, range, _)| {
-                        snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
+                    .range_to_buffer_ranges_with_deleted_hunks(selection.range())
+                    .filter_map(|(buffer_snapshot, range, deleted_hunk_anchor)| {
+                        deleted_hunk_anchor.or_else(|| {
+                            snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
+                        })
                     })
             })
             .collect::<Vec<_>>();
