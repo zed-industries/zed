@@ -163,6 +163,8 @@ pub struct WorktreeSettingsContent {
     ///
     /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
     /// occurrence.
+    ///
+    /// Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
     pub file_scan_exclusions: Option<SplicingVec>,
 
     /// Include files matching these glob patterns when scanning, even if ignored
@@ -189,6 +191,12 @@ pub struct WorktreeSettingsContent {
     ///
     /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
     /// occurrence.
+    ///
+    /// Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
+    ///
+    /// An inclusion pattern is also invalid if any of its derived parent patterns
+    /// cannot compile. The original pattern and its derived parents are accepted
+    /// or skipped together.
     pub file_scan_inclusions: Option<SplicingVec>,
 
     /// When to scan content of linked directories.
@@ -239,6 +247,8 @@ pub struct WorktreeSettingsContent {
     ///
     /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
     /// occurrence.
+    ///
+    /// Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
     pub hidden_files: Option<SplicingVec>,
 
     /// Treat files matching these glob patterns as read-only when opened. You can
@@ -265,6 +275,8 @@ pub struct WorktreeSettingsContent {
     ///
     /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
     /// occurrence.
+    ///
+    /// Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
     pub read_only_files: Option<SplicingVec>,
 }
 

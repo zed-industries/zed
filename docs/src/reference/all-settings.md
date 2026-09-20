@@ -2363,6 +2363,8 @@ Use `"..."` to add patterns without repeating Zed’s defaults. In project setti
 
 Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
+Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
+
 ## File Scan Inclusions
 
 - Setting: `file_scan_inclusions`
@@ -2384,6 +2386,10 @@ Use `"..."` to add patterns without repeating Zed’s defaults. In project setti
 ```
 
 Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
+
+Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
+
+An inclusion pattern is also invalid if any of its derived parent patterns cannot compile. The original pattern and its derived parents are accepted or skipped together.
 
 ## File Scan Depth
 
@@ -2956,6 +2962,8 @@ Use `"..."` to add patterns without repeating Zed’s defaults. In project setti
 ```
 
 Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
+
+Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
 
 ## Indent Guides
 
@@ -3917,6 +3925,8 @@ Use `"..."` to add patterns without repeating Zed’s defaults. In project setti
 ```
 
 Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
+
+Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
 
 ## Read SSH Config
 
