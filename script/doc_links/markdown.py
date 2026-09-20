@@ -256,9 +256,12 @@ def parse(source: str) -> tuple[Block, ...]:
 
 def title(blocks: tuple[Block, ...]) -> str | None:
     for block in blocks:
-        if block.kind != "heading":
-            continue
-        match = HEADING_PATTERN.match(block.source.rstrip("\r\n"))
-        if match and len(match.group(1)) == 1:
-            return re.sub(r"[`*_]", "", match.group(2)).strip()
+        if block.kind == "front_matter":
+            match = re.search(r"^title:\s*(.+?)\s*$", block.source, re.MULTILINE)
+            if match:
+                return match.group(1).strip("\"'")
+        if block.kind == "heading":
+            match = HEADING_PATTERN.match(block.source.rstrip("\r\n"))
+            if match and len(match.group(1)) == 1:
+                return re.sub(r"[`*_]", "", match.group(2)).strip()
     return None

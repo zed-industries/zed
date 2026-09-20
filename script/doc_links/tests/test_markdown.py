@@ -8,6 +8,12 @@ from doc_links.retrieval import anchor_options
 
 
 class MarkdownTest(unittest.TestCase):
+    def test_front_matter_title_is_page_title(self):
+        blocks = markdown.parse(
+            "---\ntitle: Plans & Usage\ndescription: Billing details.\n---\n\nProse.\n"
+        )
+        self.assertEqual(markdown.title(blocks), "Plans & Usage")
+
     def test_nested_shorter_fence_stays_code(self):
         source = """# Example
 
