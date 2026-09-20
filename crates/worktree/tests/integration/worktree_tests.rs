@@ -2143,17 +2143,17 @@ async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext
         json!({
             ".env.local": "",
             ".git": {},
-            ".gitignore": ".env*\n/ignored/\nunmatched.txt\n",
+            ".gitignore": ".env*\n/ignored/\n/one/\n/three/\nunmatched.txt\n",
             "ignored": {
                 "nested": {
                     "excluded.project": "",
                     "included.project": "",
                     "included.user": "",
                     "unmatched.txt": ""
-                },
-                "one": { "two": { "file.rs": "" } },
-                "three": { "file.rs": "" }
+                }
             },
+            "one": { "two": { "file.rs": "" } },
+            "three": { "file.rs": "" },
             "unmatched.txt": ""
         }),
     )
@@ -2199,36 +2199,36 @@ async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext
         );
     });
 
-    for (settings, included_paths, ancestors_included) in [
+    let ignored_directories = ["ignored", "ignored/nested", "one", "one/two", "three"];
+    for (settings, included_paths, always_included_directories) in [
         (
-            r#"{ "file_scan_inclusions": ["...", "ignored/**/*.project", "ignored/{one/two,three}/file.rs", "invalid/["] }"#,
+            r#"{ "file_scan_inclusions": ["...", "ignored/**/*.project", "{one/two,three}/file.rs", "invalid/["] }"#,
             vec![
                 rel_path(".env.local"),
                 rel_path(".gitignore"),
                 rel_path("ignored/nested/included.project"),
                 rel_path("ignored/nested/included.user"),
-                rel_path("ignored/one/two/file.rs"),
-                rel_path("ignored/three/file.rs"),
+                rel_path("one/two/file.rs"),
+                rel_path("three/file.rs"),
             ],
-            true,
+            &ignored_directories[..],
         ),
         (
-            r#"{ "file_scan_inclusions": ["ignored/{one/two,three}/file.rs"] }"#,
+            r#"{ "file_scan_inclusions": ["{one/two,three}/file.rs"] }"#,
             vec![
                 rel_path(".gitignore"),
-                rel_path("ignored/one/two/file.rs"),
-                rel_path("ignored/three/file.rs"),
+                rel_path("one/two/file.rs"),
+                rel_path("three/file.rs"),
             ],
-            true,
+            &["one", "one/two", "three"][..],
         ),
         (
-            r#"{ "file_scan_inclusions": ["{ignored/one/two,ignored/three}/file.rs"] }"#,
+            r#"{ "file_scan_inclusions": ["ignored/{nested,missing}/included.project"] }"#,
             vec![
                 rel_path(".gitignore"),
-                rel_path("ignored/one/two/file.rs"),
-                rel_path("ignored/three/file.rs"),
+                rel_path("ignored/nested/included.project"),
             ],
-            true,
+            &["ignored", "ignored/nested"][..],
         ),
         (
             r#"{ "file_scan_inclusions": ["ignored/**/*.project"] }"#,
@@ -2236,17 +2236,17 @@ async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext
                 rel_path(".gitignore"),
                 rel_path("ignored/nested/included.project"),
             ],
-            true,
+            &["ignored", "ignored/nested"][..],
         ),
         (
             r#"{ "file_scan_inclusions": ["invalid/["] }"#,
             vec![rel_path(".gitignore")],
-            false,
+            &[][..],
         ),
         (
             r#"{ "file_scan_inclusions": [] }"#,
             vec![rel_path(".gitignore")],
-            false,
+            &[][..],
         ),
     ] {
         cx.update(|cx| {
@@ -2268,17 +2268,11 @@ async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext
         })
         .await;
         tree.read_with(cx, |tree, _| {
-            for path in [
-                "ignored",
-                "ignored/nested",
-                "ignored/one",
-                "ignored/one/two",
-                "ignored/three",
-            ] {
+            for path in ignored_directories {
                 assert_eq!(
                     tree.entry_for_path(rel_path(path))
                         .is_some_and(|entry| entry.is_always_included),
-                    ancestors_included,
+                    always_included_directories.contains(&path),
                     "ancestor inclusion for {path} with {settings}"
                 );
             }

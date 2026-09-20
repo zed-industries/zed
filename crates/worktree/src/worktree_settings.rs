@@ -116,7 +116,7 @@ fn file_scan_inclusion_matchers(mut values: Vec<String>) -> (PathMatcher, PathMa
 
 fn inclusion_parent_patterns(pattern: &str, path_style: PathStyle) -> Vec<String> {
     let mut parents = Vec::new();
-    let mut braces = Vec::new();
+    let mut open_braces = 0_usize;
     let mut class_start = None;
     let mut escaped = false;
     for (index, character) in pattern.char_indices() {
@@ -147,19 +147,17 @@ fn inclusion_parent_patterns(pattern: &str, path_style: PathStyle) -> Vec<String
         } else {
             match character {
                 '[' => class_start = Some(index),
-                '{' => braces.push(index),
-                '}' => {
-                    braces.pop();
-                }
+                '{' => open_braces += 1,
+                '}' => open_braces = open_braces.saturating_sub(1),
                 _ => {}
             }
         }
         if is_separator {
-            if let Some(start) = braces.first().copied().or(class_start) {
-                // A separator inside a group is not a safe split point. The
-                // prefix still needs to admit intermediate directories such as
-                // `one` in `{one/two,three}/file.rs`, without including extra files
-                parents.push(format!("{}*", &pattern[..start]));
+            let closing_braces = "}".repeat(open_braces);
+            if let Some(start) = class_start {
+                parents.push(format!("{}*{closing_braces}", &pattern[..start]));
+            } else if open_braces > 0 {
+                parents.push(format!("{}{closing_braces}", &pattern[..split_index]));
             } else if split_index > 0 {
                 parents.push(pattern[..split_index].to_string());
             }

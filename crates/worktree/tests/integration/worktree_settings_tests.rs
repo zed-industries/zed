@@ -142,7 +142,39 @@ fn test_inclusions_preserve_brace_patterns() {
         assert!(settings.is_path_always_included(rel_path("valid"), true));
         assert!(settings.is_path_always_included(rel_path("valid/nested/file.txt"), false));
         assert!(!settings.is_path_always_included(rel_path("unmatched/file.txt"), false));
+        assert!(
+            !settings.is_path_always_included(rel_path("unmatched"), true),
+            "{pattern}: unexpected ancestor"
+        );
     }
+}
+
+#[test]
+fn test_inclusion_parents_close_nested_braces() {
+    let settings = settings_with_patterns("file_scan_inclusions", &["{a/{b,c},d}/file.rs"]);
+    for directory in ["a", "a/b", "a/c", "d"] {
+        assert!(
+            settings.is_path_always_included(rel_path(directory), true),
+            "missing ancestor {directory}"
+        );
+    }
+    for directory in ["b", "c", "unmatched"] {
+        assert!(
+            !settings.is_path_always_included(rel_path(directory), true),
+            "unexpected ancestor {directory}"
+        );
+    }
+    assert!(settings.is_path_always_included(rel_path("a/b/file.rs"), false));
+    assert!(settings.is_path_always_included(rel_path("d/file.rs"), false));
+}
+
+#[test]
+fn test_inclusion_parents_close_braces_around_character_classes() {
+    let settings = settings_with_patterns("file_scan_inclusions", &["{a,[x/y]z}/file.rs"]);
+    assert!(settings.is_path_always_included(rel_path("a"), true));
+    assert!(settings.is_path_always_included(rel_path("xz"), true));
+    assert!(settings.is_path_always_included(rel_path("a/file.rs"), false));
+    assert!(settings.is_path_always_included(rel_path("xz/file.rs"), false));
 }
 
 #[test]
