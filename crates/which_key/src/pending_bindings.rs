@@ -191,6 +191,7 @@ impl RenderOnce for PendingBindings {
                     .child(
                         Label::new("is waiting for more keys…")
                             .size(LabelSize::Small)
+                            .color(Color::Muted)
                             .single_line()
                             .truncate(),
                     ),
