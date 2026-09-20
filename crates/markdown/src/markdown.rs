@@ -3586,6 +3586,24 @@ fn byte_index_for_utf16(text: &str, utf16_index: usize) -> (usize, usize) {
     (text.len(), current_utf16)
 }
 
+fn byte_index_for_utf16_end(text: &str, utf16_index: usize) -> (usize, usize) {
+    let mut current_utf16 = 0;
+    for (byte_index, character) in text.char_indices() {
+        if current_utf16 >= utf16_index {
+            return (byte_index, current_utf16);
+        }
+
+        let next_utf16 = current_utf16 + character.len_utf16();
+        if next_utf16 >= utf16_index {
+            return (byte_index + character.len_utf8(), next_utf16);
+        }
+
+        current_utf16 = next_utf16;
+    }
+
+    (text.len(), current_utf16)
+}
+
 pub struct RenderedMarkdown {
     element: AnyElement,
     text: RenderedText,
@@ -3728,6 +3746,33 @@ impl RenderedText {
     fn source_range_for_utf16_range(&self, range_utf16: Range<usize>) -> Range<usize> {
         self.source_index_for_utf16_index(range_utf16.start)
             ..self.source_index_for_utf16_index(range_utf16.end)
+    }
+
+    fn full_text(&self) -> String {
+        let mut text = String::new();
+        for (line_index, line) in self.lines.iter().enumerate() {
+            if line_index > 0 {
+                text.push('\n');
+            }
+            text.push_str(&line.layout.text());
+        }
+        text
+    }
+
+    fn text_for_utf16_range(
+        &self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+    ) -> String {
+        let text = self.full_text();
+        let (start, adjusted_start) = byte_index_for_utf16(&text, range_utf16.start);
+        let (end, adjusted_end) = byte_index_for_utf16_end(&text, range_utf16.end);
+
+        if adjusted_start != range_utf16.start || adjusted_end != range_utf16.end {
+            adjusted_range.replace(adjusted_start..adjusted_end);
+        }
+
+        text[start..end].to_string()
     }
 
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
@@ -3925,7 +3970,7 @@ impl InputHandler for MarkdownInputHandler {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
-        _: &mut Option<Range<usize>>,
+        adjusted_range: &mut Option<Range<usize>>,
         _: &mut Window,
         _: &mut App,
     ) -> Option<String> {
@@ -3935,7 +3980,7 @@ impl InputHandler for MarkdownInputHandler {
 
         Some(
             self.rendered_text
-                .text_for_range(self.rendered_text.source_range_for_utf16_range(range_utf16)),
+                .text_for_utf16_range(range_utf16, adjusted_range),
         )
     }
 
@@ -3987,9 +4032,7 @@ impl InputHandler for MarkdownInputHandler {
         _: &mut Window,
         _: &mut App,
     ) -> Option<usize> {
-        let source_index = match self.rendered_text.source_index_for_position(point) {
-            Ok(index) | Err(index) => index,
-        };
+        let source_index = self.rendered_text.source_index_for_position(point).ok()?;
         Some(
             self.rendered_text
                 .utf16_index_for_source_index(source_index),
@@ -4151,6 +4194,17 @@ mod tests {
             rendered.text_for_range(rendered.source_range_for_utf16_range(3..5)),
             "😄"
         );
+    }
+
+    #[gpui::test]
+    fn test_text_for_utf16_range_uses_rendered_text(cx: &mut TestAppContext) {
+        let rendered = render_markdown("**世界** 😄", cx);
+        let mut adjusted_range = None;
+        assert_eq!(
+            rendered.text_for_utf16_range(3..4, &mut adjusted_range),
+            "😄"
+        );
+        assert_eq!(adjusted_range, Some(3..5));
     }
 
     fn render_markdown_with_code_span_link(
