@@ -130,15 +130,22 @@ fn test_invalid_derived_inclusions_reject_original_pattern() {
 }
 
 #[test]
-fn test_private_files_retains_strict_matching() {
+fn test_private_files_preserves_valid_patterns() {
     let settings = settings_with_patterns("private_files", &["**/private/**"]);
     assert!(settings.is_path_private(rel_path("private/file.txt")));
     assert!(settings.is_path_private(rel_path(".env.local")));
 
     let settings = settings_with_patterns("private_files", &["**/private/**", "["]);
-    assert!(!settings.is_path_private(rel_path("private/file.txt")));
-    assert!(!settings.is_path_private(rel_path(".env.local")));
+    assert!(settings.is_path_private(rel_path("private/file.txt")));
+    assert!(settings.is_path_private(rel_path(".env.local")));
+    assert!(!settings.is_path_private(rel_path("src/main.rs")));
     assert!(PathMatcher::new(["**/private/**", "["], PathStyle::local()).is_err());
+
+    for patterns in [&["["][..], &[][..]] {
+        let settings = settings_with_patterns("private_files", patterns);
+        assert!(settings.is_path_private(rel_path(".env.local")));
+        assert!(!settings.is_path_private(rel_path("private/file.txt")));
+    }
 }
 
 #[test]

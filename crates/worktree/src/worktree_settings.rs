@@ -74,9 +74,7 @@ impl Settings for WorktreeSettings {
             file_scan_exclusions: valid_path_matchers(file_scan_exclusions, "file_scan_exclusions"),
             parent_dir_scan_inclusions,
             file_scan_inclusions,
-            private_files: path_matchers(private_files, "private_files")
-                .log_err()
-                .unwrap_or_default(),
+            private_files: valid_path_matchers(private_files, "private_files"),
             hidden_files: valid_path_matchers(hidden_files, "hidden_files"),
             read_only_files: valid_path_matchers(read_only_files, "read_only_files"),
             scan_symlinks,
