@@ -105,6 +105,66 @@ class RetrievalTest(unittest.TestCase):
         self.assertTrue(anchors)
         self.assertFalse(any(anchor.text.endswith(".") for anchor in anchors))
 
+    def test_shortest_complete_anchor_is_preferred(self):
+        source = self.page(
+            "source.md",
+            "Source",
+            "# Source\n\nStart a review on desktop or web.\n",
+        )
+        target = self.page(
+            "web.md",
+            "Delta on the Web",
+            "# Delta on the Web\n\nOpen and review threads in a browser.\n",
+        )
+        anchors = anchor_options(target, source.prose_blocks, 6)
+        texts = {anchor.text for anchor in anchors}
+        self.assertIn("web", texts)
+        self.assertNotIn("desktop or web", texts)
+
+    def test_singular_anchor_matches_plural_title(self):
+        source = self.page(
+            "source.md",
+            "Source",
+            "# Source\n\nLeave a comment on the change.\n",
+        )
+        target = self.page(
+            "comments.md",
+            "Comments",
+            "# Comments\n\nComment on a specific passage.\n",
+        )
+        anchors = anchor_options(target, source.prose_blocks, 6)
+        self.assertIn("comment", {anchor.text for anchor in anchors})
+
+    def test_anchor_does_not_cross_sentence_punctuation(self):
+        source = self.page(
+            "source.md",
+            "Source",
+            "# Source\n\nUse a git repository. When the agent commits, review it.\n",
+        )
+        target = self.page(
+            "git.md",
+            "Delta & Git",
+            "# Delta & Git\n\nConnect a git repository to Delta.\n",
+        )
+        anchors = anchor_options(target, source.prose_blocks, 6)
+        self.assertIn("git repository", {anchor.text for anchor in anchors})
+        self.assertFalse(any(". " in anchor.text for anchor in anchors))
+
+    def test_product_name_alone_is_not_preferred(self):
+        source = self.page(
+            "source.md",
+            "Source",
+            "# Source\n\nA Delta worktree keeps the project separate in Delta.\n",
+        )
+        target = self.page(
+            "worktrees.md",
+            "Delta Worktrees",
+            "# Delta Worktrees\n\nA worktree contains project files.\n",
+        )
+        anchors = anchor_options(target, source.prose_blocks, 6)
+        self.assertEqual(anchors[0].text, "Delta worktree")
+        self.assertNotIn("Delta", {anchor.text for anchor in anchors})
+
 
 if __name__ == "__main__":
     unittest.main()

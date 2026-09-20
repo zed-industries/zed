@@ -24,6 +24,22 @@ BOUNDARY_STOP_WORDS = RETRIEVAL_STOP_WORDS - {
     "linux",
     "macos",
 }
+GENERIC_PRODUCT_TOKENS = {"delta", "zed"}
+ANCHOR_FUNCTION_WORDS = {
+    "a",
+    "an",
+    "as",
+    "at",
+    "by",
+    "in",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "when",
+}
 
 
 @dataclass(frozen=True)
@@ -44,6 +60,27 @@ class DestinationCandidate:
     similarity: float
     blocks: tuple[Block, ...]
     anchors: tuple[AnchorOption, ...]
+
+
+def normalize_anchor_token(token: str) -> str:
+    if len(token) > 4 and token.endswith("ies"):
+        return token[:-3] + "y"
+    if (
+        len(token) > 4
+        and token.endswith("s")
+        and not token.endswith(("ss", "us", "is"))
+    ):
+        return token[:-1]
+    return token
+
+
+def anchor_tokens(text: str) -> set[str]:
+    return {
+        normalize_anchor_token(token)
+        for token in TOKEN_PATTERN.findall(text.lower())
+        if token not in RETRIEVAL_STOP_WORDS
+        and token not in ANCHOR_FUNCTION_WORDS
+    }
 
 
 def tokenize(text: str) -> Counter[str]:
@@ -131,8 +168,11 @@ def anchor_options(
     count: int,
     all_blocks: tuple[Block, ...] | None = None,
 ) -> tuple[AnchorOption, ...]:
-    primary_tokens = set(tokenize(target.title))
-    secondary_tokens = set(tokenize(target.overview))
+    retrieval_primary_tokens = set(tokenize(target.title))
+    retrieval_secondary_tokens = set(tokenize(target.overview))
+    primary_tokens = anchor_tokens(target.title)
+    secondary_tokens = anchor_tokens(target.overview)
+    target_tokens = anchor_tokens(page_text(target))
     candidates = []
 
     for block_rank, block in enumerate(blocks):
@@ -154,15 +194,37 @@ def anchor_options(
                     phrase = block.source[
                         start - block.start : end - block.start
                     ]
-                    if "," in phrase or ";" in phrase:
+                    if (
+                        "," in phrase
+                        or ";" in phrase
+                        or "(" in phrase
+                        or ")" in phrase
+                        or re.search(r"[.!?](?:\s|$)", phrase)
+                    ):
                         continue
-                    phrase_tokens = set(tokenize(phrase))
+                    retrieval_phrase_tokens = set(tokenize(phrase))
+                    phrase_tokens = anchor_tokens(phrase)
+                    if (
+                        not phrase_tokens
+                        or phrase_tokens <= GENERIC_PRODUCT_TOKENS
+                    ):
+                        continue
+                    if (
+                        not retrieval_phrase_tokens & retrieval_primary_tokens
+                        and len(
+                            retrieval_phrase_tokens & retrieval_secondary_tokens
+                        ) < 2
+                        and not phrase_tokens & primary_tokens
+                    ):
+                        continue
                     primary_overlap = phrase_tokens & primary_tokens
                     secondary_overlap = phrase_tokens & secondary_tokens
-                    if not primary_overlap and len(secondary_overlap) < 2:
-                        continue
-                    first_token = first_word.group().lower().strip(".'’/-")
-                    last_token = last_word.group().lower().strip(".'’/-")
+                    first_token = normalize_anchor_token(
+                        first_word.group().lower().strip(".'’/-")
+                    )
+                    last_token = normalize_anchor_token(
+                        last_word.group().lower().strip(".'’/-")
+                    )
                     if (
                         not first_token
                         or not last_token
@@ -171,13 +233,26 @@ def anchor_options(
                     ):
                         continue
                     if word_count == 1 and (
-                        first_token not in primary_tokens or len(first_token) < 4
+                        first_token not in primary_tokens or len(first_token) < 3
                     ):
                         continue
+                    target_coverage = (
+                        len(phrase_tokens & target_tokens) / len(phrase_tokens)
+                    )
+                    primary_density = len(primary_overlap) / len(phrase_tokens)
+                    generic_product_penalty = (
+                        4
+                        if primary_overlap
+                        and not primary_overlap - GENERIC_PRODUCT_TOKENS
+                        else 0
+                    )
                     score = (
                         len(primary_overlap) * 8
                         + len(secondary_overlap)
-                        - abs(word_count - 3) * 0.1
+                        + target_coverage
+                        + primary_density * 2
+                        - abs(len(phrase_tokens) - 2) * 1.5
+                        - generic_product_penalty
                         - block_rank * 0.05
                     )
                     if phrase.casefold() == target.title.casefold():
@@ -264,6 +339,19 @@ class Index:
                 anchor_count,
                 source.prose_blocks,
             )
+            if len(anchors) != anchor_count:
+                expanded_blocks = top_blocks(
+                    source,
+                    target,
+                    self.inverse,
+                    min(len(source.prose_blocks), block_count * 2),
+                )
+                anchors = anchor_options(
+                    target,
+                    expanded_blocks,
+                    anchor_count,
+                    source.prose_blocks,
+                )
             if len(anchors) != anchor_count:
                 continue
             block_by_start = {block.start: block for block in source.prose_blocks}

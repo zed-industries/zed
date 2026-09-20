@@ -263,10 +263,14 @@ class EvaluationTest(unittest.TestCase):
                 "reason_probability",
                 "destination_probability",
                 "anchor_probability",
-                "anchor_quality_probability",
             ):
                 self.assertGreaterEqual(result[key], 0)
                 self.assertLessEqual(result[key], 1)
+            if result["selected_anchor"] is None:
+                self.assertIsNone(result["anchor_quality_probability"])
+            else:
+                self.assertGreaterEqual(result["anchor_quality_probability"], 0)
+                self.assertLessEqual(result["anchor_quality_probability"], 1)
 
     def test_repository_feedback_dataset_is_valid(self):
         cases = load_cases(Path("script/doc_links/evals/pr_64481_review.json"))

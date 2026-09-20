@@ -179,8 +179,11 @@ def build_request(
                 ),
                 "rules": [
                     "Select only a supplied phrase.",
-                    "Prefer a concise descriptive noun phrase.",
-                    "Reject sentence fragments, vague text, and misleading text.",
+                    "Prefer the shortest complete phrase that identifies the target.",
+                    "When one option is contained in another, choose the shorter option "
+                    "unless the extra words change the meaning needed for the target.",
+                    "Reject sentence fragments, surrounding alternatives, vague text, "
+                    "and misleading text.",
                     "Keep proper nouns together and avoid multi-concept lists.",
                     "When the same phrase appears more than once, choose the "
                     "earliest clear introduction.",
@@ -336,9 +339,10 @@ def build_quality_request(
                     "together, and names the target directly."
                 ),
                 "false": (
-                    "The anchor spans multiple concepts, splits a proper noun, ends "
-                    "awkwardly, uses a possessive or deictic phrase unnaturally, or "
-                    "links wording such as 'below' that refers to local content."
+                    "The anchor spans multiple concepts, includes unnecessary "
+                    "surrounding alternatives, splits a proper noun, ends awkwardly, "
+                    "uses a possessive or deictic phrase unnaturally, or links wording "
+                    "such as 'below' that refers to local content."
                 ),
             },
         }
