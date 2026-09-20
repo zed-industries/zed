@@ -62,6 +62,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `editor.hover.sticky`                       | `hover_popover_sticky`                         |
 | `editor.hover.hidingDelay`                  | `hover_popover_hiding_delay`                   |
 | `editor.parameterHints.enabled`             | `auto_signature_help`                          |
+| `workbench.editor.languageDetection`        | `language_detection`                           |
 | `editor.multiCursorModifier`                | `multi_cursor_modifier`                        |
 | `editor.selectionHighlight`                 | `selection_highlight`                          |
 | `editor.roundedSelection`                   | `rounded_selection`                            |
@@ -83,13 +84,12 @@ The following VS Code settings are automatically imported when you use **Import 
 
 | VS Code Setting             | Zed Setting                    |
 | --------------------------- | ------------------------------ |
+| `files.associations`        | `file_types`                   |
 | `files.autoSave`            | `autosave`                     |
 | `files.autoSaveDelay`       | `autosave.milliseconds`        |
 | `files.insertFinalNewline`  | `ensure_final_newline_on_save` |
-| `files.associations`        | `file_types`                   |
-| `files.watcherExclude`      | `file_scan_exclusions`         |
-| `files.watcherInclude`      | `file_scan_inclusions`         |
 | `files.simpleDialog.enable` | `use_system_path_prompts`      |
+| `files.watcherExclude`      | `file_scan_exclusions`         |
 | `search.smartCase`          | `use_smartcase_search`         |
 | `search.useIgnoreFiles`     | `search.include_ignored`       |
 
@@ -155,14 +155,14 @@ The following VS Code settings are automatically imported when you use **Import 
 
 **Other**
 
-| VS Code Setting            | Zed Setting                                              |
-| -------------------------- | -------------------------------------------------------- |
-| `http.proxy`               | `proxy`                                                  |
-| `npm.packageManager`       | `node.npm_path`                                          |
-| `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics`             |
-| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_icons` |
-| `chat.agent.enabled`       | `agent.enabled`                                          |
-| `mcp`                      | `context_servers`                                        |
+| VS Code Setting            | Zed Setting                                                  |
+| -------------------------- | ------------------------------------------------------------ |
+| `http.proxy`               | `proxy`                                                      |
+| `npm.packageManager`       | `node.npm_path`                                              |
+| `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics`                 |
+| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_indicator` |
+| `chat.agent.enabled`       | `agent.enabled`                                              |
+| `mcp`                      | `context_servers`                                            |
 
 Zed doesn’t import extensions or keybindings, but this import gets core editor behavior close to your VS Code setup. If you skip that step during setup, you can still import settings manually later via the command palette:
 
@@ -277,7 +277,7 @@ In VS Code, the standard entry point is opening a folder. From there, the left-h
 Zed takes a different approach:
 
 - You can still open folders, but you don’t need to. Opening a single file or even starting with an empty workspace is valid.
-- The Command Palette (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are primary navigation tools. The File Finder searches files, symbols, and commands across the workspace.
+- The [Command Palette](../command-palette.md) (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are primary navigation tools. The File Finder searches files, symbols, and commands across the workspace.
 - Instead of a persistent panel, Zed encourages you to:
   - Fuzzy-find files by name (`Cmd+P`)
   - Jump directly to symbols (`Cmd+Shift+O`)

@@ -1,13 +1,12 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
-    multibuffer_context_lines,
+    Editor, EditorEvent, HiddenUnstagedDiffHunkRenderer, MultiBuffer, multibuffer_context_lines,
 };
 use git_ui_core::file_diff_view::build_buffer_diff;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
-    IntoElement, Render, SharedString, Task, Window,
+    IntoElement, Render, SharedString, Subscription, Task, Window,
 };
 use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
@@ -29,6 +28,7 @@ use workspace::{
 pub struct MultiDiffView {
     editor: Entity<Editor>,
     file_count: usize,
+    _editor_event_subscription: Subscription,
 }
 
 struct Entry {
@@ -199,13 +199,23 @@ impl MultiDiffView {
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
-            editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
+            editor.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
             editor
         });
 
-        Self { editor, file_count }
+        let editor_event_subscription = cx.subscribe(&editor, |_, _, event: &EditorEvent, cx| {
+            if event == &(EditorEvent::SelectionsChanged { local: true }) {
+                cx.emit(event.clone())
+            }
+        });
+
+        Self {
+            editor,
+            file_count,
+            _editor_event_subscription: editor_event_subscription,
+        }
     }
 
     fn title(&self) -> SharedString {

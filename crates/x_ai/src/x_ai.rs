@@ -106,17 +106,6 @@ impl Model {
         }
     }
 
-    pub fn requires_json_schema_subset(&self) -> bool {
-        match self {
-            Self::Grok43
-            | Self::Grok45
-            | Self::Grok46
-            | Self::Grok420Reasoning
-            | Self::Grok420NonReasoning => true,
-            Self::Custom { .. } => false,
-        }
-    }
-
     pub fn supports_prompt_cache_key(&self) -> bool {
         false
     }

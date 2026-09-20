@@ -65,11 +65,11 @@ impl LocalExecutor {
         F: Future + 'static,
         F::Output: 'static,
     {
-        let dispatch = self.dispatch.clone();
+        let schedule = self.schedule();
         let location = Location::caller();
         let (runnable, task) = spawn_local_with_source_location(
             future,
-            move |runnable| dispatch(runnable),
+            schedule,
             RunnableMeta {
                 location,
                 spawned: crate::SpawnTime(Instant::now()),
@@ -106,6 +106,7 @@ impl LocalExecutor {
         Task(TaskState::Spawned(task))
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
         use std::cell::Cell;
 
@@ -123,6 +124,7 @@ impl LocalExecutor {
 
     /// Block until the future completes or timeout occurs.
     /// Returns Ok(output) if completed, Err(future) if timed out.
+    #[cfg(not(target_family = "wasm"))]
     pub fn block_with_timeout<Fut: Future>(
         &self,
         timeout: Duration,
@@ -179,6 +181,11 @@ impl LocalExecutor {
             .spawn_dedicated(box_dedicated(f))
             .downcast::<Fut::Output>()
     }
+
+    fn schedule(&self) -> impl Fn(Runnable<RunnableMeta>) + Send + Sync + 'static {
+        let dispatch = self.dispatch.clone();
+        move |runnable| dispatch(runnable)
+    }
 }
 
 /// Boxes the user-supplied dedicated closure into the type-erased shape
@@ -227,21 +234,14 @@ impl BackgroundExecutor {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        let scheduler = Arc::downgrade(&self.scheduler);
+        let schedule = self.schedule_with_priority(priority);
         let location = Location::caller();
         let (runnable, task) = async_task::Builder::new()
             .metadata(RunnableMeta {
                 location,
                 spawned: crate::SpawnTime(Instant::now()),
             })
-            .spawn(
-                move |_| future,
-                move |runnable| {
-                    if let Some(scheduler) = scheduler.upgrade() {
-                        scheduler.schedule_background_with_priority(runnable, priority);
-                    }
-                },
-            );
+            .spawn(move |_| future, schedule);
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
@@ -309,6 +309,18 @@ impl BackgroundExecutor {
             .clone()
             .spawn_dedicated(box_dedicated(f))
             .downcast::<Fut::Output>()
+    }
+
+    fn schedule_with_priority(
+        &self,
+        priority: Priority,
+    ) -> impl Fn(Runnable<RunnableMeta>) + Send + Sync + 'static {
+        let scheduler = Arc::downgrade(&self.scheduler);
+        move |runnable| {
+            if let Some(scheduler) = scheduler.upgrade() {
+                scheduler.schedule_background_with_priority(runnable, priority);
+            }
+        }
     }
 }
 

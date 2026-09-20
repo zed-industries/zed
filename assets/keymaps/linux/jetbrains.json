@@ -35,7 +35,7 @@
       "alt-shift-g": "editor::SplitSelectionIntoLines",
       "alt-j": ["editor::SelectNext", { "replace_newest": false }],
       "alt-shift-j": ["editor::SelectPrevious", { "replace_newest": false }],
-      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": true }],
+      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": true, "comment_empty_lines": true }],
       "ctrl-w": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-w": "editor::SelectSmallerSyntaxNode",
       "shift-alt-up": "editor::MoveLineUp",
@@ -83,6 +83,7 @@
       "ctrl-q": "editor::Hover",
       "ctrl-p": "editor::ShowSignatureHelp",
       "ctrl-\\": "assistant::InlineAssist",
+      "ctrl-alt-h": "call_hierarchy::ShowIncomingCalls",
     },
   },
   {
@@ -216,6 +217,13 @@
     "context": "Editor && mode == auto_height",
     "bindings": {
       "escape": "editor::Cancel",
+    },
+  },
+  {
+    "context": "CallHierarchyPicker > Picker > Editor",
+    "bindings": {
+      "ctrl-alt-h": "call_hierarchy::ToggleDirection",
+      "ctrl-k": null,
     },
   },
 ]
