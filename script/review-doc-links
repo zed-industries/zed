@@ -10,7 +10,7 @@ from doc_links.review import generate_html
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Review and apply Zed documentation link audit results."
+        description="Review and apply documentation link audit results."
     )
     commands = parser.add_subparsers(dest="command", required=True)
 

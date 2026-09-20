@@ -31,7 +31,7 @@ def positive_integer(value: str) -> int:
 def parse_arguments() -> argparse.Namespace:
     defaults = Thresholds()
     parser = argparse.ArgumentParser(
-        description="Find useful missing links between Zed documentation pages."
+        description="Find useful missing links between documentation pages."
     )
     parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
     parser.add_argument("--source", action="append", default=[])
@@ -77,7 +77,7 @@ def parse_arguments() -> argparse.Namespace:
 def markdown_report(report: Report) -> str:
     counts = Counter(decision.queue for decision in report.decisions)
     lines = [
-        "# Zed documentation link audit",
+        "# Documentation link audit",
         "",
         f"- Model: {report.model}",
         f"- Candidate pairs: {len(report.decisions)}",
