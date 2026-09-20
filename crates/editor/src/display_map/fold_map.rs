@@ -518,14 +518,11 @@ impl FoldMap {
                     ((edit.new.start + edit.old_len()).0.0 as isize + delta) as usize,
                 ));
 
-                let anchor = inlay_snapshot
-                    .buffer
-                    .anchor_before(inlay_snapshot.to_buffer_offset(edit.new.start));
                 let mut folds_cursor = self
                     .snapshot
                     .folds
                     .cursor::<FoldRange>(&inlay_snapshot.buffer);
-                folds_cursor.seek(&FoldRange(anchor..Anchor::Max), Bias::Left);
+                folds_cursor.seek(&inlay_snapshot.to_buffer_offset(edit.new.start), Bias::Left);
 
                 let mut folds = iter::from_fn({
                     let inlay_snapshot = &inlay_snapshot;
@@ -1357,6 +1354,12 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
 impl sum_tree::SeekTarget<'_, FoldSummary, FoldRange> for FoldRange {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         AnchorRangeExt::cmp(&self.0, &other.0, buffer)
+    }
+}
+
+impl sum_tree::SeekTarget<'_, FoldSummary, FoldRange> for MultiBufferOffset {
+    fn cmp(&self, cursor_location: &FoldRange, buffer: &MultiBufferSnapshot) -> Ordering {
+        Ord::cmp(self, &cursor_location.start.to_offset(buffer))
     }
 }
 
