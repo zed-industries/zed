@@ -209,7 +209,7 @@ Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add 
 }
 ```
 
-> Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> Note: This setting has no effect in [Vim mode](../vim.md), as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
@@ -4214,7 +4214,7 @@ Non-negative `integer` values
 
 ## Semantic Tokens
 
-- Description: Controls how semantic tokens from language servers are used for syntax highlighting.
+- Description: Controls how [semantic tokens](../semantic-tokens.md) from language servers are used for syntax highlighting.
 - Setting: `semantic_tokens`
 - Default: `off`
 
