@@ -195,7 +195,9 @@ impl RenderOnce for PendingBindings {
                             .truncate(),
                     ),
             )
-            .child(Divider::horizontal().color(DividerColor::BorderFaded))
+            .when(has_bindings, |element| {
+                element.child(Divider::horizontal().color(DividerColor::BorderFaded))
+            })
             .when(has_bindings, |element| {
                 element.child(
                     div()
