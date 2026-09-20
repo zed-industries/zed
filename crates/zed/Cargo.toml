@@ -29,6 +29,7 @@ test-support = [
     "title_bar/test-support",
 ]
 visual-tests = [
+    "git_ui/test-support",
     "gpui/test-support",
     "gpui_platform/screen-capture",
     "gpui_platform/test-support",

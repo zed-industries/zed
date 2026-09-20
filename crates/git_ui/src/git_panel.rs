@@ -9083,6 +9083,12 @@ impl GitPanel {
     pub fn active_repository(&self) -> Option<&Entity<Repository>> {
         self.active_repository.as_ref()
     }
+
+    pub fn collapse_graph_for_test(&mut self, cx: &mut Context<Self>) {
+        self.graph_collapsed = true;
+        self.graph = None;
+        cx.notify();
+    }
 }
 
 impl Render for GitPanel {

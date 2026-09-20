@@ -30,9 +30,13 @@
 //! Update baseline images (when UI intentionally changes):
 //!   UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
 //!
+//! Update only Git panel baselines while comparing existing scenarios:
+//!   UPDATE_BASELINE=1 UPDATE_BASELINE_PREFIX=git_panel_graph_ cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+//!
 //! ## Environment Variables
 //!
 //!   UPDATE_BASELINE - Set to update baseline images instead of comparing
+//!   UPDATE_BASELINE_PREFIX - Only update matching test names; compare all others
 //!   VISUAL_TEST_OUTPUT_DIR - Directory to save test output (default: target/visual_tests)
 
 // Stub main for non-macOS platforms
@@ -625,6 +629,16 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
+    println!("\n--- Test: git_panel_graph ---");
+    match run_git_panel_graph_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => passed += 1,
+        Ok(TestResult::BaselineUpdated(_)) => updated += 1,
+        Err(error) => {
+            eprintln!("✗ git_panel_graph: FAILED - {error:#}");
+            failed += 1;
+        }
+    }
+
     // Clean up the main workspace's worktree to stop background scanning tasks
     // This prevents "root path could not be canonicalized" errors when main() drops temp_dir
     workspace_window
@@ -713,6 +727,10 @@ fn run_visual_test(
     screenshot.save(&output_path)?;
     println!("  Screenshot saved to: {}", output_path.display());
 
+    let update_baseline = update_baseline
+        && std::env::var("UPDATE_BASELINE_PREFIX")
+            .map(|prefix| test_name.starts_with(&prefix))
+            .unwrap_or(true);
     if update_baseline {
         // Update the baseline
         if let Some(parent) = baseline_path.parent() {
@@ -740,7 +758,12 @@ fn run_visual_test(
         comparison.diff_pixel_count
     );
 
-    if comparison.match_percentage >= MATCH_THRESHOLD {
+    let match_threshold = if test_name.starts_with("git_panel_graph_") {
+        1.0
+    } else {
+        MATCH_THRESHOLD
+    };
+    if comparison.match_percentage >= match_threshold {
         Ok(TestResult::Passed)
     } else {
         // Save diff image
@@ -751,7 +774,7 @@ fn run_visual_test(
         Err(anyhow::anyhow!(
             "Image mismatch: {:.2}% match (threshold: {:.2}%)",
             comparison.match_percentage * 100.0,
-            MATCH_THRESHOLD * 100.0
+            match_threshold * 100.0
         ))
     }
 }
@@ -832,6 +855,272 @@ fn pixels_are_similar(a: &image::Rgba<u8>, b: &image::Rgba<u8>) -> bool {
         && (a.0[1] as i16 - b.0[1] as i16).abs() <= TOLERANCE
         && (a.0[2] as i16 - b.0[2] as i16).abs() <= TOLERANCE
         && (a.0[3] as i16 - b.0[3] as i16).abs() <= TOLERANCE
+}
+
+#[cfg(target_os = "macos")]
+fn run_git_panel_graph_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use git::repository::{LogOrder, LogSource};
+    use git_ui::git_panel::GitPanel;
+    use gpui::{BorrowAppContext as _, ReadGlobal as _};
+    use project::git_store::CommitDataState;
+    use settings::SettingsStore;
+    use workspace::dock::DockPosition;
+
+    let directory = tempfile::tempdir()?;
+    let project_path = directory.path().canonicalize()?.join("graph-fixture");
+    std::fs::create_dir(&project_path)?;
+    let mut command_index = 0;
+    let mut git = |arguments: &[&str]| -> Result<()> {
+        command_index += 1;
+        let date = format!("2000-01-01T00:00:{command_index:02}+0000");
+        let output = std::process::Command::new("git")
+            .args(["-c", "commit.gpgsign=false"])
+            .args(arguments)
+            .current_dir(&project_path)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "Graph Test Author")
+            .env("GIT_AUTHOR_EMAIL", "graph@example.com")
+            .env("GIT_COMMITTER_NAME", "Graph Test Author")
+            .env("GIT_COMMITTER_EMAIL", "graph@example.com")
+            .env("GIT_AUTHOR_DATE", &date)
+            .env("GIT_COMMITTER_DATE", &date)
+            .output()?;
+        anyhow::ensure!(
+            output.status.success(),
+            "git {arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    };
+    git(&["init", "--initial-branch=main", "--object-format=sha1"])?;
+    std::fs::write(project_path.join("main.rs"), "fn main() {}\n")?;
+    git(&["add", "."])?;
+    git(&["commit", "-m", "Initial project"])?;
+    git(&["checkout", "-b", "feature/compact-graph"])?;
+    std::fs::write(project_path.join("graph.rs"), "// Graph implementation\n")?;
+    git(&["add", "."])?;
+    git(&[
+        "commit",
+        "-m",
+        "Add compact graph with a deliberately long commit subject to verify truncation",
+    ])?;
+    git(&["checkout", "main"])?;
+    std::fs::write(
+        project_path.join("main.rs"),
+        "fn main() { println!(\"Hello\"); }\n",
+    )?;
+    git(&["commit", "-am", "Update application entry point"])?;
+    git(&[
+        "merge",
+        "--no-ff",
+        "feature/compact-graph",
+        "-m",
+        "Merge compact graph support",
+    ])?;
+    git(&["tag", "v1.0.0"])?;
+    git(&["branch", "release/1.0"])?;
+    git(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    for index in 0..3 {
+        git(&[
+            "commit",
+            "--allow-empty",
+            "-m",
+            &format!("Refine graph layout {index}"),
+        ])?;
+    }
+    std::fs::write(
+        project_path.join("main.rs"),
+        "fn main() { println!(\"Working changes\"); }\n",
+    )?;
+    std::fs::write(project_path.join("notes.txt"), "Untracked notes\n")?;
+
+    let project = cx.update(|cx| {
+        Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    let task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&project_path, true, cx)
+    });
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(task);
+    cx.background_executor.forbid_parking();
+    result?;
+    let task = project.update(cx, |project, cx| project.git_scans_complete(cx));
+    cx.background_executor.allow_parking();
+    cx.foreground_executor.block_test(task);
+    cx.background_executor.forbid_parking();
+    cx.run_until_parked();
+    let repository = cx
+        .update(|cx| project.read(cx).active_repository(cx))
+        .context("Graph fixture repository missing")?;
+    let start = std::time::Instant::now();
+    loop {
+        let ready = repository.update(cx, |repository, cx| -> Result<bool> {
+            let response =
+                repository.graph_data(LogSource::All, LogOrder::default(), 0..usize::MAX, cx);
+            anyhow::ensure!(
+                response.error.is_none(),
+                "Graph fixture load error: {:?}",
+                response.error
+            );
+            if response.is_loading {
+                return Ok(false);
+            }
+            anyhow::ensure!(
+                response.commits.len() == 7,
+                "Expected 7 fixture commits, found {}",
+                response.commits.len()
+            );
+            let commits = response.commits.to_vec();
+            let mut loaded = true;
+            for commit in commits {
+                loaded &= matches!(
+                    repository.fetch_commit_data(commit.sha, false, cx),
+                    CommitDataState::Loaded(_)
+                );
+            }
+            Ok(loaded)
+        })?;
+        if ready {
+            break;
+        }
+        anyhow::ensure!(
+            start.elapsed() < Duration::from_secs(30),
+            "Timed out loading graph fixture"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let original_settings = cx.update(|cx| {
+        SettingsStore::global(cx)
+            .raw_user_settings()
+            .and_then(|settings| settings.content.git_panel.clone())
+    });
+    let mut result = TestResult::Passed;
+    let mut failures = Vec::new();
+    for (name, dock, width, collapsed, show_graph) in [
+        (
+            "git_panel_graph_right",
+            DockPosition::Right,
+            360.,
+            false,
+            true,
+        ),
+        (
+            "git_panel_graph_left",
+            DockPosition::Left,
+            360.,
+            false,
+            true,
+        ),
+        (
+            "git_panel_graph_narrow",
+            DockPosition::Right,
+            260.,
+            false,
+            true,
+        ),
+        (
+            "git_panel_graph_collapsed",
+            DockPosition::Right,
+            360.,
+            true,
+            true,
+        ),
+        (
+            "git_panel_graph_disabled",
+            DockPosition::Right,
+            360.,
+            false,
+            false,
+        ),
+    ] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let panel = settings.git_panel.get_or_insert_default();
+                    panel.dock = Some(dock.into());
+                    panel.default_width = Some(width.into());
+                    panel.show_graph = Some(show_graph);
+                });
+            })
+        });
+        let window = cx.update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(960.), px(720.)),
+                    ))),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })?;
+        window.update(cx, |workspace, window, cx| {
+            let panel = GitPanel::new_test(workspace, window, cx);
+            if collapsed {
+                panel.update(cx, |panel, cx| panel.collapse_graph_for_test(cx));
+            }
+            workspace.add_panel(panel, window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+        })?;
+        cx.run_until_parked();
+        for _ in 0..5 {
+            cx.advance_clock(Duration::from_millis(100));
+            cx.run_until_parked();
+        }
+        match run_visual_test(name, window.into(), cx, update_baseline) {
+            Ok(TestResult::BaselineUpdated(path)) => result = TestResult::BaselineUpdated(path),
+            Ok(TestResult::Passed) => {}
+            Err(error) => failures.push(format!("{name}: {error:#}")),
+        }
+        cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+        cx.run_until_parked();
+    }
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| settings.git_panel = original_settings);
+        })
+    });
+    project.update(cx, |project, cx| {
+        let ids = project
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).id())
+            .collect::<Vec<_>>();
+        for id in ids {
+            project.remove_worktree(id, cx);
+        }
+    });
+    cx.run_until_parked();
+    anyhow::ensure!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(result)
 }
 
 #[cfg(target_os = "macos")]
