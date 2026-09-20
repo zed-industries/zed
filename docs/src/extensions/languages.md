@@ -372,7 +372,7 @@ For example, in JavaScript, we also disable auto-closing of single quotes within
 
 ### Text objects
 
-The `textobjects.scm` file defines rules for navigating by text objects. This was added in Zed v0.165 and is currently used only in Vim mode.
+The `textobjects.scm` file defines rules for navigating by text objects. This was added in Zed v0.165 and is currently used only in [Vim mode](../vim.md).
 
 Vim provides two levels of granularity for navigating around files. Section-by-section with `[]` etc., and method-by-method with `]m` etc. Even languages that don't support functions and classes can work well by defining similar concepts. For example CSS defines a rule-set as a method, and a media-query as a class.
 
@@ -503,7 +503,7 @@ You can customize the handling of the language server using several optional met
 
 ### Syntax Highlighting with Semantic Tokens
 
-Zed supports syntax highlighting using semantic tokens from the attached language servers. This is currently disabled by default, but can be enabled in your settings file:
+Zed supports syntax highlighting using [semantic tokens](../semantic-tokens.md) from the attached language servers. This is currently disabled by default, but can be enabled in your settings file:
 
 ```json [settings]
 {
