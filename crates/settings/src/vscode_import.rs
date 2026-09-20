@@ -1164,20 +1164,23 @@ impl VsCodeSettings {
                                 .any(|enabled| enabled.as_bool() == Some(true))
                         })
                 })
-                .and_then(|v| v.as_object())
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|(k, v)| {
-                            if v.as_bool().unwrap_or(false) {
-                                Some(k.to_owned())
-                            } else {
-                                None
-                            }
+                .and_then(Value::as_object)
+                .map(|patterns| {
+                    patterns
+                        .iter()
+                        .filter(|(pattern, enabled)| {
+                            !pattern.is_empty()
+                                && pattern.as_str() != SplicingVec::REST
+                                && enabled.as_bool() == Some(true)
                         })
+                        .map(|(pattern, _)| pattern.to_owned())
                         .collect::<Vec<_>>()
                 })
-                .filter(|r| !r.is_empty())
-                .map(SplicingVec::from),
+                .filter(|patterns| !patterns.is_empty())
+                .map(|mut patterns| {
+                    patterns.push(SplicingVec::REST.to_owned());
+                    SplicingVec::from(patterns)
+                }),
         }
     }
 }
@@ -1367,7 +1370,13 @@ mod tests {
         };
         let imported = VsCodeSettings::from_str(
             r#"{
-                "files.readonlyInclude": {"**/*.gen.rs": true, "**/*.lock": false},
+                "files.readonlyInclude": {
+                    "": true,
+                    "**/*.gen.rs": true,
+                    "**/*.lock": false,
+                    "**/generated/**": true,
+                    "...": true
+                },
                 "files.readonlyExclude": {"**/editable.gen.rs": false}
             }"#,
             VsCodeSettingsSource::VsCode,
@@ -1375,15 +1384,21 @@ mod tests {
         .worktree_settings_content();
         assert_eq!(
             serde_json::to_value(&imported.read_only_files)?,
-            serde_json::json!(["**/*.gen.rs"])
+            serde_json::json!(["**/*.gen.rs", "**/generated/**", "..."])
         );
-        let mut replaced = inherited.clone();
-        replaced.merge_from(&imported);
-        assert_eq!(replaced.read_only_files, imported.read_only_files);
+        let mut spliced = inherited.clone();
+        spliced.merge_from(&imported);
+        assert_eq!(
+            serde_json::to_value(&spliced.read_only_files)?,
+            serde_json::json!(["**/*.gen.rs", "**/generated/**", "**/*.lock"])
+        );
 
         for content in [
             r#"{"files.readonlyExclude": {"**/*.gen.rs": true}}"#,
             r#"{"files.readonlyInclude": {"**/*.gen.rs": false}}"#,
+            r#"{"files.readonlyInclude": {"": true}}"#,
+            r#"{"files.readonlyInclude": {"...": true}}"#,
+            r#"{"files.readonlyInclude": ["**/*.gen.rs"]}"#,
             r#"{"files.readonlyInclude": {}}"#,
             "{}",
         ] {
