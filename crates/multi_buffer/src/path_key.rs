@@ -460,6 +460,28 @@ impl MultiBuffer {
                     }
                     reused_excerpt
                 } else {
+                    let context = next_excerpt.context.to_offset(buffer_snapshot);
+                    let old_start = cursor.position.1;
+                    let new_start = new_excerpts.summary().len();
+                    let text_len = context.end - context.start;
+                    let first_char_len = buffer_snapshot
+                        .chars_at(context.start)
+                        .next()
+                        .map_or(0, char::len_utf8)
+                        .min(text_len);
+                    let last_char_len = buffer_snapshot
+                        .reversed_chars_at(context.end)
+                        .next()
+                        .map_or(0, char::len_utf8)
+                        .min(text_len);
+                    for range in [0..first_char_len, text_len - last_char_len..text_len] {
+                        patch.push_maybe_empty(Edit {
+                            old: old_start + MultiBufferOffset(range.start)
+                                ..old_start + MultiBufferOffset(range.end),
+                            new: new_start + MultiBufferOffset(range.start)
+                                ..new_start + MultiBufferOffset(range.end),
+                        });
+                    }
                     Excerpt::new(
                         path_key.clone(),
                         path_key_index,
