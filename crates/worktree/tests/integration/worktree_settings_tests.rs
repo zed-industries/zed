@@ -1,7 +1,9 @@
+use serde_json::json;
+use settings::{MergeFromTrait as _, RootUserSettings as _, Settings, SettingsContent};
 use std::path::Path;
 use util::{
     paths::{PathMatcher, PathStyle},
-    rel_path::RelPath,
+    rel_path::{RelPath, rel_path},
 };
 use worktree::*;
 
@@ -21,6 +23,122 @@ fn make_settings_with_read_only(patterns: &[&str]) -> WorktreeSettings {
         scan_symlinks: Default::default(),
         file_scan_depth: None,
     }
+}
+
+fn settings_with_patterns(setting: &str, patterns: &[&str]) -> WorktreeSettings {
+    zlog::init_test();
+    let mut content = SettingsContent::parse_json_with_comments(&settings::default_settings())
+        .expect("default settings");
+    let inherited: SettingsContent =
+        serde_json::from_value(json!({ setting: ["**/.git"] })).expect("inherited settings");
+    content.merge_from(&inherited);
+    let overrides: SettingsContent =
+        serde_json::from_value(json!({ setting: patterns })).expect("override settings");
+    content.merge_from(&overrides);
+    WorktreeSettings::from_settings(&content)
+}
+
+fn assert_file_pattern_settings(setting: &str) {
+    for (patterns, expected) in [
+        (vec!["**/alpha/**", "zeta/**"], [false, true, true]),
+        (vec!["**/alpha/**", "[", "zeta/**"], [false, true, true]),
+        (vec!["..."], [true, false, false]),
+        (vec!["...", "["], [true, false, false]),
+        (
+            vec!["**/alpha/**", "...", "[", "zeta/**"],
+            [true, true, true],
+        ),
+        (vec!["[", "{"], [false, false, false]),
+        (vec![], [false, false, false]),
+    ] {
+        let settings = settings_with_patterns(setting, &patterns);
+        let matcher = match setting {
+            "file_scan_exclusions" => &settings.file_scan_exclusions,
+            "file_scan_inclusions" => &settings.file_scan_inclusions,
+            "hidden_files" => &settings.hidden_files,
+            "read_only_files" => &settings.read_only_files,
+            _ => unreachable!(),
+        };
+        for (path, expected) in [".git", "alpha/file.txt", "zeta/file.txt"]
+            .into_iter()
+            .zip(expected)
+        {
+            assert_eq!(
+                matcher.is_match(rel_path(path)),
+                expected,
+                "{setting}: {patterns:?} matching {path}"
+            );
+        }
+        assert!(!matcher.is_match(rel_path("unmatched/file.txt")));
+    }
+}
+
+#[test]
+fn test_invalid_file_scan_exclusions() {
+    assert_file_pattern_settings("file_scan_exclusions");
+}
+
+#[test]
+fn test_invalid_exclusion_addition_preserves_git() {
+    let settings = settings_with_patterns("file_scan_exclusions", &["...", "["]);
+    assert!(settings.is_path_excluded(rel_path(".git/config")));
+    assert!(settings.is_path_excluded(rel_path("nested/.git/config")));
+}
+
+#[test]
+fn test_invalid_file_scan_inclusions() {
+    assert_file_pattern_settings("file_scan_inclusions");
+}
+
+#[test]
+fn test_invalid_hidden_files() {
+    assert_file_pattern_settings("hidden_files");
+}
+
+#[test]
+fn test_invalid_read_only_files() {
+    assert_file_pattern_settings("read_only_files");
+}
+
+#[test]
+fn test_invalid_direct_inclusions_do_not_include_parents() {
+    let settings =
+        settings_with_patterns("file_scan_inclusions", &["ignored/[", "valid/nested/**"]);
+    assert!(!settings.is_path_always_included(rel_path("ignored"), true));
+    assert!(!settings.is_path_always_included(rel_path("ignored/file.txt"), false));
+    assert!(settings.is_path_always_included(rel_path("valid"), true));
+    assert!(settings.is_path_always_included(rel_path("valid/nested"), true));
+    assert!(settings.is_path_always_included(rel_path("valid/nested/file.txt"), false));
+}
+
+#[test]
+fn test_invalid_derived_inclusions_reject_original_pattern() {
+    let pattern = "ignored/{one/two,three}/file.rs";
+    assert!(PathMatcher::new([pattern], PathStyle::local()).is_ok());
+    assert!(PathMatcher::new(["ignored/{one"], PathStyle::local()).is_err());
+
+    let settings = settings_with_patterns("file_scan_inclusions", &[pattern, "valid/nested/**"]);
+    assert!(!settings.is_path_always_included(rel_path("ignored"), true));
+    assert!(!settings.is_path_always_included(rel_path("ignored/one/two/file.rs"), false));
+    assert!(settings.is_path_always_included(rel_path("valid"), true));
+    assert!(settings.is_path_always_included(rel_path("valid/nested"), true));
+    assert!(settings.is_path_always_included(rel_path("valid/nested/file.txt"), false));
+
+    let settings = settings_with_patterns("file_scan_inclusions", &[pattern]);
+    assert!(!settings.is_path_always_included(rel_path("ignored"), true));
+    assert!(!settings.is_path_always_included(rel_path("ignored/one/two/file.rs"), false));
+}
+
+#[test]
+fn test_private_files_retains_strict_matching() {
+    let settings = settings_with_patterns("private_files", &["**/private/**"]);
+    assert!(settings.is_path_private(rel_path("private/file.txt")));
+    assert!(settings.is_path_private(rel_path(".env.local")));
+
+    let settings = settings_with_patterns("private_files", &["**/private/**", "["]);
+    assert!(!settings.is_path_private(rel_path("private/file.txt")));
+    assert!(!settings.is_path_private(rel_path(".env.local")));
+    assert!(PathMatcher::new(["**/private/**", "["], PathStyle::local()).is_err());
 }
 
 #[test]

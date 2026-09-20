@@ -66,42 +66,72 @@ impl Settings for WorktreeSettings {
         let hidden_files = worktree.hidden_files.unwrap().0;
         let read_only_files = worktree.read_only_files.unwrap_or_default().0;
         let scan_symlinks = worktree.scan_symlinks.unwrap();
-        let parsed_file_scan_inclusions: Vec<String> = file_scan_inclusions
-            .iter()
-            .flat_map(|glob| {
-                Path::new(glob)
-                    .ancestors()
-                    .skip(1)
-                    .map(|a| a.to_string_lossy().into())
-            })
-            .filter(|p: &String| !p.is_empty())
-            .collect();
+        let (file_scan_inclusions, parent_dir_scan_inclusions) =
+            file_scan_inclusion_matchers(file_scan_inclusions);
 
         Self {
             prevent_sharing_in_public_channels: worktree.prevent_sharing_in_public_channels,
-            file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
-                .log_err()
-                .unwrap_or_default(),
-            parent_dir_scan_inclusions: path_matchers(
-                parsed_file_scan_inclusions,
-                "file_scan_inclusions",
-            )
-            .unwrap(),
-            file_scan_inclusions: path_matchers(file_scan_inclusions, "file_scan_inclusions")
-                .unwrap(),
+            file_scan_exclusions: valid_path_matchers(file_scan_exclusions, "file_scan_exclusions"),
+            parent_dir_scan_inclusions,
+            file_scan_inclusions,
             private_files: path_matchers(private_files, "private_files")
                 .log_err()
                 .unwrap_or_default(),
-            hidden_files: path_matchers(hidden_files, "hidden_files")
-                .log_err()
-                .unwrap_or_default(),
-            read_only_files: path_matchers(read_only_files, "read_only_files")
-                .log_err()
-                .unwrap_or_default(),
+            hidden_files: valid_path_matchers(hidden_files, "hidden_files"),
+            read_only_files: valid_path_matchers(read_only_files, "read_only_files"),
             scan_symlinks,
             file_scan_depth: worktree.file_scan_depth.filter(|depth| *depth > 0),
         }
     }
+}
+
+fn valid_path_matchers(mut values: Vec<String>, context: &'static str) -> PathMatcher {
+    values.retain(|pattern| {
+        PathMatcher::new([pattern], PathStyle::local())
+            .with_context(|| format!("Ignoring invalid pattern {pattern:?} in `{context}`"))
+            .log_err()
+            .is_some()
+    });
+    path_matchers(values, context).log_err().unwrap_or_default()
+}
+
+fn file_scan_inclusion_matchers(values: Vec<String>) -> (PathMatcher, PathMatcher) {
+    let mut inclusions = Vec::new();
+    let mut parent_inclusions = Vec::new();
+    for pattern in values {
+        let parents: Vec<String> = Path::new(&pattern)
+            .ancestors()
+            .skip(1)
+            .map(|parent| parent.to_string_lossy().into_owned())
+            .filter(|parent| !parent.is_empty())
+            .collect();
+        // Keep each inclusion and its traversal paths together so a rejected
+        // pattern cannot leave behind parent directories that are always scanned
+        if PathMatcher::new(
+            std::iter::once(&pattern).chain(parents.iter()),
+            PathStyle::local(),
+        )
+        .with_context(|| {
+            format!(
+                "Ignoring pattern {pattern:?} in `file_scan_inclusions` because it or a parent pattern is invalid"
+            )
+        })
+        .log_err()
+        .is_none()
+        {
+            continue;
+        }
+        inclusions.push(pattern);
+        parent_inclusions.extend(parents);
+    }
+    (
+        path_matchers(inclusions, "file_scan_inclusions")
+            .log_err()
+            .unwrap_or_default(),
+        path_matchers(parent_inclusions, "file_scan_inclusions")
+            .log_err()
+            .unwrap_or_default(),
+    )
 }
 
 fn path_matchers(mut values: Vec<String>, context: &'static str) -> anyhow::Result<PathMatcher> {

@@ -2117,6 +2117,7 @@ async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                     "...".to_string(),
+                    "[".to_string(),
                     "ignored/**/excluded.project".to_string(),
                 ]));
                 settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![
@@ -2178,6 +2179,7 @@ async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext
                 "expected {path} to remain ignored"
             );
         }
+        assert_eq!(tree.entry_for_path(rel_path(".git")), None);
         assert_eq!(
             tree.entry_for_path(rel_path("ignored/nested/excluded.project")),
             None
@@ -2197,11 +2199,24 @@ async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext
 
     for (settings, included_paths) in [
         (
+            r#"{ "file_scan_inclusions": ["...", "ignored/**/*.project", "invalid/[", "rejected/{one/two,three}/file.rs"] }"#,
+            vec![
+                rel_path(".env.local"),
+                rel_path(".gitignore"),
+                rel_path("ignored/nested/included.project"),
+                rel_path("ignored/nested/included.user"),
+            ],
+        ),
+        (
             r#"{ "file_scan_inclusions": ["ignored/**/*.project"] }"#,
             vec![
                 rel_path(".gitignore"),
                 rel_path("ignored/nested/included.project"),
             ],
+        ),
+        (
+            r#"{ "file_scan_inclusions": ["invalid/["] }"#,
+            vec![rel_path(".gitignore")],
         ),
         (
             r#"{ "file_scan_inclusions": [] }"#,
@@ -2227,6 +2242,14 @@ async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext
         })
         .await;
         tree.read_with(cx, |tree, _| {
+            for path in ["ignored", "ignored/nested"] {
+                assert_eq!(
+                    tree.entry_for_path(rel_path(path))
+                        .is_some_and(|entry| entry.is_always_included),
+                    included_paths.len() > 1,
+                    "ancestor inclusion for {path} with {settings}"
+                );
+            }
             assert_eq!(
                 tree.files(false, 0)
                     .map(|entry| entry.path.as_ref())
