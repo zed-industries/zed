@@ -84,13 +84,12 @@ The following VS Code settings are automatically imported when you use **Import 
 
 | VS Code Setting             | Zed Setting                    |
 | --------------------------- | ------------------------------ |
+| `files.associations`        | `file_types`                   |
 | `files.autoSave`            | `autosave`                     |
 | `files.autoSaveDelay`       | `autosave.milliseconds`        |
 | `files.insertFinalNewline`  | `ensure_final_newline_on_save` |
-| `files.associations`        | `file_types`                   |
-| `files.watcherExclude`      | `file_scan_exclusions`         |
-| `files.watcherInclude`      | `file_scan_inclusions`         |
 | `files.simpleDialog.enable` | `use_system_path_prompts`      |
+| `files.watcherExclude`      | `file_scan_exclusions`         |
 | `search.smartCase`          | `use_smartcase_search`         |
 | `search.useIgnoreFiles`     | `search.include_ignored`       |
 
@@ -278,7 +277,7 @@ In VS Code, the standard entry point is opening a folder. From there, the left-h
 Zed takes a different approach:
 
 - You can still open folders, but you don’t need to. Opening a single file or even starting with an empty workspace is valid.
-- The Command Palette (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are primary navigation tools. The File Finder searches files, symbols, and commands across the workspace.
+- The [Command Palette](../command-palette.md) (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are primary navigation tools. The File Finder searches files, symbols, and commands across the workspace.
 - Instead of a persistent panel, Zed encourages you to:
   - Fuzzy-find files by name (`Cmd+P`)
   - Jump directly to symbols (`Cmd+Shift+O`)

@@ -9,12 +9,13 @@ workspace = true
 
 [lib]
 path = "src/grammars.rs"
+test = false
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
 language_core.workspace = true
 rust-embed.workspace = true
-toml.workspace = true
 util.workspace = true
 
 tree-sitter = { workspace = true, optional = true }
