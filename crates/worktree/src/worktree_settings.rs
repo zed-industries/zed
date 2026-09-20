@@ -1,9 +1,7 @@
 use std::path::Path;
 
-use anyhow::Context as _;
 use settings::{RegisterSetting, ScanSymlinksSetting, Settings};
 use util::{
-    ResultExt,
     paths::{PathMatcher, PathStyle},
     rel_path::RelPath,
 };
@@ -90,47 +88,84 @@ fn valid_path_matchers(mut values: Vec<String>, context: &'static str) -> PathMa
     })
 }
 
-fn file_scan_inclusion_matchers(values: Vec<String>) -> (PathMatcher, PathMatcher) {
-    let mut inclusions = Vec::new();
-    let mut parent_inclusions = Vec::new();
-    for pattern in values {
-        let parents: Vec<String> = Path::new(&pattern)
-            .ancestors()
-            .skip(1)
-            .map(|parent| parent.to_string_lossy().into_owned())
-            .filter(|parent| !parent.is_empty())
-            .collect();
-        // Keep each inclusion and its traversal paths together so a rejected
-        // pattern cannot leave behind parent directories that are always scanned
-        if PathMatcher::new(
-            std::iter::once(&pattern).chain(parents.iter()),
-            PathStyle::local(),
-        )
-        .with_context(|| {
-            format!(
-                "Ignoring pattern {pattern:?} in `file_scan_inclusions` because it or a parent pattern is invalid"
-            )
+fn file_scan_inclusion_matchers(mut values: Vec<String>) -> (PathMatcher, PathMatcher) {
+    values.sort();
+    let mut errors = Vec::new();
+    let inclusions = PathMatcher::new_lenient(&values, PathStyle::local(), |error| {
+        errors.push(error);
+    });
+    let parent_inclusions = values
+        .iter()
+        .filter(|pattern| {
+            !errors.iter().any(|error| {
+                error
+                    .glob()
+                    .is_none_or(|invalid| invalid == pattern.as_str())
+            })
         })
-        .log_err()
-        .is_none()
-        {
-            continue;
-        }
-        inclusions.push(pattern);
-        parent_inclusions.extend(parents);
+        .flat_map(|pattern| inclusion_parent_patterns(pattern, PathStyle::local()))
+        .collect();
+    for error in errors {
+        log::error!("Failed to compile patterns in `file_scan_inclusions`: {error}");
     }
     (
-        path_matchers(inclusions, "file_scan_inclusions")
-            .log_err()
-            .unwrap_or_default(),
-        path_matchers(parent_inclusions, "file_scan_inclusions")
-            .log_err()
-            .unwrap_or_default(),
+        inclusions,
+        valid_path_matchers(parent_inclusions, "file_scan_inclusions"),
     )
 }
 
-fn path_matchers(mut values: Vec<String>, context: &'static str) -> anyhow::Result<PathMatcher> {
-    values.sort();
-    PathMatcher::new(values, PathStyle::local())
-        .with_context(|| format!("Failed to parse globs from {}", context))
+fn inclusion_parent_patterns(pattern: &str, path_style: PathStyle) -> Vec<String> {
+    let mut parents = Vec::new();
+    let mut braces = Vec::new();
+    let mut class_start = None;
+    let mut escaped = false;
+    for (index, character) in pattern.char_indices() {
+        let is_separator = path_style.separators_ch().contains(&character);
+        let mut split_index = index;
+        if class_start.is_none() {
+            if escaped {
+                escaped = false;
+                if !is_separator {
+                    continue;
+                }
+                split_index -= 1;
+            } else if character == '\\' && path_style.is_posix() {
+                escaped = true;
+                continue;
+            }
+        }
+        if let Some(start) = class_start {
+            let first_content = start
+                + 1
+                + usize::from(matches!(
+                    pattern.as_bytes().get(start + 1),
+                    Some(b'!' | b'^')
+                ));
+            if character == ']' && index > first_content {
+                class_start = None;
+            }
+        } else {
+            match character {
+                '[' => class_start = Some(index),
+                '{' => braces.push(index),
+                '}' => {
+                    braces.pop();
+                }
+                _ => {}
+            }
+        }
+        if is_separator {
+            if let Some(start) = braces.first().copied().or(class_start) {
+                // A separator inside a group is not a safe split point. The
+                // prefix still needs to admit intermediate directories such as
+                // `one` in `{one/two,three}/file.rs`, without including extra files
+                parents.push(format!("{}*", &pattern[..start]));
+            } else if split_index > 0 {
+                parents.push(pattern[..split_index].to_string());
+            }
+        }
+    }
+    parents.sort();
+    parents.dedup();
+    parents
 }

@@ -193,10 +193,6 @@ pub struct WorktreeSettingsContent {
     /// occurrence.
     ///
     /// Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
-    ///
-    /// An inclusion pattern is also invalid if any of its derived parent patterns
-    /// cannot compile. The original pattern and its derived parents are accepted
-    /// or skipped together.
     pub file_scan_inclusions: Option<SplicingVec>,
 
     /// When to scan content of linked directories.

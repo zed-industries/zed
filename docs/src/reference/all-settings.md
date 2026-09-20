@@ -2389,8 +2389,6 @@ Inherited patterns are inserted at `"..."`, and duplicates keep their first occu
 
 Invalid patterns are logged and skipped. Empty or all-invalid lists match nothing.
 
-An inclusion pattern is also invalid if any of its derived parent patterns cannot compile. The original pattern and its derived parents are accepted or skipped together.
-
 ## File Scan Depth
 
 - Setting: `file_scan_depth`

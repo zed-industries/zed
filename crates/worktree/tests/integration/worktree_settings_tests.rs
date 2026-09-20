@@ -112,21 +112,75 @@ fn test_invalid_direct_inclusions_do_not_include_parents() {
 }
 
 #[test]
-fn test_invalid_derived_inclusions_reject_original_pattern() {
-    let pattern = "ignored/{one/two,three}/file.rs";
-    assert!(PathMatcher::new([pattern], PathStyle::local()).is_ok());
-    assert!(PathMatcher::new(["ignored/{one"], PathStyle::local()).is_err());
+fn test_inclusions_preserve_brace_patterns() {
+    for (pattern, files) in [
+        (
+            "ignored/{one/two,three}/file.rs",
+            ["ignored/one/two/file.rs", "ignored/three/file.rs"],
+        ),
+        (
+            "{one/two,three}/file.rs",
+            ["one/two/file.rs", "three/file.rs"],
+        ),
+    ] {
+        assert!(PathMatcher::new([pattern], PathStyle::local()).is_ok());
+        let settings =
+            settings_with_patterns("file_scan_inclusions", &[pattern, "valid/nested/**"]);
+        for file in files {
+            assert!(settings.is_path_always_included(rel_path(file), false));
+            for parent in rel_path(file)
+                .ancestors()
+                .skip(1)
+                .filter(|path| !path.is_empty())
+            {
+                assert!(
+                    settings.is_path_always_included(parent, true),
+                    "{pattern}: missing ancestor {parent:?}"
+                );
+            }
+        }
+        assert!(settings.is_path_always_included(rel_path("valid"), true));
+        assert!(settings.is_path_always_included(rel_path("valid/nested/file.txt"), false));
+        assert!(!settings.is_path_always_included(rel_path("unmatched/file.txt"), false));
+    }
+}
 
-    let settings = settings_with_patterns("file_scan_inclusions", &[pattern, "valid/nested/**"]);
-    assert!(!settings.is_path_always_included(rel_path("ignored"), true));
-    assert!(!settings.is_path_always_included(rel_path("ignored/one/two/file.rs"), false));
-    assert!(settings.is_path_always_included(rel_path("valid"), true));
-    assert!(settings.is_path_always_included(rel_path("valid/nested"), true));
-    assert!(settings.is_path_always_included(rel_path("valid/nested/file.txt"), false));
+#[test]
+fn test_inclusion_parents_preserve_literal_braces() {
+    let mut patterns = vec!["ignored/[{]one/file.rs"];
+    if PathStyle::local().is_posix() {
+        patterns.push(r"ignored/\{one/file.rs");
+    }
+    for pattern in patterns {
+        let settings = settings_with_patterns("file_scan_inclusions", &[pattern]);
+        assert!(settings.is_path_always_included(rel_path("ignored/{one/file.rs"), false));
+        assert!(settings.is_path_always_included(rel_path("ignored/{one"), true));
+        assert!(settings.is_path_always_included(rel_path("ignored"), true));
+        assert!(!settings.is_path_always_included(rel_path("ignored/other/file.rs"), false));
+    }
+}
 
-    let settings = settings_with_patterns("file_scan_inclusions", &[pattern]);
-    assert!(!settings.is_path_always_included(rel_path("ignored"), true));
-    assert!(!settings.is_path_always_included(rel_path("ignored/one/two/file.rs"), false));
+#[cfg(not(windows))]
+#[test]
+fn test_inclusion_parents_preserve_escaping() {
+    let settings = settings_with_patterns("file_scan_inclusions", &[r"{one\/two,three}/file.rs"]);
+    assert!(settings.is_path_always_included(rel_path("one/two/file.rs"), false));
+    assert!(settings.is_path_always_included(rel_path("one/two"), true));
+    assert!(settings.is_path_always_included(rel_path("one"), true));
+
+    let settings = settings_with_patterns("file_scan_inclusions", &[r"ignored\/nested/file.rs"]);
+    assert!(settings.is_path_always_included(rel_path("ignored/nested/file.rs"), false));
+    assert!(settings.is_path_always_included(rel_path("ignored/nested"), true));
+    assert!(settings.is_path_always_included(rel_path("ignored"), true));
+}
+
+#[cfg(not(windows))]
+#[test]
+fn test_inclusion_parents_preserve_character_classes() {
+    let settings = settings_with_patterns("file_scan_inclusions", &[r"[a\]cache/file.rs"]);
+    assert!(settings.is_path_always_included(rel_path("acache/file.rs"), false));
+    assert!(settings.is_path_always_included(rel_path("acache"), true));
+    assert!(!settings.is_path_always_included(rel_path("unmatched"), true));
 }
 
 #[test]
