@@ -1,7 +1,7 @@
 use std::{
     cell::LazyCell,
     collections::BTreeSet,
-    io::{BufRead, BufReader, Cursor, ErrorKind, Read},
+    io::{BufRead, BufReader, ErrorKind},
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
@@ -21,12 +21,9 @@ use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
 
-use language::ByteContent;
+use file_content::{ByteContent, DecodingReader, decode_byte_header};
 use util::{ResultExt, maybe, rel_path::RelPath};
-use worktree::{
-    Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings, decode_byte_header,
-    decode_file_text,
-};
+use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
@@ -849,21 +846,27 @@ impl RequestHandler<'_> {
             let is_plain_utf8 = bom_encoding.is_none()
                 && byte_content == ByteContent::Unknown
                 && is_utf8_prefix(file_start);
+            let encoding = bom_encoding.or(byte_content.encoding());
 
             let line_hint = if is_plain_utf8 {
-                match self.query.detect(file).await {
+                match self.query.detect(&mut file).await {
                     Ok(line_hint) => line_hint,
                     Err(error)
                         if error
                             .downcast_ref::<std::io::Error>()
                             .is_some_and(|error| error.kind() == ErrorKind::InvalidData) =>
                     {
-                        self.detect_in_decoded_file(fs, &abs_path).await?
+                        let mut file = fs.open_sync(&abs_path).await?;
+                        self.query
+                            .detect(&mut DecodingReader::new(&mut *file, encoding))
+                            .await?
                     }
                     Err(error) => return Err(error),
                 }
             } else {
-                self.detect_in_decoded_file(fs, &abs_path).await?
+                self.query
+                    .detect(&mut DecodingReader::new(&mut file, encoding))
+                    .await?
             };
 
             if let Some(line_hint) = line_hint {
@@ -874,16 +877,6 @@ impl RequestHandler<'_> {
         }
         .await
         .ok();
-    }
-
-    async fn detect_in_decoded_file(
-        &self,
-        fs: &dyn Fs,
-        abs_path: &Path,
-    ) -> anyhow::Result<Option<MatchPositionHint>> {
-        let (text, _encoding, _has_bom) = decode_file_text(fs, abs_path).await?;
-        let reader: Box<dyn Read + Send + Sync> = Box::new(Cursor::new(text.into_bytes()));
-        self.query.detect(BufReader::new(reader)).await
     }
 
     async fn handle_scan_path(&self, req: InputPath) {

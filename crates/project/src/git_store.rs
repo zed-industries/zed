@@ -22,6 +22,7 @@ use buffer_diff::{
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
+use file_content::{decode_text, encode_text};
 use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, SinkExt, Stream, StreamExt,
@@ -42,7 +43,6 @@ use git::{
         GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
         LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
         SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
-        is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -55,7 +55,7 @@ use gpui::{
     Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
-    Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry, decode_text, encode_text,
+    Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry,
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
@@ -10347,52 +10347,41 @@ impl Repository {
         cx: &App,
     ) -> Task<Result<(String, git::blame::Blame)>> {
         let repository_id = self.snapshot.id;
-        let rx = self.send_job("blame_buffer_at_revision", None, {
-            let path = path.clone();
-            move |state, _| async move {
-                match state {
-                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        let content_task = backend
-                            .load_revisions(vec![format!("{revision}:{}", path.as_unix_str())]);
-                        let blame_task = backend.blame_at_revision(path.clone(), revision);
-                        let (mut contents, blame) = futures::try_join!(content_task, blame_task)?;
-                        let content = contents.pop().flatten().with_context(|| {
-                            format!(
-                                "cannot load {:?} at revision {revision}: the file is missing or binary",
-                                path.as_ref()
-                            )
-                        })?;
-                        let content = decode_git_text(content)?;
-                        anyhow::Ok((content, blame))
-                    }
-                    RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
-                        let response = client
-                            .request(proto::BlameBufferAtRevision {
-                                project_id: project_id.to_proto(),
-                                repository_id: repository_id.0,
-                                path: path.as_unix_str().to_owned(),
-                                revision: revision.to_string(),
-                            })
-                            .await?;
-                        let blame = blame_from_proto(
-                            response.entries,
-                            response.messages,
-                            response.tag_names,
-                        );
-                        Ok((response.content, blame))
-                    }
+        let rx = self.send_job("blame_buffer_at_revision", None, move |state, _| async move {
+            match state {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    let content_task = backend
+                        .load_revisions(vec![format!("{revision}:{}", path.as_unix_str())]);
+                    let blame_task = backend.blame_at_revision(path.clone(), revision);
+                    let (mut contents, blame) = futures::try_join!(content_task, blame_task)?;
+                    let content = contents.pop().flatten().with_context(|| {
+                        format!(
+                            "cannot load {:?} at revision {revision}: the file is missing or binary",
+                            path.as_ref()
+                        )
+                    })?;
+                    let content = decode_git_text(content)?;
+                    anyhow::Ok((content, blame))
+                }
+                RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
+                    let response = client
+                        .request(proto::BlameBufferAtRevision {
+                            project_id: project_id.to_proto(),
+                            repository_id: repository_id.0,
+                            path: path.as_unix_str().to_owned(),
+                            revision: revision.to_string(),
+                        })
+                        .await?;
+                    let blame = blame_from_proto(
+                        response.entries,
+                        response.messages,
+                        response.tag_names,
+                    );
+                    Ok((response.content, blame))
                 }
             }
         });
-        cx.spawn(move |_: &mut AsyncApp| async move {
-            let (content, blame) = rx.await??;
-            anyhow::ensure!(
-                !is_binary_content(content.as_bytes()),
-                "cannot blame binary file {:?} at revision {revision}",
-                path.as_ref()
-            );
-            Ok((content, blame))
-        })
+        cx.background_spawn(async move { rx.await? })
     }
 
     /// Bypasses the serial git job queue: blobs are content-addressed, so this read
