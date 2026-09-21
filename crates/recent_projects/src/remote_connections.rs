@@ -234,6 +234,7 @@ pub async fn open_remote_project(
             );
             let workspace = cx.new(|cx| {
                 let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
+                workspace.set_remote_connection_placeholder();
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
             });
@@ -335,12 +336,7 @@ pub async fn open_remote_project(
                     continue;
                 }
 
-                if created_new_window {
-                    window
-                        .update(cx, |_, window, _| window.remove_window())
-                        .ok();
-                }
-                return Ok(window);
+                break;
             }
         };
 
@@ -395,11 +391,6 @@ pub async fn open_remote_project(
                     continue;
                 }
 
-                if created_new_window {
-                    window
-                        .update(cx, |_, window, _| window.remove_window())
-                        .ok();
-                }
                 initial_workspace.update(cx, |workspace, cx| {
                     trusted_worktrees::track_worktree_trust(
                         workspace.project().read(cx).worktree_store(),
@@ -411,14 +402,21 @@ pub async fn open_remote_project(
                 });
             }
 
-            Ok((_, items)) => {
+            Ok((Some(_), items)) => {
                 navigate_to_positions(&window, items, &paths_with_positions, cx);
+                return Ok(window);
             }
+            Ok((None, _)) => {}
         }
 
         break;
     }
 
+    if created_new_window {
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .ok();
+    }
     Ok(window)
 }
 
@@ -507,6 +505,7 @@ mod tests {
     use remote::RemoteClient;
     use remote_server::{HeadlessAppState, HeadlessProject};
     use serde_json::json;
+    use std::{cell::Cell, rc::Rc};
     use util::path;
     use workspace::find_existing_workspace;
 
@@ -589,6 +588,226 @@ mod tests {
                 });
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_cancel_failed_remote_connection_preserves_local_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/local"),
+                json!({ "file.txt": "local file contents" }),
+            )
+            .await;
+
+        let remote_open = cx.spawn({
+            let app_state = app_state.clone();
+            async move |mut cx| {
+                open_remote_project(
+                    RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 0 }),
+                    vec![PathBuf::from(path!("/remote"))],
+                    app_state,
+                    OpenOptions::default(),
+                    &mut cx,
+                )
+                .await
+            }
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.pending_prompt(),
+            Some((
+                String::from("Failed to connect to mock server"),
+                String::from("Mock connection not found. Call MockConnection::new() first."),
+            ))
+        );
+        let remote_window = cx.update(|cx| {
+            let windows = cx.windows();
+            assert_eq!(windows.len(), 1);
+            windows
+                .first()
+                .expect("remote placeholder window should exist")
+                .downcast::<MultiWorkspace>()
+                .expect("remote placeholder should be a workspace window")
+        });
+
+        let local = cx
+            .update(|cx| {
+                workspace::open_paths(
+                    &[PathBuf::from(path!("/local/file.txt"))],
+                    app_state,
+                    OpenOptions::default(),
+                    cx,
+                )
+            })
+            .await
+            .expect("local file should open while remote failure awaits a response");
+        assert_ne!(local.window, remote_window);
+        assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+
+        cx.simulate_prompt_answer("Cancel");
+        assert_eq!(
+            remote_open
+                .await
+                .expect("remote cancellation should finish"),
+            remote_window
+        );
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|cx| cx.windows()), vec![*local.window]);
+        local
+            .window
+            .read_with(cx, |multi_workspace, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                assert!(workspace.project().read(cx).is_local());
+                let editor = workspace
+                    .active_item_as::<Editor>(cx)
+                    .expect("local file should remain accessible after remote cancellation");
+                assert_eq!(editor.read(cx).text(cx), "local file contents");
+            })
+            .expect("local window should remain open after remote cancellation");
+    }
+
+    #[gpui::test]
+    async fn test_cancel_pending_remote_connection(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+        server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/local"),
+                json!({ "file.txt": "local file contents" }),
+            )
+            .await;
+        let local = cx
+            .update(|cx| {
+                workspace::open_paths(
+                    &[PathBuf::from(path!("/local/file.txt"))],
+                    app_state.clone(),
+                    OpenOptions::default(),
+                    cx,
+                )
+            })
+            .await
+            .expect("local file should open");
+        let local_workspace = local
+            .window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("local workspace should exist");
+
+        for cancel_during_session in [false, true] {
+            for requesting_window in [None, Some(local.window)] {
+                let (options, _server_session, connect_guard) =
+                    RemoteClient::fake_server(cx, server_cx);
+                let mut remote_open = cx.spawn({
+                    let app_state = app_state.clone();
+                    async move |mut cx| {
+                        open_remote_project(
+                            options,
+                            vec![PathBuf::from(path!("/remote"))],
+                            app_state,
+                            OpenOptions {
+                                requesting_window,
+                                ..OpenOptions::default()
+                            },
+                            &mut cx,
+                        )
+                        .await
+                    }
+                });
+                cx.run_until_parked();
+
+                assert!((&mut remote_open).now_or_never().is_none());
+                assert_eq!(cx.pending_prompt(), None);
+                let remote_window = cx.update(|cx| {
+                    let windows = cx.windows();
+                    assert_eq!(
+                        windows.len(),
+                        if requesting_window.is_some() { 1 } else { 2 }
+                    );
+                    requesting_window.unwrap_or_else(|| {
+                        windows
+                            .into_iter()
+                            .find(|window| *window != *local.window)
+                            .expect("remote placeholder window should exist")
+                            .downcast::<MultiWorkspace>()
+                            .expect("remote placeholder should be a workspace window")
+                    })
+                });
+                remote_window
+                    .read_with(cx, |multi_workspace, cx| {
+                        assert!(
+                            multi_workspace
+                                .workspace()
+                                .read(cx)
+                                .active_modal::<RemoteConnectionModal>(cx)
+                                .is_some()
+                        );
+                    })
+                    .expect("pending connection window should remain open");
+
+                let session_started = Rc::new(Cell::new(false));
+                let _subscription = cancel_during_session.then(|| {
+                    cx.update(|cx| {
+                        cx.observe_new::<RemoteClient>({
+                            let session_started = session_started.clone();
+                            move |_, _, cx| {
+                                session_started.set(true);
+                                remote_window
+                                    .update(cx, |_, window, cx| {
+                                        window.dispatch_action(Box::new(menu::Cancel), cx);
+                                    })
+                                    .expect(
+                                        "connection window should exist during session startup",
+                                    );
+                            }
+                        })
+                    })
+                });
+                if cancel_during_session {
+                    drop(connect_guard);
+                } else {
+                    cx.dispatch_action(*remote_window, menu::Cancel);
+                }
+
+                assert_eq!(
+                    remote_open
+                        .await
+                        .expect("remote cancellation should finish"),
+                    remote_window
+                );
+                cx.run_until_parked();
+
+                assert_eq!(session_started.get(), cancel_during_session);
+                assert_eq!(cx.pending_prompt(), None);
+                assert_eq!(cx.update(|cx| cx.windows()), vec![*local.window]);
+                local
+                    .window
+                    .read_with(cx, |multi_workspace, cx| {
+                        assert_eq!(multi_workspace.workspace(), &local_workspace);
+                        let workspace = local_workspace.read(cx);
+                        assert!(
+                            workspace
+                                .active_modal::<RemoteConnectionModal>(cx)
+                                .is_none()
+                        );
+                        assert!(workspace.project().read(cx).is_local());
+                        let editor = workspace.active_item_as::<Editor>(cx).expect(
+                            "local file should remain accessible after remote cancellation",
+                        );
+                        assert_eq!(editor.read(cx).text(cx), "local file contents");
+                    })
+                    .expect("local window should remain open after remote cancellation");
+            }
+        }
     }
 
     #[gpui::test]

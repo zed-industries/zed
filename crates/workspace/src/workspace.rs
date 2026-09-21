@@ -1654,6 +1654,58 @@ pub struct Workspace {
     persisted_recent_navigation_history: Vec<PathBuf>,
     last_active_project_path: Option<ProjectPath>,
     restoring_workspace: bool,
+    _restoration_task: Task<()>,
+    remote_connection_placeholder: bool,
+    local_creation: LocalWorkspaceCreation,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LocalWorkspaceCreation {
+    Independent,
+    Open,
+    Restore,
+}
+
+type PendingLocalWorkspace =
+    Shared<oneshot::Receiver<(WindowHandle<MultiWorkspace>, WeakEntity<Workspace>)>>;
+
+impl LocalWorkspaceCreation {
+    fn can_reuse(self, other: Self) -> bool {
+        self != Self::Independent && other != Self::Independent && self != other
+    }
+}
+
+#[derive(Default)]
+struct LocalWorkspaceOpenings(Rc<RefCell<Vec<Rc<LocalWorkspaceOpening>>>>);
+
+impl Global for LocalWorkspaceOpenings {}
+
+struct LocalWorkspaceOpening {
+    workspace_id: WorkspaceId,
+    creation: LocalWorkspaceCreation,
+    pending: PendingLocalWorkspace,
+}
+
+struct LocalWorkspaceReservation {
+    opening: Rc<LocalWorkspaceOpening>,
+    openings: Rc<RefCell<Vec<Rc<LocalWorkspaceOpening>>>>,
+    sender: Option<oneshot::Sender<(WindowHandle<MultiWorkspace>, WeakEntity<Workspace>)>>,
+}
+
+impl LocalWorkspaceReservation {
+    fn complete(mut self, window: WindowHandle<MultiWorkspace>, workspace: &Entity<Workspace>) {
+        if let Some(sender) = self.sender.take() {
+            sender.send((window, workspace.downgrade())).ok();
+        }
+    }
+}
+
+impl Drop for LocalWorkspaceReservation {
+    fn drop(&mut self) {
+        self.openings
+            .borrow_mut()
+            .retain(|opening| !Rc::ptr_eq(opening, &self.opening));
+    }
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -2156,6 +2208,9 @@ impl Workspace {
             persisted_recent_navigation_history: Vec::new(),
             last_active_project_path: None,
             restoring_workspace: false,
+            _restoration_task: Task::ready(()),
+            remote_connection_placeholder: false,
+            local_creation: LocalWorkspaceCreation::Independent,
         }
     }
 
@@ -2166,6 +2221,28 @@ impl Workspace {
         env: Option<HashMap<String, String>>,
         init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
         open_mode: OpenMode,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<OpenResult>> {
+        Self::new_local_with_creation(
+            abs_paths,
+            app_state,
+            requesting_window,
+            env,
+            init,
+            open_mode,
+            LocalWorkspaceCreation::Independent,
+            cx,
+        )
+    }
+
+    fn new_local_with_creation(
+        abs_paths: Vec<PathBuf>,
+        app_state: Arc<AppState>,
+        requesting_window: Option<WindowHandle<MultiWorkspace>>,
+        env: Option<HashMap<String, String>>,
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
+        creation: LocalWorkspaceCreation,
         cx: &mut App,
     ) -> Task<anyhow::Result<OpenResult>> {
         let project_handle = Project::local(
@@ -2182,20 +2259,21 @@ impl Workspace {
         let db = WorkspaceDb::global(cx);
         let kvp = db::kvp::KeyValueStore::global(cx);
         cx.spawn(async move |cx| {
-            let mut paths_to_open = Vec::with_capacity(abs_paths.len());
-            for path in abs_paths.into_iter() {
+            let mut canonical_paths = Vec::with_capacity(abs_paths.len());
+            for path in abs_paths {
                 if let Some(canonical) = app_state.fs.canonicalize(&path).await.ok() {
-                    paths_to_open.push(canonical)
+                    canonical_paths.push(canonical)
                 } else {
-                    paths_to_open.push(path)
+                    canonical_paths.push(path)
                 }
             }
 
-            let serialized_workspace = db.workspace_for_roots(paths_to_open.as_slice());
-
-            if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
-                paths_to_open = paths.ordered_paths().cloned().collect();
-            }
+            let serialized_workspace = db.workspace_for_roots(&canonical_paths);
+            let paths_to_open = if let Some(workspace) = &serialized_workspace {
+                workspace.paths.ordered_paths().cloned().collect::<Vec<_>>()
+            } else {
+                canonical_paths.clone()
+            };
 
             // Get project paths for all of the abs_paths
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
@@ -2258,9 +2336,146 @@ impl Workspace {
                 });
             }
 
+            let mut reservation = None;
+            let mut reused_workspace = None;
+            if serialized_workspace.is_some() && creation != LocalWorkspaceCreation::Independent {
+                loop {
+                    let pending = cx.update(|cx| {
+                        for window in
+                            workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
+                        {
+                            if let Ok(multi_workspace) = window.read(cx) {
+                                for workspace in multi_workspace.workspaces() {
+                                    let existing = workspace.read(cx);
+                                    if existing.database_id() == Some(workspace_id)
+                                        && creation.can_reuse(existing.local_creation)
+                                    {
+                                        reused_workspace = Some((window, workspace.clone()));
+                                        return None;
+                                    }
+                                }
+                            }
+                        }
+                        let openings = cx.default_global::<LocalWorkspaceOpenings>().0.clone();
+                        if let Some(opening) = openings.borrow().iter().find(|opening| {
+                            opening.workspace_id == workspace_id
+                                && creation.can_reuse(opening.creation)
+                        }) {
+                            return Some(opening.pending.clone());
+                        }
+                        let (sender, receiver) = oneshot::channel();
+                        let opening = Rc::new(LocalWorkspaceOpening {
+                            workspace_id,
+                            creation,
+                            pending: receiver.shared(),
+                        });
+                        openings.borrow_mut().push(opening.clone());
+                        reservation = Some(LocalWorkspaceReservation {
+                            opening,
+                            openings,
+                            sender: Some(sender),
+                        });
+                        None
+                    });
+                    let Some(pending) = pending else { break };
+                    if let Ok((window, workspace)) = pending.await
+                        && let Some(workspace) = workspace.upgrade()
+                        && window
+                            .read_with(cx, |multi_workspace, _| {
+                                multi_workspace.workspaces().any(|held| held == &workspace)
+                            })
+                            .unwrap_or(false)
+                    {
+                        reused_workspace = Some((window, workspace));
+                        break;
+                    }
+                }
+            }
+
+            if let Some((window, workspace)) = reused_workspace {
+                if creation == LocalWorkspaceCreation::Restore {
+                    window
+                        .update(cx, |_, window, cx| {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.wait_for_restoration(window, cx)
+                            })
+                        })?
+                        .await;
+                    return Ok(OpenResult {
+                        window,
+                        workspace,
+                        opened_items: Vec::new(),
+                        cancelled: false,
+                    });
+                }
+                let activated_workspace = window
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.prepare_to_activate_workspace(
+                            workspace.clone(),
+                            None,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?;
+                if activated_workspace != workspace {
+                    return Ok(OpenResult {
+                        window,
+                        workspace: activated_workspace,
+                        opened_items: Vec::new(),
+                        cancelled: true,
+                    });
+                }
+                let opened_items = window
+                    .update(cx, |_, window, cx| {
+                        window.activate_window();
+                        workspace.update(cx, |workspace, cx| {
+                            if let Some(init) = init {
+                                init(workspace, window, cx);
+                            }
+                            workspace.open_paths(
+                                canonical_paths,
+                                OpenOptions {
+                                    visible: Some(OpenVisible::All),
+                                    ..OpenOptions::default()
+                                },
+                                None,
+                                window,
+                                cx,
+                            )
+                        })
+                    })?
+                    .await;
+                return Ok(OpenResult {
+                    window,
+                    workspace,
+                    opened_items,
+                    cancelled: false,
+                });
+            }
+
+            let restoring_workspace = serialized_workspace.is_some();
             let window_to_replace = match open_mode {
                 OpenMode::NewWindow => None,
                 _ => requesting_window,
+            };
+
+            let workspace_to_close = if let Some(window) = window_to_replace
+                && open_mode == OpenMode::Activate
+            {
+                match prepare_to_replace_workspace(window, None, cx).await? {
+                    WorkspaceReplacement::Ready(workspace) => workspace,
+                    WorkspaceReplacement::Cancelled(workspace) => {
+                        return Ok(OpenResult {
+                            window,
+                            workspace,
+                            opened_items: Vec::new(),
+                            cancelled: true,
+                        });
+                    }
+                }
+            } else {
+                None
             };
 
             let (window, workspace): (WindowHandle<MultiWorkspace>, Entity<Workspace>) =
@@ -2281,6 +2496,8 @@ impl Workspace {
                             );
 
                             workspace.centered_layout = centered_layout;
+                            workspace.restoring_workspace = restoring_workspace;
+                            workspace.local_creation = creation;
 
                             // Call init callback to add items before window renders
                             if let Some(init) = init {
@@ -2292,6 +2509,11 @@ impl Workspace {
                         match open_mode {
                             OpenMode::Activate => {
                                 multi_workspace.activate(workspace.clone(), None, window, cx);
+                                if let Some(workspace_to_close) = workspace_to_close
+                                    && multi_workspace.is_workspace_retained(&workspace_to_close)
+                                {
+                                    multi_workspace.detach_workspace(&workspace_to_close, cx);
+                                }
                             }
                             OpenMode::Add => {
                                 multi_workspace.add(workspace.clone(), &*window, cx);
@@ -2344,6 +2566,8 @@ impl Workspace {
                                     cx,
                                 );
                                 workspace.centered_layout = centered_layout;
+                                workspace.restoring_workspace = restoring_workspace;
+                                workspace.local_creation = creation;
 
                                 // Call init callback to add items before window renders
                                 if let Some(init) = init {
@@ -2361,6 +2585,9 @@ impl Workspace {
                         })?;
                     (window, workspace)
                 };
+            if let Some(reservation) = reservation {
+                reservation.complete(window, &workspace);
+            }
 
             notify_if_database_failed(window, cx);
             // Check if this is an empty workspace (no paths to open)
@@ -2439,6 +2666,7 @@ impl Workspace {
                 window,
                 workspace,
                 opened_items,
+                cancelled: false,
             })
         })
     }
@@ -2908,6 +3136,10 @@ impl Workspace {
 
     pub fn is_restoring(&self) -> bool {
         self.restoring_workspace
+    }
+
+    pub fn set_remote_connection_placeholder(&mut self) {
+        self.remote_connection_placeholder = true;
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3630,8 +3862,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
         let active_call = self.active_global_call();
+        let restoration = self.wait_for_restoration(window, cx);
 
         cx.spawn_in(window, async move |this, cx| {
+            restoration.await;
             this.update(cx, |this, _| {
                 if close_intent == CloseIntent::CloseWindow {
                     this.removing = true;
@@ -3860,6 +4094,38 @@ impl Workspace {
         self.save_all_internal(SaveIntent::Close, true, window, cx)
     }
 
+    fn wait_for_restoration(&self, window: &Window, cx: &mut Context<Self>) -> Task<()> {
+        if !self.is_restoring() {
+            return Task::ready(());
+        }
+
+        let (sender, receiver) = oneshot::channel();
+        let sender = Rc::new(RefCell::new(Some(sender)));
+        let subscription = cx.observe_self({
+            let sender = sender.clone();
+            move |workspace, _| {
+                if !workspace.is_restoring()
+                    && let Some(sender) = sender.borrow_mut().take()
+                {
+                    sender.send(()).ok();
+                }
+            }
+        });
+        let window_id = window.window_handle().window_id();
+        let window_closed_subscription = cx.on_window_closed(move |_, closed_window_id| {
+            if closed_window_id == window_id
+                && let Some(sender) = sender.borrow_mut().take()
+            {
+                sender.send(()).ok();
+            }
+        });
+
+        cx.foreground_executor().spawn(async move {
+            let _subscriptions = (subscription, window_closed_subscription);
+            receiver.await.ok();
+        })
+    }
+
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
@@ -3971,18 +4237,20 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
-        let is_remote = self.project.read(cx).is_via_collab();
-        let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
-        let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
-
-        let workspace_is_empty = !is_remote && !has_worktree && !has_dirty_items;
-        if workspace_is_empty {
-            open_mode = OpenMode::Activate;
-        }
-
+        let restoration = self.wait_for_restoration(window, cx);
         let app_state = self.app_state.clone();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |workspace, cx| {
+            restoration.await;
+            let workspace_is_empty = workspace.read_with(cx, |workspace, cx| {
+                !workspace.project.read(cx).is_via_collab()
+                    && workspace.project.read(cx).worktrees(cx).next().is_none()
+                    && !workspace.items(cx).any(|item| item.is_dirty(cx))
+            })?;
+            if workspace_is_empty {
+                open_mode = OpenMode::Activate;
+            }
+
             let OpenResult { workspace, .. } = cx
                 .update(|cx| {
                     open_paths(
@@ -4016,12 +4284,14 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
         let fs = self.app_state.fs.clone();
+        let restoration = self.wait_for_restoration(window, cx);
 
         let caller_ordered_abs_paths = abs_paths.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
         cx.spawn_in(window, async move |this, cx| {
+            restoration.await;
             let mut tasks = Vec::with_capacity(abs_paths.len());
 
             for abs_path in &abs_paths {
@@ -7786,6 +8056,9 @@ impl Workspace {
     }
 
     fn workspace_location(&self, cx: &App) -> WorkspaceLocation {
+        if self.remote_connection_placeholder {
+            return WorkspaceLocation::None;
+        }
         let paths = PathList::new(&self.root_paths(cx));
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
@@ -7863,7 +8136,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
-        cx.spawn_in(window, async move |workspace, cx| {
+        let task = cx.spawn_in(window, async move |workspace, cx| {
             let recent_navigation_history = serialized_workspace.recent_navigation_history.clone();
             workspace.update(cx, |workspace, _| {
                 workspace.persisted_recent_navigation_history = recent_navigation_history;
@@ -8001,7 +8274,16 @@ impl Workspace {
                 .ok();
 
             Ok(opened_items)
-        })
+        });
+        let (sender, receiver) = oneshot::channel();
+        let task = cx.foreground_executor().spawn(async move {
+            sender.send(task.await).ok();
+        });
+        cx.defer_in(window, move |workspace, _, _| {
+            workspace._restoration_task = task
+        });
+        cx.foreground_executor()
+            .spawn(async move { receiver.await? })
     }
 
     pub fn key_context(&self, cx: &App) -> KeyContext {
@@ -10258,13 +10540,14 @@ pub async fn restore_multiworkspace(
         .await
     } else {
         cx.update(|cx| {
-            Workspace::new_local(
+            Workspace::new_local_with_creation(
                 active_workspace.paths.paths().to_vec(),
                 app_state.clone(),
                 None,
                 None,
                 None,
                 OpenMode::Add,
+                LocalWorkspaceCreation::Restore,
                 cx,
             )
         })
@@ -10291,13 +10574,14 @@ pub async fn restore_multiworkspace(
                 let paths = key.path_list().paths().to_vec();
                 match cx
                     .update(|cx| {
-                        Workspace::new_local(
+                        Workspace::new_local_with_creation(
                             paths,
                             app_state.clone(),
                             None,
                             None,
                             None,
                             OpenMode::Activate,
+                            LocalWorkspaceCreation::Restore,
                             cx,
                         )
                     })
@@ -11010,6 +11294,7 @@ pub struct OpenResult {
     pub window: WindowHandle<MultiWorkspace>,
     pub workspace: Entity<Workspace>,
     pub opened_items: Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
+    pub(crate) cancelled: bool,
 }
 
 /// Opens a workspace by its database ID, used for restoring empty workspaces with unsaved content.
@@ -11053,6 +11338,7 @@ pub fn open_workspace_by_id(
                         cx,
                     );
                     workspace.centered_layout = centered_layout;
+                    workspace.restoring_workspace = true;
                     workspace
                 });
                 multi_workspace.add(workspace.clone(), &*window, cx);
@@ -11093,6 +11379,7 @@ pub fn open_workspace_by_id(
                             cx,
                         );
                         workspace.centered_layout = centered_layout;
+                        workspace.restoring_workspace = true;
                         workspace
                     });
                     cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
@@ -11207,11 +11494,35 @@ pub fn open_paths(
                     window.filter(|window| {
                         window
                             .read(cx)
-                            .is_ok_and(|mw| mw.multi_workspace_enabled(cx))
+                            .is_ok_and(|multi_workspace| multi_workspace.multi_workspace_enabled(cx))
                     })
                 });
 
                 if let Some(window) = target_window {
+                    let pending_restore = window
+                        .update(cx, |multi_workspace, window, cx| {
+                            multi_workspace.workspace().update(cx, |workspace, cx| {
+                                if workspace.visible_worktrees(cx).next().is_some() {
+                                    None
+                                } else {
+                                    Some(workspace.wait_for_restoration(window, cx))
+                                }
+                            })
+                        })
+                        .ok()
+                        .flatten();
+                    if let Some(restoration) = pending_restore {
+                        restoration.await;
+                    }
+                    let can_reuse = cx.update(|cx| {
+                        window.read(cx).is_ok_and(|multi_workspace| {
+                            let workspace = multi_workspace.workspace().read(cx);
+                            multi_workspace.multi_workspace_enabled(cx)
+                                && (workspace.visible_worktrees(cx).next().is_some()
+                                    || !workspace.items(cx).any(|item| item.is_dirty(cx)))
+                        })
+                    });
+                    if can_reuse {
                     open_options.requesting_window = Some(window);
                     window
                         .update(cx, |multi_workspace, _, cx| {
@@ -11225,6 +11536,7 @@ pub fn open_paths(
                             }
                         })
                         .log_err();
+                    }
                 }
             }
         }
@@ -11232,10 +11544,22 @@ pub fn open_paths(
         let open_in_dev_container = open_options.open_in_dev_container;
 
         let result = if let Some((existing, target_workspace)) = existing {
-            let open_task = existing
+            let workspace = existing
                 .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.prepare_to_activate_workspace(target_workspace.clone(), None, window, cx)
+                })?
+                .await?;
+            if workspace != target_workspace {
+                return Ok(OpenResult {
+                    window: existing,
+                    workspace,
+                    opened_items: Vec::new(),
+                    cancelled: true,
+                });
+            }
+            let open_task = existing
+                .update(cx, |_, window, cx| {
                     window.activate_window();
-                    multi_workspace.activate(target_workspace.clone(), None, window, cx);
                     target_workspace.update(cx, |workspace, cx| {
                         if open_in_dev_container {
                             workspace.set_open_in_dev_container(true);
@@ -11265,7 +11589,7 @@ pub fn open_paths(
                 });
             });
 
-            Ok(OpenResult { window: existing, workspace: target_workspace, opened_items: open_task })
+            Ok(OpenResult { window: existing, workspace: target_workspace, opened_items: open_task, cancelled: false })
         } else {
             let init = if open_in_dev_container {
                 Some(Box::new(|workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>| {
@@ -11274,15 +11598,21 @@ pub fn open_paths(
             } else {
                 None
             };
+            let creation = if open_options.should_reuse_existing_window() {
+                LocalWorkspaceCreation::Open
+            } else {
+                LocalWorkspaceCreation::Independent
+            };
             let result = cx
                 .update(move |cx| {
-                    Workspace::new_local(
+                    Workspace::new_local_with_creation(
                         abs_paths,
                         app_state.clone(),
                         open_options.requesting_window,
                         open_options.env,
                         init,
                         open_options.open_mode,
+                        creation,
                         cx,
                     )
                 })
@@ -11498,6 +11828,72 @@ pub fn open_remote_project_with_existing_connection(
     })
 }
 
+enum WorkspaceReplacement {
+    Ready(Option<Entity<Workspace>>),
+    Cancelled(Entity<Workspace>),
+}
+
+async fn prepare_to_replace_workspace(
+    window: WindowHandle<MultiWorkspace>,
+    target_workspace: Option<&Entity<Workspace>>,
+    cx: &mut AsyncApp,
+) -> Result<WorkspaceReplacement> {
+    loop {
+        let workspace = window.update(cx, |multi_workspace, _, cx| {
+            if Some(multi_workspace.workspace()) == target_workspace
+                || ((multi_workspace.multi_workspace_enabled(cx)
+                    || multi_workspace.active_workspace_is_retained())
+                    && multi_workspace
+                        .workspace()
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .next()
+                        .is_some())
+            {
+                None
+            } else {
+                Some(multi_workspace.workspace().clone())
+            }
+        })?;
+        let Some(workspace) = workspace else {
+            return Ok(WorkspaceReplacement::Ready(None));
+        };
+
+        window
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.wait_for_restoration(window, cx)
+                })
+            })?
+            .await;
+
+        let prepare = window.update(cx, |multi_workspace, window, cx| {
+            if multi_workspace.workspace() != &workspace
+                || ((multi_workspace.multi_workspace_enabled(cx)
+                    || multi_workspace.active_workspace_is_retained())
+                    && workspace.read(cx).visible_worktrees(cx).next().is_some())
+                || workspace.read(cx).is_restoring()
+            {
+                return None;
+            }
+            Some(workspace.update(cx, |workspace, cx| {
+                workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+            }))
+        })?;
+        let Some(prepare) = prepare else {
+            continue;
+        };
+        if !prepare.await? {
+            return Ok(WorkspaceReplacement::Cancelled(workspace));
+        }
+        if window.read_with(cx, |multi_workspace, _| {
+            multi_workspace.workspace() == &workspace
+        })? {
+            return Ok(WorkspaceReplacement::Ready(Some(workspace)));
+        }
+    }
+}
+
 async fn open_remote_project_inner(
     project: Entity<Project>,
     paths: Vec<PathBuf>,
@@ -11532,6 +11928,9 @@ async fn open_remote_project_inner(
         return Err(project_path_errors.pop().context("no paths given")?);
     }
 
+    let db = cx.update(|cx| WorkspaceDb::global(cx));
+    let toolchains = db.toolchains(workspace_id).await?;
+
     let workspace = window.update(cx, |multi_workspace, window, cx| {
         let new_workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(
@@ -11542,6 +11941,7 @@ async fn open_remote_project_inner(
                 cx,
             );
             workspace.update_history(cx);
+            workspace.restoring_workspace = serialized_workspace.is_some();
 
             if let Some(ref serialized) = serialized_workspace {
                 workspace.centered_layout = serialized.centered_layout;
@@ -11563,8 +11963,6 @@ async fn open_remote_project_inner(
         new_workspace
     })?;
 
-    let db = cx.update(|cx| WorkspaceDb::global(cx));
-    let toolchains = db.toolchains(workspace_id).await?;
     for (toolchain, worktree_path, path) in toolchains {
         project
             .update(cx, |this, cx| {
@@ -12472,7 +12870,7 @@ mod tests {
         DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext, px,
     };
-    use project::{Project, ProjectEntryId, WorktreeId};
+    use project::{DisableAiSettings, Project, ProjectEntryId, WorktreeId};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -13575,6 +13973,768 @@ mod tests {
         cx.executor().run_until_parked();
 
         assert!(task.await.unwrap());
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_concurrent_session_restore_and_open(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        init_test(cx);
+        let app_state = cx.update(AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/"), json!({ "project": {}, "other": {} }))
+            .await;
+        let paths = vec![
+            PathBuf::from(path!("/project")),
+            PathBuf::from(path!("/other")),
+        ];
+        let saved = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    paths.clone(),
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::NewWindow,
+                    cx,
+                )
+            })
+            .await
+            .expect("initial project should open");
+        let serialization = saved
+            .window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_all_serialization(window, cx)
+            })
+            .expect("initial window should exist");
+        futures::future::join_all(serialization).await;
+        saved
+            .window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("initial window should close");
+        drop(saved);
+        cx.run_until_parked();
+
+        for creations in [
+            [
+                LocalWorkspaceCreation::Open,
+                LocalWorkspaceCreation::Restore,
+            ],
+            [
+                LocalWorkspaceCreation::Restore,
+                LocalWorkspaceCreation::Open,
+            ],
+            [
+                LocalWorkspaceCreation::Independent,
+                LocalWorkspaceCreation::Restore,
+            ],
+            [
+                LocalWorkspaceCreation::Restore,
+                LocalWorkspaceCreation::Independent,
+            ],
+        ] {
+            let tasks = cx.update(|cx| {
+                creations
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, creation)| {
+                        let paths = if index == 0 {
+                            paths.clone()
+                        } else {
+                            paths.iter().rev().cloned().collect()
+                        };
+                        Workspace::new_local_with_creation(
+                            paths,
+                            app_state.clone(),
+                            None,
+                            None,
+                            None,
+                            OpenMode::Activate,
+                            creation,
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let opened = futures::future::join_all(tasks)
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>>>()
+                .expect("both opens should complete");
+            let expected_windows = if creations.contains(&LocalWorkspaceCreation::Independent) {
+                2
+            } else {
+                1
+            };
+            assert_eq!(cx.windows().len(), expected_windows);
+            assert_eq!(
+                opened
+                    .iter()
+                    .map(|result| result.window)
+                    .collect::<HashSet<_>>()
+                    .len(),
+                expected_windows
+            );
+            for result in &opened {
+                result.workspace.read_with(cx, |workspace, cx| {
+                    assert_eq!(
+                        PathList::new(&workspace.root_paths(cx)),
+                        PathList::new(&paths)
+                    );
+                });
+            }
+            for window in cx.windows() {
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .expect("restored window should close");
+            }
+            drop(opened);
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_session_restore_reuses_canonical_root(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        init_test(cx);
+        let app_state = cx.update(AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/real"), json!({}))
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_symlink(path!("/alias"), PathBuf::from(path!("/real")))
+            .await;
+        let paths = vec![PathBuf::from(path!("/real"))];
+        let saved = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    paths.clone(),
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::NewWindow,
+                    cx,
+                )
+            })
+            .await
+            .expect("initial project should open");
+        let serialization = saved
+            .window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_all_serialization(window, cx)
+            })
+            .expect("initial window should exist");
+        futures::future::join_all(serialization).await;
+        saved
+            .window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("initial window should close");
+        drop(saved);
+        cx.run_until_parked();
+
+        let restored = cx
+            .update(|cx| {
+                Workspace::new_local_with_creation(
+                    paths,
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Add,
+                    LocalWorkspaceCreation::Restore,
+                    cx,
+                )
+            })
+            .await
+            .expect("saved project should restore");
+        let opened = cx
+            .update(|cx| {
+                open_paths(
+                    &[PathBuf::from(path!("/alias"))],
+                    app_state,
+                    OpenOptions::default(),
+                    cx,
+                )
+            })
+            .await
+            .expect("project alias should open");
+
+        assert_eq!(opened.window, restored.window);
+        assert_eq!(opened.workspace, restored.workspace);
+        assert_eq!(cx.windows().len(), 1);
+        assert_eq!(
+            opened
+                .workspace
+                .read_with(cx, |workspace, cx| workspace.root_paths(cx)),
+            vec![Arc::<Path>::from(Path::new(path!("/real")))]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_find_or_create_workspace_cancellation(cx: &mut TestAppContext) {
+        init_test(cx);
+        for existing_target in [false, true] {
+            for answer in ["Cancel", "Save"] {
+                let (window, workspace, item, app_state) = scratch_window_for_reuse(true, cx).await;
+                let target = if existing_target {
+                    Some(
+                        cx.update(|cx| {
+                            Workspace::new_local(
+                                vec![PathBuf::from(path!("/replacement"))],
+                                app_state,
+                                Some(window),
+                                None,
+                                None,
+                                OpenMode::Add,
+                                cx,
+                            )
+                        })
+                        .await
+                        .expect("target workspace should open")
+                        .workspace,
+                    )
+                } else {
+                    None
+                };
+                if let Some(target) = &target {
+                    let added = window
+                        .update(cx, |multi_workspace, window, cx| {
+                            multi_workspace.find_or_create_workspace(
+                                PathList::new(&[PathBuf::from(path!("/replacement"))]),
+                                None,
+                                None,
+                                |_, _, _| Task::ready(Ok(None)),
+                                None,
+                                OpenMode::Add,
+                                None,
+                                window,
+                                cx,
+                            )
+                        })
+                        .expect("scratch window should exist")
+                        .await
+                        .expect("adding an existing workspace should not replace the draft");
+                    assert_eq!(&added, target);
+                    assert!(!cx.has_pending_prompt());
+                    assert_eq!(
+                        window
+                            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                            .expect("scratch window should remain open"),
+                        workspace
+                    );
+                }
+                let opening = window
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.find_or_create_workspace(
+                            PathList::new(&[PathBuf::from(path!("/replacement"))]),
+                            None,
+                            None,
+                            |_, _, _| Task::ready(Ok(None)),
+                            None,
+                            OpenMode::Activate,
+                            None,
+                            window,
+                            cx,
+                        )
+                    })
+                    .expect("scratch window should exist");
+                cx.run_until_parked();
+                assert!(cx.has_pending_prompt());
+                cx.simulate_prompt_answer(answer);
+                if answer == "Save" {
+                    cx.run_until_parked();
+                    cx.simulate_new_path_selection(|_| None);
+                }
+                assert_eq!(
+                    opening.await.err().map(|error| error.to_string()),
+                    Some(String::from("Workspace opening was cancelled"))
+                );
+                assert_eq!(
+                    window
+                        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                        .expect("scratch window should remain open"),
+                    workspace
+                );
+                workspace.read_with(cx, |workspace, cx| {
+                    assert_eq!(
+                        workspace
+                            .items(cx)
+                            .map(|item| item.item_id())
+                            .collect::<Vec<_>>(),
+                        vec![item.entity_id()]
+                    );
+                    assert_eq!(item.read(cx).state, "scratch draft");
+                    assert!(item.read(cx).is_dirty);
+                });
+                assert_eq!(
+                    window
+                        .read_with(cx, |multi_workspace, _| multi_workspace
+                            .workspaces()
+                            .count())
+                        .expect("scratch window should remain open"),
+                    if existing_target { 2 } else { 1 }
+                );
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .expect("scratch window should close");
+                drop(target);
+                cx.run_until_parked();
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_session_restore_during_replacement_prompt(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        init_test(cx);
+        for (answer, concurrent_creation) in [
+            ("Cancel", LocalWorkspaceCreation::Restore),
+            ("Don't Save", LocalWorkspaceCreation::Restore),
+            ("Cancel", LocalWorkspaceCreation::Open),
+        ] {
+            let (window, workspace, _, app_state) = scratch_window_for_reuse(false, cx).await;
+            let session_id = workspace.read_with(cx, |workspace, _| workspace.session_id.clone());
+            let paths = vec![PathBuf::from(path!("/replacement"))];
+            let saved = cx
+                .update(|cx| {
+                    Workspace::new_local(
+                        paths.clone(),
+                        app_state.clone(),
+                        None,
+                        None,
+                        None,
+                        OpenMode::NewWindow,
+                        cx,
+                    )
+                })
+                .await
+                .expect("saved project should open");
+            let serialization = saved
+                .window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.flush_all_serialization(window, cx)
+                })
+                .expect("saved window should exist");
+            futures::future::join_all(serialization).await;
+            saved
+                .window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("saved window should close");
+            drop(saved);
+            cx.run_until_parked();
+
+            let opening = cx.update(|cx| {
+                Workspace::new_local_with_creation(
+                    paths.clone(),
+                    app_state.clone(),
+                    Some(window),
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    LocalWorkspaceCreation::Open,
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            assert!(cx.has_pending_prompt());
+            let restoring = cx.update(|cx| {
+                Workspace::new_local_with_creation(
+                    paths.clone(),
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Add,
+                    concurrent_creation,
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            if concurrent_creation == LocalWorkspaceCreation::Restore {
+                assert!(!restoring.is_ready());
+            } else {
+                assert!(restoring.is_ready());
+            }
+            cx.simulate_prompt_answer(answer);
+            let opened = opening.await.expect("open should finish");
+            let restored = restoring.await.expect("restore should finish");
+            if answer == "Cancel" {
+                assert_eq!(opened.workspace, workspace);
+                assert_ne!(restored.window, window);
+                if concurrent_creation == LocalWorkspaceCreation::Restore {
+                    let reopening = cx.update(|cx| {
+                        Workspace::new_local_with_creation(
+                            paths,
+                            app_state,
+                            Some(window),
+                            None,
+                            None,
+                            OpenMode::Activate,
+                            LocalWorkspaceCreation::Open,
+                            cx,
+                        )
+                    });
+                    cx.run_until_parked();
+                    assert!(!cx.has_pending_prompt());
+                    assert_eq!(
+                        reopening
+                            .await
+                            .expect("restored project should be reused")
+                            .workspace,
+                        restored.workspace
+                    );
+                }
+                assert_eq!(
+                    workspace.read_with(cx, |workspace, _| workspace.session_id.clone()),
+                    session_id
+                );
+                assert_eq!(cx.windows().len(), 2);
+            } else {
+                assert_eq!(opened.window, window);
+                assert_eq!(opened.workspace, restored.workspace);
+                assert_eq!(cx.windows().len(), 1);
+            }
+            for window in cx.windows() {
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .expect("window should close");
+            }
+            drop((opened, restored, workspace));
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_explicit_reuse_scratch_replacement_choices(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for (multi_workspace_enabled, answer) in [false, true].into_iter().flat_map(|enabled| {
+            ["Cancel", "Don't Save", "Save"].map(move |answer| (enabled, answer))
+        }) {
+            let (window, workspace, item, app_state) =
+                scratch_window_for_reuse(multi_workspace_enabled, cx).await;
+            let session_id = workspace.read_with(cx, |workspace, _| workspace.session_id.clone());
+            let task = cx.update(|cx| {
+                open_paths(
+                    &[PathBuf::from(path!("/replacement"))],
+                    app_state,
+                    OpenOptions {
+                        requesting_window: Some(window),
+                        workspace_matching: WorkspaceMatching::None,
+                        ..OpenOptions::default()
+                    },
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+
+            assert!(cx.has_pending_prompt());
+            assert_eq!(
+                window
+                    .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                    .unwrap(),
+                workspace
+            );
+            cx.simulate_prompt_answer(answer);
+            if answer == "Save" {
+                cx.run_until_parked();
+                cx.simulate_new_path_selection(|_| {
+                    Some(PathBuf::from(path!("/replacement/draft.txt")))
+                });
+            }
+            let result = task.await.unwrap();
+
+            assert_eq!(result.window, window);
+            assert_eq!(result.cancelled, answer == "Cancel");
+            assert_eq!(result.opened_items.iter().flatten().count(), 0);
+            assert!(!cx.has_pending_prompt());
+            cx.update(|cx| assert_eq!(cx.windows().len(), 1));
+            if answer == "Cancel" {
+                assert_eq!(result.workspace, workspace);
+                workspace.read_with(cx, |workspace, cx| {
+                    assert_eq!(workspace.session_id, session_id);
+                    assert_eq!(
+                        workspace
+                            .items(cx)
+                            .map(|item| item.item_id())
+                            .collect::<Vec<_>>(),
+                        vec![item.entity_id()]
+                    );
+                });
+            } else {
+                assert_ne!(result.workspace, workspace);
+                assert_eq!(
+                    window
+                        .read_with(cx, |multi_workspace, _| multi_workspace
+                            .workspaces()
+                            .count())
+                        .unwrap(),
+                    1
+                );
+                result.workspace.read_with(cx, |workspace, cx| {
+                    assert_eq!(
+                        workspace.root_paths(cx),
+                        vec![Arc::<Path>::from(Path::new(path!("/replacement")))]
+                    );
+                });
+            }
+            item.read_with(cx, |item, _| {
+                assert_eq!(item.state, "scratch draft");
+                assert_eq!(item.save_count, usize::from(answer == "Save"));
+                assert_eq!(item.save_as_count, usize::from(answer == "Save"));
+                assert_eq!(item.is_dirty, answer != "Save");
+            });
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap();
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_explicit_reuse_waits_for_restoration_or_window_close(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for (multi_workspace_enabled, close_window) in [false, true]
+            .into_iter()
+            .flat_map(|enabled| [false, true].map(move |close_window| (enabled, close_window)))
+        {
+            let (window, workspace, item, app_state) =
+                scratch_window_for_reuse(multi_workspace_enabled, cx).await;
+            workspace.update(cx, |workspace, cx| {
+                workspace.restoring_workspace = true;
+                item.update(cx, |item, _| item.is_dirty = false);
+            });
+            let task = cx.update(|cx| {
+                open_paths(
+                    &[PathBuf::from(path!("/replacement"))],
+                    app_state,
+                    OpenOptions {
+                        requesting_window: Some(window),
+                        workspace_matching: WorkspaceMatching::None,
+                        ..OpenOptions::default()
+                    },
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+
+            assert!(!task.is_ready());
+            assert!(!cx.has_pending_prompt());
+            assert_eq!(
+                window
+                    .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                    .unwrap(),
+                workspace
+            );
+            if close_window {
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .unwrap();
+                assert!(task.await.is_err());
+            } else {
+                workspace.update(cx, |workspace, cx| {
+                    item.update(cx, |item, _| item.is_dirty = true);
+                    workspace.restoring_workspace = false;
+                    cx.notify();
+                });
+                cx.run_until_parked();
+                assert!(cx.has_pending_prompt());
+                cx.simulate_prompt_answer("Cancel");
+                assert_eq!(task.await.unwrap().workspace, workspace);
+                item.read_with(cx, |item, _| {
+                    assert_eq!(item.state, "scratch draft");
+                    assert!(item.is_dirty);
+                });
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .unwrap();
+            }
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_explicit_reuse_retains_project_without_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (window, workspace, item, app_state) = scratch_window_for_reuse(true, cx).await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/original"), json!({}))
+            .await;
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.project.update(cx, |project, cx| {
+                    project.find_or_create_worktree(path!("/original"), true, cx)
+                })
+            })
+            .await
+            .unwrap();
+        let result = cx
+            .update(|cx| {
+                open_paths(
+                    &[PathBuf::from(path!("/replacement"))],
+                    app_state,
+                    OpenOptions {
+                        requesting_window: Some(window),
+                        workspace_matching: WorkspaceMatching::None,
+                        ..OpenOptions::default()
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.window, window);
+        assert_ne!(result.workspace, workspace);
+        assert!(!cx.has_pending_prompt());
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                assert_eq!(
+                    multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
+                    vec![workspace.clone(), result.workspace.clone()]
+                );
+                assert!(multi_workspace.is_workspace_retained(&workspace));
+                assert_eq!(
+                    workspace
+                        .read(cx)
+                        .items(cx)
+                        .map(|item| item.item_id())
+                        .collect::<Vec<_>>(),
+                    vec![item.entity_id()]
+                );
+                assert_eq!(item.read(cx).state, "scratch draft");
+                assert!(item.read(cx).is_dirty);
+                assert_eq!(cx.windows().len(), 1);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_project_scratch_replacement_prompts_once(
+        disabled_cx: &mut TestAppContext,
+        enabled_cx: &mut TestAppContext,
+    ) {
+        for (multi_workspace_enabled, cx) in [(false, disabled_cx), (true, enabled_cx)] {
+            init_test(cx);
+            let (window, workspace, item, _) =
+                scratch_window_for_reuse(multi_workspace_enabled, cx).await;
+            workspace.update(cx, |workspace, cx| {
+                workspace.restoring_workspace = true;
+                item.update(cx, |item, _| item.is_dirty = false);
+            });
+            let task = window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.open_project(
+                        vec![PathBuf::from(path!("/replacement"))],
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap();
+            cx.run_until_parked();
+
+            assert!(!task.is_ready());
+            assert!(!cx.has_pending_prompt());
+            workspace.update(cx, |workspace, cx| {
+                item.update(cx, |item, _| item.is_dirty = true);
+                workspace.restoring_workspace = false;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            assert!(cx.has_pending_prompt());
+            cx.simulate_prompt_answer("Don't Save");
+            cx.run_until_parked();
+            assert!(!cx.has_pending_prompt());
+            let replacement = task.await.unwrap();
+            assert_ne!(replacement, workspace);
+            window
+                .read_with(cx, |multi_workspace, cx| {
+                    assert_eq!(multi_workspace.workspace(), &replacement);
+                    assert_eq!(multi_workspace.workspaces().count(), 1);
+                    assert_eq!(
+                        replacement.read(cx).root_paths(cx),
+                        vec![Arc::<Path>::from(Path::new(path!("/replacement")))]
+                    );
+                    assert_eq!(item.read(cx).save_as_count, 0);
+                })
+                .unwrap();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_project_existing_workspace_replacement_choices(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (window, workspace, item, app_state) = scratch_window_for_reuse(false, cx).await;
+        let target_workspace = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    vec![PathBuf::from(path!("/replacement"))],
+                    app_state,
+                    Some(window),
+                    None,
+                    None,
+                    OpenMode::Add,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .workspace;
+
+        for answer in ["Cancel", "Don't Save"] {
+            let task = window
+                .update(cx, |multi_workspace, window, cx| {
+                    assert_eq!(multi_workspace.workspace(), &workspace);
+                    assert!(!multi_workspace.active_workspace_is_retained());
+                    multi_workspace.open_project(
+                        vec![PathBuf::from(path!("/replacement"))],
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap();
+            cx.run_until_parked();
+
+            assert!(cx.has_pending_prompt());
+            cx.simulate_prompt_answer(answer);
+            let replacement = task.await.unwrap();
+            assert!(!cx.has_pending_prompt());
+            window
+                .read_with(cx, |multi_workspace, cx| {
+                    if answer == "Cancel" {
+                        assert_eq!(replacement, workspace);
+                        assert_eq!(
+                            multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
+                            vec![workspace.clone(), target_workspace.clone()]
+                        );
+                    } else {
+                        assert_eq!(replacement, target_workspace);
+                        assert_eq!(
+                            multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
+                            vec![target_workspace.clone()]
+                        );
+                    }
+                    assert_eq!(multi_workspace.workspace(), &replacement);
+                    assert_eq!(item.read(cx).state, "scratch draft");
+                    assert!(item.read(cx).is_dirty);
+                    assert_eq!(item.read(cx).save_count, 0);
+                    assert_eq!(item.read(cx).save_as_count, 0);
+                    assert_eq!(cx.windows().len(), 1);
+                })
+                .unwrap();
+        }
     }
 
     #[gpui::test]
@@ -20164,6 +21324,57 @@ mod tests {
             assert!(!first_panel.read(cx).zoomed);
             assert!(second_panel.read(cx).zoomed);
         });
+    }
+
+    async fn scratch_window_for_reuse(
+        multi_workspace_enabled: bool,
+        cx: &mut TestAppContext,
+    ) -> (
+        WindowHandle<MultiWorkspace>,
+        Entity<Workspace>,
+        Entity<TestItem>,
+        Arc<AppState>,
+    ) {
+        let app_state = cx.update(AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/replacement"), json!({}))
+            .await;
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        cx.update(|cx| {
+            DisableAiSettings::override_global(
+                DisableAiSettings {
+                    disable_ai: !multi_workspace_enabled,
+                },
+                cx,
+            );
+            register_serializable_item::<TestItem>(cx);
+        });
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let (workspace, item) = window
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let item = cx.new(|cx| {
+                    let mut item = TestItem::new(cx)
+                        .with_dirty(true)
+                        .with_serialize(|| Some(Task::ready(Ok(()))));
+                    item.state = String::from("scratch draft");
+                    item
+                });
+                workspace.update(cx, |workspace, cx| {
+                    workspace.add_item_to_active_pane(
+                        Box::new(item.clone()),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                });
+                (workspace, item)
+            })
+            .unwrap();
+        (window, workspace, item, app_state)
     }
 
     struct SecondTestPanel {

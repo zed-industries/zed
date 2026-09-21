@@ -27,7 +27,11 @@ use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::{FutureExt, StreamExt, channel::oneshot, future};
+use futures::{
+    FutureExt, StreamExt,
+    channel::{mpsc::UnboundedReceiver, oneshot},
+    future,
+};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
@@ -355,7 +359,7 @@ fn main() {
     ));
     let background_executor = app.background_executor();
 
-    let (open_listener, mut open_rx) = OpenListener::new();
+    let (open_listener, open_rx) = OpenListener::new();
 
     let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS
         || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
@@ -926,42 +930,7 @@ fn main() {
             )
         };
 
-        let restore_task = match open_rx
-            .try_recv()
-            .ok()
-            .and_then(|request| OpenRequest::parse(request, cx).log_err())
-        {
-            Some(request) if request.is_focus_app_only() => cx.spawn({
-                let app_state = app_state.clone();
-                async move |cx| {
-                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
-                        fail_to_open_window_async(e, cx)
-                    }
-                }
-            }),
-            Some(request) => {
-                handle_open_request(request, app_state.clone(), cx);
-                Task::ready(())
-            }
-            None => cx.spawn({
-                let app_state = app_state.clone();
-                async move |cx| {
-                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
-                        fail_to_open_window_async(e, cx)
-                    }
-                }
-            }),
-        };
-
-        let (first_window_tx, first_window_rx) = oneshot::channel::<()>();
-        let first_window_tx = Rc::new(RefCell::new(Some(first_window_tx)));
-        let _first_window_subscription = cx.observe_new::<MultiWorkspace>(move |_, _, _| {
-            if let Some(tx) = first_window_tx.borrow_mut().take() {
-                tx.send(()).ok();
-            }
-        });
-
-        let restore_finished = cx.background_spawn(restore_task).shared();
+        let restore_finished = start_open_listener(app_state.clone(), open_rx, cx);
 
         cx.spawn({
             let db = workspace::WorkspaceDb::global(cx);
@@ -979,30 +948,71 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let app_state = app_state.clone();
-
         component_preview::init(app_state.clone(), cx);
+    });
+}
 
-        cx.spawn(async move |cx| {
-            let _first_window_subscription = _first_window_subscription;
+fn start_open_listener(
+    app_state: Arc<AppState>,
+    mut open_rx: UnboundedReceiver<RawOpenRequest>,
+    cx: &mut App,
+) -> future::Shared<Task<()>> {
+    let first_request = open_rx
+        .try_recv()
+        .ok()
+        .and_then(|request| OpenRequest::parse(request, cx).log_err());
+    let create_workspace = first_request
+        .as_ref()
+        .is_none_or(OpenRequest::needs_initial_workspace);
+    let (first_window_tx, first_window_rx) = oneshot::channel::<()>();
+    let first_window_tx = Rc::new(RefCell::new(Some(first_window_tx)));
+    let first_window_subscription = cx.observe_new::<MultiWorkspace>(move |_, _, _| {
+        if let Some(sender) = first_window_tx.borrow_mut().take() {
+            sender.send(()).ok();
+        }
+    });
+    let restore_task = cx.spawn({
+        let app_state = app_state.clone();
+        async move |cx| {
+            let result = if create_workspace {
+                restore_or_create_workspace(app_state, cx).await
+            } else {
+                restore_workspace_session(app_state, cx).await.map(|_| ())
+            };
+            if let Err(error) = result {
+                fail_to_open_window_async(error, cx);
+            }
+        }
+    });
+    let restore_finished = cx.background_spawn(restore_task).shared();
+    cx.spawn({
+        let restore_finished = restore_finished.clone();
+        async move |cx| {
+            let _first_window_subscription = first_window_subscription;
             let first_window_placed = first_window_rx.shared();
-            while let Some(urls) = open_rx.next().await {
-                // On a macOS cold launch, `zed <path>` arrives here after startup already
-                // began restoring the session, so wait for a restored window to exist before
-                // matching. Otherwise this open sees no windows and spawns a redundant one (#61346).
+            let mut first_request = first_request;
+            loop {
+                let request = if let Some(request) = first_request.take() {
+                    request
+                } else if let Some(urls) = open_rx.next().await {
+                    let Some(request) = cx.update(|cx| OpenRequest::parse(urls, cx).log_err())
+                    else {
+                        continue;
+                    };
+                    request
+                } else {
+                    break;
+                };
                 futures::select_biased! {
                     _ = restore_finished.clone() => {}
                     _ = first_window_placed.clone() => {}
                 }
-                cx.update(|cx| {
-                    if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                        handle_open_request(request, app_state.clone(), cx);
-                    }
-                });
+                cx.update(|cx| handle_open_request(request, app_state.clone(), cx));
             }
-        })
-        .detach();
-    });
+        }
+    })
+    .detach();
+    restore_finished
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
@@ -1425,7 +1435,42 @@ pub(crate) async fn restore_or_create_workspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    if restore_workspace_session(app_state.clone(), cx).await? {
+        return Ok(());
+    }
     let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
+        cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
+    } else {
+        cx.update(|cx| {
+            workspace::open_new(
+                Default::default(),
+                app_state,
+                cx,
+                |workspace, window, cx| {
+                    let restore_on_startup = WorkspaceSettings::get_global(cx).restore_on_startup;
+                    match restore_on_startup {
+                        workspace::RestoreOnStartupBehavior::Launchpad => {}
+                        _ => {
+                            Editor::new_file(workspace, &Default::default(), window, cx);
+                        }
+                    }
+                },
+            )
+        })
+        .await?;
+    }
+    Ok(())
+}
+
+async fn restore_workspace_session(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<bool> {
+    if cx.update(|cx| {
+        cx.windows()
+            .iter()
+            .any(|window| window.downcast::<MultiWorkspace>().is_some())
+    }) {
+        return Ok(true);
+    }
     if let Some(multi_workspaces) = restorable_workspaces(cx, &app_state).await {
         let mut error_count = 0;
         for multi_workspace in multi_workspaces {
@@ -1555,29 +1600,10 @@ pub(crate) async fn restore_or_create_workspace(
             })
             .await?;
         }
-    } else if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
+        Ok(true)
     } else {
-        cx.update(|cx| {
-            workspace::open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    let restore_on_startup = WorkspaceSettings::get_global(cx).restore_on_startup;
-                    match restore_on_startup {
-                        workspace::RestoreOnStartupBehavior::Launchpad => {}
-                        _ => {
-                            Editor::new_file(workspace, &Default::default(), window, cx);
-                        }
-                    }
-                },
-            )
-        })
-        .await?;
+        Ok(false)
     }
-
-    Ok(())
 }
 
 async fn restorable_workspaces(

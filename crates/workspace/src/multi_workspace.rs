@@ -28,8 +28,8 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    Panel, Workspace, WorkspaceId, client_side_decorations,
-    persistence::model::MultiWorkspaceState,
+    Panel, Workspace, WorkspaceId, WorkspaceReplacement, client_side_decorations,
+    persistence::model::MultiWorkspaceState, prepare_to_replace_workspace,
 };
 
 actions!(
@@ -1106,11 +1106,6 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(workspace) = self.workspace_for_paths(&paths, host.as_ref(), cx) {
-            self.activate(workspace.clone(), source_workspace, window, cx);
-            return Task::ready(Ok(workspace));
-        }
-
         let Some(connection_options) = host else {
             return self.find_or_create_local_workspace(
                 paths,
@@ -1122,6 +1117,11 @@ impl MultiWorkspace {
                 cx,
             );
         };
+
+        if let Some(workspace) = self.workspace_for_paths(&paths, Some(&connection_options), cx) {
+            self.activate(workspace.clone(), source_workspace, window, cx);
+            return Task::ready(Ok(workspace));
+        }
 
         let app_state = self.workspace().read(cx).app_state().clone();
         let window_handle = window.window_handle().downcast::<MultiWorkspace>();
@@ -1210,8 +1210,17 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if let Some(workspace) = self.workspace_for_paths(&path_list, None, cx) {
-            self.activate(workspace.clone(), source_workspace, window, cx);
-            return Task::ready(Ok(workspace));
+            if open_mode == OpenMode::Add {
+                self.add(workspace.clone(), window, cx);
+                return Task::ready(Ok(workspace));
+            }
+            let activation =
+                self.prepare_to_activate_workspace(workspace.clone(), source_workspace, window, cx);
+            return cx.foreground_executor().spawn(async move {
+                let activated = activation.await?;
+                anyhow::ensure!(activated == workspace, "Workspace opening was cancelled");
+                Ok(workspace)
+            });
         }
 
         let paths = path_list.paths().to_vec();
@@ -1245,21 +1254,29 @@ impl MultiWorkspace {
 
             if let Some(requesting_window) = requesting_window
                 && let Some(workspace) = requesting_window
-                    .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace
-                            .workspace_for_paths(&effective_path_list, None, cx)
-                            .inspect(|workspace| {
-                                multi_workspace.activate(
-                                    workspace.clone(),
-                                    source_workspace.clone(),
-                                    window,
-                                    cx,
-                                );
-                            })
+                    .read_with(cx, |multi_workspace, cx| {
+                        multi_workspace.workspace_for_paths(&effective_path_list, None, cx)
                     })
                     .ok()
                     .flatten()
             {
+                if open_mode == OpenMode::Add {
+                    return requesting_window.update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.add(workspace.clone(), window, cx);
+                        workspace
+                    });
+                }
+                let activated = requesting_window
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.prepare_to_activate_workspace(
+                            workspace.clone(),
+                            source_workspace,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?;
+                anyhow::ensure!(activated == workspace, "Workspace opening was cancelled");
                 return Ok(workspace);
             }
 
@@ -1276,6 +1293,7 @@ impl MultiWorkspace {
                     )
                 })
                 .await?;
+            anyhow::ensure!(!result.cancelled, "Workspace opening was cancelled");
             Ok(result.workspace)
         })
     }
@@ -1403,7 +1421,11 @@ impl MultiWorkspace {
     /// Detaches a workspace: clears session state, DB binding, cached
     /// group key, and emits `WorkspaceRemoved`. The DB row is preserved
     /// so the workspace still appears in the recent-projects list.
-    fn detach_workspace(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+    pub(crate) fn detach_workspace(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(index) = self.held_index(workspace) {
             assert_ne!(
                 index,
@@ -1920,76 +1942,47 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            let empty_workspace = if self
-                .workspace()
-                .read(cx)
-                .project()
-                .read(cx)
-                .visible_worktrees(cx)
-                .next()
-                .is_none()
-            {
-                Some(self.workspace().clone())
-            } else {
-                None
-            };
-
-            cx.spawn_in(window, async move |this, cx| {
-                if let Some(empty_workspace) = empty_workspace.as_ref() {
-                    let should_continue = empty_workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
-                        })?
-                        .await?;
-                    if !should_continue {
-                        return Ok(empty_workspace.clone());
-                    }
-                }
-
-                let create_task = this.update_in(cx, |this, window, cx| {
-                    this.find_or_create_local_workspace(
-                        PathList::new(&paths),
-                        None,
-                        None,
-                        OpenMode::Activate,
-                        None,
-                        window,
-                        cx,
-                    )
-                })?;
-                let new_workspace = create_task.await?;
-
-                if let Some(empty_workspace) = empty_workspace
-                    && empty_workspace != new_workspace
-                {
-                    this.update(cx, |this, cx| {
-                        if this.is_workspace_retained(&empty_workspace) {
-                            this.detach_workspace(&empty_workspace, cx);
-                        }
-                    })?;
-                }
-
-                Ok(new_workspace)
-            })
+            self.find_or_create_local_workspace(
+                PathList::new(&paths),
+                None,
+                None,
+                OpenMode::Activate,
+                None,
+                window,
+                cx,
+            )
         } else {
-            let workspace = self.workspace().clone();
-            cx.spawn_in(window, async move |_this, cx| {
-                let should_continue = workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        workspace.prepare_to_close(crate::CloseIntent::ReplaceWindow, window, cx)
-                    })?
-                    .await?;
-                if should_continue {
-                    workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            workspace.open_workspace_for_paths(open_mode, paths, window, cx)
-                        })?
-                        .await
-                } else {
-                    Ok(workspace)
-                }
+            self.workspace().update(cx, |workspace, cx| {
+                workspace.open_workspace_for_paths(open_mode, paths, window, cx)
             })
         }
+    }
+
+    pub(crate) fn prepare_to_activate_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        source_workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Workspace>>> {
+        let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+        cx.spawn_in(window, async move |multi_workspace, cx| {
+            let window_handle = window_handle.context("window is not a multi workspace")?;
+            match prepare_to_replace_workspace(window_handle, Some(&workspace), cx).await? {
+                WorkspaceReplacement::Cancelled(workspace) => Ok(workspace),
+                WorkspaceReplacement::Ready(workspace_to_close) => {
+                    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+                        multi_workspace.activate(workspace.clone(), source_workspace, window, cx);
+                        if let Some(workspace_to_close) = workspace_to_close
+                            && multi_workspace.is_workspace_retained(&workspace_to_close)
+                        {
+                            multi_workspace.detach_workspace(&workspace_to_close, cx);
+                        }
+                        workspace
+                    })
+                }
+            }
+        })
     }
 }
 
