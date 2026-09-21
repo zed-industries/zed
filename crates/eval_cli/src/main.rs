@@ -971,7 +971,7 @@ fn log_acp_thread_event(
             if let Some(acp_thread::AgentThreadEntry::AssistantMessage(message)) = entries.last() {
                 for chunk in &message.chunks {
                     if let acp_thread::AssistantMessageChunk::Message { id: _, block } = chunk {
-                        if let acp_thread::ContentBlock::Markdown { markdown } = block {
+                        for markdown in block.markdowns() {
                             let text = markdown.read(cx).source().to_string();
                             if !text.is_empty() {
                                 eprint!("{text}");

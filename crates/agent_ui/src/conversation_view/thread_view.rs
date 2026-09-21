@@ -6353,43 +6353,31 @@ impl ThreadView {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
-                let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
                 let message_body = v_flex()
                     .w_full()
                     .gap_3()
                     .children(chunks.iter().enumerate().filter_map(
                         |(chunk_ix, chunk)| match chunk {
                             AssistantMessageChunk::Message { block, .. } => {
-                                block.markdown().and_then(|md| {
-                                    let this_is_blank = md.read(cx).source().trim().is_empty();
-                                    is_blank = is_blank && this_is_blank;
-                                    if this_is_blank {
-                                        return None;
-                                    }
-
-                                    Some(
-                                        self.render_markdown(md.clone(), style.clone(), cx)
-                                            .into_any_element(),
-                                    )
+                                let this_is_blank = !block.visible_content(cx);
+                                is_blank = is_blank && this_is_blank;
+                                (!this_is_blank).then(|| {
+                                    div()
+                                        .id(("assistant-message-chunk", chunk_ix))
+                                        .child(self.render_message_content(
+                                            entry_ix, chunk_ix, block, window, cx,
+                                        ))
+                                        .into_any_element()
                                 })
                             }
                             AssistantMessageChunk::Thought { block, .. } => {
-                                block.markdown().and_then(|md| {
-                                    let this_is_blank = md.read(cx).source().trim().is_empty();
-                                    is_blank = is_blank && this_is_blank;
-                                    if this_is_blank {
-                                        return None;
-                                    }
-                                    Some(
-                                        self.render_thinking_block(
-                                            entry_ix,
-                                            chunk_ix,
-                                            md.clone(),
-                                            window,
-                                            cx,
-                                        )
-                                        .into_any_element(),
+                                let this_is_blank = !block.visible_content(cx);
+                                is_blank = is_blank && this_is_blank;
+                                (!this_is_blank).then(|| {
+                                    self.render_thinking_block(
+                                        entry_ix, chunk_ix, block, window, cx,
                                     )
+                                    .into_any_element()
                                 })
                             }
                         },
@@ -6407,7 +6395,7 @@ impl ThreadView {
                         .when(is_last, |this| this.pb_4())
                         .w_full()
                         .text_ui(cx)
-                        .child(self.render_message_context_menu(entry_ix, message_body, cx))
+                        .child(message_body)
                         .when_some(
                             self.entry_view_state
                                 .read(cx)
@@ -7458,11 +7446,44 @@ impl ThreadView {
         cx.notify();
     }
 
+    fn render_message_content(
+        &self,
+        entry_ix: usize,
+        chunk_ix: usize,
+        content: &acp_thread::MessageContent,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        v_flex().w_full().gap_3().children(
+            content
+                .blocks()
+                .iter()
+                .enumerate()
+                .filter(|(_, block)| block.visible_content(cx))
+                .map(|(block_ix, block)| {
+                    let content = self.render_output_content_block(
+                        entry_ix, block_ix, block, None, false, window, cx,
+                    );
+                    div()
+                        .id(("message-content-block", block_ix))
+                        .debug_selector(move || {
+                            format!("message-content-{entry_ix}-{chunk_ix}-{block_ix}")
+                        })
+                        .child(self.render_message_context_menu(
+                            entry_ix,
+                            block.markdown().cloned(),
+                            content,
+                            cx,
+                        ))
+                }),
+        )
+    }
+
     fn render_thinking_block(
         &self,
         entry_ix: usize,
         chunk_ix: usize,
-        chunk: Entity<Markdown>,
+        chunk: &acp_thread::MessageContent,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -7487,6 +7508,7 @@ impl ThreadView {
         let panel_bg = cx.theme().colors().panel_background;
 
         v_flex()
+            .id(("thinking-block", chunk_ix))
             .gap_1()
             .child(
                 h_flex()
@@ -7524,7 +7546,10 @@ impl ThreadView {
                     )
                     .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
                         this.toggle_thinking_block_expansion(key, window, cx);
-                    })),
+                    }))
+                    .map(|header| {
+                        self.render_message_context_menu(entry_ix, None, header.into_any(), cx)
+                    }),
             )
             .when(is_open, |this| {
                 this.child(
@@ -7542,11 +7567,11 @@ impl ThreadView {
                                     this.track_scroll(&scroll_handle)
                                 })
                                 .overflow_hidden()
-                                .child(self.render_markdown(
-                                    chunk,
-                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                                    cx,
-                                )),
+                                .child(
+                                    self.render_message_content(
+                                        entry_ix, chunk_ix, chunk, window, cx,
+                                    ),
+                                ),
                         )
                         .when(is_constrained, |this| {
                             this.child(
@@ -7570,6 +7595,7 @@ impl ThreadView {
     fn render_message_context_menu(
         &self,
         entry_ix: usize,
+        markdown: Option<Entity<Markdown>>,
         message_body: AnyElement,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -7582,51 +7608,18 @@ impl ThreadView {
                 let focus = window.focused(cx);
                 let entity = entity.clone();
                 let workspace = workspace.clone();
+                let markdown = markdown.clone();
 
                 ContextMenu::build(window, cx, move |menu, _, cx| {
                     let this = entity.read(cx);
                     let is_at_top = this.list_state.logical_scroll_top().item_ix == 0;
-
-                    let chunks =
-                        this.thread.read(cx).entries().get(entry_ix).and_then(
-                            |entry| match &entry {
-                                AgentThreadEntry::AssistantMessage(msg) => Some(&msg.chunks),
-                                _ => None,
-                            },
-                        );
-
-                    let context_menu_link = chunks.and_then(|chunks| {
-                        chunks.iter().find_map(|chunk| {
-                            let markdown = match chunk {
-                                AssistantMessageChunk::Message { block, .. } => block.markdown(),
-                                AssistantMessageChunk::Thought { block, .. } => block.markdown(),
-                            };
-                            markdown
-                                .and_then(|markdown| markdown.read(cx).context_menu_link().cloned())
-                        })
-                    });
-                    let selected_text = chunks.and_then(|chunks| {
-                        chunks.iter().find_map(|chunk| {
-                            let markdown = match chunk {
-                                AssistantMessageChunk::Message { block, .. } => block.markdown(),
-                                AssistantMessageChunk::Thought { block, .. } => block.markdown(),
-                            };
-                            markdown.and_then(|markdown| {
-                                markdown.read(cx).context_menu_selected_text().cloned()
-                            })
-                        })
-                    });
-                    let selected_markdown = chunks.and_then(|chunks| {
-                        chunks.iter().find_map(|chunk| {
-                            let markdown = match chunk {
-                                AssistantMessageChunk::Message { block, .. } => block.markdown(),
-                                AssistantMessageChunk::Thought { block, .. } => block.markdown(),
-                            };
-                            markdown.and_then(|markdown| {
-                                markdown.read(cx).context_menu_selected_markdown().cloned()
-                            })
-                        })
-                    });
+                    let markdown = markdown.as_ref().map(|markdown| markdown.read(cx));
+                    let context_menu_link =
+                        markdown.and_then(|markdown| markdown.context_menu_link().cloned());
+                    let selected_text = markdown
+                        .and_then(|markdown| markdown.context_menu_selected_text().cloned());
+                    let selected_markdown = markdown
+                        .and_then(|markdown| markdown.context_menu_selected_markdown().cloned());
 
                     let copy_this_agent_response =
                         ContextMenuEntry::new("Copy This Agent Response").handler({
@@ -7746,7 +7739,7 @@ impl ThreadView {
                                 if markdown.trim().is_empty() {
                                     None
                                 } else {
-                                    Some(markdown.to_string())
+                                    Some(markdown)
                                 }
                             }
                             AssistantMessageChunk::Thought { .. } => None,
@@ -10571,6 +10564,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         v_flex()
+            .debug_selector(|| "agent-output-image".into())
             .gap_2()
             .map(|this| {
                 if card_layout {
