@@ -898,41 +898,32 @@ See [Configuring the Prediction Debounce](../ai/edit-prediction.md#configuring-t
 
 ## Edit Predictions Disabled in
 
-- Description: A list of language scopes in which edit predictions should be disabled.
 - Setting: `edit_predictions_disabled_in`
-- Default: `[]`
-
-**Options**
-
-List of `string` values
-
-1. Don't show edit predictions in comments:
+- Description: Disable edit predictions in these language scopes, such as "comment" and "string".
+- Default:
 
 ```json [settings]
 {
-  "edit_predictions_disabled_in": ["comment"]
+  "edit_predictions_disabled_in": []
 }
 ```
 
-2. Don't show edit predictions in strings and comments:
+Use `"..."` to add scopes without repeating the inherited list. In project settings, it extends the user or parent configuration value. In language-specific settings, it extends the scopes inherited by that language. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
-  "edit_predictions_disabled_in": ["comment", "string"]
-}
-```
-
-3. Only in Go, don't show edit predictions in strings and comments:
-
-```json [settings]
-{
+  "edit_predictions_disabled_in": ["comment"],
   "languages": {
     "Go": {
-      "edit_predictions_disabled_in": ["comment", "string"]
+      "edit_predictions_disabled_in": ["string", "..."]
     }
   }
 }
 ```
+
+Inherited scopes are inserted at `"..."`, and duplicates keep their first occurrence.
+
+Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
 
 ## Current Line Highlight
 

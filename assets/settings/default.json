@@ -540,8 +540,18 @@
   // Controls whether edit predictions are shown immediately (true)
   // or manually by triggering `editor::ShowEditPrediction` (false).
   "show_edit_predictions": true,
-  // Controls whether edit predictions are shown in a given language scope.
-  // Example: ["string", "comment"]
+  // Disable edit predictions in these language scopes, such as "comment" and
+  // "string".
+  //
+  // Use `"..."` to add scopes without repeating the inherited list. In project
+  // settings, it extends the user or parent configuration value. In
+  // language-specific settings, it extends the scopes inherited by that
+  // language. Omit `"..."` to replace the inherited list.
+  //
+  // Inherited scopes are inserted at `"..."`, and duplicates keep their first
+  // occurrence.
+  //
+  // Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
   "edit_predictions_disabled_in": [],
   // Whether to show tabs and spaces in the editor.
   // This setting can take four values:
