@@ -2831,10 +2831,12 @@ impl FakeFs {
 
                 None
             }
-            btree_map::Entry::Occupied(mut entry) => {
+            btree_map::Entry::Occupied(entry) => {
                 // Like `unlink`, removing a symlink removes the link itself.
-                if !entry.get().is_symlink() {
-                    entry.get_mut().file_content(&path)?;
+                if let entry = entry.get()
+                    && !entry.is_symlink()
+                {
+                    entry.file_content(&path)?;
                 }
                 Some(entry.remove())
             }
