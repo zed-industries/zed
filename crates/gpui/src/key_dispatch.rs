@@ -1333,7 +1333,10 @@ mod tests {
         cx.simulate_modifiers_change(Modifiers::shift());
         assert!(intercepted_keystrokes.borrow().is_empty());
         cx.simulate_modifiers_change(Modifiers::none());
-        assert_eq!(intercepted_keystrokes.borrow().as_slice(), &[shift.clone()]);
+        assert_eq!(
+            intercepted_keystrokes.borrow().as_slice(),
+            std::slice::from_ref(&shift)
+        );
         assert_eq!(action_count.get(), 0);
 
         // Without consumption, the same recognized release reaches keymap dispatch.
