@@ -611,6 +611,7 @@ mod tests {
             sidebar_side: Default::default(),
             threads_sidebar_default_width: px(300.),
             threads_sidebar_auto_open: true,
+            max_idle_retained_threads: 5,
             thinking_display: Default::default(),
         }
     }

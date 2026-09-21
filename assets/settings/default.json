@@ -1161,6 +1161,10 @@
     // Threads Sidebar. Applies when `default_open_behavior` or
     // `cli_default_open_behavior` is set to "existing_window".
     "threads_sidebar_auto_open": true,
+    // Maximum number of idle threads with loadable sessions to retain in the
+    // agent panel. Set to 0 to unload every eligible idle thread when it is
+    // no longer active.
+    "max_idle_retained_threads": 5,
     // Default fixed width when the agent panel is docked to the left or right and
     // `flexible` is false.
     "default_width": 640,

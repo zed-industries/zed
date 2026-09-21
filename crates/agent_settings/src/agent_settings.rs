@@ -216,6 +216,7 @@ pub struct AgentSettings {
     pub sidebar_side: SidebarDockPosition,
     pub threads_sidebar_default_width: Pixels,
     pub threads_sidebar_auto_open: bool,
+    pub max_idle_retained_threads: usize,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub max_content_width: Option<Pixels>,
@@ -776,6 +777,7 @@ impl Settings for AgentSettings {
                 .into_gpui()
                 .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH),
             threads_sidebar_auto_open: agent.threads_sidebar_auto_open.unwrap(),
+            max_idle_retained_threads: agent.max_idle_retained_threads.unwrap(),
             default_width: agent.default_width.unwrap().into_gpui(),
             default_height: agent.default_height.unwrap().into_gpui(),
             max_content_width: if agent.limit_content_width.unwrap() {
@@ -1155,6 +1157,40 @@ mod tests {
                 AgentSettings::get_global(cx).threads_sidebar_default_width,
                 px(300.),
                 "an unset width falls back to the default"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_max_idle_retained_threads_defaults_to_five_and_follows_user_settings(
+        cx: &mut gpui::App,
+    ) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        assert_eq!(
+            AgentSettings::get_global(cx).max_idle_retained_threads,
+            5,
+            "default.json supplies the retained thread limit"
+        );
+
+        for (content, expected) in [
+            (r#"{ "agent": { "max_idle_retained_threads": 0 } }"#, 0),
+            (r#"{ "agent": { "max_idle_retained_threads": 12 } }"#, 12),
+            (r#"{ "agent": { "max_idle_retained_threads": null } }"#, 5),
+            (r#"{ "agent": {} }"#, 5),
+        ] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(content, cx)
+                    .expect("user settings should load");
+            });
+            assert_eq!(
+                AgentSettings::get_global(cx).max_idle_retained_threads,
+                expected,
+                "{content}"
             );
         }
     }
