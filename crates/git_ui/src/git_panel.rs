@@ -14,6 +14,7 @@ use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::solo_diff_view::SoloDiffView;
 use crate::staged_diff::StagedDiff;
 use crate::unstaged_diff::UnstagedDiff;
+use crate::history_ref_picker::{HistoryRefOption, HistoryRefPicker, HistoryRefSelection};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -556,6 +557,8 @@ struct SerializedGitPanel {
     graph_collapsed: bool,
     #[serde(default)]
     graph_height: Option<f32>,
+    #[serde(default)]
+    graph_history_ref: Option<String>,
     #[serde(default)]
     signoff_enabled: bool,
     #[serde(default)]
@@ -1123,6 +1126,7 @@ pub struct GitPanel {
     graph_collapsed: bool,
     graph_height: Option<Pixels>,
     graph_bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
+    graph_history_ref: HistoryRefSelection,
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
     /// Whether the commit editor should fill the vertical height of the panel.
@@ -1322,6 +1326,21 @@ impl GitPanel {
             .and_then(|panel| panel.graph_height)
             .filter(|height| height.is_finite())
             .map(|height| px(height.clamp(100., 1000.)));
+        let graph_history_ref = serialized_panel
+            .as_ref()
+            .and_then(|panel| panel.graph_history_ref.as_deref())
+            .map(|s| {
+                if s == "all" {
+                    HistoryRefSelection::All
+                } else if s == "auto" {
+                    HistoryRefSelection::Auto
+                } else if let Some(b) = s.strip_prefix("branch:") {
+                    HistoryRefSelection::Branch(b.to_string().into())
+                } else {
+                    HistoryRefSelection::Auto
+                }
+            })
+            .unwrap_or(HistoryRefSelection::Auto);
 
         cx.new(|cx| {
             let focus_handle = cx.focus_handle();
@@ -1462,6 +1481,7 @@ impl GitPanel {
                 graph_collapsed,
                 graph_height,
                 graph_bounds: Rc::new(Cell::new(gpui::Bounds::default())),
+                graph_history_ref,
                 active_repository,
                 commit_editor,
                 commit_editor_expanded: false,
@@ -1801,6 +1821,11 @@ impl GitPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let graph_collapsed = self.graph_collapsed;
         let graph_height = self.graph_height.map(f32::from);
+        let graph_history_ref = match &self.graph_history_ref {
+            HistoryRefSelection::All => Some("all".to_string()),
+            HistoryRefSelection::Auto => Some("auto".to_string()),
+            HistoryRefSelection::Branch(name) => Some(format!("branch:{}", name)),
+        };
         let signoff_enabled = self.signoff_enabled;
         let commit_messages = self.serialized_commit_messages(cx);
         let kvp = KeyValueStore::global(cx);
@@ -1829,6 +1854,7 @@ impl GitPanel {
                         serde_json::to_string(&SerializedGitPanel {
                             graph_collapsed,
                             graph_height,
+                            graph_history_ref,
                             signoff_enabled,
                             commit_messages,
                         })?,
@@ -8971,17 +8997,205 @@ impl GitPanel {
         Some((repository, entry.repo_path.clone()))
     }
 
+    fn graph_log_source(&self, cx: &App) -> LogSource {
+        match &self.graph_history_ref {
+            HistoryRefSelection::All => LogSource::All,
+            HistoryRefSelection::Auto => {
+                if let Some(repository) = &self.active_repository {
+                    if let Some(branch) = repository.read(cx).branch.as_ref() {
+                        LogSource::Branch(branch.name().to_string().into())
+                    } else {
+                        LogSource::Branch("HEAD".into())
+                    }
+                } else {
+                    LogSource::All
+                }
+            }
+            HistoryRefSelection::Branch(name) => LogSource::Branch(name.clone()),
+        }
+    }
+
+    fn select_history_ref(&mut self, selection: HistoryRefSelection, cx: &mut Context<Self>) {
+        if self.graph_history_ref == selection {
+            return;
+        }
+        self.graph_history_ref = selection;
+        self.serialize(cx);
+        let log_source = self.graph_log_source(cx);
+        if let Some(graph) = self.graph.as_ref() {
+            graph.update(cx, |graph, cx| {
+                graph.set_log_source(log_source, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn open_history_ref_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        let mut options = Vec::new();
+        options.push(HistoryRefOption {
+            selection: HistoryRefSelection::All,
+            title: "All".into(),
+            subtitle: Some("All history item references".into()),
+            tag: None,
+            is_remote: false,
+        });
+        options.push(HistoryRefOption {
+            selection: HistoryRefSelection::Auto,
+            title: "Auto".into(),
+            subtitle: Some("Current history item reference(s)".into()),
+            tag: None,
+            is_remote: false,
+        });
+
+        let (local_branches, remote_branches) = {
+            let repo = active_repository.read(cx);
+            let mut locals = Vec::new();
+            let mut remotes = Vec::new();
+            for branch in repo.branch_list.iter() {
+                if branch.is_remote() {
+                    remotes.push(branch.clone());
+                } else {
+                    locals.push(branch.clone());
+                }
+            }
+            (locals, remotes)
+        };
+
+        for (ix, branch) in local_branches.into_iter().enumerate() {
+            let short_sha = branch.most_recent_commit.as_ref().map(|c| {
+                let sha = &c.sha;
+                sha[..7.min(sha.len())].to_string()
+            });
+            options.push(HistoryRefOption {
+                selection: HistoryRefSelection::Branch(branch.name().to_string().into()),
+                title: branch.name().to_string().into(),
+                subtitle: short_sha.map(|s| s.into()),
+                tag: if ix == 0 { Some("branches") } else { None },
+                is_remote: false,
+            });
+        }
+
+        for (ix, branch) in remote_branches.into_iter().enumerate() {
+            let short_sha = branch.most_recent_commit.as_ref().map(|c| {
+                let sha = &c.sha;
+                sha[..7.min(sha.len())].to_string()
+            });
+            let subtitle = short_sha.map(|sha| format!("Remote branch at {}", sha).into());
+            options.push(HistoryRefOption {
+                selection: HistoryRefSelection::Branch(branch.name().to_string().into()),
+                title: branch.name().to_string().into(),
+                subtitle,
+                tag: if ix == 0 { Some("remote branches") } else { None },
+                is_remote: true,
+            });
+        }
+
+        let current_selection = self.graph_history_ref.clone();
+        let panel = cx.entity().downgrade();
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, move |window, cx| {
+                    HistoryRefPicker::new(
+                        options,
+                        current_selection,
+                        move |selection, _window, cx| {
+                            panel
+                                .update(cx, |panel, cx| {
+                                    panel.select_history_ref(selection, cx);
+                                })
+                                .ok();
+                        },
+                        window,
+                        cx,
+                    )
+                });
+            })
+            .ok();
+    }
+
+    fn refresh_graph(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(graph) = self.graph.as_ref() {
+            graph.update(cx, |graph, cx| {
+                graph.refresh(cx);
+            });
+        }
+        self.schedule_update(window, cx);
+    }
+
     fn render_graph_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         if !self.graph_collapsed && self.graph.is_none() {
             if let Some(repository) = self.active_repository.as_ref() {
                 let repository_id = repository.read(cx).id;
                 let git_store = self.project.read(cx).git_store().clone();
                 let workspace = self.workspace.clone();
+                let log_source = self.graph_log_source(cx);
                 self.graph = Some(cx.new(|cx| {
-                    GitGraph::new_compact(repository_id, git_store, workspace, window, cx)
+                    GitGraph::new_compact(
+                        repository_id,
+                        git_store,
+                        workspace,
+                        Some(log_source),
+                        window,
+                        cx,
+                    )
                 }));
             }
         }
+
+        let (ahead, behind) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| {
+                let repo = repo.read(cx);
+                let branch = repo.branch.as_ref()?;
+                let upstream = branch.upstream.as_ref()?;
+                let status = upstream.tracking.status()?;
+                Some((status.ahead, status.behind))
+            })
+            .unwrap_or((0, 0));
+
+        let pull_button: AnyElement = if behind > 0 {
+            Button::new("graph-pull", format!("{behind}"))
+                .start_icon(Icon::new(IconName::ArrowDown).size(IconSize::Small))
+                .tooltip(Tooltip::text(format!("Pull ({} behind)", behind)))
+                .disabled(self.active_repository.is_none())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.pull(false, window, cx);
+                }))
+                .into_any_element()
+        } else {
+            IconButton::new("graph-pull", IconName::ArrowDown)
+                .tooltip(Tooltip::text("Pull"))
+                .disabled(self.active_repository.is_none())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.pull(false, window, cx);
+                }))
+                .into_any_element()
+        };
+
+        let push_button: AnyElement = if ahead > 0 {
+            Button::new("graph-push", format!("{ahead}"))
+                .start_icon(Icon::new(IconName::ArrowUp).size(IconSize::Small))
+                .tooltip(Tooltip::text(format!("Push ({} ahead)", ahead)))
+                .disabled(self.active_repository.is_none())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.push(false, false, window, cx);
+                }))
+                .into_any_element()
+        } else {
+            IconButton::new("graph-push", IconName::ArrowUp)
+                .tooltip(Tooltip::text("Push"))
+                .disabled(self.active_repository.is_none())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.push(false, false, window, cx);
+                }))
+                .into_any_element()
+        };
 
         let bounds = self.graph_bounds.clone();
         v_flex()
@@ -9018,6 +9232,7 @@ impl GitPanel {
                     .px_2()
                     .py_1()
                     .gap_1()
+                    .overflow_x_hidden()
                     .child(
                         Button::new("toggle-graph-section", "Graph")
                             .start_icon(
@@ -9037,7 +9252,48 @@ impl GitPanel {
                                 cx.notify();
                             })),
                     )
-                    .child(div().flex_1())
+                    .child(div().flex_1().min_w_0())
+                    .when(!self.graph_collapsed, |this| {
+                        this.child(
+                            Button::new("graph-ref-selector", self.graph_history_ref.label())
+                                .start_icon(Icon::new(IconName::GitBranch).size(IconSize::Small))
+                                .tooltip(Tooltip::text("Select History Item Reference"))
+                                .disabled(self.active_repository.is_none())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_history_ref_picker(window, cx);
+                                })),
+                        )
+                        .child(
+                            IconButton::new("graph-go-to-head", IconName::Crosshair)
+                                .tooltip(Tooltip::text("Go to Current History Item"))
+                                .disabled(self.active_repository.is_none())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if let Some(graph) = this.graph.as_ref() {
+                                        graph.update(cx, |graph, cx| {
+                                            graph.scroll_to_head(window, cx);
+                                        });
+                                    }
+                                })),
+                        )
+                        .child(
+                            IconButton::new("graph-fetch-all", IconName::CloudDownload)
+                                .tooltip(Tooltip::text("Fetch From All Remotes"))
+                                .disabled(self.active_repository.is_none())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.fetch(true, window, cx);
+                                })),
+                        )
+                        .child(pull_button)
+                        .child(push_button)
+                        .child(
+                            IconButton::new("graph-refresh", IconName::RotateCw)
+                                .tooltip(Tooltip::text("Refresh"))
+                                .disabled(self.active_repository.is_none())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.refresh_graph(window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         IconButton::new("expand-panel-graph", IconName::Maximize)
                             .tooltip(Tooltip::text("Open Git Graph"))
@@ -10486,6 +10742,52 @@ mod tests {
             serde_json::from_str(r#"{"signoff_enabled":false}"#).expect("legacy state");
         assert!(!legacy.graph_collapsed);
         assert!(legacy.graph_height.is_none());
+        assert_eq!(legacy.graph_history_ref, None);
+    }
+
+    #[gpui::test]
+    async fn test_panel_graph_history_ref_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({".git": {}}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+
+        let serialized: SerializedGitPanel =
+            serde_json::from_str(r#"{"graph_collapsed":false,"graph_history_ref":"branch:feature"}"#)
+                .expect("panel state");
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            GitPanel::new_with_serialized_panel(workspace, Some(serialized), window, cx)
+        });
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert_eq!(
+                panel.graph_history_ref,
+                HistoryRefSelection::Branch("feature".into())
+            );
+            assert_eq!(
+                panel.graph_log_source(cx),
+                LogSource::Branch("feature".into())
+            );
+
+            panel.select_history_ref(HistoryRefSelection::All, cx);
+            assert_eq!(panel.graph_history_ref, HistoryRefSelection::All);
+            assert_eq!(panel.graph_log_source(cx), LogSource::All);
+
+            panel.select_history_ref(HistoryRefSelection::Auto, cx);
+            assert_eq!(panel.graph_history_ref, HistoryRefSelection::Auto);
+
+            drop(panel.render_graph_section(window, cx));
+            assert!(panel.graph.is_some());
+        });
     }
 
     async fn history_panel_for_project(

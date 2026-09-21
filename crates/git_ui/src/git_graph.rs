@@ -1604,6 +1604,7 @@ impl GitGraph {
         repo_id: RepositoryId,
         git_store: Entity<GitStore>,
         workspace: WeakEntity<Workspace>,
+        log_source: Option<LogSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1611,7 +1612,7 @@ impl GitGraph {
             repo_id,
             git_store,
             workspace,
-            Some(LogSource::All),
+            log_source.or(Some(LogSource::All)),
             window,
             cx,
         );
@@ -1638,6 +1639,52 @@ impl GitGraph {
                 );
             })
             .log_err();
+    }
+
+    pub(crate) fn scroll_to_head(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let repository = self.get_repository(cx);
+        let head_branch_name: Option<SharedString> = repository.as_ref().and_then(|repo| {
+            repo.read(cx)
+                .branch
+                .as_ref()
+                .map(|b| b.name().to_string().into())
+        });
+
+        let head_index = self
+            .graph_data
+            .commits
+            .iter()
+            .position(|commit| {
+                commit
+                    .data
+                    .ref_names
+                    .iter()
+                    .any(|name| Self::is_head_ref(name.as_ref(), &head_branch_name))
+            })
+            .unwrap_or(0);
+
+        if head_index < self.graph_data.commits.len() {
+            self.select_entry(head_index, ScrollStrategy::Center, cx);
+        }
+    }
+
+    pub(crate) fn set_log_source(&mut self, log_source: LogSource, cx: &mut Context<Self>) {
+        if self.log_source == log_source {
+            return;
+        }
+        self.log_source = log_source;
+        self.invalidate_state(cx);
+        self.fetch_initial_graph_data(cx);
+    }
+
+    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_state(cx);
+        if let Some(repository) = self.get_repository(cx) {
+            repository.update(cx, |repository, cx| {
+                repository.retry_graph_data(self.log_source.clone(), self.log_order, cx);
+            });
+        }
+        self.fetch_initial_graph_data(cx);
     }
 
     fn on_repository_event(
@@ -1906,10 +1953,12 @@ impl GitGraph {
 
                 let is_selected = self.selected_entry_idx == Some(idx);
                 if self.compact {
-                    let tooltip = format!(
-                        "{}\n{}\n{} · {}",
-                        subject, commit.data.sha, author_name, formatted_time
+                    let short_sha = commit.data.sha.display_short();
+                    let meta_text = format!(
+                        "{} · {} · {}",
+                        short_sha, author_name, formatted_time
                     );
+                    let subject_for_tooltip = subject.clone();
                     let reference = commit
                         .data
                         .ref_names
@@ -1947,7 +1996,14 @@ impl GitGraph {
                                         .color(Color::Muted),
                                 )
                             })
-                            .tooltip(Tooltip::text(tooltip))
+                            .tooltip(move |_, cx| {
+                                Tooltip::with_meta(
+                                    subject_for_tooltip.clone(),
+                                    None,
+                                    meta_text.clone(),
+                                    cx,
+                                )
+                            })
                             .into_any_element(),
                         Empty.into_any_element(),
                         Empty.into_any_element(),
@@ -6211,6 +6267,7 @@ mod tests {
                 repository.read(cx).id,
                 project.read(cx).git_store().clone(),
                 workspace.downgrade(),
+                None,
                 window,
                 cx,
             )
