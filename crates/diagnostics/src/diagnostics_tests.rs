@@ -11,7 +11,7 @@ use editor::{
 };
 use gpui::{TestAppContext, VisualTestContext};
 use indoc::indoc;
-use language::{DiagnosticSourceKind, Rope};
+use language::{BufferId, Diagnostic, DiagnosticEntryRef, DiagnosticSourceKind, Rope};
 use lsp::LanguageServerId;
 use pretty_assertions::assert_eq;
 use project::{
@@ -1351,44 +1351,54 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
 fn test_nearby_related_diagnostic_links_back_to_primary(cx: &mut TestAppContext) {
     init_test(cx);
 
-    let primary = language::Diagnostic {
-        message: "the trait bound `(): HasTest` is not satisfied".into(),
-        group_id: 1,
-        is_primary: true,
-        ..Default::default()
-    };
-    let related = language::Diagnostic {
-        message: "required by a bound in `Test::TestAssoc`".into(),
-        group_id: 1,
-        ..Default::default()
-    };
+    let buffer_id = BufferId::new(1).expect("test buffer ID should be nonzero");
+    let group_id = 1;
+    let diagnostic_group = [
+        DiagnosticEntryRef {
+            range: text::Point::new(10, 4)..text::Point::new(10, 16),
+            diagnostic: &Diagnostic {
+                message: "the trait bound `(): HasTest` is not satisfied".into(),
+                is_primary: true,
+                group_id,
+                ..Default::default()
+            },
+        },
+        DiagnosticEntryRef {
+            range: text::Point::new(13, 0)..text::Point::new(13, 22),
+            diagnostic: &Diagnostic {
+                message: "required by a bound in `Test::TestAssoc`".into(),
+                group_id,
+                ..Default::default()
+            },
+        },
+    ];
+
+    let primary_index = diagnostic_group
+        .iter()
+        .position(|entry| entry.diagnostic.is_primary)
+        .expect("test diagnostic group should contain a primary diagnostic");
+    let expected_back_link =
+        format!("([back](file://#diagnostic-{buffer_id}-{group_id}-{primary_index}))");
 
     cx.update(|cx| {
         let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
-            vec![
-                language::DiagnosticEntryRef {
-                    range: text::Point::new(10, 4)..text::Point::new(10, 16),
-                    diagnostic: &primary,
-                },
-                language::DiagnosticEntryRef {
-                    range: text::Point::new(13, 0)..text::Point::new(13, 22),
-                    diagnostic: &related,
-                },
-            ],
-            language::BufferId::new(1).unwrap(),
+            diagnostic_group.to_vec(),
+            buffer_id,
             None,
             None,
             cx,
         );
 
+        let [_primary_block, related_block] = blocks.as_slice() else {
+            panic!("expected one primary and one related diagnostic block");
+        };
+
+        let markdown = related_block.markdown.read(cx).source();
+
         assert!(
-            blocks[1]
-                .markdown
-                .read(cx)
-                .source()
-                .contains("([back](file://#diagnostic-1-1-0))"),
+            markdown.contains(&expected_back_link),
             "related diagnostic should link back to the primary diagnostic, got: {}",
-            blocks[1].markdown.read(cx).source()
+            markdown
         );
     });
 }
