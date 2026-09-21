@@ -789,6 +789,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 - Default:
 
 ```json [settings]
+{
   "edit_predictions": {
     "disabled_globs": [
       "**/.env*",
@@ -803,6 +804,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
       "/**/zed/keymap.json"
     ]
   }
+}
 ```
 
 **Options**
@@ -847,13 +849,29 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 
 ### Disabled Globs
 
-- Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
+- Description: Disable edit predictions for files matching these glob patterns.
 - Setting: `disabled_globs`
 - Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml", "**/.zed/settings.json", "/**/zed/settings.json", "/**/zed/keymap.json"]`
 
 **Options**
 
 List of `string` values.
+
+Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+
+```json [settings]
+{
+  "edit_predictions": {
+    "disabled_globs": ["**/build/**", "..."]
+  }
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
+
+Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+
+Relative patterns are matched against paths relative to the worktree root. Absolute patterns are matched against absolute paths. A leading `~` is expanded to your home folder.
 
 ### Prediction Debounce
 
