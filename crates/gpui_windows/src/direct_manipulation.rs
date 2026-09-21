@@ -25,11 +25,13 @@ pub(crate) struct DirectManipulationHandler {
     _handler_cookie: u32,
     window: HWND,
     scale_factor: Rc<Cell<f32>>,
+    native_touch: bool,
+    touch_position: Rc<Cell<Option<Point<Pixels>>>>,
     pending_events: Rc<RefCell<Vec<PlatformInput>>>,
 }
 
 impl DirectManipulationHandler {
-    pub fn new(window: HWND, scale_factor: f32) -> Result<Self> {
+    pub fn new(window: HWND, scale_factor: f32, native_touch: bool) -> Result<Self> {
         unsafe {
             let manager: IDirectManipulationManager =
                 CoCreateInstance(&DirectManipulationManager, None, CLSCTX_INPROC_SERVER)?;
@@ -64,12 +66,14 @@ impl DirectManipulationHandler {
             viewport.Enable()?;
 
             let scale_factor = Rc::new(Cell::new(scale_factor));
+            let touch_position = Rc::new(Cell::new(None));
             let pending_events = Rc::new(RefCell::new(Vec::new()));
 
             let event_handler: IDirectManipulationViewportEventHandler =
                 DirectManipulationEventHandler::new(
                     window,
                     Rc::clone(&scale_factor),
+                    Rc::clone(&touch_position),
                     Rc::clone(&pending_events),
                 )
                 .into();
@@ -85,6 +89,8 @@ impl DirectManipulationHandler {
                 _handler_cookie: handler_cookie,
                 window,
                 scale_factor,
+                native_touch,
+                touch_position,
                 pending_events,
             })
         }
@@ -98,8 +104,24 @@ impl DirectManipulationHandler {
         unsafe {
             let pointer_id = wparam.loword() as u32;
             let mut pointer_type = POINTER_INPUT_TYPE::default();
-            if GetPointerType(pointer_id, &mut pointer_type).is_ok() && pointer_type == PT_TOUCHPAD
-            {
+            if GetPointerType(pointer_id, &mut pointer_type).is_err() {
+                return;
+            }
+            let is_native_touch = self.native_touch && pointer_type == PT_TOUCH;
+            if pointer_type == PT_TOUCHPAD || is_native_touch {
+                if is_native_touch {
+                    let mut pointer_info = POINTER_INFO::default();
+                    if GetPointerInfo(pointer_id, &mut pointer_info).is_ok() {
+                        let mut position = pointer_info.ptPixelLocation;
+                        if ScreenToClient(self.window, &mut position).is_ok() {
+                            self.touch_position.set(Some(logical_point(
+                                position.x as f32,
+                                position.y as f32,
+                                self.scale_factor.get(),
+                            )));
+                        }
+                    }
+                }
                 self.viewport.SetContact(pointer_id).log_err();
             }
         }
@@ -137,6 +159,7 @@ enum GestureKind {
 struct DirectManipulationEventHandler {
     window: HWND,
     scale_factor: Rc<Cell<f32>>,
+    touch_position: Rc<Cell<Option<Point<Pixels>>>>,
     gesture_kind: Cell<GestureKind>,
     last_scale: Cell<f32>,
     last_x_offset: Cell<f32>,
@@ -149,11 +172,13 @@ impl DirectManipulationEventHandler {
     fn new(
         window: HWND,
         scale_factor: Rc<Cell<f32>>,
+        touch_position: Rc<Cell<Option<Point<Pixels>>>>,
         pending_events: Rc<RefCell<Vec<PlatformInput>>>,
     ) -> Self {
         Self {
             window,
             scale_factor,
+            touch_position,
             gesture_kind: Cell::new(GestureKind::None),
             last_scale: Cell::new(1.0),
             last_x_offset: Cell::new(0.0),
@@ -164,7 +189,7 @@ impl DirectManipulationEventHandler {
     }
 
     fn end_gesture(&self) {
-        let position = self.mouse_position();
+        let position = self.gesture_position();
         let modifiers = current_modifiers();
         match self.gesture_kind.get() {
             GestureKind::Scroll => {
@@ -190,9 +215,13 @@ impl DirectManipulationEventHandler {
             GestureKind::None => {}
         }
         self.gesture_kind.set(GestureKind::None);
+        self.touch_position.set(None);
     }
 
-    fn mouse_position(&self) -> Point<Pixels> {
+    fn gesture_position(&self) -> Point<Pixels> {
+        if let Some(position) = self.touch_position.get() {
+            return position;
+        }
         let scale_factor = self.scale_factor.get();
         unsafe {
             let mut point: POINT = std::mem::zeroed();
@@ -291,7 +320,7 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
             return Ok(());
         }
 
-        let position = self.mouse_position();
+        let position = self.gesture_position();
         let modifiers = current_modifiers();
 
         // Direct Manipulation reports both translation and scale in every content update.

@@ -78,7 +78,6 @@ pub struct WindowsWindowState {
     /// Native mode gives Windows the entire contact sequence. It is immutable
     /// for a window, so a contact can never switch owners mid-stream.
     pub(crate) touch_input_mode: TouchInputMode,
-    pub(crate) native_pan_position: Cell<Option<Point<Pixels>>>,
     pub current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with [`WindowsPlatformState::cursor_visible`].
     pub cursor_visible: Arc<AtomicBool>,
@@ -159,8 +158,12 @@ impl WindowsWindowState {
         let fullscreen = None;
         let initial_placement = None;
 
-        let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
-            .context("initializing Direct Manipulation")?;
+        let direct_manipulation = DirectManipulationHandler::new(
+            hwnd,
+            scale_factor,
+            touch_input_mode == TouchInputMode::Native,
+        )
+        .context("initializing Direct Manipulation")?;
 
         Ok(Self {
             origin: Cell::new(origin),
@@ -185,7 +188,6 @@ impl WindowsWindowState {
             click_state,
             touch_state: RefCell::new(WindowsTouchState::default()),
             touch_input_mode,
-            native_pan_position: Cell::new(None),
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),

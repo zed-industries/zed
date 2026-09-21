@@ -15,7 +15,7 @@ use windows::{
         UI::{
             Controls::*,
             HiDpi::*,
-            Input::{Ime::*, KeyboardAndMouse::*, Pointer::*, Touch::*},
+            Input::{Ime::*, KeyboardAndMouse::*, Pointer::*},
             WindowsAndMessaging::*,
         },
     },
@@ -253,7 +253,6 @@ impl WindowsWindowInner {
                     None
                 }
             }
-            WM_GESTURE => self.handle_native_gesture(handle, lparam),
             WM_SYSKEYUP => self.handle_syskeyup_msg(wparam, lparam),
             WM_KEYUP => self.handle_keyup_msg(wparam, lparam),
             WM_GPUI_KEYDOWN => self.handle_keydown_msg(wparam, lparam),
@@ -566,70 +565,6 @@ impl WindowsWindowInner {
             }
         }
         self.handle_pointer_sample(handle, pointer_id, pointer_info, phase, true)
-    }
-
-    /// Windows owns the complete contact in native mode. Its default window
-    /// procedure provides press-and-hold feedback and the promoted right click;
-    /// only a recognized pan is translated back into GPUI scrolling.
-    fn handle_native_gesture(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        if self.state.touch_input_mode != TouchInputMode::Native {
-            return None;
-        }
-
-        let gesture_handle = HGESTUREINFO(lparam.0 as _);
-        let mut gesture = GESTUREINFO {
-            cbSize: std::mem::size_of::<GESTUREINFO>() as u32,
-            ..Default::default()
-        };
-        if let Err(error) = unsafe { GetGestureInfo(gesture_handle, &mut gesture) } {
-            log::error!("failed to read native gesture: {error}");
-            return None;
-        }
-
-        // We have consumed the gesture-info handle, so it is ours to close.
-        unsafe { CloseGestureInfoHandle(gesture_handle) }.log_err();
-
-        if gesture.dwID != GID_PAN.0 {
-            return Some(0);
-        }
-
-        let position = self.pointer_position(
-            handle,
-            POINT {
-                x: gesture.ptsLocation.x as i32,
-                y: gesture.ptsLocation.y as i32,
-            },
-        )?;
-        let began = gesture.dwFlags & GF_BEGIN != 0;
-        let ended = gesture.dwFlags & GF_END != 0;
-        let previous = self.state.native_pan_position.replace(Some(position));
-        let phase = if began || previous.is_none() {
-            TouchPhase::Started
-        } else if ended {
-            TouchPhase::Ended
-        } else {
-            TouchPhase::Moved
-        };
-        let delta = previous.map_or_else(
-            || point(px(0.0), px(0.0)),
-            |previous| point(position.x - previous.x, position.y - previous.y),
-        );
-        if ended {
-            self.state.native_pan_position.set(None);
-        }
-
-        let Some(mut callback) = self.state.callbacks.input.take() else {
-            return Some(0);
-        };
-        let handled = !callback(PlatformInput::ScrollWheel(ScrollWheelEvent {
-            position,
-            delta: ScrollDelta::Pixels(delta),
-            modifiers: current_modifiers(),
-            touch_phase: phase,
-        }))
-        .propagate;
-        self.state.callbacks.input.set(Some(callback));
-        Some(if handled { 0 } else { 1 })
     }
 
     fn handle_pointer_sample(
