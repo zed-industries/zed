@@ -4968,30 +4968,46 @@ impl AcpThread {
                 output_byte_limit,
                 terminal,
             } => {
-                let entity = self.register_terminal_created(
-                    terminal_id.clone(),
-                    label,
-                    cwd,
-                    output_byte_limit,
-                    terminal,
-                    cx,
-                );
+                if self.terminals.contains_key(&terminal_id) {
+                    return;
+                }
+                let language_registry = self.project.read(cx).languages().clone();
+                let entity = cx.new(|cx| {
+                    Terminal::new_display(
+                        terminal_id.clone(),
+                        &label,
+                        cwd,
+                        output_byte_limit.map(|limit| limit as usize),
+                        terminal,
+                        language_registry,
+                        cx,
+                    )
+                });
+                // Provider output and exit can arrive without another tool-call update.
+                cx.observe(&entity, |this, terminal, cx| {
+                    for (index, entry) in this.entries.iter().enumerate() {
+                        if entry
+                            .terminals()
+                            .any(|entry_terminal| entry_terminal == &terminal)
+                        {
+                            cx.emit(AcpThreadEvent::EntryUpdated(index));
+                        }
+                    }
+                    cx.notify();
+                })
+                .detach();
+                self.terminals.insert(terminal_id.clone(), entity.clone());
 
                 if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
                     for data in chunks.drain(..) {
                         entity.update(cx, |term, cx| {
-                            term.inner().update(cx, |inner, cx| {
-                                inner.write_output(&data, cx);
-                            })
+                            term.write_display_output(&data, cx);
                         });
                     }
                 }
 
-                if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, _| inner.shrink_to_used());
-                        cx.notify();
-                    });
+                if let Some(status) = self.pending_terminal_exit.remove(&terminal_id) {
+                    entity.update(cx, |term, cx| term.finish_display(status, cx));
                 }
 
                 cx.notify();
@@ -4999,9 +5015,7 @@ impl AcpThread {
             TerminalProviderEvent::Output { terminal_id, data } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
                     entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, cx| {
-                            inner.write_output(&data, cx);
-                        })
+                        term.write_display_output(&data, cx);
                     });
                 } else {
                     self.pending_terminal_output
@@ -5025,12 +5039,11 @@ impl AcpThread {
                 status,
             } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, _| inner.shrink_to_used());
-                        cx.notify();
-                    });
+                    entity.update(cx, |term, cx| term.finish_display(status, cx));
                 } else {
-                    self.pending_terminal_exit.insert(terminal_id, status);
+                    self.pending_terminal_exit
+                        .entry(terminal_id)
+                        .or_insert(status);
                 }
             }
         }
@@ -5853,6 +5866,22 @@ mod tests {
                 cx,
             );
         });
+        cx.run_until_parked();
+        thread.update(cx, |thread, cx| {
+            let terminal = thread
+                .terminal(terminal_id.clone())
+                .expect("display terminal");
+            terminal.update(cx, |terminal, cx| {
+                assert!(!terminal.is_process_backed());
+                assert!(terminal.wait_for_exit().is_err());
+                terminal.stop_by_user(cx);
+                assert!(!terminal.was_stopped_by_user());
+                assert!(
+                    terminal.output().is_none(),
+                    "a display terminal must wait for the provider's exit event",
+                );
+            });
+        });
 
         let mut output = String::new();
         for line in 0..15_000 {
@@ -5867,17 +5896,36 @@ mod tests {
                 },
                 cx,
             );
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, cx| {
+            let terminal = thread
+                .terminal(terminal_id.clone())
+                .expect("display terminal");
+            let output = terminal.read(cx).current_output(cx);
+            assert!(output.output.contains("line 14999"));
+            assert!(output.exit_status.is_none());
+        });
+
+        thread.update(cx, |thread, cx| {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
-                    status: acp::TerminalExitStatus::new().exit_code(0),
+                    status: acp::TerminalExitStatus::new().exit_code(7),
                 },
                 cx,
             );
         });
+        cx.run_until_parked();
 
         let content = thread.read_with(cx, |thread, cx| {
             let term = thread.terminal(terminal_id.clone()).unwrap();
+            let output = term.read(cx).current_output(cx);
+            assert_eq!(
+                output.exit_status.and_then(|status| status.exit_code),
+                Some(7)
+            );
+            assert!(output.output.contains("line 14999"));
             term.read_with(cx, |term, cx| term.inner().read(cx).get_content())
         });
 
@@ -5885,6 +5933,68 @@ mod tests {
             content.contains("line 14999"),
             "expected output to remain visible after terminal exit, got: {content}"
         );
+
+        let terminal = thread.read_with(cx, |thread, _| {
+            thread
+                .terminal(terminal_id.clone())
+                .expect("display terminal")
+        });
+        let ended_at = terminal.read_with(cx, |terminal, _| {
+            terminal.output().expect("completed output").ended_at
+        });
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "Duplicate".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower.clone(),
+                },
+                cx,
+            );
+            assert_eq!(
+                thread
+                    .terminal(terminal_id.clone())
+                    .expect("terminal")
+                    .entity_id(),
+                terminal.entity_id(),
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id.clone(),
+                    status: acp::TerminalExitStatus::new().signal("SIGTERM"),
+                },
+                cx,
+            );
+        });
+        terminal.read_with(cx, |terminal, _| {
+            let output = terminal.output().expect("completed output");
+            assert_eq!(output.ended_at, ended_at);
+            assert_eq!(output.exit_status.exit_code, Some(7));
+            assert_eq!(output.exit_status.signal, None);
+            assert_eq!(output.content, content);
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id,
+                    data: b"late output\n".to_vec(),
+                },
+                cx,
+            );
+        });
+        terminal.read_with(cx, |terminal, cx| {
+            let output = terminal.output().expect("completed output");
+            assert_eq!(output.ended_at, ended_at);
+            assert_eq!(output.exit_status.exit_code, Some(7));
+            assert_eq!(output.exit_status.signal, None);
+            assert!(output.content.contains("late output"));
+            assert_eq!(output.content, lower.read(cx).get_content());
+            assert_eq!(output.original_content_len, output.content.len());
+            assert_eq!(output.content_line_count, lower.read(cx).total_lines());
+        });
     }
 
     #[gpui::test]
@@ -5923,7 +6033,21 @@ mod tests {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
+                    status: acp::TerminalExitStatus::new().signal("SIGTERM"),
+                },
+                cx,
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id.clone(),
                     status: acp::TerminalExitStatus::new().exit_code(0),
+                },
+                cx,
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id: terminal_id.clone(),
+                    data: b"\nlate output".to_vec(),
                 },
                 cx,
             );
@@ -5958,6 +6082,12 @@ mod tests {
         // Output should be present after Created (flushed from buffer)
         let content = thread.read_with(cx, |thread, cx| {
             let term = thread.terminal(terminal_id.clone()).unwrap();
+            let output = term.read(cx).current_output(cx);
+            let exit_status = output.exit_status.expect("buffered exit status");
+            assert_eq!(exit_status.signal.as_deref(), Some("SIGTERM"));
+            assert_eq!(exit_status.exit_code, None);
+            assert!(output.output.contains("pre-exit data"));
+            assert!(output.output.contains("late output"));
             term.read_with(cx, |t, cx| t.inner().read(cx).get_content())
         });
 
@@ -5977,12 +6107,24 @@ mod tests {
     #[cfg(unix)]
     #[gpui::test]
     async fn test_terminal_kill_allows_wait_for_exit_to_complete(cx: &mut gpui::TestAppContext) {
+        assert_process_terminal_can_stop(false, cx).await;
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_headless_terminal_retains_process_control(cx: &mut gpui::TestAppContext) {
+        assert_process_terminal_can_stop(true, cx).await;
+    }
+
+    #[cfg(unix)]
+    async fn assert_process_terminal_can_stop(headless: bool, cx: &mut gpui::TestAppContext) {
         use std::collections::HashMap;
         use task::Shell;
         use util::shell_builder::ShellBuilder;
 
         init_test(cx);
         cx.executor().allow_parking();
+        cx.update(|cx| cx.set_global(::terminal::HeadlessTerminal(headless)));
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
@@ -6000,7 +6142,6 @@ mod tests {
 
         let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
 
-        // Create a real PTY terminal that runs a command which prints output then sleeps
         // We use printf instead of echo and chain with && sleep to ensure proper execution
         let (program, args) = ShellBuilder::new(&Shell::System, false).build(
             Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
@@ -6039,49 +6180,61 @@ mod tests {
             .unwrap();
 
         let lower_terminal = cx.new(|cx| builder.subscribe(cx));
+        assert_eq!(
+            lower_terminal.read_with(cx, |terminal, _| terminal.is_pty()),
+            !headless
+        );
 
         // Create the acp_thread Terminal wrapper
         thread.update(cx, |thread, cx| {
-            thread.on_terminal_provider_event(
-                TerminalProviderEvent::Created {
-                    terminal_id: terminal_id.clone(),
-                    label: "printf output_before_kill && sleep 60".to_string(),
-                    cwd: None,
-                    output_byte_limit: None,
-                    terminal: lower_terminal.clone(),
-                },
+            let terminal = thread.register_terminal_created(
+                terminal_id.clone(),
+                "printf output_before_kill && sleep 60".to_string(),
+                None,
+                None,
+                lower_terminal.clone(),
                 cx,
             );
+            assert!(terminal.read(cx).is_process_backed());
         });
 
         // Poll until the printf command produces output, rather than using a
         // fixed sleep which is flaky on loaded machines.
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            let has_output = thread.read_with(cx, |thread, cx| {
-                let term = thread
-                    .terminals
-                    .get(&terminal_id)
-                    .expect("terminal not found");
-                let content = term.read(cx).inner().read(cx).get_content();
-                content.contains("output_before_kill")
-            });
-            if has_output {
-                break;
+        if !headless {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let has_output = thread.read_with(cx, |thread, cx| {
+                    let term = thread
+                        .terminals
+                        .get(&terminal_id)
+                        .expect("terminal not found");
+                    let content = term.read(cx).inner().read(cx).get_content();
+                    content.contains("output_before_kill")
+                });
+                if has_output {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Timed out waiting for printf output to appear in terminal",
+                );
+                cx.executor().timer(Duration::from_millis(50)).await;
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "Timed out waiting for printf output to appear in terminal",
-            );
-            cx.executor().timer(Duration::from_millis(50)).await;
         }
 
         // Get the acp_thread Terminal and kill it
+        let killed_at = std::time::Instant::now();
         let wait_for_exit = thread.update(cx, |thread, cx| {
             let term = thread.terminals.get(&terminal_id).unwrap();
-            let wait_for_exit = term.read(cx).wait_for_exit();
+            let wait_for_exit = term.read(cx).wait_for_exit().expect("process terminal");
             term.update(cx, |term, cx| {
-                term.kill(cx);
+                assert!(term.output().is_none(), "the process must still be running");
+                if headless {
+                    term.stop_by_user(cx);
+                    assert!(term.was_stopped_by_user());
+                } else {
+                    term.kill(cx);
+                }
             });
             wait_for_exit
         });
@@ -6100,22 +6253,28 @@ mod tests {
             "wait_for_exit should complete after kill, but it timed out. \
             This indicates kill_active_task is not properly killing the shell process."
         );
+        assert!(
+            killed_at.elapsed() < Duration::from_secs(5),
+            "the process must stop without waiting for its natural exit",
+        );
 
         // Give the system a chance to process any pending updates
         cx.run_until_parked();
 
-        // Verify that the underlying terminal still has the output that was
-        // written before the kill. This verifies that killing doesn't lose output.
-        let inner_content = thread.read_with(cx, |thread, cx| {
-            let term = thread.terminals.get(&terminal_id).unwrap();
-            term.read(cx).inner().read(cx).get_content()
-        });
+        if !headless {
+            // Verify that the underlying terminal still has the output that was
+            // written before the kill. This verifies that killing doesn't lose output.
+            let inner_content = thread.read_with(cx, |thread, cx| {
+                let term = thread.terminals.get(&terminal_id).unwrap();
+                term.read(cx).inner().read(cx).get_content()
+            });
 
-        assert!(
-            inner_content.contains("output_before_kill"),
-            "Underlying terminal should contain output from before kill, got: {}",
-            inner_content
-        );
+            assert!(
+                inner_content.contains("output_before_kill"),
+                "Underlying terminal should contain output from before kill, got: {}",
+                inner_content
+            );
+        }
     }
 
     #[gpui::test]

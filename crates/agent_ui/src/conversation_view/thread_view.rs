@@ -7896,7 +7896,13 @@ impl ThreadView {
         let output_line_count = output.map(|output| output.content_line_count).unwrap_or(0);
 
         let command_failed = command_finished
-            && output.is_some_and(|o| o.exit_status.is_some_and(|status| !status.success()));
+            && output.is_some_and(|output| {
+                output
+                    .exit_status
+                    .exit_code
+                    .is_some_and(|exit_code| exit_code != 0)
+                    || output.exit_status.signal.is_some()
+            });
 
         let time_elapsed = if let Some(output) = output {
             output.ended_at.duration_since(started_at)
@@ -7967,26 +7973,24 @@ impl ThreadView {
                 cx.notify();
             }
         }))
-        .on_stop({
-            let terminal = terminal.clone();
-            cx.listener(move |this, _event, _window, cx| {
-                terminal.update(cx, |terminal, cx| {
-                    terminal.stop_by_user(cx);
-                });
-                if AgentSettings::get_global(cx).cancel_generation_on_terminal_stop {
-                    this.cancel_generation(cx);
-                }
+        .when(terminal_data.is_process_backed(), |header| {
+            header.on_stop({
+                let terminal = terminal.clone();
+                cx.listener(move |this, _event, _window, cx| {
+                    terminal.update(cx, |terminal, cx| {
+                        terminal.stop_by_user(cx);
+                    });
+                    if AgentSettings::get_global(cx).cancel_generation_on_terminal_stop {
+                        this.cancel_generation(cx);
+                    }
+                })
             })
         })
         .when_some(truncated_tooltip, |header, tooltip| {
             header.truncated(tooltip)
         })
         .when(tool_failed || command_failed, |header| {
-            header.failed(
-                output
-                    .and_then(|o| o.exit_status)
-                    .map(|status| status.code().unwrap_or(-1)),
-            )
+            header.failed(output.and_then(|output| output.exit_status.exit_code))
         })
         .when_some(tool_call.sandbox_not_applied.as_ref(), |header, reason| {
             header.sandbox_warning(self.sandbox_not_applied_warning(reason, cx))
