@@ -12,14 +12,26 @@ pub fn toggle_in_settings(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) {
-    let current_user_selection = AgentSettings::get_global(cx)
-        .default_model
-        .as_ref()
-        .filter(|selection| {
+    let settings = AgentSettings::get_global(cx);
+    let current_user_selection = settings
+        .saved_model_settings
+        .iter()
+        .rev()
+        .find(|selection| {
             selection.provider.0 == model.provider_id().0.as_ref()
                 && selection.model == model.id().0.as_ref()
         })
-        .cloned();
+        .cloned()
+        .or_else(|| {
+            settings
+                .default_model
+                .as_ref()
+                .filter(|selection| {
+                    selection.provider.0 == model.provider_id().0.as_ref()
+                        && selection.model == model.id().0.as_ref()
+                })
+                .cloned()
+        });
 
     let selection = language_model_to_selection(&model, current_user_selection.as_ref());
     update_settings_file(fs, cx, move |settings, _| {

@@ -988,6 +988,7 @@ mod tests {
             compaction_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
+            saved_model_settings: vec![],
             default_profile: AgentProfileId::default(),
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),

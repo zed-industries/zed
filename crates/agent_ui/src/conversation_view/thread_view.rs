@@ -40,7 +40,9 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
 };
 use notifications::status_toast::StatusToast;
-use settings::{update_settings_file, update_settings_file_with_completion};
+use settings::{
+    LanguageModelSelection, update_settings_file, update_settings_file_with_completion,
+};
 use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
     SplitButtonStyle, Tab, ToggleState,
@@ -5213,11 +5215,23 @@ impl ThreadView {
                         let favorite_key = thread.model().map(|model| {
                             (model.provider_id().0.to_string(), model.id().0.to_string())
                         });
+                        let saved_model_settings = thread.model().map(|model| {
+                            LanguageModelSelection {
+                                provider: model.provider_id().0.to_string().into(),
+                                model: model.id().0.to_string(),
+                                enable_thinking,
+                                effort: thread.thinking_effort().cloned(),
+                                speed: thread.speed(),
+                            }
+                        });
                         let fs = thread.project().read(cx).fs().clone();
                         update_settings_file(fs, cx, move |settings, _| {
                             if let Some(agent) = settings.agent.as_mut() {
                                 if let Some(default_model) = agent.default_model.as_mut() {
                                     default_model.enable_thinking = enable_thinking;
+                                }
+                                if let Some(saved_model_settings) = saved_model_settings {
+                                    agent.set_saved_model_settings(saved_model_settings);
                                 }
                                 if let Some((provider_id, model_id)) = &favorite_key {
                                     agent.update_favorite_model(
@@ -5379,6 +5393,23 @@ impl ThreadView {
                                                         model.id().0.to_string(),
                                                     )
                                                 });
+                                                let saved_model_settings =
+                                                    thread.model().map(|model| {
+                                                        LanguageModelSelection {
+                                                            provider: model
+                                                                .provider_id()
+                                                                .0
+                                                                .to_string()
+                                                                .into(),
+                                                            model: model.id().0.to_string(),
+                                                            enable_thinking:
+                                                                thread.thinking_enabled(),
+                                                            effort: thread
+                                                                .thinking_effort()
+                                                                .cloned(),
+                                                            speed: thread.speed(),
+                                                        }
+                                                    });
                                                 let fs = thread.project().read(cx).fs().clone();
                                                 update_settings_file(fs, cx, move |settings, _| {
                                                     if let Some(agent) = settings.agent.as_mut() {
@@ -5387,6 +5418,13 @@ impl ThreadView {
                                                         {
                                                             default_model.effort =
                                                                 Some(effort.to_string());
+                                                        }
+                                                        if let Some(saved_model_settings) =
+                                                            saved_model_settings
+                                                        {
+                                                            agent.set_saved_model_settings(
+                                                                saved_model_settings,
+                                                            );
                                                         }
                                                         if let Some((provider_id, model_id)) =
                                                             &favorite_key
@@ -12134,11 +12172,21 @@ impl ThreadView {
             let favorite_key = thread
                 .model()
                 .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
+            let saved_model_settings = thread.model().map(|model| LanguageModelSelection {
+                provider: model.provider_id().0.to_string().into(),
+                model: model.id().0.to_string(),
+                enable_thinking: thread.thinking_enabled(),
+                effort: thread.thinking_effort().cloned(),
+                speed: thread.speed(),
+            });
             let fs = thread.project().read(cx).fs().clone();
             update_settings_file(fs, cx, move |settings, _| {
                 if let Some(agent) = settings.agent.as_mut() {
                     if let Some(default_model) = agent.default_model.as_mut() {
                         default_model.speed = Some(new_speed);
+                    }
+                    if let Some(saved_model_settings) = saved_model_settings {
+                        agent.set_saved_model_settings(saved_model_settings);
                     }
                     if let Some((provider_id, model_id)) = &favorite_key {
                         agent.update_favorite_model(provider_id, model_id, |favorite| {

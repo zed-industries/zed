@@ -281,6 +281,9 @@ pub struct AgentSettingsContent {
     /// Favorite models to show at the top of the model selector.
     #[serde(default)]
     pub favorite_models: Vec<LanguageModelSelection>,
+    /// Thinking and speed settings saved for individual models.
+    #[serde(default)]
+    pub saved_model_settings: Vec<LanguageModelSelection>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     pub inline_assistant_model: Option<LanguageModelSelection>,
     /// Model to use for the inline assistant when streaming tools are enabled.
@@ -459,6 +462,16 @@ impl AgentSettingsContent {
             .any(|m| m.provider == model.provider && m.model == model.model)
         {
             self.favorite_models.push(model);
+        }
+    }
+
+    pub fn set_saved_model_settings(&mut self, settings: LanguageModelSelection) {
+        if let Some(existing) = self.saved_model_settings.iter_mut().rev().find(|existing| {
+            existing.provider == settings.provider && existing.model == settings.model
+        }) {
+            *existing = settings;
+        } else {
+            self.saved_model_settings.push(settings);
         }
     }
 
@@ -1186,6 +1199,28 @@ mod tests {
             .get("mcp:github:create_issue")
             .unwrap();
         assert_eq!(mcp_rules.default, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_set_saved_model_settings_replaces_matching_model() {
+        let mut settings = AgentSettingsContent::default();
+        let model = |effort, speed| LanguageModelSelection {
+            provider: LanguageModelProviderSetting("openai".to_string()),
+            model: "luna".to_string(),
+            enable_thinking: true,
+            effort: Some(effort.to_string()),
+            speed: Some(speed),
+        };
+
+        settings.set_saved_model_settings(model("max", language_model_core::Speed::Fast));
+        settings.set_saved_model_settings(model("low", language_model_core::Speed::Standard));
+
+        assert_eq!(settings.saved_model_settings.len(), 1);
+        assert_eq!(settings.saved_model_settings[0].effort.as_deref(), Some("low"));
+        assert_eq!(
+            settings.saved_model_settings[0].speed,
+            Some(language_model_core::Speed::Standard)
+        );
     }
 
     #[test]

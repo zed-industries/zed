@@ -2581,29 +2581,49 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
-        let favorite = agent_settings::AgentSettings::get_global(cx)
-            .favorite_models
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        let current_selection = settings
+            .saved_model_settings
             .iter()
-            .find(|favorite| {
-                favorite.provider.0 == model.provider_id().0.as_ref()
-                    && favorite.model == model.id().0.as_ref()
+            .rev()
+            .find(|selection| {
+                selection.provider.0 == model.provider_id().0.as_ref()
+                    && selection.model == model.id().0.as_ref()
             })
-            .cloned();
+            .cloned()
+            .or_else(|| {
+                settings
+                    .favorite_models
+                    .iter()
+                    .find(|favorite| {
+                        favorite.provider.0 == model.provider_id().0.as_ref()
+                            && favorite.model == model.id().0.as_ref()
+                    })
+                    .cloned()
+            })
+            .or_else(|| {
+                settings
+                    .default_model
+                    .as_ref()
+                    .filter(|selection| {
+                        selection.provider.0 == model.provider_id().0.as_ref()
+                            && selection.model == model.id().0.as_ref()
+                    })
+                    .cloned()
+            });
 
         let LanguageModelSelection {
             enable_thinking,
             effort,
             speed,
             ..
-        } = agent_settings::language_model_to_selection(&model, favorite.as_ref());
+        } = agent_settings::language_model_to_selection(&model, current_selection.as_ref());
 
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.set_thinking_effort(effort.clone(), cx);
             thread.set_thinking_enabled(enable_thinking, cx);
-            if let Some(speed) = speed {
-                thread.set_speed(speed, cx);
-            }
+            thread.set_speed(speed.unwrap_or_default(), cx);
         });
 
         update_settings_file(
@@ -2709,14 +2729,26 @@ fn model_id_to_selection(model_id: &AgentModelId, cx: &App) -> LanguageModelSele
         };
     };
 
-    let current_user_selection = agent_settings::AgentSettings::get_global(cx)
-        .default_model
-        .as_ref()
-        .filter(|selection| {
+    let settings = agent_settings::AgentSettings::get_global(cx);
+    let current_user_selection = settings
+        .saved_model_settings
+        .iter()
+        .rev()
+        .find(|selection| {
             selection.provider.0 == resolved.provider_id().0.as_ref()
                 && selection.model == resolved.id().0.as_ref()
         })
-        .cloned();
+        .cloned()
+        .or_else(|| {
+            settings
+                .default_model
+                .as_ref()
+                .filter(|selection| {
+                    selection.provider.0 == resolved.provider_id().0.as_ref()
+                        && selection.model == resolved.id().0.as_ref()
+                })
+                .cloned()
+        });
 
     agent_settings::language_model_to_selection(&resolved, current_user_selection.as_ref())
 }

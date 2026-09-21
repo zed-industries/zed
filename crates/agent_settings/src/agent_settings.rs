@@ -228,6 +228,7 @@ pub struct AgentSettings {
     pub compaction_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
+    pub saved_model_settings: Vec<LanguageModelSelection>,
     pub default_profile: AgentProfileId,
     pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
 
@@ -807,6 +808,7 @@ impl Settings for AgentSettings {
             compaction_model: agent.compaction_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
             favorite_models: agent.favorite_models,
+            saved_model_settings: agent.saved_model_settings,
             default_profile: AgentProfileId(agent.default_profile.unwrap()),
             profiles: agent
                 .profiles
