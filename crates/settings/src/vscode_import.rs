@@ -1126,25 +1126,15 @@ impl VsCodeSettings {
         WorktreeSettingsContent {
             prevent_sharing_in_public_channels: false,
             file_scan_depth: None,
-            file_scan_exclusions: self
-                .read_value("files.watcherExclude")
-                .and_then(|v| v.as_array())
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|n| n.as_str().map(str::to_owned))
-                        .collect::<Vec<_>>()
-                })
-                .filter(|r| !r.is_empty())
-                .map(SplicingVec::from),
+            file_scan_exclusions: Self::enabled_patterns(self.read_value("files.exclude")),
             // `files.watcherInclude` adds watch roots, not Git-ignore overrides
             file_scan_inclusions: None,
             scan_symlinks: None,
             private_files: None,
             hidden_files: None,
             // Zed cannot represent the writable exceptions in `files.readonlyExclude`
-            read_only_files: self
-                .read_value("files.readonlyInclude")
-                .filter(|_| {
+            read_only_files: Self::enabled_patterns(
+                self.read_value("files.readonlyInclude").filter(|_| {
                     !self
                         .read_value("files.readonlyExclude")
                         .and_then(Value::as_object)
@@ -1153,22 +1143,31 @@ impl VsCodeSettings {
                                 .values()
                                 .any(|enabled| enabled.as_bool() == Some(true))
                         })
-                })
-                .and_then(|v| v.as_object())
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|(k, v)| {
-                            if v.as_bool().unwrap_or(false) {
-                                Some(k.to_owned())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .filter(|r| !r.is_empty())
-                .map(SplicingVec::from),
+                }),
+            ),
         }
+    }
+
+    fn enabled_patterns(value: Option<&Value>) -> Option<SplicingVec> {
+        value
+            .and_then(Value::as_object)
+            .map(|patterns| {
+                patterns
+                    .iter()
+                    .filter(|(pattern, enabled)| {
+                        // Zed reserves `...` for inheritance, not a literal path
+                        !pattern.is_empty()
+                            && pattern.as_str() != SplicingVec::REST
+                            && enabled.as_bool() == Some(true)
+                    })
+                    .map(|(pattern, _)| pattern.to_owned())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|patterns| !patterns.is_empty())
+            .map(|mut patterns| {
+                patterns.push(SplicingVec::REST.to_owned());
+                SplicingVec::from(patterns)
+            })
     }
 }
 
@@ -1237,6 +1236,82 @@ mod tests {
     }
 
     #[test]
+    fn test_import_file_exclusions() -> Result<()> {
+        let imported = VsCodeSettings::from_str(
+            r#"{
+                "files.exclude": {
+                    "": true,
+                    "**/array/**": [],
+                    "**/build/**": true,
+                    "**/cache/**": false,
+                    "**/null/**": null,
+                    "**/number/**": 1,
+                    "**/object/**": {"enabled": true},
+                    "**/string/**": "true",
+                    "**/target/**": true,
+                    "**/*.js": {"when": "$(basename).ts"},
+                    "...": true
+                }
+            }"#,
+            VsCodeSettingsSource::VsCode,
+        )?
+        .settings_content();
+        assert_eq!(
+            serde_json::to_value(&imported.project.worktree.file_scan_exclusions)?,
+            serde_json::json!(["**/build/**", "**/target/**", "..."])
+        );
+
+        let mut inherited = WorktreeSettingsContent {
+            file_scan_exclusions: Some(SplicingVec::from(vec!["**/inherited/**".to_string()])),
+            ..Default::default()
+        };
+        inherited.merge_from(&imported.project.worktree);
+        assert_eq!(
+            serde_json::to_value(&inherited.file_scan_exclusions)?,
+            serde_json::json!(["**/build/**", "**/target/**", "**/inherited/**"])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_import_file_exclusions_without_usable_patterns() -> Result<()> {
+        let inherited = WorktreeSettingsContent {
+            file_scan_exclusions: Some(SplicingVec::from(vec!["**/inherited/**".to_string()])),
+            ..Default::default()
+        };
+        for content in [
+            r#"{"files.exclude": "**/cache/**"}"#,
+            r#"{"files.exclude": 1}"#,
+            r#"{"files.exclude": ["**/cache/**"]}"#,
+            r#"{"files.exclude": []}"#,
+            r#"{"files.exclude": null}"#,
+            r#"{"files.exclude": true}"#,
+            r#"{"files.exclude": {"": true}}"#,
+            r#"{"files.exclude": {"**/cache/**": "true"}}"#,
+            r#"{"files.exclude": {"**/cache/**": false}}"#,
+            r#"{"files.exclude": {"**/*.js": {"when": "$(basename).ts"}}}"#,
+            r#"{"files.exclude": {"...": true}}"#,
+            r#"{"files.exclude": {}}"#,
+            r#"{"files.watcherExclude": {"**/cache/**": true}}"#,
+            r#"{}"#,
+        ] {
+            let imported =
+                VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)?.settings_content();
+            assert_eq!(
+                imported.project.worktree.file_scan_exclusions, None,
+                "{content}"
+            );
+            let mut unchanged = inherited.clone();
+            unchanged.merge_from(&imported.project.worktree);
+            assert_eq!(
+                unchanged.file_scan_exclusions, inherited.file_scan_exclusions,
+                "{content}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_import_watcher_include_preserves_file_scan_inclusions() -> Result<()> {
         let inherited = WorktreeSettingsContent {
             file_scan_inclusions: Some(SplicingVec::from(vec![
@@ -1284,7 +1359,13 @@ mod tests {
         };
         let imported = VsCodeSettings::from_str(
             r#"{
-                "files.readonlyInclude": {"**/*.gen.rs": true, "**/*.lock": false},
+                "files.readonlyInclude": {
+                    "": true,
+                    "**/*.gen.rs": true,
+                    "**/*.lock": false,
+                    "**/generated/**": true,
+                    "...": true
+                },
                 "files.readonlyExclude": {"**/editable.gen.rs": false}
             }"#,
             VsCodeSettingsSource::VsCode,
@@ -1292,15 +1373,21 @@ mod tests {
         .worktree_settings_content();
         assert_eq!(
             serde_json::to_value(&imported.read_only_files)?,
-            serde_json::json!(["**/*.gen.rs"])
+            serde_json::json!(["**/*.gen.rs", "**/generated/**", "..."])
         );
-        let mut replaced = inherited.clone();
-        replaced.merge_from(&imported);
-        assert_eq!(replaced.read_only_files, imported.read_only_files);
+        let mut spliced = inherited.clone();
+        spliced.merge_from(&imported);
+        assert_eq!(
+            serde_json::to_value(&spliced.read_only_files)?,
+            serde_json::json!(["**/*.gen.rs", "**/generated/**", "**/*.lock"])
+        );
 
         for content in [
             r#"{"files.readonlyExclude": {"**/*.gen.rs": true}}"#,
             r#"{"files.readonlyInclude": {"**/*.gen.rs": false}}"#,
+            r#"{"files.readonlyInclude": {"": true}}"#,
+            r#"{"files.readonlyInclude": {"...": true}}"#,
+            r#"{"files.readonlyInclude": ["**/*.gen.rs"]}"#,
             r#"{"files.readonlyInclude": {}}"#,
             "{}",
         ] {
