@@ -6622,11 +6622,10 @@ impl Workspace {
             project.set_active_path(active_entry.clone(), cx)
         });
 
-        // Only infer the active repository from the file path when the
-        // focused item is backed by a single buffer.  Multi-buffer items
-        // (e.g. ProjectDiff) span multiple repositories, and their cursor
-        // position should not trigger an automatic repo switch.
-        // See: https://github.com/zed-industries/zed/issues/58792
+        // Infer the active repository only from singleton items.
+        // A multibuffer's active path represents the cursor's location within
+        // an aggregate view, so we assume it's not the user's intent to switch
+        // repositories.
         if focus_changed
             && let Some(project_path) = &active_entry
             && self
