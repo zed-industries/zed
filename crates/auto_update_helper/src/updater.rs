@@ -1,7 +1,7 @@
 use std::{
     ffi::{OsStr, OsString},
     os::windows::ffi::OsStrExt,
-    path::Path,
+    path::{Path, PathBuf},
     sync::LazyLock,
     time::{Duration, Instant},
 };
@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context as _, Result};
 use windows::{
     Win32::{
-        Foundation::{HWND, LPARAM, WPARAM},
+        Foundation::{ERROR_MORE_DATA, HWND, LPARAM, WPARAM},
         System::RestartManager::{
             CCH_RM_SESSION_KEY, RmEndSession, RmGetList, RmRegisterResources, RmShutdown,
             RmStartSession,
@@ -154,17 +154,23 @@ impl Job {
             }),
             rollback: Box::new(move |app_dir| {
                 let filename = app_dir.join(filename);
-                anyhow::bail!(
-                    "Delete operations cannot be rolled back, file: {}",
-                    filename.display()
-                )
+                // Deleting a directory can't be undone; if it still exists and can't be removed,
+                // that's a cleanup issue for the next run, not a fatal one.
+                match std::fs::remove_dir_all(&filename) {
+                    Ok(()) => {}
+                    Err(e) => log::warn!(
+                        "Failed to remove leftover directory {}: {e:#}",
+                        filename.display()
+                    ),
+                }
+                Ok(())
             }),
         }
     }
 }
 
 #[cfg(not(test))]
-pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
+pub(crate) static JOBS: LazyLock<[Job; 24]> = LazyLock::new(|| {
     fn p(value: &str) -> &Path {
         Path::new(value)
     }
@@ -175,6 +181,7 @@ pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
         Job::move_file(p("Zed.exe"), p("old\\Zed.exe")),
         Job::mkdir(p("old\\bin")),
         Job::move_file(p("bin\\Zed.exe"), p("old\\bin\\Zed.exe")),
+        Job::move_if_exists(p("bin\\zed.exe"), p("old\\bin\\zed.exe")),
         Job::move_file(p("bin\\zed"), p("old\\bin\\zed")),
         //
         // TODO: remove after a few weeks once everyone is on the new version and this file never exists
@@ -191,6 +198,7 @@ pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
         // Copy new files
         Job::move_file(p("install\\Zed.exe"), p("Zed.exe")),
         Job::move_file(p("install\\bin\\Zed.exe"), p("bin\\Zed.exe")),
+        Job::move_if_exists(p("install\\bin\\zed.exe"), p("bin\\zed.exe")),
         Job::move_file(p("install\\bin\\zed"), p("bin\\zed")),
         //
         Job::mkdir_if_exists(p("x64"), p("install\\x64")),
@@ -271,96 +279,157 @@ pub(crate) static JOBS: LazyLock<[Job; 9]> = LazyLock::new(|| {
     ]
 });
 
-/// Attempts to use Windows Restart Manager to release file handles held by other processes
-/// (e.g., Explorer.exe) on the files we need to move during the update.
-///
-/// This is a best-effort operation - if it fails, we'll still try the update and rely on
-/// the retry logic.
-fn release_file_handles(app_dir: &Path) -> Result<()> {
-    // Files that commonly get locked by Explorer or other processes
-    let files_to_release = [
-        app_dir.join("Zed.exe"),
-        app_dir.join("bin\\Zed.exe"),
-        app_dir.join("bin\\zed"),
-        app_dir.join("conpty.dll"),
+/// A Windows Restart Manager session, used to detect which processes hold handles to files.
+struct RmSession {
+    handle: u32,
+}
+
+impl RmSession {
+    /// Starts a new session. Returns `None` if the session could not be started.
+    fn new() -> Option<Self> {
+        let mut handle: u32 = 0;
+        let mut session_key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
+        let ok = unsafe {
+            RmStartSession(&mut handle, None, PWSTR::from_raw(session_key.as_mut_ptr())).is_ok()
+        };
+        ok.then(|| Self { handle })
+    }
+
+    /// Registers a file so that `locked_process_count` reports the processes holding it.
+    fn register_file(&self, path: &Path) -> bool {
+        let wide_path: Vec<u16> = OsStr::new(path.as_os_str())
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let pcwstr = PCWSTR::from_raw(wide_path.as_ptr());
+        unsafe { RmRegisterResources(self.handle, Some(std::slice::from_ref(&pcwstr)), None, None) }
+            .is_ok()
+    }
+
+    /// The number of processes holding handles to the registered files, if the query succeeded.
+    fn locked_process_count(&self) -> Option<u32> {
+        let mut needed: u32 = 0;
+        let mut count: u32 = 0;
+        let mut reboot_reasons: u32 = 0;
+        // In the two-call query pattern, ERROR_MORE_DATA is a success signal meaning
+        // processes were found (with `needed` set to how many).
+        let result =
+            unsafe { RmGetList(self.handle, &mut needed, &mut count, None, &mut reboot_reasons) };
+        if result.is_ok() || result == ERROR_MORE_DATA {
+            Some(needed)
+        } else {
+            None
+        }
+    }
+
+    /// Politely asks the processes holding handles to release them (e.g. Explorer's icon cache
+    /// handles). Uncooperative processes keep their handles.
+    fn request_release(&self) {
+        // RmShutdown with flags=0 asks applications to release handles gracefully;
+        // for Explorer this typically releases icon cache handles without closing it.
+        let _ = unsafe { RmShutdown(self.handle, 0, None) };
+    }
+}
+
+impl Drop for RmSession {
+    fn drop(&mut self) {
+        unsafe { let _ = RmEndSession(self.handle); }
+    }
+}
+
+/// The files in the app directory that an update moves or overwrites, including the `old\`
+/// destinations where leftovers from a previous interrupted update may still sit (possibly
+/// locked by a process running from them).
+fn files_involved(app_dir: &Path) -> Vec<PathBuf> {
+    const RELATIVE_PATHS: &[&str] = &[
+        "Zed.exe",
+        "bin\\Zed.exe",
+        "bin\\zed.exe",
+        "bin\\zed",
+        "OpenConsole.exe",
+        "x64\\OpenConsole.exe",
+        "arm64\\OpenConsole.exe",
+        "conpty.dll",
+        // Leftover destinations from a previous update
+        "old\\Zed.exe",
+        "old\\bin\\Zed.exe",
+        "old\\bin\\zed.exe",
+        "old\\bin\\zed",
+        "old\\OpenConsole.exe",
+        "old\\x64\\OpenConsole.exe",
+        "old\\arm64\\OpenConsole.exe",
+        "old\\conpty.dll",
     ];
 
-    log::info!("Attempting to release file handles using Restart Manager...");
-
-    let mut session: u32 = 0;
-    let mut session_key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
-
-    // Start a Restart Manager session
-    let err = unsafe {
-        RmStartSession(
-            &mut session,
-            Some(0),
-            PWSTR::from_raw(session_key.as_mut_ptr()),
-        )
-    };
-    if err.is_err() {
-        anyhow::bail!("RmStartSession failed: {err:?}");
-    }
-
-    // Ensure we end the session when done
-    let _session_guard = scopeguard::guard(session, |s| {
-        let _ = unsafe { RmEndSession(s) };
-    });
-
-    // Convert paths to wide strings for Windows API
-    let wide_paths: Vec<Vec<u16>> = files_to_release
+    RELATIVE_PATHS
         .iter()
-        .filter(|p| p.exists())
-        .map(|p| {
-            OsStr::new(p)
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect()
+        .map(|path| app_dir.join(*path))
+        .filter(|path| path.exists())
+        .collect()
+}
+
+/// Uses Windows Restart Manager to find which of the files an update needs to move are
+/// currently held by other processes (e.g. a terminal's OpenConsole.exe).
+fn find_locked_files(app_dir: &Path) -> Vec<PathBuf> {
+    files_involved(app_dir)
+        .into_iter()
+        .filter(|path| {
+            let Some(session) = RmSession::new() else {
+                return false;
+            };
+            if !session.register_file(path) {
+                return false;
+            }
+            let locked = session.locked_process_count().is_some_and(|count| count > 0);
+            if locked {
+                log::info!("File {} is held by other process(es)", path.display());
+            }
+            locked
         })
-        .collect();
+        .collect()
+}
 
-    if wide_paths.is_empty() {
-        log::info!("No files to release handles for");
-        return Ok(());
-    }
-
-    let pcwstr_paths: Vec<PCWSTR> = wide_paths
-        .iter()
-        .map(|p| PCWSTR::from_raw(p.as_ptr()))
-        .collect();
-
-    // Register the files we want to modify
-    let err = unsafe { RmRegisterResources(session, Some(&pcwstr_paths), None, None) };
-    if err.is_err() {
-        anyhow::bail!("RmRegisterResources failed: {err:?}");
-    }
-
-    // Check if any processes are using these files
-    let mut needed: u32 = 0;
-    let mut count: u32 = 0;
-    let mut reboot_reasons: u32 = 0;
-    let _ = unsafe { RmGetList(session, &mut needed, &mut count, None, &mut reboot_reasons) };
-
-    if needed == 0 {
-        log::info!("No processes are holding handles to the files");
+/// Makes sure no other process is holding any of the files an update needs to move.
+///
+/// Politely asks processes to release their handles (e.g. Explorer's icon cache) and waits a
+/// short while for them to do so. Returns an error describing the locked files if they are
+/// still held, so that `perform_update` can defer the update instead of risking a
+/// half-finished swap.
+fn ensure_files_unlocked(app_dir: &Path) -> Result<()> {
+    let mut locked = find_locked_files(app_dir);
+    if locked.is_empty() {
         return Ok(());
     }
 
     log::info!(
-        "{} process(es) are holding handles to the files, requesting release...",
-        needed
+        "{} file(s) are held by other processes, requesting release...",
+        locked.len()
     );
-
-    // Request processes to release their handles
-    // RmShutdown with flags=0 asks applications to release handles gracefully
-    // For Explorer, this typically releases icon cache handles without closing Explorer
-    let err = unsafe { RmShutdown(session, 0, None) };
-    if err.is_err() {
-        anyhow::bail!("RmShutdown failed: {:?}", err);
+    for path in &locked {
+        if let Some(session) = RmSession::new()
+            && session.register_file(path)
+        {
+            session.request_release();
+        }
     }
 
-    log::info!("Successfully requested handle release");
-    Ok(())
+    // Give the processes a moment to release their handles, re-checking periodically.
+    for _ in 0..4 {
+        std::thread::sleep(Duration::from_millis(500));
+        locked = find_locked_files(app_dir);
+        if locked.is_empty() {
+            return Ok(());
+        }
+    }
+
+    let files = locked
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::bail!(
+        "the following files are in use by other processes (e.g. an open terminal or Explorer): {files}"
+    )
 }
 
 #[allow(clippy::disallowed_methods, reason = "doesn't run in the main binary")]
@@ -378,9 +447,21 @@ pub(crate) fn perform_update(
 ) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
-    // Try to release file handles before starting the update
-    if let Err(e) = release_file_handles(app_dir) {
-        log::warn!("Restart Manager failed (will continue anyway): {}", e);
+    // Before moving anything, make sure no other process is holding any of the files we need
+    // to move (e.g. a terminal's OpenConsole.exe or Explorer's icon handles). If they are still
+    // locked after politely asking for release, defer the update: the installation is left
+    // untouched and the swap will be retried the next time Zed exits or restarts.
+    if let Err(e) = ensure_files_unlocked(app_dir) {
+        log::error!("Deferring Zed update: {e:#}");
+        if launch {
+            // Don't leave the user without an editor: start the currently installed version;
+            // the swap will be retried when it exits.
+            #[allow(clippy::disallowed_methods, reason = "doesn't run in the main binary")]
+            let _child = zed_launch_command(app_dir, launch_arguments)
+                .spawn()
+                .context("Failed to launch Zed after deferring the update")?;
+        }
+        anyhow::bail!("Update deferred, it will be retried on the next exit or restart: {e}");
     }
 
     let mut last_successful_job = None;
@@ -425,14 +506,23 @@ pub(crate) fn perform_update(
             anyhow::bail!("Autoupdate failed, nothing to rollback");
         };
 
-        for job in (0..=last_successful_job).rev() {
-            let job = &JOBS[job];
+        // Roll back every applied job. If one rollback fails (e.g. a directory that can't be
+        // removed because a process is holding a file in it), keep rolling back the rest:
+        // restoring the moved executables is what keeps Zed launchable.
+        let mut failed_rollbacks = Vec::new();
+        for i in (0..=last_successful_job).rev() {
+            let job = &JOBS[i];
             if let Err(e) = (job.rollback)(app_dir) {
-                anyhow::bail!(
-                    "Job rollback failed, the app might be left in an inconsistent state: ({:?})",
-                    e
-                );
+                log::error!("Rolling back job {i} failed: {e:#}");
+                failed_rollbacks.push(i);
             }
+        }
+
+        if !failed_rollbacks.is_empty() {
+            anyhow::bail!(
+                "Autoupdate failed, and {} rollback(s) also failed (jobs {failed_rollbacks:?}) - the app might be left in an inconsistent state",
+                failed_rollbacks.len()
+            );
         }
 
         anyhow::bail!("Autoupdate failed, rollback successful");
@@ -450,9 +540,23 @@ pub(crate) fn perform_update(
 
 #[cfg(test)]
 mod test {
-    use std::{ffi::OsString, path::Path};
+    use std::{
+        ffi::{OsStr, OsString},
+        os::windows::ffi::OsStrExt,
+        path::Path,
+        time::Duration,
+    };
 
-    use super::{perform_update, zed_launch_command};
+    use super::{ensure_files_unlocked, find_locked_files, perform_update, zed_launch_command};
+    use windows::{
+        core::PCWSTR,
+        Win32::{
+            Foundation::{CloseHandle, GENERIC_READ},
+            Storage::FileSystem::{
+                CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE, OPEN_EXISTING,
+            },
+        },
+    };
 
     #[test]
     fn test_zed_launch_command_preserves_arguments() {
@@ -499,5 +603,119 @@ mod test {
             ret.is_err_and(|e| e.to_string().as_str() == "Autoupdate failed, rollback successful")
         );
         assert!(std::env::var("ZED_AUTO_UPDATE_RB").is_ok_and(|e| e == "rollback1"));
+    }
+
+    #[test]
+    fn test_ensure_files_unlocked_succeeds_when_nothing_is_locked() {
+        let app_dir = tempfile::tempdir().unwrap();
+        std::fs::write(app_dir.path().join("Zed.exe"), b"").unwrap();
+        std::fs::create_dir_all(app_dir.path().join("old\\x64")).unwrap();
+        std::fs::write(
+            app_dir.path().join("old\\x64\\OpenConsole.exe"),
+            b"",
+        )
+        .unwrap();
+
+        assert!(ensure_files_unlocked(app_dir.path()).is_ok());
+    }
+
+    #[test]
+    fn test_find_locked_files_detects_exclusive_handle() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let file = app_dir.path().join("Zed.exe");
+        std::fs::write(&file, b"").unwrap();
+
+        // Open the file with a share mode that blocks renaming or deleting it, like the
+        // image of a running process.
+        let wide_path: Vec<u16> = OsStr::new(file.as_os_str())
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR::from_raw(wide_path.as_ptr()),
+                GENERIC_READ.0,
+                FILE_SHARE_NONE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+        }
+        .unwrap();
+
+        // Restart Manager may take a moment to notice the new handle.
+        let mut locked = Vec::new();
+        for _ in 0..20 {
+            locked = find_locked_files(app_dir.path());
+            if !locked.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            locked.contains(&file),
+            "expected {} to be reported as locked",
+            file.display()
+        );
+
+        unsafe { let _ = CloseHandle(handle); };
+    }
+
+    /// Regression test for the incident where a leftover `old\x64\OpenConsole.exe` held by a
+    /// running process made the update fail mid-swap and the rollback strand `Zed.exe` in
+    /// `old\`, making the app disappear. The update must now be deferred *before* any file is
+    /// moved, leaving the installation untouched.
+    #[test]
+    fn test_perform_update_defers_when_leftover_file_is_locked() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let root = app_dir.path();
+
+        // A leftover from a previous interrupted update, held with a share mode that blocks
+        // rename/delete, like a process running from it.
+        std::fs::create_dir_all(root.join("old\\x64")).unwrap();
+        let leftover = root.join("old\\x64\\OpenConsole.exe");
+        std::fs::write(&leftover, b"older").unwrap();
+
+        let wide_path: Vec<u16> = OsStr::new(leftover.as_os_str())
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR::from_raw(wide_path.as_ptr()),
+                GENERIC_READ.0,
+                FILE_SHARE_NONE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+        }
+        .unwrap();
+
+        // The update must be deferred before any job runs.
+        let err = perform_update(root, None, false, &[])
+            .expect_err("update should be deferred");
+        assert!(
+            err.to_string().contains("Update deferred"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains(leftover.file_name().unwrap().to_str().unwrap()),
+            "error should name the locked file: {err}"
+        );
+        // No job ran: nothing was moved into `old\`.
+        assert!(!root.join("test1").exists());
+
+        // Once the file is released, the lock check passes again.
+        unsafe { let _ = CloseHandle(handle); };
+        for _ in 0..40 {
+            if find_locked_files(root).is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(ensure_files_unlocked(root).is_ok());
     }
 }
