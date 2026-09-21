@@ -240,6 +240,13 @@ impl WindowsWindowInner {
             WM_POINTERDOWN if self.state.touch_input_mode == TouchInputMode::RawGpui => {
                 self.handle_pointer_msg(handle, wparam, TouchPhase::Started)
             }
+            WM_POINTERDOWN if self.state.touch_input_mode == TouchInputMode::Native => {
+                // Associate the contact at the documented UI-thread enrollment point, but
+                // leave the original message unconsumed so Windows can retain native tap and
+                // press-and-hold promotion when Direct Manipulation does not claim a pan.
+                self.state.direct_manipulation.on_pointer_down(wparam);
+                None
+            }
             WM_POINTERUPDATE if self.state.touch_input_mode == TouchInputMode::RawGpui => {
                 self.handle_pointer_msg(handle, wparam, TouchPhase::Moved)
             }

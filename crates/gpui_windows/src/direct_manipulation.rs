@@ -100,6 +100,33 @@ impl DirectManipulationHandler {
         self.scale_factor.set(scale_factor);
     }
 
+    pub fn on_pointer_down(&self, wparam: WPARAM) {
+        if !self.native_touch {
+            return;
+        }
+
+        unsafe {
+            let pointer_id = wparam.loword() as u32;
+            let mut pointer_type = POINTER_INPUT_TYPE::default();
+            if GetPointerType(pointer_id, &mut pointer_type).is_err() || pointer_type != PT_TOUCH {
+                return;
+            }
+
+            let mut pointer_info = POINTER_INFO::default();
+            if GetPointerInfo(pointer_id, &mut pointer_info).is_ok() {
+                let mut position = pointer_info.ptPixelLocation;
+                if ScreenToClient(self.window, &mut position).as_bool() {
+                    self.touch_position.set(Some(logical_point(
+                        position.x as f32,
+                        position.y as f32,
+                        self.scale_factor.get(),
+                    )));
+                }
+            }
+            self.viewport.SetContact(pointer_id).log_err();
+        }
+    }
+
     pub fn on_pointer_hit_test(&self, wparam: WPARAM) {
         unsafe {
             let pointer_id = wparam.loword() as u32;
@@ -107,21 +134,7 @@ impl DirectManipulationHandler {
             if GetPointerType(pointer_id, &mut pointer_type).is_err() {
                 return;
             }
-            let is_native_touch = self.native_touch && pointer_type == PT_TOUCH;
-            if pointer_type == PT_TOUCHPAD || is_native_touch {
-                if is_native_touch {
-                    let mut pointer_info = POINTER_INFO::default();
-                    if GetPointerInfo(pointer_id, &mut pointer_info).is_ok() {
-                        let mut position = pointer_info.ptPixelLocation;
-                        if ScreenToClient(self.window, &mut position).as_bool() {
-                            self.touch_position.set(Some(logical_point(
-                                position.x as f32,
-                                position.y as f32,
-                                self.scale_factor.get(),
-                            )));
-                        }
-                    }
-                }
+            if pointer_type == PT_TOUCHPAD {
                 self.viewport.SetContact(pointer_id).log_err();
             }
         }
