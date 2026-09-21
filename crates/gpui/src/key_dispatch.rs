@@ -1329,12 +1329,14 @@ mod tests {
         });
         let shift = Keystroke::parse("shift").expect("valid keystroke");
 
+        // Pressing Shift is not a keystroke. Consuming its recognized release suppresses the binding.
         cx.simulate_modifiers_change(Modifiers::shift());
         assert!(intercepted_keystrokes.borrow().is_empty());
         cx.simulate_modifiers_change(Modifiers::none());
         assert_eq!(intercepted_keystrokes.borrow().as_slice(), &[shift.clone()]);
         assert_eq!(action_count.get(), 0);
 
+        // Without consumption, the same recognized release reaches keymap dispatch.
         should_consume.set(false);
         intercepted_keystrokes.borrow_mut().clear();
         cx.simulate_modifiers_change(Modifiers::shift());
@@ -1365,6 +1367,7 @@ mod tests {
             })
         });
 
+        // Shift-F1 is the only keystroke. Releasing Shift must not emit a second one.
         cx.simulate_modifiers_change(Modifiers::shift());
         assert!(intercepted_keystrokes.borrow().is_empty());
         cx.simulate_keystrokes("shift-f1");
