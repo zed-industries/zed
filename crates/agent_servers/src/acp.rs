@@ -5113,7 +5113,7 @@ fn handle_wait_for_terminal_exit(
             .run_until_cancelled(async {
                 let exit_status = thread
                     .update(cx, |thread, cx| {
-                        anyhow::Ok(thread.terminal(args.terminal_id)?.read(cx).wait_for_exit())
+                        thread.terminal(args.terminal_id)?.read(cx).wait_for_exit()
                     })
                     .flatten_acp()?
                     .await;
