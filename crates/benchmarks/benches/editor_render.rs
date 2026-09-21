@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use benchmarks::bench_utils::random_rust_file;
 use editor::{
-    Editor, EditorMode, MultiBuffer,
+    Editor, EditorMode, HighlightKey, MultiBuffer, MultiBufferOffset,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
 };
 use gpui::{
@@ -431,7 +431,7 @@ fn render_highlighted_editor(cx: &mut BenchAppContext) {
 }
 
 #[gpui::bench(
-    inputs = vec!["ascii", "cjk"],
+    inputs = ["ascii", "cjk", "devanagari"],
     input_name = "script",
     group = "Unwrapped long lines",
     sample_size = 10
@@ -442,6 +442,7 @@ fn editor_render_unwrapped_long_lines(script: &&str, cx: &mut BenchAppContext) {
     let line = match *script {
         "ascii" => "const value = { key: 'value', other: 12345 }; ".repeat(120),
         "cjk" => "漢字仮名交じり文です。".repeat(500),
+        "devanagari" => "क्षित्रिय संस्कृति ".repeat(400),
         _ => unreachable!(),
     };
     assert!(line.len() > 1024);
@@ -466,6 +467,132 @@ fn editor_render_unwrapped_long_lines(script: &&str, cx: &mut BenchAppContext) {
     cx.bench_renderer(editor, move |editor, window, cx| {
         scroll_columns = (scroll_columns + 3.) % 3_000.;
         editor.set_scroll_position(gpui::point(scroll_columns, 0.), window, cx);
+    });
+}
+
+#[gpui::bench(
+    inputs = [
+        "type",
+        "backspace",
+        "left_right",
+        "up_down",
+        "home_end",
+        "word_motion",
+        "newline_undo",
+        "select_to_line_start",
+        "scroll_with_search_highlights",
+        "type_cjk",
+        "up_down_cjk",
+        "scroll_cjk",
+    ],
+    input_name = "operation",
+    group = "Huge unwrapped line editing",
+    sample_size = 10
+)]
+fn editor_edit_huge_unwrapped_line(operation: &&str, cx: &mut BenchAppContext) {
+    init_context(cx);
+
+    let long_line = if operation.ends_with("_cjk") {
+        "漢字仮名交じり文です。".repeat(35_000)
+    } else {
+        "const value = { key: 'value', other: 12345 }; ".repeat(220_000)
+    };
+    assert!(long_line.len() > 1_000_000);
+    let text = format!("{long_line}\nshort line\nanother short line");
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+
+    let mut window = cx.add_empty_window();
+    let editor = window.update(|window, cx| {
+        let editor = window.replace_root(cx, |window, cx| {
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.set_style(editor::EditorStyle::default(), window, cx);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+            editor.move_to_end_of_line(&Default::default(), window, cx);
+            editor
+        });
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    cx.run_until_idle();
+
+    let operation = *operation;
+    if operation == "scroll_with_search_highlights" {
+        window.update(|_, cx| {
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let ranges = long_line
+                    .match_indices('e')
+                    .map(|(offset, _)| {
+                        snapshot.anchor_after(MultiBufferOffset(offset))
+                            ..snapshot.anchor_before(MultiBufferOffset(offset + 1))
+                    })
+                    .collect::<Vec<_>>();
+                assert!(ranges.len() > 500_000);
+                editor.highlight_background(
+                    HighlightKey::BufferSearchHighlights,
+                    &ranges,
+                    |_, theme| theme.colors().search_match_background,
+                    cx,
+                );
+            });
+        });
+    }
+    let mut toggle = false;
+    let mut scroll_columns = 0.;
+    cx.bench_renderer(editor, move |editor, window, cx| {
+        toggle = !toggle;
+        match operation {
+            "scroll_with_search_highlights" | "scroll_cjk" => {
+                scroll_columns = (scroll_columns + 3.) % 3_000.;
+                editor.set_scroll_position(gpui::point(scroll_columns, 0.), window, cx);
+            }
+            "type" => editor.handle_input("x", window, cx),
+            "type_cjk" => editor.handle_input("漢", window, cx),
+            "backspace" => editor.backspace(&Default::default(), window, cx),
+            "left_right" => {
+                if toggle {
+                    editor.move_left(&Default::default(), window, cx);
+                } else {
+                    editor.move_right(&Default::default(), window, cx);
+                }
+            }
+            "up_down" | "up_down_cjk" => {
+                if toggle {
+                    editor.move_down(&MoveDown, window, cx);
+                } else {
+                    editor.move_up(&MoveUp, window, cx);
+                }
+            }
+            "home_end" => {
+                if toggle {
+                    editor.move_to_beginning_of_line(&Default::default(), window, cx);
+                } else {
+                    editor.move_to_end_of_line(&Default::default(), window, cx);
+                }
+            }
+            "word_motion" => {
+                if toggle {
+                    editor.move_to_previous_word_start(&Default::default(), window, cx);
+                } else {
+                    editor.move_to_next_word_end(&Default::default(), window, cx);
+                }
+            }
+            "newline_undo" => {
+                if toggle {
+                    editor.newline(&Default::default(), window, cx);
+                } else {
+                    editor.undo(&Default::default(), window, cx);
+                }
+            }
+            "select_to_line_start" => {
+                if toggle {
+                    editor.select_to_beginning_of_line(&Default::default(), window, cx);
+                } else {
+                    editor.move_to_end_of_line(&Default::default(), window, cx);
+                }
+            }
+            _ => unreachable!(),
+        }
     });
 }
 
@@ -495,6 +622,7 @@ gpui::bench_group!(
     editor_render_with_editorconfig,
     editor_render_highlighted,
     editor_render_highlighted_minimap,
-    editor_render_unwrapped_long_lines
+    editor_render_unwrapped_long_lines,
+    editor_edit_huge_unwrapped_line
 );
 gpui::bench_main!(benches);

@@ -75,6 +75,7 @@ mod custom_highlights;
 mod fold_map;
 mod inlay_map;
 mod invisibles;
+mod row_ruler;
 mod tab_map;
 mod wrap_map;
 
@@ -95,12 +96,12 @@ pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
 use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
-    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, UnderlineStyle,
-    WeakEntity, WindowTextSystem,
+    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, TextAlign,
+    UnderlineStyle, WeakEntity, WindowTextSystem,
 };
 use language::{
     LanguageAwareStyling, Point, Subscription as BufferSubscription,
-    language_settings::{AllLanguageSettings, LanguageSettings},
+    language_settings::{AllLanguageSettings, LanguageSettings, ShowWhitespaceSetting},
 };
 
 use multi_buffer::{
@@ -141,6 +142,8 @@ use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
 use fold_map::{Chunk, FoldPointCursor, FoldSnapshot};
 use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
 use itertools::Either;
+use row_ruler::RowRulerCache;
+pub use row_ruler::{RowRuler, RulerShaper};
 pub(crate) use tab_map::TabPoint;
 use tab_map::{TabPointCursor, TabSnapshot};
 use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
@@ -250,6 +253,7 @@ pub struct DisplayMap {
     pub(crate) diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) companion: Option<(WeakEntity<DisplayMap>, Entity<Companion>)>,
     lsp_folding_crease_ids: HashMap<BufferId, Vec<CreaseId>>,
+    row_rulers: Arc<RowRulerCache>,
 }
 
 pub(crate) struct Companion {
@@ -421,6 +425,7 @@ impl DisplayMap {
             masked: false,
             companion: None,
             lsp_folding_crease_ids: HashMap::default(),
+            row_rulers: Arc::new(RowRulerCache::new(0, false, None)),
         }
     }
 
@@ -665,6 +670,7 @@ impl DisplayMap {
         DisplaySnapshot {
             display_map_id: self.entity_id,
             companion_display_snapshot,
+            row_rulers: self.row_rulers_for(&block_snapshot),
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
             crease_snapshot: self.crease_map.snapshot(),
@@ -689,6 +695,7 @@ impl DisplayMap {
         DisplaySnapshot {
             display_map_id: self.entity_id,
             companion_display_snapshot: None,
+            row_rulers: self.row_rulers_for(&block_snapshot),
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
             crease_snapshot: self.crease_map.snapshot(),
@@ -700,6 +707,18 @@ impl DisplayMap {
             use_lsp_folding_ranges: !self.lsp_folding_crease_ids.is_empty(),
             fold_placeholder: self.fold_placeholder.clone(),
         }
+    }
+
+    fn row_rulers_for(&mut self, block_snapshot: &BlockSnapshot) -> Arc<RowRulerCache> {
+        let version = block_snapshot.wrap_snapshot.tab_snapshot.version;
+        if !self.row_rulers.matches(version, self.masked) {
+            self.row_rulers = Arc::new(RowRulerCache::new(
+                version,
+                self.masked,
+                Some(&self.row_rulers),
+            ));
+        }
+        self.row_rulers.clone()
     }
 
     pub fn crease_snapshot(&self) -> CreaseSnapshot {
@@ -1276,8 +1295,12 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits, None);
 
+        let widths = widths.into_iter().collect::<Vec<_>>();
+        let ruler_widths_changed = self
+            .row_rulers
+            .update_renderer_widths(widths.iter().copied());
         let (snapshot, edits) = fold_map.update_fold_widths(widths);
-        let widths_changed = !edits.is_empty();
+        let widths_changed = ruler_widths_changed || !edits.is_empty();
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
@@ -1426,6 +1449,17 @@ pub struct HighlightedChunk<'a> {
 }
 
 impl<'a> HighlightedChunk<'a> {
+    pub(crate) fn without_font_styles(self) -> Self {
+        Self {
+            style: self.style.map(|style| HighlightStyle {
+                font_weight: None,
+                font_style: None,
+                ..style
+            }),
+            ..self
+        }
+    }
+
     #[instrument(skip_all)]
     fn highlight_invisibles(
         self,
@@ -1547,182 +1581,6 @@ fn mask_chunks<'a>(chunks: impl Iterator<Item = Chunk<'a>>) -> impl Iterator<Ite
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GridPosition {
-    pub byte_column: u32,
-    pub scalar_column: u32,
-}
-
-#[derive(Clone)]
-pub struct UnwrappedRowGrid {
-    snapshot: Arc<DisplaySnapshot>,
-    row: DisplayRow,
-    fold_start: FoldPoint,
-    byte_len: u32,
-    scalar_len: u32,
-}
-
-impl Debug for UnwrappedRowGrid {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UnwrappedRowGrid")
-            .field("row", &self.row)
-            .field("byte_len", &self.byte_len)
-            .field("scalar_len", &self.scalar_len)
-            .finish()
-    }
-}
-
-impl UnwrappedRowGrid {
-    pub fn new(snapshot: Arc<DisplaySnapshot>, row: DisplayRow) -> Self {
-        let byte_len = snapshot.line_len(row);
-        let fold_start =
-            snapshot.display_point_to_fold_point(DisplayPoint::new(row, 0), Bias::Left);
-        let mut grid = Self {
-            snapshot,
-            row,
-            fold_start,
-            byte_len,
-            scalar_len: 0,
-        };
-        grid.scalar_len = grid.measure(byte_len, Bias::Right).scalar_column;
-        grid
-    }
-
-    pub fn row(&self) -> DisplayRow {
-        self.row
-    }
-
-    pub fn byte_len(&self) -> u32 {
-        self.byte_len
-    }
-
-    pub fn scalar_len(&self) -> u32 {
-        self.scalar_len
-    }
-
-    pub fn is_ascii(&self) -> bool {
-        self.byte_len == self.scalar_len
-    }
-
-    pub fn scalar_column(&self, byte_column: u32, bias: Bias) -> GridPosition {
-        let byte_column = byte_column.min(self.byte_len);
-        if self.is_ascii() {
-            return GridPosition {
-                byte_column,
-                scalar_column: byte_column,
-            };
-        }
-        self.measure(byte_column, bias)
-    }
-
-    pub fn byte_column(&self, scalar_column: u32, bias: Bias) -> GridPosition {
-        let target = scalar_column.min(self.scalar_len);
-        if self.is_ascii() {
-            return GridPosition {
-                byte_column: target,
-                scalar_column: target,
-            };
-        }
-        if target == 0 {
-            return GridPosition {
-                byte_column: 0,
-                scalar_column: 0,
-            };
-        }
-        if target == self.scalar_len {
-            return GridPosition {
-                byte_column: self.byte_len,
-                scalar_column: self.scalar_len,
-            };
-        }
-
-        let mut low = GridPosition {
-            byte_column: 0,
-            scalar_column: 0,
-        };
-        let mut high = GridPosition {
-            byte_column: self.byte_len,
-            scalar_column: self.scalar_len,
-        };
-        let mut interpolate = true;
-        while high.byte_column - low.byte_column > 1 {
-            let byte_span = high.byte_column - low.byte_column;
-            let scalar_span = high.scalar_column - low.scalar_column;
-            let offset = if interpolate && scalar_span > 0 {
-                let interpolated = u64::from(target - low.scalar_column) * u64::from(byte_span)
-                    / u64::from(scalar_span);
-                u32::try_from(interpolated)
-                    .unwrap_or(u32::MAX)
-                    .clamp(1, byte_span - 1)
-            } else {
-                byte_span / 2
-            };
-            interpolate = !interpolate;
-            let probe = low.byte_column + offset;
-            let measured = self.measure(probe, Bias::Right);
-            if measured.scalar_column == target {
-                return measured;
-            } else if measured.scalar_column < target {
-                low = GridPosition {
-                    byte_column: probe,
-                    scalar_column: measured.scalar_column,
-                };
-            } else {
-                high = GridPosition {
-                    byte_column: probe,
-                    scalar_column: measured.scalar_column,
-                };
-            }
-        }
-
-        let left = self.measure(high.byte_column, Bias::Left);
-        let right = self.measure(high.byte_column, Bias::Right);
-        if target <= left.scalar_column {
-            left
-        } else if target >= right.scalar_column {
-            right
-        } else {
-            match bias {
-                Bias::Left => left,
-                Bias::Right => right,
-            }
-        }
-    }
-
-    pub fn nearest_byte_column(&self, scalar_column: ScrollOffset) -> GridPosition {
-        let scalar_column = scalar_column.max(0.).min(self.scalar_len as ScrollOffset);
-        let rounded = scalar_column.round() as u32;
-        let left = self.byte_column(rounded, Bias::Left);
-        let right = self.byte_column(rounded, Bias::Right);
-        let left_distance = (scalar_column - left.scalar_column as ScrollOffset).abs();
-        let right_distance = (right.scalar_column as ScrollOffset - scalar_column).abs();
-        if right_distance < left_distance {
-            right
-        } else {
-            left
-        }
-    }
-
-    fn measure(&self, byte_column: u32, bias: Bias) -> GridPosition {
-        let point = self.snapshot.clip_ignoring_line_ends(
-            DisplayPoint::new(self.row, byte_column.min(self.byte_len)),
-            bias,
-        );
-        let fold_end = self.snapshot.display_point_to_fold_point(point, bias);
-        let fold_summary = self
-            .snapshot
-            .fold_snapshot()
-            .text_summary_for_range(self.fold_start..fold_end);
-        let fold_chars = u32::try_from(fold_summary.chars).unwrap_or(u32::MAX);
-        let fold_bytes = fold_end.column().saturating_sub(self.fold_start.column());
-        let tab_expansion = point.column().saturating_sub(fold_bytes);
-        GridPosition {
-            byte_column: point.column(),
-            scalar_column: fold_chars.saturating_add(tab_expansion),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GridCell {
     pub width: Pixels,
@@ -1730,6 +1588,8 @@ pub struct GridCell {
 }
 
 impl GridCell {
+    pub(crate) const FIT_TOLERANCE: ScrollPixelOffset = 0.5;
+
     pub fn measure(text_system: &WindowTextSystem, font: &Font, font_size: Pixels) -> Self {
         let font_id = text_system.resolve_font(font);
         let width = text_system.em_layout_width(font_id, font_size);
@@ -1739,16 +1599,38 @@ impl GridCell {
                 .all(|probe| text_system.layout_width(font_id, font_size, probe) == width);
         Self { width, monospace }
     }
+
+    pub fn fits(&self, columns: &Range<u32>, shaped_width: Pixels) -> bool {
+        let grid_width = ScrollPixelOffset::from(self.width) * columns.len() as ScrollPixelOffset;
+        (ScrollPixelOffset::from(shaped_width) - grid_width).abs() <= Self::FIT_TOLERANCE
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HorizontalViewport {
     pub scroll_columns: ScrollOffset,
     pub visible_columns: ScrollOffset,
+    pub text_align: TextAlign,
+    pub content_width: Pixels,
 }
 
 impl HorizontalViewport {
-    const MAX_WINDOW_VIEWPORTS: usize = 8;
+    pub fn aligned(&self, line_width: ScrollPixelOffset, cell: GridCell) -> Self {
+        let content_width = ScrollPixelOffset::from(self.content_width);
+        let alignment_offset = match self.text_align {
+            TextAlign::Left => 0.,
+            TextAlign::Center => (content_width - line_width) / 2.,
+            TextAlign::Right => content_width - line_width,
+        };
+        if alignment_offset == 0. || cell.width <= Pixels::ZERO {
+            return *self;
+        }
+        Self {
+            scroll_columns: self.scroll_columns
+                - alignment_offset / ScrollPixelOffset::from(cell.width),
+            ..*self
+        }
+    }
 
     pub fn first_column(&self) -> usize {
         self.scroll_columns.max(0.).floor() as usize
@@ -1758,87 +1640,100 @@ impl HorizontalViewport {
         (self.visible_columns.max(0.).ceil() as usize).max(1)
     }
 
-    pub fn shaping_window(&self, grid: &UnwrappedRowGrid, cell: GridCell) -> RowWindow {
+    pub fn shaping_window(&self, row_len: u32) -> Range<u32> {
         let visible = self.column_count();
         let leading = visible / 2;
         let total = leading + visible * 2;
-        let grid_len = grid.scalar_len() as usize;
-        let mut start = self.first_column().saturating_sub(leading);
-        if grid.is_ascii() && cell.monospace {
-            start = start / visible * visible;
-        }
-        start = start.min(grid_len.saturating_sub(total));
-        let end = (start + total).min(grid_len);
-        RowWindow::from_scalar_columns(grid, start..end)
+        let row_len = row_len as usize;
+        let start = (self.first_column().saturating_sub(leading) / visible * visible)
+            .min(row_len.saturating_sub(total));
+        let end = (start + total).min(row_len);
+        column_from_usize(start)..column_from_usize(end)
     }
+}
 
-    pub fn extended_shaping_window(
+#[derive(Clone)]
+pub struct RuledRow {
+    snapshot: Arc<DisplaySnapshot>,
+    row: DisplayRow,
+    ruler: Arc<RowRuler>,
+    shaper: RulerShaper,
+}
+
+impl Debug for RuledRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuledRow")
+            .field("row", &self.row)
+            .field("ruler", &self.ruler)
+            .finish()
+    }
+}
+
+impl RuledRow {
+    pub fn columns_for_viewport(
         &self,
-        grid: &UnwrappedRowGrid,
-        window: &RowWindow,
-        shaped_width: Pixels,
+        viewport: &HorizontalViewport,
         cell: GridCell,
-    ) -> Option<RowWindow> {
+    ) -> Range<u32> {
+        let viewport = viewport.aligned(self.ruler.width(), cell);
         let cell_width = ScrollPixelOffset::from(cell.width);
-        let shaped_right = cell_width * window.scalar_columns.start as ScrollPixelOffset
-            + ScrollPixelOffset::from(shaped_width);
-        let covered_right = (self.scroll_columns + self.visible_columns + 1.) * cell_width;
-        if shaped_right >= covered_right || window.bytes.end >= grid.byte_len() {
-            return None;
-        }
-        let visible = self.column_count();
-        let max_end = window.scalar_columns.start as usize + visible * Self::MAX_WINDOW_VIEWPORTS;
-        let end = (window.scalar_columns.end as usize + visible)
-            .min(max_end)
-            .min(grid.scalar_len() as usize);
-        let end = grid.byte_column(u32::try_from(end).unwrap_or(u32::MAX), Bias::Right);
-        (end.byte_column > window.bytes.end).then(|| RowWindow {
-            bytes: window.bytes.start..end.byte_column,
-            scalar_columns: window.scalar_columns.start..end.scalar_column,
-        })
+        let visible_width = viewport.visible_columns.max(1.) * cell_width;
+        let left = viewport.scroll_columns.max(0.) * cell_width;
+        self.ruler
+            .columns_for_x_range(left - visible_width / 2.0..left + visible_width * 1.5)
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RowWindow {
-    pub bytes: Range<u32>,
-    pub scalar_columns: Range<u32>,
-}
+    pub fn chunk_columns(&self, columns: Range<u32>) -> impl Iterator<Item = Range<u32>> + '_ {
+        self.ruler.chunk_ranges(columns)
+    }
 
-impl RowWindow {
-    fn from_scalar_columns(grid: &UnwrappedRowGrid, scalar_columns: Range<usize>) -> Self {
-        let start = grid.byte_column(
-            u32::try_from(scalar_columns.start).unwrap_or(u32::MAX),
-            Bias::Left,
-        );
-        let end = grid.byte_column(
-            u32::try_from(scalar_columns.end).unwrap_or(u32::MAX),
-            Bias::Right,
-        );
-        Self {
-            bytes: start.byte_column..end.byte_column,
-            scalar_columns: start.scalar_column..end.scalar_column,
-        }
+    pub fn chunk_width(&self, columns: Range<u32>) -> ScrollPixelOffset {
+        self.ruler.width_of_chunks(columns)
+    }
+
+    fn x_for_column(&self, column: u32) -> ScrollPixelOffset {
+        self.ruler
+            .x_for_column(column, &self.snapshot, self.row, &self.shaper)
+    }
+
+    fn column_for_x(&self, x: ScrollPixelOffset) -> u32 {
+        self.ruler
+            .column_for_x(x, &self.snapshot, self.row, &self.shaper)
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct WindowedRowGeometry {
-    grid: UnwrappedRowGrid,
+    row_len: u32,
     cell: GridCell,
-    window: RowWindow,
+    window: Range<u32>,
+    ruled: Option<RuledRow>,
 }
 
 impl WindowedRowGeometry {
-    pub fn new(grid: UnwrappedRowGrid, cell: GridCell, window: RowWindow) -> Self {
-        Self { grid, cell, window }
+    pub fn new(row_len: u32, cell: GridCell, window: Range<u32>) -> Self {
+        Self {
+            row_len,
+            cell,
+            window,
+            ruled: None,
+        }
     }
 
-    pub fn grid(&self) -> &UnwrappedRowGrid {
-        &self.grid
+    pub fn ruled(ruled: RuledRow, row_len: u32, cell: GridCell, window: Range<u32>) -> Self {
+        Self {
+            row_len,
+            cell,
+            window,
+            ruled: Some(ruled),
+        }
     }
 
-    pub fn window(&self) -> &RowWindow {
+    pub fn row_len(&self) -> u32 {
+        self.row_len
+    }
+
+    pub fn window(&self) -> &Range<u32> {
         &self.window
     }
 
@@ -1847,67 +1742,45 @@ impl WindowedRowGeometry {
     }
 
     pub fn start_x(&self) -> ScrollPixelOffset {
-        self.scalar_x(self.window.scalar_columns.start)
+        self.column_x(self.window.start)
     }
 
     pub fn width(&self, shaped_width: Pixels) -> ScrollPixelOffset {
-        self.start_x()
-            + ScrollPixelOffset::from(shaped_width)
-            + self.scalar_x(
-                self.grid
-                    .scalar_len()
-                    .saturating_sub(self.window.scalar_columns.end),
-            )
+        self.column_x(self.row_len)
+            .max(self.start_x() + ScrollPixelOffset::from(shaped_width))
     }
 
-    pub fn x_before_window(&self, byte_column: u32) -> ScrollPixelOffset {
-        self.scalar_x(
-            self.grid
-                .scalar_column(byte_column, Bias::Left)
-                .scalar_column,
-        )
-    }
-
-    pub fn x_after_window(&self, byte_column: u32, shaped_width: Pixels) -> ScrollPixelOffset {
-        let scalar_column = self
-            .grid
-            .scalar_column(byte_column, Bias::Left)
-            .scalar_column;
-        self.start_x()
-            + ScrollPixelOffset::from(shaped_width)
-            + self.scalar_x(scalar_column.saturating_sub(self.window.scalar_columns.end))
-    }
-
-    pub fn byte_column_before_window_for_x(&self, x: ScrollPixelOffset) -> u32 {
-        let scalar_column = self
-            .scalar_columns_for_x(x)
-            .min(self.window.scalar_columns.start as ScrollOffset);
-        self.grid.nearest_byte_column(scalar_column).byte_column
-    }
-
-    pub fn byte_column_after_window_for_x(
-        &self,
-        x: ScrollPixelOffset,
-        shaped_width: Pixels,
-    ) -> Option<u32> {
-        let suffix_x = x - self.start_x() - ScrollPixelOffset::from(shaped_width);
-        let scalar_column =
-            self.window.scalar_columns.end as ScrollOffset + self.scalar_columns_for_x(suffix_x);
-        (scalar_column <= self.grid.scalar_len() as ScrollOffset)
-            .then(|| self.grid.nearest_byte_column(scalar_column).byte_column)
-    }
-
-    fn scalar_x(&self, scalar_column: u32) -> ScrollPixelOffset {
-        ScrollPixelOffset::from(self.cell.width) * scalar_column as ScrollPixelOffset
-    }
-
-    fn scalar_columns_for_x(&self, x: ScrollPixelOffset) -> ScrollOffset {
-        if self.cell.width <= Pixels::ZERO {
-            0.
-        } else {
-            (x / ScrollPixelOffset::from(self.cell.width)).max(0.)
+    pub fn column_x(&self, column: u32) -> ScrollPixelOffset {
+        if let Some(ruled) = &self.ruled {
+            return ruled.x_for_column(column.min(self.row_len));
         }
+        ScrollPixelOffset::from(self.cell.width) * column as ScrollPixelOffset
     }
+
+    pub fn column_for_x(&self, x: ScrollPixelOffset) -> u32 {
+        if let Some(ruled) = &self.ruled {
+            return ruled.column_for_x(x).min(self.row_len);
+        }
+        if self.cell.width <= Pixels::ZERO {
+            return 0;
+        }
+        let column = (x / ScrollPixelOffset::from(self.cell.width))
+            .round()
+            .max(0.);
+        column_from_usize(column as usize).min(self.row_len)
+    }
+
+    pub fn column_before_window_for_x(&self, x: ScrollPixelOffset) -> u32 {
+        self.column_for_x(x).min(self.window.start)
+    }
+
+    pub fn column_after_window_for_x(&self, x: ScrollPixelOffset) -> u32 {
+        self.column_for_x(x).max(self.window.end)
+    }
+}
+
+fn column_from_usize(column: usize) -> u32 {
+    u32::try_from(column).unwrap_or(u32::MAX)
 }
 
 pub enum RowLayout {
@@ -1930,17 +1803,15 @@ impl RowLayout {
         match self {
             Self::Shaped(layout) => ScrollPixelOffset::from(layout.x_for_index(index)),
             Self::Windowed { geometry, shaped } => {
-                let window = &geometry.window().bytes;
-                let byte_column = u32::try_from(index).unwrap_or(u32::MAX);
-                if byte_column < window.start {
-                    geometry.x_before_window(byte_column)
-                } else if byte_column <= window.end {
+                let window = geometry.window();
+                let column = column_from_usize(index);
+                if column >= window.start && column <= window.end {
                     geometry.start_x()
                         + ScrollPixelOffset::from(
-                            shaped.x_for_index((byte_column - window.start) as usize),
+                            shaped.x_for_index((column - window.start) as usize),
                         )
                 } else {
-                    geometry.x_after_window(byte_column, shaped.width)
+                    geometry.column_x(column)
                 }
             }
         }
@@ -1951,15 +1822,13 @@ impl RowLayout {
             Self::Shaped(layout) => layout.closest_index_for_x(Pixels::from(x)),
             Self::Windowed { geometry, shaped } => {
                 let start_x = geometry.start_x();
-                let window = &geometry.window().bytes;
+                let window = geometry.window();
                 if x < start_x {
-                    geometry.byte_column_before_window_for_x(x) as usize
+                    geometry.column_before_window_for_x(x) as usize
                 } else if x <= start_x + ScrollPixelOffset::from(shaped.width) {
                     window.start as usize + shaped.closest_index_for_x(Pixels::from(x - start_x))
                 } else {
-                    geometry
-                        .byte_column_after_window_for_x(x, shaped.width)
-                        .unwrap_or(geometry.grid().byte_len()) as usize
+                    geometry.column_after_window_for_x(x) as usize
                 }
             }
         }
@@ -1972,6 +1841,7 @@ pub struct DisplaySnapshot {
     pub companion_display_snapshot: Option<Arc<DisplaySnapshot>>,
     pub crease_snapshot: CreaseSnapshot,
     block_snapshot: BlockSnapshot,
+    row_rulers: Arc<RowRulerCache>,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     semantic_token_highlights: SemanticTokensHighlights,
@@ -2073,6 +1943,16 @@ impl DisplaySnapshot {
         };
         let settings = LanguageSettings::for_buffer_snapshot(&buffer_snapshot, None, cx);
         settings.semantic_tokens.use_tree_sitter()
+    }
+
+    pub fn shows_trailing_whitespace(&self, position: DisplayRow, cx: &App) -> bool {
+        let position = DisplayPoint::new(position, 0);
+        let Some((buffer_snapshot, ..)) = self.point_to_buffer_point(position.to_point(self))
+        else {
+            return false;
+        };
+        let settings = LanguageSettings::for_buffer_snapshot(&buffer_snapshot, None, cx);
+        settings.show_whitespaces == ShowWhitespaceSetting::Trailing
     }
 
     pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
@@ -2275,6 +2155,38 @@ impl DisplaySnapshot {
         self.mask_chunks_if_needed(chunks).map(|h| h.text)
     }
 
+    fn text_chunks_from(&self, point: DisplayPoint) -> impl Iterator<Item = &str> {
+        let language_aware = LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: false,
+        };
+        if self.is_long_unwrapped_row(point.row()) {
+            let start = self.block_snapshot.to_wrap_point(point.0, Bias::Left);
+            let end = WrapPoint::new(start.row(), self.wrap_snapshot().line_len(start.row()));
+            let chunks =
+                self.wrap_snapshot()
+                    .chunks(start..end, language_aware, Highlights::default());
+            Either::Left(self.mask_chunks_if_needed(chunks).map(|chunk| chunk.text))
+        } else {
+            let chunks = self.block_snapshot.chunks(
+                BlockRow(point.row().0)..BlockRow(self.max_point().row().next_row().0),
+                language_aware,
+                Highlights::default(),
+            );
+            let mut column = 0;
+            Either::Right(
+                self.mask_chunks_if_needed(chunks)
+                    .map(|chunk| chunk.text)
+                    .filter_map(move |chunk| {
+                        let chunk_start = column;
+                        column += chunk.len() as u32;
+                        let skip = point.column().saturating_sub(chunk_start) as usize;
+                        (skip < chunk.len()).then(|| &chunk[skip..])
+                    }),
+            )
+        }
+    }
+
     /// Returns text chunks starting at the end of the given display row in reverse until the start of the file
     #[instrument(skip_all)]
     pub fn reverse_text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
@@ -2350,8 +2262,11 @@ impl DisplaySnapshot {
         language_aware: LanguageAwareStyling,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        let range =
-            self.clip_point(range.start, Bias::Left)..self.clip_point(range.end, Bias::Right);
+        debug_assert!(
+            range.start.column() <= self.line_len(range.start.row())
+                && range.end.column() <= self.line_len(range.end.row()),
+            "column sub-ranges must stay within their rows: {range:?}"
+        );
         debug_assert!(
             !self.has_soft_wraps() || (range.start.column() == 0 && range.end.column() == 0),
             "column sub-ranges are unsupported with soft wraps: wrap chunks emit synthetic \
@@ -2517,11 +2432,82 @@ impl DisplaySnapshot {
         highlights
     }
 
-    pub fn is_windowed_row(&self, display_row: DisplayRow) -> bool {
-        !self.has_soft_wraps()
-            && display_row <= self.max_point().row()
-            && self.line_len(display_row) as usize > MAX_LINE_LEN
-            && !self.is_block_line(display_row)
+    pub fn is_windowed_row(&self, display_row: DisplayRow, cell: GridCell) -> bool {
+        self.is_long_unwrapped_row(display_row) && self.row_has_exact_grid(display_row, cell)
+    }
+
+    pub fn is_long_unwrapped_row(&self, display_row: DisplayRow) -> bool {
+        self.long_unwrapped_row_len(display_row).is_some()
+    }
+
+    pub fn long_unwrapped_row_len(&self, display_row: DisplayRow) -> Option<u32> {
+        if self.masked
+            || self.has_soft_wraps()
+            || display_row > self.max_point().row()
+            || self.is_block_line(display_row)
+        {
+            return None;
+        }
+        let row_len = self.line_len(display_row);
+        (row_len as usize > MAX_LINE_LEN).then_some(row_len)
+    }
+
+    pub fn grid_window(
+        &self,
+        display_row: DisplayRow,
+        row_len: u32,
+        viewport: &HorizontalViewport,
+        cell: GridCell,
+        shaper: &RulerShaper,
+    ) -> Option<(Range<u32>, Arc<LineLayout>)> {
+        if !self.row_has_exact_grid(display_row, cell) {
+            return None;
+        }
+        let row_width = ScrollPixelOffset::from(cell.width) * row_len as ScrollPixelOffset;
+        let window = viewport.aligned(row_width, cell).shaping_window(row_len);
+        let shaped = shaper.layout_columns(self, display_row, window.clone());
+        cell.fits(&window, shaped.width).then_some((window, shaped))
+    }
+
+    pub fn ruled_row(&self, display_row: DisplayRow, shaper: RulerShaper) -> RuledRow {
+        let wrap_row = self
+            .block_snapshot
+            .to_wrap_point(DisplayPoint::new(display_row, 0).0, Bias::Left)
+            .row()
+            .0;
+        let ruler = self
+            .row_rulers
+            .get_or_build(wrap_row, &shaper, |previous, renderer_widths| {
+                RowRuler::new(self, display_row, &shaper, previous, renderer_widths)
+            });
+        RuledRow {
+            snapshot: Arc::new(self.clone()),
+            row: display_row,
+            ruler,
+            shaper,
+        }
+    }
+
+    pub fn row_has_exact_grid(&self, display_row: DisplayRow, cell: GridCell) -> bool {
+        if !cell.monospace {
+            return false;
+        }
+        let fold_snapshot = self.fold_snapshot();
+        let fold_row = self
+            .display_point_to_fold_point(DisplayPoint::new(display_row, 0), Bias::Left)
+            .row();
+        let fold_range =
+            FoldPoint::new(fold_row, 0)..FoldPoint::new(fold_row, fold_snapshot.line_len(fold_row));
+        let summary = fold_snapshot.text_summary_for_range(fold_range.clone());
+        if summary.chars != summary.len.0 {
+            return false;
+        }
+        let inlay_range = fold_range.start.to_inlay_point(fold_snapshot)
+            ..fold_range.end.to_inlay_point(fold_snapshot);
+        let buffer_range = self.inlay_snapshot().to_buffer_point(inlay_range.start)
+            ..self.inlay_snapshot().to_buffer_point(inlay_range.end);
+        fold_snapshot.folds_in_range(buffer_range).next().is_none()
+            && !self.inlay_snapshot().has_rendered_inlays(inlay_range)
     }
 
     #[instrument(skip_all)]
@@ -2530,29 +2516,23 @@ impl DisplaySnapshot {
             tree_sitter: false,
             diagnostics: false,
         };
-        if self.is_windowed_row(display_row) {
+        let cell = details.grid_cell();
+        if let Some(row_len) = self.long_unwrapped_row_len(display_row) {
+            let shaper = details.ruler_shaper();
             let viewport = details.horizontal_viewport(self);
-            let cell = details.grid_cell();
-            let grid = UnwrappedRowGrid::new(Arc::new(self.clone()), display_row);
-            let mut window = viewport.shaping_window(&grid, cell);
-            loop {
-                let chunks = self.highlighted_chunks_in_range(
-                    DisplayPoint::new(display_row, window.bytes.start)
-                        ..DisplayPoint::new(display_row, window.bytes.end),
-                    language_aware,
-                    &details.editor_style,
-                );
-                let shaped = details.shape_row_text(chunks);
-                match viewport.extended_shaping_window(&grid, &window, shaped.width, cell) {
-                    Some(extended) => window = extended,
-                    None => {
-                        return RowLayout::Windowed {
-                            geometry: WindowedRowGeometry::new(grid, cell, window),
-                            shaped,
-                        };
-                    }
-                }
+            if let Some((window, shaped)) =
+                self.grid_window(display_row, row_len, &viewport, cell, &shaper)
+            {
+                return RowLayout::Windowed {
+                    geometry: WindowedRowGeometry::new(row_len, cell, window),
+                    shaped,
+                };
             }
+            let ruled = self.ruled_row(display_row, shaper);
+            return RowLayout::Windowed {
+                geometry: WindowedRowGeometry::ruled(ruled, row_len, cell, 0..0),
+                shaped: Arc::new(LineLayout::default()),
+            };
         }
 
         let chunks = self.highlighted_chunks(
@@ -2586,16 +2566,8 @@ impl DisplaySnapshot {
     pub fn grapheme_at(&self, mut point: DisplayPoint) -> Option<SharedString> {
         point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
         let chars = self
-            .text_chunks(point.row())
+            .text_chunks_from(point)
             .flat_map(str::chars)
-            .skip_while({
-                let mut column = 0;
-                move |char| {
-                    let at_point = column >= point.column();
-                    column += char.len_utf8() as u32;
-                    !at_point
-                }
-            })
             .take_while({
                 let mut prev = false;
                 move |char| {
@@ -3936,54 +3908,6 @@ pub mod tests {
     }
 
     #[gpui::test]
-    async fn test_highlighted_chunks_in_range_clips_to_char_boundaries(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        cx.update(|cx| init_test(cx, &|_| {}));
-
-        let buffer = cx.new(|cx| Buffer::local(format!("{}\nplain", "α".repeat(16)), cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let map = cx.new(|cx| {
-            DisplayMap::new(
-                buffer,
-                font("Helvetica"),
-                px(14.0),
-                None,
-                1,
-                1,
-                FoldPlaceholder::test(),
-                DiagnosticSeverity::Warning,
-                cx,
-            )
-        });
-        let snapshot = cx.update(|cx| map.update(cx, |map, cx| map.snapshot(cx)));
-        let style = EditorStyle::default();
-        let language_aware = LanguageAwareStyling {
-            tree_sitter: false,
-            diagnostics: false,
-        };
-        let chunks_text = |range: Range<DisplayPoint>| {
-            snapshot
-                .highlighted_chunks_in_range(range, language_aware, &style)
-                .map(|chunk| chunk.text)
-                .collect::<String>()
-        };
-
-        assert_eq!(
-            chunks_text(DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 8)),
-            "ααα"
-        );
-        assert_eq!(
-            chunks_text(DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 9)),
-            "αααα"
-        );
-        assert_eq!(
-            chunks_text(DisplayPoint::new(DisplayRow(0), 31)..DisplayPoint::new(DisplayRow(1), 3)),
-            "α\npla"
-        );
-    }
-
-    #[gpui::test]
     async fn test_highlighted_chunks_in_range_masks_redacted_text(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, &|_| {}));
 
@@ -4039,86 +3963,73 @@ pub mod tests {
     }
 
     #[gpui::test]
-    async fn test_unwrapped_row_grid_maps_unicode_and_tabs(cx: &mut gpui::TestAppContext) {
+    async fn test_highlighted_chunks_in_range_keeps_exact_endpoints(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             init_test(cx, &|settings| {
-                settings.project.all_languages.defaults.tab_size = NonZeroU32::new(4);
+                settings.project.all_languages.defaults.tab_size = NonZeroU32::new(128);
             })
         });
+        let style = EditorStyle::default();
+        let language_aware = LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: false,
+        };
 
-        let text = format!("{}\t{}", "é".repeat(50), "漢".repeat(400));
-        let snapshot = Arc::new(build_snapshot(&text, cx));
-        let display_text = snapshot.text();
-        let grid = UnwrappedRowGrid::new(snapshot, DisplayRow(0));
+        let text = format!("{}\t{}", "x".repeat(79), "y".repeat(3_000));
+        let snapshot = build_snapshot(&text, cx);
+        assert_eq!(snapshot.line_len(DisplayRow(0)), 79 + 49 + 3_000);
+        let chunks_text = |snapshot: &DisplaySnapshot, columns: Range<u32>| {
+            snapshot
+                .highlighted_chunks_in_range(
+                    DisplayPoint::new(DisplayRow(0), columns.start)
+                        ..DisplayPoint::new(DisplayRow(0), columns.end),
+                    language_aware,
+                    &style,
+                )
+                .map(|chunk| chunk.text)
+                .collect::<String>()
+        };
+        assert_eq!(
+            chunks_text(&snapshot, 100..350),
+            format!("{}{}", " ".repeat(28), "y".repeat(222))
+        );
+        assert_eq!(
+            chunks_text(&snapshot, 50..100),
+            format!("{}{}", "x".repeat(29), " ".repeat(21))
+        );
+        assert_eq!(chunks_text(&snapshot, 90..110), " ".repeat(20));
 
-        assert_eq!(grid.byte_len(), 1_302);
-        assert_eq!(grid.scalar_len(), 452);
-        assert!(!grid.is_ascii());
-        for (byte_column, bias, expected) in [
-            (100, Bias::Left, (100, 50)),
-            (101, Bias::Left, (100, 50)),
-            (101, Bias::Right, (102, 52)),
-            (103, Bias::Left, (102, 52)),
-            (103, Bias::Right, (105, 53)),
-            (432, Bias::Left, (432, 162)),
-        ] {
-            assert_eq!(
-                grid.scalar_column(byte_column, bias),
-                grid_position(expected),
-                "scalar column for byte column {byte_column} with {bias:?}"
-            );
-        }
-        for (scalar_column, bias, expected) in [
-            (50, Bias::Left, (100, 50)),
-            (51, Bias::Left, (100, 50)),
-            (51, Bias::Right, (102, 52)),
-            (52, Bias::Left, (102, 52)),
-            (162, Bias::Left, (432, 162)),
-            (452, Bias::Left, (1_302, 452)),
-        ] {
-            assert_eq!(
-                grid.byte_column(scalar_column, bias),
-                grid_position(expected),
-                "byte column for scalar column {scalar_column} with {bias:?}"
-            );
-        }
-        for scalar_column in 0..=grid.scalar_len() {
-            let left = grid.byte_column(scalar_column, Bias::Left);
-            let right = grid.byte_column(scalar_column, Bias::Right);
-            assert!(left.scalar_column <= scalar_column);
-            assert!(right.scalar_column >= scalar_column);
-            assert!(right.scalar_column - left.scalar_column <= 2);
-            for position in [left, right] {
-                assert!(display_text.is_char_boundary(position.byte_column as usize));
-                assert_eq!(
-                    grid.scalar_column(position.byte_column, Bias::Left),
-                    position
-                );
-            }
-        }
-
-        let text = format!("e\u{301}{}", "x".repeat(MAX_LINE_LEN * 2));
-        let snapshot = Arc::new(build_snapshot(&text, cx));
-        let grid = UnwrappedRowGrid::new(snapshot, DisplayRow(0));
-        assert_eq!(grid.byte_column(1, Bias::Left), grid_position((0, 0)));
-        assert_eq!(grid.byte_column(1, Bias::Right), grid_position((3, 2)));
-        assert_eq!(grid.nearest_byte_column(0.4), grid_position((0, 0)));
-        assert_eq!(grid.nearest_byte_column(1.6), grid_position((3, 2)));
-
-        let text = format!("{}\t{}", "x".repeat(30), "y".repeat(MAX_LINE_LEN * 2));
-        let snapshot = Arc::new(build_snapshot(&text, cx));
-        let grid = UnwrappedRowGrid::new(snapshot, DisplayRow(0));
-        assert!(grid.is_ascii());
-        assert_eq!(grid.byte_len(), 32 + (MAX_LINE_LEN * 2) as u32);
-        assert_eq!(grid.byte_column(33, Bias::Left), grid_position((33, 33)));
+        let text = format!("{}Z", "x".repeat(2_047));
+        let mut snapshot = build_snapshot(&text, cx);
+        snapshot.clip_at_line_ends = true;
+        assert_eq!(
+            chunks_text(&snapshot, 1_798..2_048),
+            format!("{}Z", "x".repeat(249))
+        );
     }
 
     #[gpui::test]
-    async fn test_unwrapped_row_grid_maps_unicode_inlays_and_folds(cx: &mut gpui::TestAppContext) {
+    async fn test_is_windowed_row_requires_exact_grid(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, &|_| {}));
+        let monospace = GridCell {
+            width: px(10.),
+            monospace: true,
+        };
+        let proportional = GridCell {
+            width: px(10.),
+            monospace: false,
+        };
 
-        let suffix = "x".repeat(MAX_LINE_LEN * 2);
-        let text = format!("abCDEFgh{suffix}");
+        let long_len = MAX_LINE_LEN * 2;
+        let text = format!(
+            "{}\n{}\t{}\n{}\nshort\n{}\n{}",
+            "x".repeat(long_len),
+            "x".repeat(30),
+            "y".repeat(long_len),
+            "é".repeat(long_len),
+            "f".repeat(long_len),
+            "r".repeat(long_len)
+        );
         let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         let map = cx.new(|cx| {
@@ -4134,165 +4045,227 @@ pub mod tests {
                 cx,
             )
         });
-
         map.update(cx, |map, cx| {
-            map.splice_inlays(
-                &[],
-                vec![Inlay::mock_hint(
-                    0,
-                    buffer_snapshot.anchor_after(MultiBufferOffset(2)),
-                    "λ🙂",
+            let fold_row_start = text.find("fff").unwrap();
+            map.fold(
+                vec![Crease::simple(
+                    buffer_snapshot.offset_to_point(MultiBufferOffset(fold_row_start + 10))
+                        ..buffer_snapshot.offset_to_point(MultiBufferOffset(fold_row_start + 20)),
+                    FoldPlaceholder::test(),
                 )],
                 cx,
             );
-
-            let mut placeholder = FoldPlaceholder::test();
-            placeholder.collapsed_text = Some("漢🙂".into());
-            map.fold(
-                vec![Crease::simple(
-                    MultiBufferPoint::new(0, 3)..MultiBufferPoint::new(0, 6),
-                    placeholder,
-                )],
+            let repl_row_start = text.find("rrr").unwrap();
+            map.splice_inlays(
+                &[],
+                vec![
+                    Inlay::mock_hint(
+                        0,
+                        buffer_snapshot.anchor_after(MultiBufferOffset(5)),
+                        "hint",
+                    ),
+                    Inlay::repl_result(
+                        1,
+                        buffer_snapshot.anchor_after(MultiBufferOffset(repl_row_start + 5)),
+                        "result",
+                    ),
+                ],
                 cx,
             );
         });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
 
-        let snapshot = Arc::new(map.update(cx, |map, cx| map.snapshot(cx)));
-        assert_eq!(snapshot.text(), format!("abλ🙂C漢🙂gh{suffix}"));
-        let grid = UnwrappedRowGrid::new(snapshot, DisplayRow(0));
-        assert_eq!(grid.byte_len(), 2_066);
-        assert_eq!(grid.scalar_len(), 2_057);
+        assert!(snapshot.is_windowed_row(DisplayRow(0), monospace));
+        assert!(!snapshot.is_windowed_row(DisplayRow(0), proportional));
+        assert!(snapshot.is_windowed_row(DisplayRow(1), monospace));
+        assert!(!snapshot.is_windowed_row(DisplayRow(2), monospace));
+        assert!(!snapshot.is_windowed_row(DisplayRow(3), monospace));
+        assert!(!snapshot.is_windowed_row(DisplayRow(4), monospace));
+        assert!(!snapshot.is_windowed_row(DisplayRow(5), monospace));
 
-        for position in [(0, 0), (2, 2), (9, 5), (16, 7), (18, 9), (2_066, 2_057)] {
-            for bias in [Bias::Left, Bias::Right] {
-                assert_eq!(
-                    grid.scalar_column(position.0, bias),
-                    grid_position(position)
+        let mut masked = snapshot.clone();
+        masked.masked = true;
+        assert!(!masked.is_long_unwrapped_row(DisplayRow(0)));
+        assert!(!masked.is_long_unwrapped_row(DisplayRow(2)));
+        assert!(!snapshot.is_windowed_row(DisplayRow(6), monospace));
+    }
+
+    #[gpui::test]
+    async fn test_ruler_uses_measured_inlay_renderer_widths(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
+        cx.set_state(&format!("ˇ{}", "漢".repeat(MAX_LINE_LEN)));
+        let inlay_id = InlayId::ReplResult(7);
+        cx.update_editor(|editor, _, cx| {
+            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            editor.display_map.update(cx, |map, cx| {
+                map.splice_inlays(
+                    &[],
+                    vec![Inlay::repl_result(
+                        7,
+                        buffer_snapshot.anchor_after(MultiBufferOffset(3)),
+                        "x",
+                    )],
+                    cx,
                 );
-                assert_eq!(grid.byte_column(position.1, bias), grid_position(position));
-            }
-        }
+            });
+        });
+        let ruler_width = |cx: &mut crate::test::editor_test_context::EditorTestContext| {
+            cx.update_editor(|editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx).display_snapshot;
+                let details = editor.text_layout_details(window, cx);
+                let cell = details.grid_cell();
+                assert!(!snapshot.is_windowed_row(DisplayRow(0), cell));
+                let layout = snapshot.layout_row(DisplayRow(0), &details);
+                (layout.width(), ScrollPixelOffset::from(cell.width))
+            })
+        };
 
-        assert_eq!(grid.scalar_column(4, Bias::Left), grid_position((2, 2)));
-        assert_eq!(grid.scalar_column(4, Bias::Right), grid_position((9, 5)));
-        assert_eq!(grid.byte_column(3, Bias::Left), grid_position((2, 2)));
-        assert_eq!(grid.byte_column(3, Bias::Right), grid_position((9, 5)));
-        assert_eq!(grid.scalar_column(12, Bias::Left), grid_position((9, 5)));
-        assert_eq!(grid.scalar_column(12, Bias::Right), grid_position((16, 7)));
-        assert_eq!(grid.byte_column(6, Bias::Left), grid_position((9, 5)));
-        assert_eq!(grid.byte_column(6, Bias::Right), grid_position((16, 7)));
+        let (guessed_width, cell_width) = ruler_width(&mut cx);
+        let changed = cx.update_editor(|editor, _, cx| {
+            editor.display_map.update(cx, |map, cx| {
+                map.update_fold_widths([(ChunkRendererId::Inlay(inlay_id), px(200.))], cx)
+            })
+        });
+        assert!(changed);
+        let (measured_width, _) = ruler_width(&mut cx);
+        assert!(((measured_width - guessed_width) - (200. - cell_width)).abs() < 0.01);
+
+        let changed = cx.update_editor(|editor, _, cx| {
+            editor.display_map.update(cx, |map, cx| {
+                map.update_fold_widths([(ChunkRendererId::Inlay(inlay_id), px(200.))], cx)
+            })
+        });
+        assert!(!changed);
+    }
+
+    #[gpui::test]
+    async fn test_windowed_rows_inside_multiline_inlays(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
+        cx.set_state("aˇb");
+        let inlay_text = format!("p\n{}\nr", "q".repeat(2_048));
+        cx.update_editor(|editor, _, cx| {
+            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            editor.display_map.update(cx, |map, cx| {
+                map.splice_inlays(
+                    &[],
+                    vec![Inlay::mock_hint(
+                        0,
+                        buffer_snapshot.anchor_after(MultiBufferOffset(1)),
+                        inlay_text.as_str(),
+                    )],
+                    cx,
+                );
+            });
+        });
+        let (snapshot, details) = cx.update_editor(|editor, window, cx| {
+            editor.set_visible_column_count(100.);
+            editor.set_scroll_position(gpui::point(200., 0.), window, cx);
+            (
+                editor.snapshot(window, cx).display_snapshot,
+                editor.text_layout_details(window, cx),
+            )
+        });
+        assert_eq!(snapshot.text(), format!("ap\n{}\nrb", "q".repeat(2_048)));
+        let cell = details.grid_cell();
+        assert!(cell.monospace);
+        assert!(!snapshot.is_windowed_row(DisplayRow(0), cell));
+        assert!(snapshot.is_windowed_row(DisplayRow(1), cell));
+        assert!(!snapshot.is_windowed_row(DisplayRow(2), cell));
+
+        let cell_width = ScrollPixelOffset::from(cell.width);
+        let layout = snapshot.layout_row(DisplayRow(1), &details);
+        assert!(matches!(layout, RowLayout::Windowed { .. }));
+        assert_eq!(layout.x_for_index(50), cell_width * 50.);
+        assert!((layout.x_for_index(250) - cell_width * 250.).abs() < 0.01);
+        assert_eq!(layout.closest_index_for_x(cell_width * 250.), 250);
+        assert_eq!(layout.closest_index_for_x(cell_width * 2_000.), 2_000);
+        assert_eq!(layout.width(), cell_width * 2_048.);
+
+        let style = EditorStyle::default();
+        let language_aware = LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: false,
+        };
+        let chunks_text = snapshot
+            .highlighted_chunks_in_range(
+                DisplayPoint::new(DisplayRow(1), 100)..DisplayPoint::new(DisplayRow(1), 350),
+                language_aware,
+                &style,
+            )
+            .map(|chunk| chunk.text)
+            .collect::<String>();
+        assert_eq!(chunks_text, "q".repeat(250));
     }
 
     #[gpui::test]
     async fn test_shaping_window_selection(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, &|_| {}));
 
-        let monospace = GridCell {
+        let cell = GridCell {
             width: px(10.),
             monospace: true,
-        };
-        let proportional = GridCell {
-            width: px(10.),
-            monospace: false,
         };
         let viewport = |scroll_columns: f64| HorizontalViewport {
             scroll_columns,
             visible_columns: 100.,
+            text_align: TextAlign::Left,
+            content_width: px(600.),
         };
 
-        let ascii = Arc::new(build_snapshot(&"x".repeat(10_000), cx));
-        let ascii = UnwrappedRowGrid::new(ascii, DisplayRow(0));
-        assert_eq!(
-            viewport(0.).shaping_window(&ascii, monospace),
-            row_window(0..250)
-        );
-        assert_eq!(
-            viewport(120.).shaping_window(&ascii, monospace),
-            row_window(0..250)
-        );
-        assert_eq!(
-            viewport(170.).shaping_window(&ascii, monospace),
-            row_window(100..350)
-        );
-        assert_eq!(
-            viewport(170.).shaping_window(&ascii, proportional),
-            row_window(120..370)
-        );
-        assert_eq!(
-            viewport(9_950.).shaping_window(&ascii, monospace),
-            row_window(9_750..10_000)
-        );
-        assert_eq!(
-            viewport(20_000.).shaping_window(&ascii, proportional),
-            row_window(9_750..10_000)
-        );
-
-        let wide = Arc::new(build_snapshot(&"漢".repeat(10_000), cx));
-        let wide = UnwrappedRowGrid::new(wide, DisplayRow(0));
-        let window = viewport(170.).shaping_window(&wide, monospace);
-        assert_eq!(window.scalar_columns, 120..370);
-        assert_eq!(window.bytes, 360..1_110);
-        assert_eq!(
-            viewport(170.).extended_shaping_window(&wide, &window, px(2_500.), monospace),
-            None
-        );
-        let extended = viewport(170.)
-            .extended_shaping_window(&wide, &window, px(1_000.), monospace)
-            .unwrap();
-        assert_eq!(extended.scalar_columns, 120..470);
-        assert_eq!(extended.bytes, 360..1_410);
-        let capped = RowWindow {
-            bytes: 360..(120 + 800) * 3,
-            scalar_columns: 120..120 + 800,
+        let centered = HorizontalViewport {
+            text_align: TextAlign::Center,
+            ..viewport(0.)
         };
+        assert_eq!(centered.aligned(40_000., cell).scroll_columns, 1_970.);
         assert_eq!(
-            viewport(170.).extended_shaping_window(&wide, &capped, px(10.), monospace),
-            None
+            centered.aligned(40_000., cell).shaping_window(4_000),
+            1_900..2_150
         );
+        let right_aligned = HorizontalViewport {
+            text_align: TextAlign::Right,
+            ..viewport(0.)
+        };
+        assert_eq!(right_aligned.aligned(40_000., cell).scroll_columns, 3_940.);
+        assert_eq!(viewport(0.).aligned(40_000., cell), viewport(0.));
 
-        let short = Arc::new(build_snapshot(&"漢".repeat(300), cx));
-        let short = UnwrappedRowGrid::new(short, DisplayRow(0));
-        assert_eq!(
-            viewport(170.).shaping_window(&short, monospace),
-            RowWindow {
-                bytes: 150..900,
-                scalar_columns: 50..300,
-            }
-        );
+        assert_eq!(viewport(0.).shaping_window(10_000), 0..250);
+        assert_eq!(viewport(120.).shaping_window(10_000), 0..250);
+        assert_eq!(viewport(170.).shaping_window(10_000), 100..350);
+        assert_eq!(viewport(9_950.).shaping_window(10_000), 9_750..10_000);
+        assert_eq!(viewport(20_000.).shaping_window(10_000), 9_750..10_000);
+        assert_eq!(viewport(170.).shaping_window(300), 50..300);
+
+        let window = viewport(170.).shaping_window(10_000);
+        assert!(cell.fits(&window, px(2_500.)));
+        assert!(cell.fits(&window, px(2_500.4)));
+        assert!(!cell.fits(&window, px(2_501.)));
+        assert!(!cell.fits(&window, px(2_490.)));
     }
 
     #[gpui::test]
     async fn test_windowed_row_layout_positions(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, &|_| {}));
 
-        let text = format!(
-            "{}{}{}",
-            "x".repeat(2_000),
-            "漢".repeat(2_000),
-            "y".repeat(2_000)
-        );
-        let snapshot = Arc::new(build_snapshot(&text, cx));
-        let grid = UnwrappedRowGrid::new(snapshot, DisplayRow(0));
         let cell = GridCell {
             width: px(10.),
             monospace: true,
         };
-        let window = RowWindow {
-            bytes: 2_000..2_000 + 300 * 3,
-            scalar_columns: 2_000..2_300,
-        };
-        let geometry = WindowedRowGeometry::new(grid, cell, window);
+        let geometry = WindowedRowGeometry::new(10_000, cell, 2_000..2_300);
         let glyphs = (0..300)
             .map(|glyph_index| gpui::ShapedGlyph {
                 id: gpui::GlyphId(1),
-                position: gpui::point(px(20. * glyph_index as f32), px(0.)),
-                index: glyph_index * 3,
+                position: gpui::point(px(10. * glyph_index as f32), px(0.)),
+                index: glyph_index,
                 is_emoji: false,
             })
             .collect::<Vec<_>>();
         let shaped = Arc::new(LineLayout {
-            width: px(6_000.),
-            len: 900,
+            width: px(3_000.),
+            len: 300,
             runs: vec![gpui::ShapedRun {
                 font_id: gpui::FontId(0),
                 glyphs,
@@ -4304,31 +4277,70 @@ pub mod tests {
         assert_eq!(layout.x_for_index(0), 0.);
         assert_eq!(layout.x_for_index(1_000), 10_000.);
         assert_eq!(layout.x_for_index(2_000), 20_000.);
-        assert_eq!(layout.x_for_index(2_900), 26_000.);
-        assert_eq!(layout.x_for_index(2_903), 26_010.);
-        assert_eq!(layout.x_for_index(8_000), 26_000. + 17_000.);
-        assert_eq!(layout.x_for_index(10_000), 26_000. + 37_000.);
-        assert_eq!(layout.width(), 63_000.);
+        assert_eq!(layout.x_for_index(2_150), 21_500.);
+        assert_eq!(layout.x_for_index(2_300), 23_000.);
+        assert_eq!(layout.x_for_index(8_000), 80_000.);
+        assert_eq!(layout.x_for_index(10_000), 100_000.);
+        assert_eq!(layout.width(), 100_000.);
 
         assert_eq!(layout.closest_index_for_x(-5.), 0);
         assert_eq!(layout.closest_index_for_x(10_004.), 1_000);
+        assert_eq!(layout.closest_index_for_x(10_006.), 1_001);
         assert_eq!(layout.closest_index_for_x(20_000.), 2_000);
-        assert_eq!(layout.closest_index_for_x(26_014.), 2_903);
-        assert_eq!(layout.closest_index_for_x(43_000.), 8_000);
+        assert_eq!(layout.closest_index_for_x(21_504.), 2_150);
+        assert_eq!(layout.closest_index_for_x(43_000.), 4_300);
         assert_eq!(layout.closest_index_for_x(1_000_000.), 10_000);
     }
 
-    fn grid_position((byte_column, scalar_column): (u32, u32)) -> GridPosition {
-        GridPosition {
-            byte_column,
-            scalar_column,
-        }
-    }
+    #[gpui::test]
+    async fn test_vertical_movement_on_long_rows_is_scroll_invariant(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| init_test(cx, &|_| {}));
 
-    fn row_window(scalar_columns: Range<u32>) -> RowWindow {
-        RowWindow {
-            bytes: scalar_columns.clone(),
-            scalar_columns,
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
+        let ascii_len = MAX_LINE_LEN * 3;
+        let wide_len = MAX_LINE_LEN * 2;
+        cx.set_state(&format!(
+            "ˇ{}\nx\n{}\nx",
+            "a".repeat(ascii_len),
+            "🙂".repeat(wide_len)
+        ));
+
+        for (row, column) in [
+            (0, ascii_len as u32 - 100),
+            (0, 1_500),
+            (2, ('🙂'.len_utf8() * (wide_len - 100)) as u32),
+            (2, '🙂'.len_utf8() as u32 * 700),
+        ] {
+            let start = DisplayPoint::new(DisplayRow(row), column);
+            let (below, goal) = cx.update_editor(|editor, window, cx| {
+                editor.set_visible_column_count(100.);
+                editor.set_scroll_position(gpui::point(column as f64 - 40., 0.), window, cx);
+                let snapshot = editor.snapshot(window, cx);
+                let details = editor.text_layout_details(window, cx);
+                movement::down(
+                    &snapshot,
+                    start,
+                    language::SelectionGoal::None,
+                    false,
+                    &details,
+                )
+            });
+            assert_eq!(below, DisplayPoint::new(DisplayRow(row + 1), 1));
+
+            for scroll_columns in [0., 20., 700., 3_000., 5_000.] {
+                let (back, _) = cx.update_editor(|editor, window, cx| {
+                    editor.set_scroll_position(gpui::point(scroll_columns, 0.), window, cx);
+                    let snapshot = editor.snapshot(window, cx);
+                    let details = editor.text_layout_details(window, cx);
+                    movement::up(&snapshot, below, goal, false, &details)
+                });
+                assert_eq!(
+                    back, start,
+                    "moving up from {below:?} with the viewport at column {scroll_columns}"
+                );
+            }
         }
     }
 

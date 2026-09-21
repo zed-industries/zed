@@ -31,9 +31,10 @@ use super::{
     render_breadcrumb_text,
 };
 use crate::{
-    BUFFER_HEADER_PADDING, DisplayRow, Editor, EditorSettings, EditorSnapshot, FILE_HEADER_HEIGHT,
-    GutterDimensions, JumpData, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, Point, RowExt,
-    SelectionEffects, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    BUFFER_HEADER_PADDING, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
+    FILE_HEADER_HEIGHT, GutterDimensions, JumpData, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    OpenExcerpts, Point, RowExt, SelectionEffects, StickyHeaderExcerpt, ToPoint, ToggleFold,
+    ToggleFoldAll,
     display_map::{HorizontalViewport, ToDisplayPoint},
     scroll::{Autoscroll, ScrollOffset, ScrollPixelOffset},
 };
@@ -287,9 +288,17 @@ impl EditorElement {
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
 
+            let sticky_range = {
+                let buffer = snapshot.buffer_snapshot();
+                let start = DisplayPoint::new(sticky_row, 0).to_offset(snapshot, Bias::Left);
+                let end =
+                    DisplayPoint::new(sticky_row.next_row(), 0).to_offset(snapshot, Bias::Right);
+                buffer.anchor_before(start)..buffer.anchor_after(end)
+            };
             self.populate_point_diagnostics(
                 snapshot,
                 sticky_row..sticky_row.next_row(),
+                std::slice::from_ref(&sticky_range),
                 std::slice::from_mut(&mut line),
             );
 

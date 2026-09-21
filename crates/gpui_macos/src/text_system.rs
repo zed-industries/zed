@@ -767,7 +767,52 @@ mod lenient_font_attributes {
 #[cfg(test)]
 mod tests {
     use crate::MacTextSystem;
-    use gpui::{FontRun, GlyphId, PlatformTextSystem, font, px};
+    use gpui::{Font, FontRun, FontWeight, GlyphId, PlatformTextSystem, font, px};
+
+    #[test]
+    fn test_monospace_advances_are_style_independent_and_cell_aligned() {
+        let fonts = MacTextSystem::new();
+        let regular = fonts.font_id(&font("Menlo")).unwrap();
+        let bold = fonts
+            .font_id(&Font {
+                weight: FontWeight::BOLD,
+                ..font("Menlo")
+            })
+            .unwrap();
+        let width = |font_id, text: &str| {
+            fonts
+                .layout_line(
+                    text,
+                    px(14.),
+                    &[FontRun {
+                        font_id,
+                        len: text.len(),
+                    }],
+                )
+                .width
+        };
+        let cell = width(regular, "m");
+        for sample in ["x", "W", "i", "const value = 12345;", "界", "漢字仮名"] {
+            let regular_width = width(regular, sample);
+            let bold_width = width(bold, sample);
+            assert!(
+                (regular_width - bold_width).abs() < px(0.01),
+                "{sample:?}: regular {regular_width:?} vs bold {bold_width:?}"
+            );
+        }
+        for sample in ["x", "W", "i", "const value = 12345;"] {
+            let cells = width(regular, sample) / cell;
+            assert!(
+                (cells - cells.round()).abs() < 0.01,
+                "{sample:?} spans {cells} cells"
+            );
+        }
+        let cjk_cells = width(regular, "界") / cell;
+        assert!(
+            (cjk_cells - cjk_cells.round()).abs() > 0.1,
+            "CJK fallback glyphs span {cjk_cells} cells; the grid path must keep excluding them"
+        );
+    }
 
     #[test]
     fn test_layout_line_bom_char() {

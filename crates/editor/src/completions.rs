@@ -18,6 +18,7 @@ impl Editor {
             visible_rows: self.visible_line_count(),
             visible_columns: self.visible_column_count(),
             vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
+            grid_cell: OnceCell::new(),
         }
     }
 

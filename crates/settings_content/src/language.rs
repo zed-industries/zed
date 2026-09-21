@@ -436,6 +436,7 @@ pub enum AutoIndentMode {
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Do not soft-wrap.
+    #[serde(alias = "prefer_line")]
     None,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
@@ -1297,6 +1298,14 @@ mod test {
     use crate::{ParseStatus, fallible_options, merge_from::MergeFrom};
 
     use super::*;
+
+    #[test]
+    fn test_soft_wrap_deserialization_accepts_legacy_prefer_line() {
+        let settings: LanguageSettingsContent =
+            serde_json::from_str("{\"soft_wrap\": \"prefer_line\"}").unwrap();
+        assert_eq!(settings.soft_wrap, Some(SoftWrap::None));
+        assert_eq!(serde_json::to_string(&SoftWrap::None).unwrap(), "\"none\"");
+    }
 
     #[test]
     fn test_formatter_deserialization() {

@@ -5431,5 +5431,13 @@ mod tests {
             "#},
             None,
         );
+        assert_migrate_settings(
+            r#"{"profiles":{"work":{"settings":{"languages":{"Go":{"soft_wrap":"prefer_line"}}}}}}"#,
+            Some(r#"{"profiles":{"work":{"settings":{"languages":{"Go":{"soft_wrap":"none"}}}}}}"#),
+        );
+        assert_migrate_settings(
+            r#"{"profiles":{"\u5de5\u4f5c":{"settings":{"soft_wrap":"prefer_line"}}}}"#,
+            Some(r#"{"profiles":{"\u5de5\u4f5c":{"settings":{"soft_wrap":"none"}}}}"#),
+        );
     }
 }

@@ -242,37 +242,32 @@ impl TabSnapshot {
             .fold_snapshot
             .text_summary_for_range(input_start..input_end);
 
-        let line_end = if range.start.row() == range.end.row() {
-            range.end
-        } else {
-            self.max_point()
-        };
-        let first_line_chars = self
-            .chunks(
-                range.start..line_end,
-                LanguageAwareStyling {
-                    tree_sitter: false,
-                    diagnostics: false,
-                },
-                Highlights::default(),
-            )
-            .flat_map(|chunk| chunk.text.chars())
-            .take_while(|&c| c != '\n')
-            .count() as u32;
+        let (first_line_output_bytes, first_line_input_bytes) =
+            if range.start.row() == range.end.row() {
+                (
+                    range.end.column() - range.start.column(),
+                    input_end.column() - input_start.column(),
+                )
+            } else {
+                (
+                    self.line_len(range.start.row()) - range.start.column(),
+                    self.fold_snapshot.line_len(input_start.row()) - input_start.column(),
+                )
+            };
+        let first_line_chars = tab_expanded_chars(
+            input_summary.first_line_chars,
+            first_line_output_bytes,
+            first_line_input_bytes,
+        );
 
         let last_line_chars = if range.start.row() == range.end.row() {
             first_line_chars
         } else {
-            self.chunks(
-                TabPoint::new(range.end.row(), 0)..range.end,
-                LanguageAwareStyling {
-                    tree_sitter: false,
-                    diagnostics: false,
-                },
-                Highlights::default(),
+            tab_expanded_chars(
+                input_summary.last_line_chars,
+                range.end.column(),
+                input_end.column(),
             )
-            .flat_map(|chunk| chunk.text.chars())
-            .count() as u32
         };
 
         TextSummary {
@@ -909,6 +904,11 @@ impl<'a> TabStopCursor<'a> {
 }
 
 #[inline(always)]
+fn tab_expanded_chars(input_chars: u32, output_bytes: u32, input_bytes: u32) -> u32 {
+    let tab_expansion = i64::from(output_bytes) - i64::from(input_bytes);
+    u32::try_from(i64::from(input_chars) + tab_expansion).unwrap_or(0)
+}
+
 fn count_chars_in_byte_range(range: Range<u32>, bitmap: u128) -> u32 {
     let low_mask = u128::MAX << range.start;
     let high_mask = u128::MAX >> (127 - range.end);

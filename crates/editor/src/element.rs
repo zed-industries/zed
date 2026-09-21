@@ -20,8 +20,8 @@ use crate::{
     cursor_animation::{CursorViewport, LogicalCursorPosition},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins, GridCell,
-        HighlightKey, HighlightedChunk, HorizontalViewport, RowWindow, ToDisplayPoint,
-        UnwrappedRowGrid, WindowedRowGeometry,
+        HighlightKey, HighlightedChunk, HorizontalViewport, RulerShaper, ToDisplayPoint,
+        WindowedRowGeometry,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, GitGutterWidth, Minimap, MinimapThumb,
@@ -87,7 +87,7 @@ use std::{
 };
 use sum_tree::Bias;
 use text::{BufferId, ToPoint as _};
-use theme::{ActiveTheme, Appearance, PlayerColor};
+use theme::{ActiveTheme, Appearance, PlayerColor, Theme};
 use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
 use ui::{ButtonLike, POPOVER_Y_PADDING, Tooltip, prelude::*, scrollbars::ShowScrollbar};
@@ -3321,7 +3321,6 @@ impl EditorElement {
                 })
                 .collect()
         } else if let Some((viewport, cell)) = row_windowing {
-            let grid_snapshot = Arc::new(snapshot.display_snapshot.clone());
             (rows.start.0..rows.end.0)
                 .map(|row| {
                     let display_row = DisplayRow(row);
@@ -3330,10 +3329,11 @@ impl EditorElement {
                         .get(row_index)
                         .map(std::slice::from_ref)
                         .unwrap_or(&[]);
-                    if snapshot.is_windowed_row(display_row) {
-                        layout_windowed_row(
-                            UnwrappedRowGrid::new(grid_snapshot.clone(), display_row),
-                            viewport,
+                    if let Some(row_len) = snapshot.long_unwrapped_row_len(display_row) {
+                        layout_long_row(
+                            display_row,
+                            row_len,
+                            Some(viewport),
                             cell,
                             snapshot,
                             style,
@@ -3368,7 +3368,7 @@ impl EditorElement {
             LineWithInvisibles::from_chunks(
                 chunks,
                 style,
-                MAX_LINE_LEN,
+                max_shaped_line_len(snapshot),
                 rows.len(),
                 &snapshot.mode,
                 editor_width,
@@ -4837,16 +4837,18 @@ impl EditorElement {
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         row_infos: &[RowInfo],
         start_row: DisplayRow,
+        visible_ranges: &[Range<Anchor>],
         snapshot: &EditorSnapshot,
         highlighted_ranges: &mut Vec<(Range<DisplayPoint>, Hsla)>,
         cx: &mut App,
     ) {
         let colors = cx.theme().colors();
 
-        let visible_start =
-            DisplayPoint::new(start_row, 0).to_offset(&snapshot.display_snapshot, Bias::Left);
-        let visible_end = DisplayPoint::new(DisplayRow(start_row.0 + row_infos.len() as u32), 0)
-            .to_offset(&snapshot.display_snapshot, Bias::Right);
+        let buffer = snapshot.buffer_snapshot();
+        let visible_ranges = visible_ranges
+            .iter()
+            .map(|range| range.start.to_offset(buffer)..range.end.to_offset(buffer))
+            .collect::<Vec<_>>();
 
         // Gather the word diffs that intersect the viewport. A hunk stores the
         // word diffs for its entire range, so without this filter a large hunk
@@ -4861,7 +4863,11 @@ impl EditorElement {
                 _ => None,
             })
             .flatten()
-            .filter(|word_diff| word_diff.start < visible_end && word_diff.end > visible_start)
+            .filter(|word_diff| {
+                visible_ranges
+                    .iter()
+                    .any(|visible| word_diff.start < visible.end && word_diff.end > visible.start)
+            })
             .collect();
 
         // The converter walks each display-map layer with a forward-only cursor,
@@ -5802,6 +5808,7 @@ impl EditorElement {
         &self,
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
+        visible_ranges: &[Range<Anchor>],
         line_layouts: &mut [LineWithInvisibles],
     ) {
         if visible_rows.is_empty() {
@@ -5811,15 +5818,12 @@ impl EditorElement {
         let display_snapshot = &snapshot.display_snapshot;
         let buffer_snapshot = snapshot.buffer_snapshot();
 
-        let query_start = display_snapshot
-            .display_point_to_point(DisplayPoint::new(visible_rows.start, 0), Bias::Left);
-        let query_end_display = display_snapshot
-            .clip_ignoring_line_ends(DisplayPoint::new(visible_rows.end, 0), Bias::Right);
-        let query_end = display_snapshot.display_point_to_point(query_end_display, Bias::Right);
-
-        for (point, diagnostic) in
-            Self::point_diagnostics_in_range(buffer_snapshot, query_start..query_end)
-        {
+        for (point, diagnostic) in visible_ranges.iter().flat_map(|range| {
+            Self::point_diagnostics_in_range(
+                buffer_snapshot,
+                range.start.to_point(buffer_snapshot)..range.end.to_point(buffer_snapshot),
+            )
+        }) {
             if display_snapshot.intersects_fold(point) {
                 continue;
             }
@@ -7487,6 +7491,7 @@ pub(crate) struct LineWithInvisibles {
     pub(crate) width: ScrollPixelOffset,
     font_size: Pixels,
     window: Option<WindowedRowGeometry>,
+    trailing_whitespace_start: Option<usize>,
 }
 
 enum LineFragment {
@@ -7522,6 +7527,7 @@ impl LineWithInvisibles {
             point_diagnostics: Vec::new(),
             font_size,
             window: None,
+            trailing_whitespace_start: None,
             fragments: smallvec![LineFragment::Text(line)],
         }
     }
@@ -7532,15 +7538,54 @@ impl LineWithInvisibles {
             invisibles: Vec::new(),
             diagnostic_underline_severity_ranges: Vec::new(),
             point_diagnostics: Vec::new(),
-            len: geometry.grid().byte_len() as usize,
+            len: geometry.row_len() as usize,
             width: geometry.width(Pixels::ZERO),
             font_size,
             window: Some(geometry),
+            trailing_whitespace_start: None,
         }
     }
 
+    fn extend_clipped_tabs(
+        &mut self,
+        snapshot: &DisplaySnapshot,
+        row: DisplayRow,
+        window: &Range<u32>,
+    ) {
+        if let Some(Invisible::Tab {
+            line_start_offset, ..
+        }) = self.invisibles.first_mut()
+            && *line_start_offset == window.start as usize
+        {
+            let tab_start = snapshot
+                .clip_ignoring_line_ends(DisplayPoint::new(row, window.start), Bias::Left)
+                .column() as usize;
+            *line_start_offset = tab_start;
+        }
+        if let Some(Invisible::Tab {
+            line_end_offset, ..
+        }) = self.invisibles.last_mut()
+            && *line_end_offset == window.end as usize
+        {
+            let tab_end = snapshot
+                .clip_ignoring_line_ends(DisplayPoint::new(row, window.end), Bias::Right)
+                .column() as usize;
+            *line_end_offset = tab_end;
+        }
+    }
+
+    fn append(&mut self, other: Self) {
+        self.fragments.extend(other.fragments);
+        self.invisibles.extend(other.invisibles);
+        self.diagnostic_underline_severity_ranges
+            .extend(other.diagnostic_underline_severity_ranges);
+        self.point_diagnostics.extend(other.point_diagnostics);
+        self.len += other.len;
+        self.width += other.width;
+    }
+
     fn windowed(mut self, geometry: WindowedRowGeometry) -> Self {
-        self.len = geometry.grid().byte_len() as usize;
+        self.len = geometry.row_len() as usize;
         self.width = geometry.width(self.shaped_width());
         self.window = Some(geometry);
         self
@@ -7731,6 +7776,7 @@ impl LineWithInvisibles {
                             point_diagnostics: Vec::new(),
                             font_size,
                             window: None,
+                            trailing_whitespace_start: None,
                         });
 
                         line.clear();
@@ -8331,16 +8377,21 @@ impl LineWithInvisibles {
                 paint(window, cx);
             }),
 
-            ShowWhitespaceSetting::Trailing => {
-                let mut previous_start = self.len;
-                for ([start, end], paint) in invisible_iter.rev() {
-                    if previous_start != end {
-                        break;
+            ShowWhitespaceSetting::Trailing => match self.trailing_whitespace_start {
+                Some(trailing_start) => invisible_iter
+                    .filter(|([start, _], _)| *start >= trailing_start)
+                    .for_each(|(_, paint)| paint(window, cx)),
+                None => {
+                    let mut previous_start = self.len;
+                    for ([start, end], paint) in invisible_iter.rev() {
+                        if previous_start != end {
+                            break;
+                        }
+                        previous_start = start;
+                        paint(window, cx);
                     }
-                    previous_start = start;
-                    paint(window, cx);
                 }
-            }
+            },
 
             // For a whitespace to be on a boundary, any of the following conditions need to be met:
             // - It is a tab
@@ -8391,11 +8442,8 @@ impl LineWithInvisibles {
         let Some(window) = &self.window else {
             return true;
         };
-        let cell = window.cell();
-        if !(cell.monospace && window.grid().is_ascii()) {
-            return false;
-        }
-        let cell_width = ScrollPixelOffset::from(cell.width);
+        let viewport = viewport.aligned(self.width, window.cell());
+        let cell_width = ScrollPixelOffset::from(window.cell().width);
         let start_x = window.start_x();
         start_x <= viewport.scroll_columns * cell_width
             && start_x + ScrollPixelOffset::from(self.shaped_width())
@@ -8404,14 +8452,10 @@ impl LineWithInvisibles {
 
     pub fn x_for_index(&self, index: usize) -> ScrollPixelOffset {
         let shaped_start_index = self.shaped_start_index();
-        if let Some(window) = &self.window {
-            let byte_column = u32::try_from(index).unwrap_or(u32::MAX);
-            if index < shaped_start_index {
-                return window.x_before_window(byte_column);
-            }
-            if index > shaped_start_index + self.shaped_len() {
-                return window.x_after_window(byte_column, self.shaped_width());
-            }
+        if let Some(window) = &self.window
+            && (index < shaped_start_index || index > shaped_start_index + self.shaped_len())
+        {
+            return window.column_x(u32::try_from(index).unwrap_or(u32::MAX));
         }
 
         let mut fragment_start_x = self.start_x();
@@ -8448,7 +8492,7 @@ impl LineWithInvisibles {
         if let Some(window) = &self.window
             && x < fragment_start_x
         {
-            return Some(window.byte_column_before_window_for_x(x) as usize);
+            return Some(window.column_before_window_for_x(x) as usize);
         }
 
         let mut fragment_start_index = self.shaped_start_index();
@@ -8478,9 +8522,8 @@ impl LineWithInvisibles {
         }
 
         let window = self.window.as_ref()?;
-        window
-            .byte_column_after_window_for_x(x, self.shaped_width())
-            .map(|byte_column| byte_column as usize)
+        (x <= window.column_x(window.row_len()))
+            .then(|| window.column_after_window_for_x(x) as usize)
     }
 
     pub fn font_id_for_index(&self, index: usize) -> Option<FontId> {
@@ -8531,7 +8574,7 @@ impl LineWithInvisibles {
     fn shaped_start_index(&self) -> usize {
         self.window
             .as_ref()
-            .map_or(0, |window| window.window().bytes.start as usize)
+            .map_or(0, |window| window.window().start as usize)
     }
 
     fn shaped_len(&self) -> usize {
@@ -8987,6 +9030,27 @@ impl Element for EditorElement {
                         )
                     };
 
+                    let horizontal_viewport = |scroll_x: ScrollOffset| HorizontalViewport {
+                        scroll_columns: scroll_x,
+                        visible_columns,
+                        text_align: style.text.text_align,
+                        content_width: text_hitbox.size.width,
+                    };
+                    let row_windowing = row_windowing(
+                        &snapshot,
+                        start_row..end_row,
+                        horizontal_viewport(scroll_position.x),
+                        grid_cell,
+                    );
+                    let highlight_ranges = visible_highlight_ranges(
+                        &snapshot,
+                        start_row..end_row,
+                        start_anchor..end_anchor,
+                        row_windowing,
+                        style,
+                        window,
+                    );
+
                     let mut highlighted_rows =
                         self.editor.read(cx).highlighted_display_rows_in_range(
                             start_anchor..end_anchor,
@@ -8999,8 +9063,9 @@ impl Element for EditorElement {
                         .editor_with_selections(cx)
                         .map(|editor| {
                             if editor == self.editor {
-                                editor.read(cx).background_highlights_in_range(
-                                    start_anchor..end_anchor,
+                                background_highlights_in_ranges(
+                                    editor.read(cx),
+                                    &highlight_ranges,
                                     &snapshot.display_snapshot,
                                     cx.theme(),
                                 )
@@ -9335,6 +9400,7 @@ impl Element for EditorElement {
                         &display_hunks,
                         &row_infos,
                         start_row,
+                        &highlight_ranges,
                         &snapshot,
                         &mut highlighted_ranges,
                         cx,
@@ -9349,17 +9415,6 @@ impl Element for EditorElement {
                                 .flat_map(|(_, colors)| colors.iter().cloned()),
                         ),
                         self.style.background,
-                    );
-
-                    let horizontal_viewport = |scroll_x: ScrollOffset| HorizontalViewport {
-                        scroll_columns: scroll_x,
-                        visible_columns,
-                    };
-                    let row_windowing = row_windowing(
-                        &snapshot,
-                        start_row..end_row,
-                        horizontal_viewport(scroll_position.x),
-                        grid_cell,
                     );
 
                     let mut line_layouts = Self::layout_lines(
@@ -10232,6 +10287,7 @@ impl Element for EditorElement {
                     self.populate_point_diagnostics(
                         &snapshot,
                         start_row..end_row,
+                        &highlight_ranges,
                         &mut line_layouts,
                     );
 
@@ -11141,14 +11197,117 @@ fn row_windowing(
     viewport: HorizontalViewport,
     cell: GridCell,
 ) -> Option<(HorizontalViewport, GridCell)> {
-    (!snapshot.has_soft_wraps()
-        && (rows.start.0..rows.end.0).any(|row| snapshot.is_windowed_row(DisplayRow(row))))
-    .then_some((viewport, cell))
+    (rows.start.0..rows.end.0)
+        .any(|row| snapshot.is_long_unwrapped_row(DisplayRow(row)))
+        .then_some((viewport, cell))
 }
 
-fn layout_windowed_row(
-    grid: UnwrappedRowGrid,
-    viewport: HorizontalViewport,
+fn max_shaped_line_len(snapshot: &EditorSnapshot) -> usize {
+    if snapshot.has_soft_wraps() {
+        MAX_LINE_LEN
+    } else {
+        usize::MAX
+    }
+}
+
+fn ruler_shaper(style: &EditorStyle, window: &Window) -> RulerShaper {
+    RulerShaper {
+        text_system: window.text_system().clone(),
+        style: style.clone(),
+        font_size: style.text.font_size.to_pixels(window.rem_size()),
+    }
+}
+
+fn long_row_columns(
+    snapshot: &EditorSnapshot,
+    display_row: DisplayRow,
+    row_len: u32,
+    viewport: &HorizontalViewport,
+    cell: GridCell,
+    style: &EditorStyle,
+    window: &Window,
+) -> Range<u32> {
+    let shaper = ruler_shaper(style, window);
+    match snapshot.grid_window(display_row, row_len, viewport, cell, &shaper) {
+        Some((columns, _)) => columns,
+        None => snapshot
+            .ruled_row(display_row, shaper)
+            .columns_for_viewport(viewport, cell),
+    }
+}
+
+fn visible_highlight_ranges(
+    snapshot: &EditorSnapshot,
+    rows: Range<DisplayRow>,
+    visible_range: Range<Anchor>,
+    row_windowing: Option<(HorizontalViewport, GridCell)>,
+    style: &EditorStyle,
+    window: &Window,
+) -> Vec<Range<Anchor>> {
+    let Some((viewport, cell)) = row_windowing else {
+        return vec![visible_range];
+    };
+    let buffer = snapshot.buffer_snapshot();
+    let anchor_at =
+        |point: DisplayPoint, bias: Bias| buffer.anchor_at(point.to_offset(snapshot, bias), bias);
+    let mut ranges = Vec::new();
+    let mut run_start = Some(visible_range.start);
+    for row in rows.start.0..rows.end.0 {
+        let display_row = DisplayRow(row);
+        if let Some(row_len) = snapshot.long_unwrapped_row_len(display_row) {
+            if let Some(run_start) = run_start.take() {
+                ranges.push(run_start..anchor_at(DisplayPoint::new(display_row, 0), Bias::Right));
+            }
+            let bounds = long_row_columns(
+                snapshot,
+                display_row,
+                row_len,
+                &viewport,
+                cell,
+                style,
+                window,
+            );
+            ranges.push(
+                anchor_at(DisplayPoint::new(display_row, bounds.start), Bias::Left)
+                    ..anchor_at(DisplayPoint::new(display_row, bounds.end), Bias::Right),
+            );
+            run_start = Some(anchor_at(
+                DisplayPoint::new(display_row, row_len),
+                Bias::Left,
+            ));
+        }
+    }
+    if let Some(run_start) = run_start {
+        ranges.push(run_start..visible_range.end);
+    }
+    ranges.retain(|range| range.start.cmp(&range.end, buffer).is_lt());
+    ranges
+}
+
+fn background_highlights_in_ranges(
+    editor: &Editor,
+    ranges: &[Range<Anchor>],
+    snapshot: &DisplaySnapshot,
+    theme: &Theme,
+) -> Vec<(Range<DisplayPoint>, Hsla)> {
+    let mut highlights = Vec::new();
+    let mut previous_end = None::<DisplayPoint>;
+    for range in ranges {
+        highlights.extend(
+            editor
+                .background_highlights_in_range(range.clone(), snapshot, theme)
+                .into_iter()
+                .filter(|(highlight, _)| previous_end.is_none_or(|end| highlight.start >= end)),
+        );
+        previous_end = Some(range.end.to_display_point(snapshot));
+    }
+    highlights
+}
+
+fn layout_long_row(
+    display_row: DisplayRow,
+    row_len: u32,
+    viewport: Option<HorizontalViewport>,
     cell: GridCell,
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
@@ -11157,20 +11316,38 @@ fn layout_windowed_row(
     window: &mut Window,
     cx: &mut App,
 ) -> LineWithInvisibles {
-    let display_row = grid.row();
+    let font_size = style.text.font_size.to_pixels(window.rem_size());
+    let shaper = ruler_shaper(style, window);
+    let Some(viewport) = viewport else {
+        let geometry = if snapshot.row_has_exact_grid(display_row, cell) {
+            WindowedRowGeometry::new(row_len, cell, 0..0)
+        } else {
+            WindowedRowGeometry::ruled(snapshot.ruled_row(display_row, shaper), row_len, cell, 0..0)
+        };
+        return LineWithInvisibles::grid_only(geometry, font_size);
+    };
+
     let use_tree_sitter =
         !snapshot.semantic_tokens_enabled || snapshot.use_tree_sitter_for_syntax(display_row, cx);
     let language_aware = LanguageAwareStyling {
         tree_sitter: use_tree_sitter,
         diagnostics: true,
     };
-    let font_size = style.text.font_size.to_pixels(window.rem_size());
-    let shape = |bytes: Range<u32>, window: &mut Window, cx: &mut App| {
-        let chunks = snapshot.highlighted_chunks_in_range(
-            DisplayPoint::new(display_row, bytes.start)..DisplayPoint::new(display_row, bytes.end),
-            language_aware,
-            style,
-        );
+    let shape = |bytes: Range<u32>, keep_font_styles: bool, window: &mut Window, cx: &mut App| {
+        let chunks = snapshot
+            .highlighted_chunks_in_range(
+                DisplayPoint::new(display_row, bytes.start)
+                    ..DisplayPoint::new(display_row, bytes.end),
+                language_aware,
+                style,
+            )
+            .map(|chunk| {
+                if keep_font_styles {
+                    chunk
+                } else {
+                    chunk.without_font_styles()
+                }
+            });
         LineWithInvisibles::from_chunks(
             chunks,
             style,
@@ -11196,19 +11373,101 @@ fn layout_windowed_row(
                 width: 0.,
                 font_size,
                 window: None,
+                trailing_whitespace_start: None,
             }
         })
     };
-
-    let mut row_window = viewport.shaping_window(&grid, cell);
-    loop {
-        let shaped = shape(row_window.bytes.clone(), window, cx);
-        match viewport.extended_shaping_window(&grid, &row_window, shaped.shaped_width(), cell) {
-            Some(extended) => row_window = extended,
-            None => {
-                return shaped.windowed(WindowedRowGeometry::new(grid, cell, row_window));
-            }
+    let shape_to_width = |bytes: Range<u32>,
+                          expected_width: ScrollPixelOffset,
+                          window: &mut Window,
+                          cx: &mut App| {
+        let shaped = shape(bytes.clone(), true, window, cx);
+        if (ScrollPixelOffset::from(shaped.shaped_width()) - expected_width).abs()
+            <= GridCell::FIT_TOLERANCE
+        {
+            shaped
+        } else {
+            shape(bytes, false, window, cx)
         }
+    };
+
+    let mut shaped;
+    let geometry;
+    if let Some((columns, _)) = snapshot.grid_window(display_row, row_len, &viewport, cell, &shaper)
+    {
+        let grid_width = ScrollPixelOffset::from(cell.width) * columns.len() as ScrollPixelOffset;
+        shaped = shape_to_width(columns.clone(), grid_width, window, cx);
+        geometry = WindowedRowGeometry::new(row_len, cell, columns);
+    } else {
+        let ruled = snapshot.ruled_row(display_row, shaper);
+        let columns = ruled.columns_for_viewport(&viewport, cell);
+        let mut chunks = ruled.chunk_columns(columns.clone());
+        let first_chunk = chunks.next().unwrap_or(0..0);
+        shaped = shape_to_width(
+            first_chunk.clone(),
+            ruled.chunk_width(first_chunk),
+            window,
+            cx,
+        );
+        for chunk in chunks {
+            shaped.append(shape_to_width(
+                chunk.clone(),
+                ruled.chunk_width(chunk),
+                window,
+                cx,
+            ));
+        }
+        geometry = WindowedRowGeometry::ruled(ruled, row_len, cell, columns);
+    }
+
+    shaped.extend_clipped_tabs(&snapshot.display_snapshot, display_row, geometry.window());
+    if snapshot.shows_trailing_whitespace(display_row, cx) {
+        shaped.trailing_whitespace_start = Some(trailing_whitespace_start(
+            &snapshot.display_snapshot,
+            display_row,
+            row_len,
+            style,
+        ));
+    }
+    shaped.windowed(geometry)
+}
+
+fn trailing_whitespace_start(
+    snapshot: &DisplaySnapshot,
+    row: DisplayRow,
+    row_len: u32,
+    style: &EditorStyle,
+) -> usize {
+    let language_aware = LanguageAwareStyling {
+        tree_sitter: false,
+        diagnostics: false,
+    };
+    let mut tail_len = 64;
+    loop {
+        let tail_start = snapshot
+            .clip_ignoring_line_ends(
+                DisplayPoint::new(row, row_len.saturating_sub(tail_len)),
+                Bias::Left,
+            )
+            .column();
+        let tail = snapshot
+            .highlighted_chunks_in_range(
+                DisplayPoint::new(row, tail_start)..DisplayPoint::new(row, row_len),
+                language_aware,
+                style,
+            )
+            .map(|chunk| chunk.text)
+            .collect::<String>();
+        let trailing_len = tail
+            .chars()
+            .rev()
+            .take_while(|char| char.is_whitespace())
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if trailing_len < tail.len() || tail_start == 0 {
+            return row_len as usize - trailing_len;
+        }
+        tail_len = tail_len.saturating_mul(2);
     }
 }
 
@@ -11223,33 +11482,21 @@ pub fn layout_line(
     window: &mut Window,
     cx: &mut App,
 ) -> LineWithInvisibles {
-    if snapshot.is_windowed_row(row) {
+    if let Some(row_len) = snapshot.long_unwrapped_row_len(row) {
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let cell = GridCell::measure(window.text_system(), &style.text.font(), font_size);
-        let grid = UnwrappedRowGrid::new(Arc::new(snapshot.display_snapshot.clone()), row);
-        return match viewport {
-            Some(viewport) => layout_windowed_row(
-                grid,
-                viewport,
-                cell,
-                snapshot,
-                style,
-                text_width,
-                bg_segments,
-                window,
-                cx,
-            ),
-            None => {
-                let empty_window = RowWindow {
-                    bytes: 0..0,
-                    scalar_columns: 0..0,
-                };
-                LineWithInvisibles::grid_only(
-                    WindowedRowGeometry::new(grid, cell, empty_window),
-                    font_size,
-                )
-            }
-        };
+        return layout_long_row(
+            row,
+            row_len,
+            viewport,
+            cell,
+            snapshot,
+            style,
+            text_width,
+            bg_segments,
+            window,
+            cx,
+        );
     }
 
     let use_tree_sitter =
@@ -11262,7 +11509,7 @@ pub fn layout_line(
     LineWithInvisibles::from_chunks(
         chunks,
         style,
-        MAX_LINE_LEN,
+        max_shaped_line_len(snapshot),
         1,
         &snapshot.mode,
         text_width,
@@ -13438,20 +13685,26 @@ mod tests {
         init_test(cx, |_| {});
 
         let texts = [
-            "abcdefghij".repeat(400),
-            "é العربية क्षि ก้ 漢字 🧑🏽‍💻 ".repeat(100),
-            "العربية مرحبا ".repeat(500),
-            format!(
-                "{}{}{}",
-                "abc ".repeat(300),
-                "مرحبا ".repeat(300),
-                "xyz ".repeat(300)
+            ("abcdefghij".repeat(400), true),
+            (
+                format!("{}\t{}", "x".repeat(2_000), "y".repeat(2_000)),
+                true,
             ),
-            "🙂".repeat(MAX_LINE_LEN),
-            format!("{}\t{}", "x".repeat(2_000), "y".repeat(2_000)),
+            ("é العربية क्षि ก้ 漢字 🧑🏽‍💻 ".repeat(100), false),
+            ("العربية مرحبا ".repeat(500), false),
+            (
+                format!(
+                    "{}{}{}",
+                    "abc ".repeat(300),
+                    "مرحبا ".repeat(300),
+                    "xyz ".repeat(300)
+                ),
+                false,
+            ),
+            ("🙂".repeat(MAX_LINE_LEN), false),
         ];
         let visible_columns = 60.;
-        for text in texts {
+        for (text, expect_windowed) in texts {
             assert!(text.len() > MAX_LINE_LEN);
             let window = cx.add_window(|window, cx| {
                 let buffer = MultiBuffer::build_simple(&text, cx);
@@ -13472,6 +13725,7 @@ mod tests {
                         let cell = details.grid_cell();
                         let cell_width = ScrollPixelOffset::from(cell.width);
                         assert!(cell.monospace);
+                        assert_eq!(snapshot.is_windowed_row(DisplayRow(0), cell), expect_windowed);
 
                         let layout = layout_line(
                             DisplayRow(0),
@@ -13485,19 +13739,44 @@ mod tests {
                             cx,
                         );
                         let row_layout = snapshot.layout_row(DisplayRow(0), &details);
-                        let RowLayout::Windowed { geometry, shaped } = &row_layout else {
-                            panic!("long unwrapped rows must be windowed in the display map");
-                        };
-                        let row_window = layout.window.as_ref().unwrap().window();
-                        assert_eq!(row_window, geometry.window());
-                        assert!(text.is_char_boundary(row_window.bytes.start as usize));
-                        assert!(text.is_char_boundary(row_window.bytes.end as usize));
-                        assert_eq!(layout.len, text.len());
-                        assert_eq!(
-                            layout.shaped_start_index() + layout.shaped_len(),
-                            row_window.bytes.end as usize
+                        let display_len = snapshot.line_len(DisplayRow(0)) as usize;
+                        assert_eq!(layout.len, display_len);
+                        assert!((layout.width - row_layout.width()).abs() < 0.1);
+                        let full_row = details.shape_row_text(snapshot.highlighted_chunks(
+                            DisplayRow(0)..DisplayRow(1),
+                            LanguageAwareStyling {
+                                tree_sitter: false,
+                                diagnostics: false,
+                            },
+                            &style,
+                        ));
+                        let shaping_tolerance = 1e-4 * row_layout.width() + 0.1;
+                        assert!(
+                            (row_layout.width() - ScrollPixelOffset::from(full_row.width)).abs()
+                                < shaping_tolerance,
+                            "{text:?}: ruler width {} differs from the full-row width {:?}",
+                            row_layout.width(),
+                            full_row.width
                         );
 
+                        let RowLayout::Windowed { geometry, shaped } = &row_layout else {
+                            panic!("long unwrapped rows must not be shaped in full");
+                        };
+                        let row_window = layout.window.as_ref().unwrap().window();
+                        if expect_windowed {
+                            assert_eq!(row_window, geometry.window());
+                            assert_eq!(
+                                ScrollPixelOffset::from(shaped.width),
+                                ScrollPixelOffset::from(layout.shaped_width())
+                            );
+                        } else {
+                            assert_eq!(geometry.window(), &(0..0));
+                            assert!(!row_window.is_empty());
+                        }
+                        assert_eq!(
+                            layout.shaped_start_index() + layout.shaped_len(),
+                            row_window.end as usize
+                        );
                         let scroll_columns = viewport.scroll_columns.min(
                             (layout.width / cell_width - viewport.visible_columns).max(0.),
                         );
@@ -13514,34 +13793,22 @@ mod tests {
                             shaped_right >= visible_right,
                             "{text:?} at {scroll_columns}: shaped text ends at {shaped_right} before the viewport right edge {visible_right}"
                         );
-                        assert_eq!(layout.width, row_layout.width());
-                        assert_eq!(
-                            ScrollPixelOffset::from(shaped.width),
-                            ScrollPixelOffset::from(layout.shaped_width())
-                        );
 
-                        let grid = geometry.grid();
-                        for index in (0..=text.len()).step_by(7).filter(|index| text.is_char_boundary(*index)) {
+                        for index in (0..=display_len)
+                            .step_by(7)
+                            .filter(|index| text.is_char_boundary(*index))
+                        {
                             let x = layout.x_for_index(index);
-                            assert_eq!(
-                                x,
-                                row_layout.x_for_index(index),
+                            assert!(
+                                (x - row_layout.x_for_index(index)).abs() < 0.1,
                                 "{text:?} at {scroll_columns}: element and display map disagree at byte {index}"
                             );
-                            let byte_column = index as u32;
-                            if byte_column < row_window.bytes.start {
-                                let scalar = grid.scalar_column(byte_column, Bias::Left).scalar_column;
-                                assert_eq!(x, cell_width * scalar as ScrollPixelOffset);
-                            } else if byte_column > row_window.bytes.end {
-                                let scalar = grid.scalar_column(byte_column, Bias::Left).scalar_column;
-                                assert_eq!(
-                                    x,
-                                    shaped_right
-                                        + cell_width
-                                            * (scalar - row_window.scalar_columns.end) as ScrollPixelOffset
-                                );
-                            }
-                            let round_trip = layout.index_for_x(x).unwrap_or(text.len());
+                            assert!(
+                                (x - ScrollPixelOffset::from(full_row.x_for_index(index))).abs()
+                                    < shaping_tolerance,
+                                "{text:?} at {scroll_columns}: byte {index} is at {x} instead of its full-row position"
+                            );
+                            let round_trip = layout.index_for_x(x).unwrap_or(display_len);
                             assert!(text.is_char_boundary(round_trip));
                             assert!(
                                 (layout.x_for_index(round_trip) - x).abs() <= cell_width,
@@ -13549,13 +13816,222 @@ mod tests {
                             );
                             assert_eq!(
                                 row_layout.closest_index_for_x(x),
-                                layout.index_for_x(x).unwrap_or(text.len()),
+                                layout.index_for_x(x).unwrap_or(display_len),
                             );
                         }
                     })
                     .unwrap();
             }
         }
+    }
+
+    #[gpui::test]
+    fn test_visible_highlight_ranges_clip_windowed_rows(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let long_len = MAX_LINE_LEN * 20;
+        let text = format!(
+            "short\n{}\nmid\ndle\n{}\ntail",
+            "x".repeat(long_len),
+            "y".repeat(long_len)
+        );
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&text, cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_column_count(100.);
+                editor.set_scroll_position(gpui::point(5_000., 0.), window, cx);
+                let snapshot = editor.snapshot(window, cx);
+                let buffer = snapshot.buffer_snapshot();
+                let details = editor.text_layout_details(window, cx);
+                let viewport = details.horizontal_viewport(&snapshot);
+                let rows = DisplayRow(0)..DisplayRow(6);
+                let visible = Anchor::Min..Anchor::Max;
+
+                let style = editor.style(cx).clone();
+                let ranges = visible_highlight_ranges(
+                    &snapshot,
+                    rows.clone(),
+                    visible.clone(),
+                    None,
+                    &style,
+                    window,
+                );
+                assert_eq!(ranges.len(), 1);
+
+                let ranges = visible_highlight_ranges(
+                    &snapshot,
+                    rows,
+                    visible,
+                    Some((viewport, details.grid_cell())),
+                    &style,
+                    window,
+                );
+                let offsets = ranges
+                    .iter()
+                    .map(|range| {
+                        let start = range.start.to_offset(buffer).0;
+                        let end = range.end.to_offset(buffer).0;
+                        start..end
+                    })
+                    .collect::<Vec<_>>();
+                let long_row_start = "short\n".len();
+                let second_long_row_start = long_row_start + long_len + "\nmid\ndle\n".len();
+                assert_eq!(offsets.len(), 5);
+                assert_eq!(offsets[0], 0..long_row_start);
+                assert!(offsets[1].start > long_row_start + 4_000);
+                assert!(offsets[1].end < long_row_start + long_len);
+                assert_eq!(offsets[1].end - offsets[1].start, 250);
+                assert_eq!(offsets[2], long_row_start + long_len..second_long_row_start);
+                assert!(offsets[3].start > second_long_row_start + 4_000);
+                assert!(offsets[3].end < second_long_row_start + long_len);
+                assert_eq!(offsets[4], second_long_row_start + long_len..text.len());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_windowed_rows_keep_trailing_whitespace_and_tab_extents(cx: &mut TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.show_whitespaces = Some(ShowWhitespaceSetting::Trailing);
+            settings.defaults.tab_size = NonZeroU32::new(128);
+        });
+
+        let text = format!(
+            "x{}\n{}\t{}",
+            " ".repeat(MAX_LINE_LEN),
+            "x".repeat(60),
+            "y".repeat(3_000)
+        );
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&text, cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+        window
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_column_count(100.);
+                editor.set_scroll_position(gpui::point(170., 0.), window, cx);
+                let snapshot = editor.snapshot(window, cx);
+                let details = editor.text_layout_details(window, cx);
+                let viewport = details.horizontal_viewport(&snapshot);
+                let mut layout_row = |row: u32| {
+                    layout_line(
+                        DisplayRow(row),
+                        &snapshot,
+                        &style,
+                        px(500.),
+                        Some(viewport),
+                        |_| false,
+                        &[],
+                        window,
+                        cx,
+                    )
+                };
+
+                let whitespace_row = layout_row(0);
+                assert_eq!(
+                    whitespace_row.window.as_ref().unwrap().window(),
+                    &(100..350)
+                );
+                assert_eq!(whitespace_row.trailing_whitespace_start, Some(1));
+                let trailing_markers = whitespace_row
+                    .invisibles
+                    .iter()
+                    .filter(|invisible| match invisible {
+                        Invisible::Whitespace {
+                            line_start_offset, ..
+                        } => *line_start_offset >= 1,
+                        Invisible::Tab { .. } => false,
+                    })
+                    .count();
+                assert_eq!(trailing_markers, 250);
+
+                let tab_row = layout_row(1);
+                assert_eq!(tab_row.window.as_ref().unwrap().window(), &(100..350));
+                assert_eq!(
+                    tab_row.invisibles.first(),
+                    Some(&Invisible::Tab {
+                        line_start_offset: 60,
+                        line_end_offset: 128,
+                    })
+                );
+                assert_eq!(
+                    tab_row.x_for_index(60),
+                    60. * f64::from(details.grid_cell().width)
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_background_highlights_spanning_windowed_rows_are_not_duplicated(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let text = format!("START\n{}\nEND", "a".repeat(MAX_LINE_LEN * 4));
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&text, cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_column_count(100.);
+                editor.set_scroll_position(gpui::point(1_000., 0.), window, cx);
+                editor.highlight_background(
+                    HighlightKey::BufferSearchHighlights,
+                    &[Anchor::Min..Anchor::Max],
+                    |_, theme| theme.colors().search_match_background,
+                    cx,
+                );
+                let snapshot = editor.snapshot(window, cx);
+                let details = editor.text_layout_details(window, cx);
+                let style = editor.style(cx).clone();
+                let ranges = visible_highlight_ranges(
+                    &snapshot,
+                    DisplayRow(0)..DisplayRow(3),
+                    Anchor::Min..Anchor::Max,
+                    Some((details.horizontal_viewport(&snapshot), details.grid_cell())),
+                    &style,
+                    window,
+                );
+                assert_eq!(ranges.len(), 3);
+
+                let per_range = ranges
+                    .iter()
+                    .flat_map(|range| {
+                        editor.background_highlights_in_range(
+                            range.clone(),
+                            &snapshot.display_snapshot,
+                            cx.theme(),
+                        )
+                    })
+                    .count();
+                assert_eq!(per_range, 3);
+
+                let highlights = background_highlights_in_ranges(
+                    editor,
+                    &ranges,
+                    &snapshot.display_snapshot,
+                    cx.theme(),
+                );
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(
+                    highlights[0].0,
+                    DisplayPoint::new(DisplayRow(0), 0)..snapshot.max_point()
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -13711,7 +14187,8 @@ mod tests {
             });
             let position_map = &state.position_map;
             let line = &position_map.line_layouts[0];
-            assert!(!line.window.as_ref().unwrap().grid().is_ascii());
+            assert!(line.window.is_some());
+            assert!(line.shaped_len() < text.len());
             assert!(line.shaped_start_index() <= cursor_column);
             assert!(cursor_column <= line.shaped_start_index() + line.shaped_len());
             let cursor_x = state.content_origin.x
@@ -13720,7 +14197,7 @@ mod tests {
                 );
             let text_bounds = position_map.text_hitbox.bounds;
             assert!(
-                cursor_x >= text_bounds.left() && cursor_x <= text_bounds.right(),
+                cursor_x >= text_bounds.left() - px(1.) && cursor_x <= text_bounds.right(),
                 "cursor at byte {cursor_column} is at {cursor_x:?}, outside the text bounds {text_bounds:?}"
             );
         }
@@ -13730,10 +14207,9 @@ mod tests {
     async fn test_point_for_position_outside_shaped_window_follows_grid(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        let long_chars = MAX_LINE_LEN * 2;
-        let byte_len = long_chars * 2;
+        let byte_len = MAX_LINE_LEN * 2;
         let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple(&"α".repeat(long_chars), cx);
+            let buffer = MultiBuffer::build_simple(&"a".repeat(byte_len), cx);
             Editor::new(EditorMode::full(), buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
@@ -13762,20 +14238,17 @@ mod tests {
         let line = &position_map.line_layouts[0];
         let shaped_start = line.shaped_start_index();
         assert!(shaped_start > 0);
-        assert_eq!(shaped_start % 2, 0);
 
         let cell_width = f64::from(line.window.as_ref().unwrap().cell().width);
-        let target_scalar_column = shaped_start as f64 / 2. - 50.7;
+        let target_column = shaped_start as f64 - 50.7;
         let position = gpui::point(
             position_map.text_hitbox.bounds.origin.x
-                + Pixels::from(
-                    target_scalar_column * cell_width - position_map.scroll_pixel_position.x,
-                ),
+                + Pixels::from(target_column * cell_width - position_map.scroll_pixel_position.x),
             position_map.text_hitbox.bounds.origin.y + px(1.),
         );
         let point_for_position = position_map.point_for_position(position);
 
-        let expected = DisplayPoint::new(DisplayRow(0), shaped_start as u32 - 51 * 2);
+        let expected = DisplayPoint::new(DisplayRow(0), shaped_start as u32 - 51);
         assert_eq!(point_for_position.exact_unclipped, expected);
         assert_eq!(point_for_position.previous_valid, expected);
         assert_eq!(point_for_position.next_valid, expected);
@@ -14375,6 +14848,7 @@ mod tests {
             width: 3.25,
             font_size: px(13.),
             window: None,
+            trailing_whitespace_start: None,
         };
         let underline = point_diagnostic_test_style(WARNING);
         line.add_point_diagnostic(PointDiagnostic {

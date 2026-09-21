@@ -333,7 +333,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                 }
 
-                let mut renderer = None;
+                let renderer = inlay_chunk_renderer(inlay);
                 let mut highlight_style = match inlay.id {
                     InlayId::EditPrediction(_) => self.highlight_styles.edit_prediction.map(|s| {
                         if inlay.text().chars().all(|c| c.is_whitespace()) {
@@ -342,66 +342,10 @@ impl<'a> Iterator for InlayChunks<'a> {
                             s.insertion
                         }
                     }),
-                    InlayId::Hint(_) => self.highlight_styles.inlay_hint,
-                    InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
-                    InlayId::ReplResult(_) => {
-                        let text = inlay.text().to_string();
-                        renderer = Some(ChunkRenderer {
-                            id: ChunkRendererId::Inlay(inlay.id),
-                            render: Arc::new(move |cx| {
-                                let colors = cx.theme().colors();
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .child(div().w_4())
-                                    .child(
-                                        div()
-                                            .px_1()
-                                            .rounded_sm()
-                                            .bg(colors.surface_background)
-                                            .text_color(colors.text_muted)
-                                            .text_xs()
-                                            .child(text.trim().to_string()),
-                                    )
-                                    .into_any_element()
-                            }),
-                            constrain_width: false,
-                            measured_width: None,
-                        });
-                        self.highlight_styles.inlay_hint
-                    }
-                    InlayId::Color(_) => {
-                        if let InlayContent::Color(color) = inlay.content {
-                            renderer = Some(ChunkRenderer {
-                                id: ChunkRendererId::Inlay(inlay.id),
-                                render: Arc::new(move |cx| {
-                                    div()
-                                        .relative()
-                                        .size_3p5()
-                                        .child(
-                                            div()
-                                                .absolute()
-                                                .right_1()
-                                                .size_3()
-                                                .border_1()
-                                                .border_color(
-                                                    if cx.theme().appearance().is_light() {
-                                                        gpui::black().opacity(0.5)
-                                                    } else {
-                                                        gpui::white().opacity(0.5)
-                                                    },
-                                                )
-                                                .bg(color),
-                                        )
-                                        .into_any_element()
-                                }),
-                                constrain_width: false,
-                                measured_width: None,
-                            });
-                        }
-                        self.highlight_styles.inlay_hint
-                    }
+                    InlayId::Hint(_)
+                    | InlayId::DebuggerValue(_)
+                    | InlayId::ReplResult(_)
+                    | InlayId::Color(_) => self.highlight_styles.inlay_hint,
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
@@ -1205,6 +1149,23 @@ impl InlaySnapshot {
         summary
     }
 
+    pub fn has_rendered_inlays(&self, range: Range<InlayPoint>) -> bool {
+        let mut cursor = self.transforms.cursor::<InlayPoint>(());
+        cursor.seek(&range.start, Bias::Right);
+        while let Some(transform) = cursor.item() {
+            if *cursor.start() >= range.end {
+                break;
+            }
+            if let Transform::Inlay(inlay) = transform
+                && inlay_chunk_renderer(inlay).is_some()
+            {
+                return true;
+            }
+            cursor.next();
+        }
+        false
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn row_infos(&self, row: u32) -> InlayBufferRows<'_> {
         let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
@@ -1427,6 +1388,67 @@ impl BufferOffsetToInlayPointCursor<'_> {
             }
         }
         result
+    }
+}
+
+fn inlay_chunk_renderer(inlay: &Inlay) -> Option<ChunkRenderer> {
+    match inlay.id {
+        InlayId::ReplResult(_) => {
+            let text = inlay.text().to_string();
+            Some(ChunkRenderer {
+                id: ChunkRendererId::Inlay(inlay.id),
+                render: Arc::new(move |cx| {
+                    let colors = cx.theme().colors();
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .child(div().w_4())
+                        .child(
+                            div()
+                                .px_1()
+                                .rounded_sm()
+                                .bg(colors.surface_background)
+                                .text_color(colors.text_muted)
+                                .text_xs()
+                                .child(text.trim().to_string()),
+                        )
+                        .into_any_element()
+                }),
+                constrain_width: false,
+                measured_width: None,
+            })
+        }
+        InlayId::Color(_) => {
+            let InlayContent::Color(color) = inlay.content else {
+                return None;
+            };
+            Some(ChunkRenderer {
+                id: ChunkRendererId::Inlay(inlay.id),
+                render: Arc::new(move |cx| {
+                    div()
+                        .relative()
+                        .size_3p5()
+                        .child(
+                            div()
+                                .absolute()
+                                .right_1()
+                                .size_3()
+                                .border_1()
+                                .border_color(if cx.theme().appearance().is_light() {
+                                    gpui::black().opacity(0.5)
+                                } else {
+                                    gpui::white().opacity(0.5)
+                                })
+                                .bg(color),
+                        )
+                        .into_any_element()
+                }),
+                constrain_width: false,
+                measured_width: None,
+            })
+        }
+        InlayId::EditPrediction(_) | InlayId::Hint(_) | InlayId::DebuggerValue(_) => None,
     }
 }
 

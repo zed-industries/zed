@@ -4,16 +4,16 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{
     DisplayRow, EditorStyle, ToOffset, ToPoint,
-    display_map::{GridCell, HighlightedChunk, HorizontalViewport},
+    display_map::{GridCell, HighlightedChunk, HorizontalViewport, RulerShaper},
     scroll::{ScrollOffset, SharedScrollAnchor},
 };
-use gpui::{LineLayout, Pixels, WindowTextSystem};
+use gpui::{LineLayout, Pixels, TextAlign, WindowTextSystem};
 use language::{CharClassifier, Point};
 use multi_buffer::{MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 use workspace::searchable::Direction;
 
-use std::{borrow::Cow, ops::Range, sync::Arc};
+use std::{borrow::Cow, cell::OnceCell, ops::Range, sync::Arc};
 
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
@@ -34,6 +34,7 @@ pub struct TextLayoutDetails {
     pub visible_rows: Option<f64>,
     pub visible_columns: Option<f64>,
     pub vertical_scroll_margin: ScrollOffset,
+    pub(crate) grid_cell: OnceCell<GridCell>,
 }
 
 impl TextLayoutDetails {
@@ -42,17 +43,29 @@ impl TextLayoutDetails {
     }
 
     pub(crate) fn grid_cell(&self) -> GridCell {
-        GridCell::measure(
-            &self.text_system,
-            &self.editor_style.text.font(),
-            self.font_size(),
-        )
+        *self.grid_cell.get_or_init(|| {
+            GridCell::measure(
+                &self.text_system,
+                &self.editor_style.text.font(),
+                self.font_size(),
+            )
+        })
+    }
+
+    pub(crate) fn ruler_shaper(&self) -> RulerShaper {
+        RulerShaper {
+            text_system: self.text_system.clone(),
+            style: self.editor_style.clone(),
+            font_size: self.font_size(),
+        }
     }
 
     pub(crate) fn horizontal_viewport(&self, snapshot: &DisplaySnapshot) -> HorizontalViewport {
         HorizontalViewport {
             scroll_columns: self.scroll_anchor.scroll_position(snapshot).x,
             visible_columns: self.visible_columns.unwrap_or(0.),
+            text_align: TextAlign::Left,
+            content_width: Pixels::ZERO,
         }
     }
 
