@@ -237,7 +237,6 @@ impl DirectManipulationEventHandler {
             GestureKind::None => {}
         }
         self.gesture_kind.set(GestureKind::None);
-        self.touch_position.set(None);
     }
 
     fn gesture_position(&self) -> Point<Pixels> {
@@ -272,6 +271,10 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
 
         if current == DIRECTMANIPULATION_READY {
             self.end_gesture();
+            // INERTIA が新しい接触で中断される場合、RUNNING への遷移は新しい pointer
+            // position を既に記録している。そこで消すと次の scroll が cursor 位置へ
+            // 再 hit-test されるため、viewport が完全に idle になった時だけ消す。
+            self.touch_position.set(None);
 
             // Reset the content transform so the viewport is ready for the next gesture.
             // ZoomToRect triggers a second RUNNING -> READY cycle, so prevent an infinite loop here.
