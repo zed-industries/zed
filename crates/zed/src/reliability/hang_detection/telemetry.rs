@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use gpui::profiler::hang::{HangTrigger, SerializedHangIncident};
+use hdrhistogram::Histogram;
 
 /// Cap on incidents per telemetry event. When more accrue between sends, the
 /// ones with the largest stalls are kept and the incident counts still cover
@@ -16,6 +17,8 @@ pub struct Reporter {
     pending: Vec<SerializedHangIncident>,
     threshold_incidents: u64,
     budget_incidents: u64,
+    // Every incident's stall, in milliseconds; `pending` keeps only the largest.
+    stalls: Histogram<u64>,
 }
 
 impl Reporter {
@@ -25,6 +28,7 @@ impl Reporter {
             pending: Vec::new(),
             threshold_incidents: 0,
             budget_incidents: 0,
+            stalls: Histogram::new(3).expect("3 significant figures is a valid histogram"),
         }
     }
 
@@ -33,6 +37,7 @@ impl Reporter {
             HangTrigger::Threshold => self.threshold_incidents += 1,
             HangTrigger::Budget => self.budget_incidents += 1,
         }
+        self.stalls.record(incident.stall_ms as u64).ok();
         self.pending.push(incident);
         if self.pending.len() > MAX_REPORTED_INCIDENTS {
             self.pending
@@ -47,11 +52,12 @@ impl Reporter {
         }
     }
 
+    // Sends even without incidents so summing `report_window_seconds` gives the
+    // observed time when computing incident rates.
     pub fn send(&mut self) {
-        self.last_send = Instant::now();
-        if self.pending.is_empty() {
-            return;
-        }
+        let now = Instant::now();
+        let report_window_seconds = now.duration_since(self.last_send).as_secs();
+        self.last_send = now;
         let mut incidents = std::mem::take(&mut self.pending);
         incidents.sort_by(|a, b| b.stall_ms.total_cmp(&a.stall_ms));
         let threshold_incidents = std::mem::take(&mut self.threshold_incidents);
@@ -64,7 +70,13 @@ impl Reporter {
             incidents,
             total_incidents,
             threshold_incidents,
-            budget_incidents
+            budget_incidents,
+            stall_p50_ms = self.stalls.value_at_quantile(0.5),
+            stall_p95_ms = self.stalls.value_at_quantile(0.95),
+            stall_max_ms = self.stalls.max(),
+            report_window_seconds,
+            measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION
         );
+        self.stalls.reset();
     }
 }

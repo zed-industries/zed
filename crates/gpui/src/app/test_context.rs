@@ -3,10 +3,10 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
-    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, window::ElementArenaScope,
+    Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
+    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -129,6 +129,45 @@ impl TestAppContext {
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        Self::build_with_platform(
+            dispatcher,
+            fn_name,
+            background_executor,
+            foreground_executor,
+            platform,
+        )
+    }
+
+    /// Creates a test context backed by the provided platform text system.
+    pub fn build_with_text_system(
+        dispatcher: TestDispatcher,
+        fn_name: Option<&'static str>,
+        platform_text_system: Arc<dyn PlatformTextSystem>,
+    ) -> Self {
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let platform = TestPlatform::with_text_system(
+            background_executor.clone(),
+            foreground_executor.clone(),
+            platform_text_system,
+        );
+        Self::build_with_platform(
+            dispatcher,
+            fn_name,
+            background_executor,
+            foreground_executor,
+            platform,
+        )
+    }
+
+    fn build_with_platform(
+        dispatcher: TestDispatcher,
+        fn_name: Option<&'static str>,
+        background_executor: BackgroundExecutor,
+        foreground_executor: ForegroundExecutor,
+        platform: Rc<TestPlatform>,
+    ) -> Self {
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
@@ -167,6 +206,21 @@ impl TestAppContext {
     /// Checks whether there have been any new path prompts received by the platform.
     pub fn did_prompt_for_new_path(&self) -> bool {
         self.test_platform.did_prompt_for_new_path()
+    }
+
+    /// Returns the number of active idle sleep prevention tokens.
+    pub fn active_idle_sleep_preventions(&self) -> usize {
+        self.test_platform.active_idle_sleep_preventions()
+    }
+
+    /// Sets the delay for subsequent idle sleep prevention acquisitions.
+    pub fn set_idle_sleep_prevention_delay(&self, delay: Duration) {
+        self.test_platform.set_idle_sleep_prevention_delay(delay);
+    }
+
+    /// Makes subsequent idle sleep prevention acquisitions fail or succeed.
+    pub fn set_idle_sleep_prevention_fails(&self, fails: bool) {
+        self.test_platform.set_idle_sleep_prevention_fails(fails);
     }
 
     /// returns a new `TestAppContext` re-using the same executors to interleave tasks.
@@ -401,6 +455,26 @@ impl TestAppContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
+    }
+
+    /// Simulates a change in whether the platform is presenting the window.
+    pub fn simulate_window_visibility_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        visibility: WindowVisibility,
+    ) {
+        self.test_window(window_handle)
+            .simulate_visibility_change(visibility);
+    }
+
+    /// Simulates visible viewport changes without resizing the window's layout area.
+    pub fn simulate_window_visual_viewport_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        bounds: Bounds<Pixels>,
+    ) {
+        self.test_window(window_handle)
+            .simulate_visual_viewport_change(bounds);
     }
 
     /// Simulates the window moving to a display with a different scale factor.
@@ -892,6 +966,11 @@ impl VisualTestContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_resize(&self, size: Size<Pixels>) {
         self.simulate_window_resize(self.window, size)
+    }
+
+    /// Simulates a change in whether the platform is presenting this window.
+    pub fn simulate_visibility_change(&self, visibility: WindowVisibility) {
+        self.simulate_window_visibility_change(self.window, visibility);
     }
 
     /// Simulates the window moving to a display with a different scale factor.
