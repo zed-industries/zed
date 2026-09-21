@@ -2113,6 +2113,28 @@ pub struct WindowOptions {
 
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
+
+    /// How touch contacts are routed for this window.
+    ///
+    /// Most applications should use the default, which gives GPUI the raw touch
+    /// sequence. Windows applications which rely on the system press-and-hold
+    /// feedback and its release-time right click can opt into [`TouchInputMode::Native`].
+    pub touch_input_mode: TouchInputMode,
+}
+
+/// The owner of a window's touch-contact sequence.
+///
+/// This choice is fixed when a window is created. A platform must not send one
+/// contact through both routes: Windows explicitly leaves partial pointer
+/// consumption undefined.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TouchInputMode {
+    /// Deliver raw touch contacts to GPUI. This is the portable default.
+    #[default]
+    RawGpui,
+    /// Let the native platform own touch contacts and promote its native
+    /// gestures, including Windows press-and-hold, to platform input.
+    Native,
 }
 
 /// The variables that can be configured when creating a new window
@@ -2175,6 +2197,10 @@ pub struct WindowParams {
     pub app_id: Option<String>,
 
     pub window_min_size: Option<Size<Pixels>>,
+
+    /// See [`WindowOptions::touch_input_mode`]. Platforms that do not expose a
+    /// native touch route may ignore this value.
+    pub touch_input_mode: TouchInputMode,
 
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
@@ -2239,6 +2265,7 @@ impl Default for WindowOptions {
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,
+            touch_input_mode: TouchInputMode::default(),
         }
     }
 }

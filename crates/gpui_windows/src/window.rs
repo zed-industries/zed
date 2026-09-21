@@ -75,6 +75,10 @@ pub struct WindowsWindowState {
 
     pub click_state: ClickState,
     pub(crate) touch_state: RefCell<WindowsTouchState>,
+    /// Native mode gives Windows the entire contact sequence. It is immutable
+    /// for a window, so a contact can never switch owners mid-stream.
+    pub(crate) touch_input_mode: TouchInputMode,
+    pub(crate) native_pan_position: Cell<Option<Point<Pixels>>>,
     pub current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with [`WindowsPlatformState::cursor_visible`].
     pub cursor_visible: Arc<AtomicBool>,
@@ -122,6 +126,7 @@ impl WindowsWindowState {
         disable_direct_composition: bool,
         invalidate_devices: Arc<AtomicBool>,
         draw_coordinator: Rc<DrawCoordinator>,
+        touch_input_mode: TouchInputMode,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -179,6 +184,8 @@ impl WindowsWindowState {
             force_render_pending: Cell::new(false),
             click_state,
             touch_state: RefCell::new(WindowsTouchState::default()),
+            touch_input_mode,
+            native_pan_position: Cell::new(None),
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),
@@ -279,6 +286,7 @@ impl WindowsWindowInner {
             context.disable_direct_composition,
             context.invalidate_devices.clone(),
             context.draw_coordinator.clone(),
+            context.touch_input_mode,
         )?;
 
         Ok(Rc::new(Self {
@@ -428,6 +436,7 @@ struct WindowCreateContext {
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
     draw_coordinator: Rc<DrawCoordinator>,
+    touch_input_mode: TouchInputMode,
     parent_hwnd: Option<HWND>,
 }
 
@@ -541,6 +550,7 @@ impl WindowsWindow {
             directx_devices,
             invalidate_devices,
             draw_coordinator,
+            touch_input_mode: params.touch_input_mode,
             parent_hwnd,
         };
         let creation_result = unsafe {
