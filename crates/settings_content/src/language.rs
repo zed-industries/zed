@@ -656,13 +656,38 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub show_edit_predictions: Option<bool>,
-    /// Controls whether edit predictions are shown in the given language
-    /// scopes.
+    /// Disable edit predictions in these language scopes, such as "comment" and
+    /// "string".
     ///
-    /// Example: ["string", "comment"]
+    /// Default:
     ///
-    /// Default: []
-    pub edit_predictions_disabled_in: Option<Vec<String>>,
+    /// ```json
+    /// {
+    ///   "edit_predictions_disabled_in": []
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add scopes without repeating the inherited list. In project
+    /// settings, it extends the user or parent configuration value. In
+    /// language-specific settings, it extends the scopes inherited by that
+    /// language. Omit `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "edit_predictions_disabled_in": ["comment"],
+    ///   "languages": {
+    ///     "Go": {
+    ///       "edit_predictions_disabled_in": ["string", "..."]
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Inherited scopes are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    ///
+    /// Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+    pub edit_predictions_disabled_in: Option<SplicingVec>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
