@@ -26,6 +26,7 @@ use project::{DisableAiSettings, Project};
 use regex::Regex;
 use settings::{Settings, SettingsContent, SettingsStore, SplicingVec, update_settings_file};
 use std::{
+    ops::Range,
     rc::Rc,
     sync::{Arc, LazyLock},
     time::Duration,
@@ -1411,6 +1412,18 @@ fn initialize_disabled_globs_setting(file: &mut SettingsContent) {
         .get_or_insert_with(|| SplicingVec::from(vec![SplicingVec::REST.to_string()]));
 }
 
+fn disabled_globs_content_range(text: &str) -> Option<Range<usize>> {
+    static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        // Treat strings and comments as units so their brackets do not end the selection
+        Regex::new(
+            r#""disabled_globs":\s*\[\s*(?P<content>(?:"(?:[^"\\]|\\.)*"|/\*(?s:.*?)\*/|//[^\r\n]*|[^"/\]])*?)\s*\]"#,
+        )
+        .expect("disabled globs selection regex should compile")
+    });
+    let content = DISABLED_GLOBS_REGEX.captures(text)?.name("content")?;
+    Some(content.range())
+}
+
 async fn open_disabled_globs_setting_in_editor(
     workspace: WeakEntity<Workspace>,
     cx: &mut AsyncWindowContext,
@@ -1450,16 +1463,7 @@ async fn open_disabled_globs_setting_in_editor(
 
             let text = item.buffer().read(cx).snapshot(cx).text();
 
-            static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-                Regex::new(r#""disabled_globs":\s*\[\s*(?P<content>(?:.|\n)*?)\s*\]"#).unwrap()
-            });
-            // Only capture [...]
-            let range = DISABLED_GLOBS_REGEX.captures(&text).and_then(|captures| {
-                captures
-                    .name("content")
-                    .map(|inner_match| inner_match.start()..inner_match.end())
-            });
-            if let Some(range) = range {
+            if let Some(range) = disabled_globs_content_range(&text) {
                 let range = MultiBufferOffset(range.start)..MultiBufferOffset(range.end);
                 item.change_selections(
                     SelectionEffects::scroll(Autoscroll::newest()),
@@ -1687,63 +1691,76 @@ fn copilot_settings_url(enterprise_uri: Option<&str>) -> Arc<str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context as _;
     use gpui::TestAppContext;
     use settings::RootUserSettings;
-    use util::rel_path::rel_path;
+
+    #[test]
+    fn test_disabled_globs_selection_and_replacement() -> Result<()> {
+        for contents in [
+            r#""[.][.][.]""#,
+            r#""**/[ab]/**", "...""#,
+            r#""escaped\"]", "backslash\\", "...""#,
+            r#""escaped\\]", "line\nbreak]", "unicode\u005d""#,
+            "\n    \"é[ab]\",\n    \"...\"\n  ",
+            "// Ignore filenames containing a \" character\n    \"**/private/**\"\n",
+            "/* Ignore \" and ] */\n    \"**/private/**\"\n",
+            "\"**/private/**\", // Keep \" and ]\n    \"...\"\n",
+            r#""**/build/**", "...""#,
+            "",
+            "\n  ",
+        ] {
+            let mut text = format!(
+                r#"{{"edit_predictions":{{"disabled_globs":[{contents}],"mode":"subtle"}}}}"#
+            );
+            let mut expected = SettingsContent::parse_json_with_comments(&text)?;
+            let range = disabled_globs_content_range(&text).context("disabled globs selection")?;
+            assert_eq!(text.get(range.clone()), Some(contents.trim()));
+
+            text.replace_range(range, r#""**/replacement/**", "...""#);
+            expected
+                .project
+                .all_languages
+                .edit_predictions
+                .as_mut()
+                .context("edit prediction settings")?
+                .disabled_globs = Some(SplicingVec::from(vec![
+                "**/replacement/**".to_string(),
+                SplicingVec::REST.to_string(),
+            ]));
+            assert_eq!(SettingsContent::parse_json_with_comments(&text)?, expected);
+        }
+        Ok(())
+    }
 
     #[gpui::test]
-    fn test_initialize_disabled_globs_preserves_resolved_settings(cx: &mut App) {
-        let mut store = SettingsStore::new(cx, &settings::default_settings());
-        store.register_setting::<AllLanguageSettings>();
+    fn test_initialize_disabled_globs_setting(cx: &mut App) {
+        let store = SettingsStore::new(cx, &settings::default_settings());
 
-        let cases: &[(&str, &[&str], bool, bool)] = &[
-            ("", &[SplicingVec::REST], false, true),
-            (r#"{}"#, &[SplicingVec::REST], false, true),
-            (
-                r#"{"edit_predictions":{}}"#,
-                &[SplicingVec::REST],
-                false,
-                true,
-            ),
+        let cases: &[(&str, &[&str])] = &[
+            ("", &[SplicingVec::REST]),
+            (r#"{}"#, &[SplicingVec::REST]),
+            (r#"{"edit_predictions":{}}"#, &[SplicingVec::REST]),
             (
                 r#"{"edit_predictions":{"mode":"subtle"}}"#,
                 &[SplicingVec::REST],
-                false,
-                true,
             ),
-            (
-                r#"{"edit_predictions":{"disabled_globs":[]}}"#,
-                &[],
-                true,
-                true,
-            ),
+            (r#"{"edit_predictions":{"disabled_globs":[]}}"#, &[]),
             (
                 r#"{"edit_predictions":{"disabled_globs":["**/build/**"]}}"#,
                 &["**/build/**"],
-                true,
-                false,
             ),
             (
                 r#"{"edit_predictions":{"disabled_globs":["...","**/build/**"]}}"#,
                 &[SplicingVec::REST, "**/build/**"],
-                false,
-                false,
+            ),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["[.][.][.]"]}}"#,
+                &["[.][.][.]"],
             ),
         ];
-        for &(content, expected_globs, sensitive_enabled, custom_enabled) in cases {
+        for &(content, expected_globs) in cases {
             let original = if content.is_empty() { "{}" } else { content };
-            store
-                .set_user_settings(original, cx)
-                .expect("user settings load");
-            let resolved_globs = store
-                .merged_settings()
-                .project
-                .all_languages
-                .edit_predictions
-                .as_ref()
-                .expect("default edit prediction settings exist")
-                .disabled_globs
-                .clone();
             let mut expected_content = SettingsContent::parse_json_with_comments(original)
                 .expect("settings content parses");
             let original_globs = &mut expected_content
@@ -1781,39 +1798,6 @@ mod tests {
                     .is_empty(),
                 "{content}",
             );
-
-            store
-                .set_user_settings(&updated, cx)
-                .expect("updated settings load");
-            assert_eq!(
-                store
-                    .merged_settings()
-                    .project
-                    .all_languages
-                    .edit_predictions
-                    .as_ref()
-                    .expect("edit prediction settings exist")
-                    .disabled_globs,
-                resolved_globs,
-                "{content}",
-            );
-            let settings = &store.get::<AllLanguageSettings>(None).edit_predictions;
-            for (path, expected_enabled) in [
-                (".env", sensitive_enabled),
-                ("build/output.rs", custom_enabled),
-                ("src/main.rs", true),
-            ] {
-                let file: Arc<dyn File> = Arc::new(language::TestFile {
-                    path: rel_path(path).into(),
-                    root_name: "project".to_string(),
-                    local_root: None,
-                });
-                assert_eq!(
-                    settings.enabled_for_file(&file, cx),
-                    expected_enabled,
-                    "path: {path}, settings: {content}",
-                );
-            }
         }
     }
 

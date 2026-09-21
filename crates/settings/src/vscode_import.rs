@@ -686,14 +686,8 @@ impl VsCodeSettings {
                 disabled_globs
                     .iter()
                     .filter_map(|glob| glob.as_str())
-                    .map(|glob| {
-                        // Preserve literal imported patterns instead of interpreting them as inheritance
-                        if glob == SplicingVec::REST {
-                            "[.][.][.]".to_string()
-                        } else {
-                            glob.to_string()
-                        }
-                    })
+                    .filter(|glob| *glob != SplicingVec::REST)
+                    .map(str::to_owned)
                     .collect::<Vec<_>>(),
             )),
             ..Default::default()
@@ -1254,10 +1248,9 @@ mod tests {
                 serde_json::json!(["**/build/**", false, null, 1, {}, []]),
                 serde_json::json!(["**/build/**"]),
             ),
-            (serde_json::json!(["..."]), serde_json::json!(["[.][.][.]"])),
             (
                 serde_json::json!(["...", "**/build/**", false]),
-                serde_json::json!(["[.][.][.]", "**/build/**"]),
+                serde_json::json!(["**/build/**"]),
             ),
         ] {
             let content = serde_json::json!({
@@ -1294,6 +1287,8 @@ mod tests {
         };
         for content in [
             r#"{"cursor.general.globalCursorIgnoreList": "**/build/**"}"#,
+            r#"{"cursor.general.globalCursorIgnoreList": ["..."]}"#,
+            r#"{"cursor.general.globalCursorIgnoreList": ["...", false, null]}"#,
             r#"{"cursor.general.globalCursorIgnoreList": []}"#,
             r#"{"cursor.general.globalCursorIgnoreList": [false, null, 1, {}, []]}"#,
             r#"{"cursor.general.globalCursorIgnoreList": null}"#,
