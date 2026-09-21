@@ -265,6 +265,7 @@ impl TerminalInlineAssistant {
 
             LanguageModelRequest {
                 thread_id: Some(session_id),
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::TerminalInlineAssist),
                 messages: vec![request_message],
@@ -276,6 +277,7 @@ impl TerminalInlineAssistant {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             }
         }))
     }

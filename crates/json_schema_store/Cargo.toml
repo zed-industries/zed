@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/json_schema_store.rs"
+doctest = false
 
 [features]
 default = []
