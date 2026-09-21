@@ -7,7 +7,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
 use crate::{
-    DelayMs, DocumentFoldingRanges, DocumentSymbols, ExtendingSet, SemanticTokens, merge_from,
+    DelayMs, DocumentFoldingRanges, DocumentSymbols, ExtendingSet, SemanticTokens, SplicingVec,
+    merge_from,
 };
 
 /// The state of the modifier keys at some point in time
@@ -132,10 +133,29 @@ impl EditPredictionProvider {
 pub struct EditPredictionSettingsContent {
     /// Determines which edit prediction provider to use.
     pub provider: Option<EditPredictionProvider>,
-    /// A list of globs representing files that edit predictions should be disabled for.
-    /// This list adds to a pre-existing, sensible default set of globs.
-    /// Any additional ones you add are combined with them.
-    pub disabled_globs: Option<Vec<String>>,
+    /// Disable edit predictions for files matching these glob patterns.
+    ///
+    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "edit_predictions": {
+    ///     "disabled_globs": ["**/build/**", "..."]
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    ///
+    /// Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+    ///
+    /// Relative patterns are matched against paths relative to the worktree root.
+    /// Absolute patterns are matched against absolute paths. A leading `~` is
+    /// expanded to your home folder.
+    pub disabled_globs: Option<SplicingVec>,
     /// The mode used to display edit predictions in the buffer.
     /// Provider support required.
     pub mode: Option<EditPredictionsMode>,
@@ -1300,6 +1320,91 @@ mod test {
     use crate::{ParseStatus, fallible_options, merge_from::MergeFrom};
 
     use super::*;
+
+    fn edit_prediction_settings(patterns: &[&str]) -> EditPredictionSettingsContent {
+        EditPredictionSettingsContent {
+            disabled_globs: Some(SplicingVec::from(
+                patterns
+                    .iter()
+                    .map(|pattern| pattern.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_disabled_globs_splice_each_layer() {
+        let mut settings = edit_prediction_settings(&["**/.env*"]);
+        settings.merge_from(&edit_prediction_settings(&[
+            "**/user/**",
+            SplicingVec::REST,
+        ]));
+        settings.merge_from(&edit_prediction_settings(&[
+            "**/project/**",
+            SplicingVec::REST,
+        ]));
+        settings.merge_from(&edit_prediction_settings(&[
+            "**/child/**",
+            SplicingVec::REST,
+        ]));
+        assert_eq!(
+            settings.disabled_globs,
+            edit_prediction_settings(&["**/child/**", "**/project/**", "**/user/**", "**/.env*",])
+                .disabled_globs,
+        );
+    }
+
+    #[test]
+    fn test_disabled_globs_replace_clear_and_inherit() {
+        let mut settings = edit_prediction_settings(&["**/.env*"]);
+        settings.merge_from(&edit_prediction_settings(&["**/build/**"]));
+        assert_eq!(
+            settings.disabled_globs,
+            edit_prediction_settings(&["**/build/**"]).disabled_globs,
+        );
+        settings.merge_from(&EditPredictionSettingsContent::default());
+        assert_eq!(
+            settings.disabled_globs,
+            edit_prediction_settings(&["**/build/**"]).disabled_globs,
+        );
+        settings.merge_from(&edit_prediction_settings(&[]));
+        assert_eq!(settings.disabled_globs, Some(SplicingVec::default()));
+        settings.merge_from(&edit_prediction_settings(&[SplicingVec::REST]));
+        assert_eq!(settings.disabled_globs, Some(SplicingVec::default()));
+    }
+
+    #[test]
+    fn test_disabled_globs_splice_preserves_first_occurrence() {
+        let inherited = edit_prediction_settings(&["**/.env*", "**/user/**"]);
+        for (patterns, expected) in [
+            (
+                vec![SplicingVec::REST, "**/build/**"],
+                vec!["**/.env*", "**/user/**", "**/build/**"],
+            ),
+            (
+                vec!["**/build/**", SplicingVec::REST],
+                vec!["**/build/**", "**/.env*", "**/user/**"],
+            ),
+            (
+                vec![
+                    "**/user/**",
+                    SplicingVec::REST,
+                    "**/build/**",
+                    SplicingVec::REST,
+                ],
+                vec!["**/user/**", "**/.env*", "**/build/**"],
+            ),
+            (vec!["**/build/**", "**/build/**"], vec!["**/build/**"]),
+        ] {
+            let mut settings = inherited.clone();
+            settings.merge_from(&edit_prediction_settings(&patterns));
+            assert_eq!(
+                settings.disabled_globs,
+                edit_prediction_settings(&expected).disabled_globs,
+            );
+        }
+    }
 
     #[test]
     fn test_formatter_deserialization() {

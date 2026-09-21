@@ -979,7 +979,7 @@ mod tests {
             settings
                 .edit_predictions
                 .get_or_insert(Default::default())
-                .disabled_globs = Some(vec![".env*".to_string()]);
+                .disabled_globs = Some(vec![".env*".to_string()].into());
         });
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);

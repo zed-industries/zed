@@ -24,7 +24,7 @@ use language::{
 };
 use project::{DisableAiSettings, Project};
 use regex::Regex;
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{Settings, SettingsContent, SettingsStore, SplicingVec, update_settings_file};
 use std::{
     rc::Rc,
     sync::{Arc, LazyLock},
@@ -1402,6 +1402,15 @@ impl StatusItemView for EditPredictionButton {
     }
 }
 
+fn initialize_disabled_globs_setting(file: &mut SettingsContent) {
+    file.project
+        .all_languages
+        .edit_predictions
+        .get_or_insert_with(Default::default)
+        .disabled_globs
+        .get_or_insert_with(|| SplicingVec::from(vec![SplicingVec::REST.to_string()]));
+}
+
 async fn open_disabled_globs_setting_in_editor(
     workspace: WeakEntity<Workspace>,
     cx: &mut AsyncWindowContext,
@@ -1423,16 +1432,8 @@ async fn open_disabled_globs_setting_in_editor(
 
             let settings = cx.global::<SettingsStore>();
 
-            // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
             let Some(edits) = settings
-                .edits_for_update(&text, |file| {
-                    file.project
-                        .all_languages
-                        .edit_predictions
-                        .get_or_insert_with(Default::default)
-                        .disabled_globs
-                        .get_or_insert_with(Vec::new);
-                })
+                .edits_for_update(&text, initialize_disabled_globs_setting)
                 .log_err()
             else {
                 return;
@@ -1687,6 +1688,134 @@ fn copilot_settings_url(enterprise_uri: Option<&str>) -> Arc<str> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use settings::RootUserSettings;
+    use util::rel_path::rel_path;
+
+    #[gpui::test]
+    fn test_initialize_disabled_globs_preserves_resolved_settings(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
+
+        let cases: &[(&str, &[&str], bool, bool)] = &[
+            ("", &[SplicingVec::REST], false, true),
+            (r#"{}"#, &[SplicingVec::REST], false, true),
+            (
+                r#"{"edit_predictions":{}}"#,
+                &[SplicingVec::REST],
+                false,
+                true,
+            ),
+            (
+                r#"{"edit_predictions":{"mode":"subtle"}}"#,
+                &[SplicingVec::REST],
+                false,
+                true,
+            ),
+            (
+                r#"{"edit_predictions":{"disabled_globs":[]}}"#,
+                &[],
+                true,
+                true,
+            ),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["**/build/**"]}}"#,
+                &["**/build/**"],
+                true,
+                false,
+            ),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["...","**/build/**"]}}"#,
+                &[SplicingVec::REST, "**/build/**"],
+                false,
+                false,
+            ),
+        ];
+        for &(content, expected_globs, sensitive_enabled, custom_enabled) in cases {
+            let original = if content.is_empty() { "{}" } else { content };
+            store
+                .set_user_settings(original, cx)
+                .expect("user settings load");
+            let resolved_globs = store
+                .merged_settings()
+                .project
+                .all_languages
+                .edit_predictions
+                .as_ref()
+                .expect("default edit prediction settings exist")
+                .disabled_globs
+                .clone();
+            let mut expected_content = SettingsContent::parse_json_with_comments(original)
+                .expect("settings content parses");
+            let original_globs = &mut expected_content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_with(Default::default)
+                .disabled_globs;
+            let already_configured = original_globs.is_some();
+            *original_globs = Some(SplicingVec::from(
+                expected_globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            ));
+
+            let edits = store
+                .edits_for_update(content, initialize_disabled_globs_setting)
+                .expect("settings edits are generated");
+            assert_eq!(edits.is_empty(), already_configured, "{content}");
+            let mut updated = content.to_string();
+            for (range, replacement) in edits {
+                updated.replace_range(range, &replacement);
+            }
+            assert_eq!(
+                SettingsContent::parse_json_with_comments(&updated)
+                    .expect("updated settings parse"),
+                expected_content,
+                "{content}",
+            );
+            assert!(
+                store
+                    .edits_for_update(&updated, initialize_disabled_globs_setting)
+                    .expect("repeated settings edits are generated")
+                    .is_empty(),
+                "{content}",
+            );
+
+            store
+                .set_user_settings(&updated, cx)
+                .expect("updated settings load");
+            assert_eq!(
+                store
+                    .merged_settings()
+                    .project
+                    .all_languages
+                    .edit_predictions
+                    .as_ref()
+                    .expect("edit prediction settings exist")
+                    .disabled_globs,
+                resolved_globs,
+                "{content}",
+            );
+            let settings = &store.get::<AllLanguageSettings>(None).edit_predictions;
+            for (path, expected_enabled) in [
+                (".env", sensitive_enabled),
+                ("build/output.rs", custom_enabled),
+                ("src/main.rs", true),
+            ] {
+                let file: Arc<dyn File> = Arc::new(language::TestFile {
+                    path: rel_path(path).into(),
+                    root_name: "project".to_string(),
+                    local_root: None,
+                });
+                assert_eq!(
+                    settings.enabled_for_file(&file, cx),
+                    expected_enabled,
+                    "path: {path}, settings: {content}",
+                );
+            }
+        }
+    }
 
     #[gpui::test]
     async fn test_copilot_settings_url_with_enterprise_uri(cx: &mut TestAppContext) {

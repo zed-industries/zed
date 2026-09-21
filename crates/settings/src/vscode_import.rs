@@ -682,13 +682,20 @@ impl VsCodeSettings {
             .as_array()?;
 
         skip_default(EditPredictionSettingsContent {
-            disabled_globs: skip_default(
+            disabled_globs: skip_default(SplicingVec::from(
                 disabled_globs
                     .iter()
                     .filter_map(|glob| glob.as_str())
-                    .map(|s| s.to_string())
-                    .collect(),
-            ),
+                    .map(|glob| {
+                        // Preserve literal imported patterns instead of interpreting them as inheritance
+                        if glob == SplicingVec::REST {
+                            "[.][.][.]".to_string()
+                        } else {
+                            glob.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )),
             ..Default::default()
         })
     }
@@ -1233,6 +1240,73 @@ mod tests {
             .unwrap()
             .settings_content()
             .reduce_motion
+    }
+
+    #[test]
+    fn test_import_disabled_globs_replaces_inherited_patterns() -> Result<()> {
+        for (ignore_list, expected) in [
+            (serde_json::json!([""]), serde_json::json!([""])),
+            (
+                serde_json::json!(["**/build/**", "**/cache/**"]),
+                serde_json::json!(["**/build/**", "**/cache/**"]),
+            ),
+            (
+                serde_json::json!(["**/build/**", false, null, 1, {}, []]),
+                serde_json::json!(["**/build/**"]),
+            ),
+            (serde_json::json!(["..."]), serde_json::json!(["[.][.][.]"])),
+            (
+                serde_json::json!(["...", "**/build/**", false]),
+                serde_json::json!(["[.][.][.]", "**/build/**"]),
+            ),
+        ] {
+            let content = serde_json::json!({
+                "cursor.general.globalCursorIgnoreList": ignore_list,
+            });
+            let imported =
+                VsCodeSettings::from_str(&content.to_string(), VsCodeSettingsSource::Cursor)?
+                    .settings_content();
+            let imported = imported
+                .project
+                .all_languages
+                .edit_predictions
+                .context("imported edit prediction settings")?;
+            assert_eq!(serde_json::to_value(&imported.disabled_globs)?, expected);
+
+            let mut inherited = EditPredictionSettingsContent {
+                disabled_globs: Some(SplicingVec::from(vec!["**/inherited/**".to_string()])),
+                ..Default::default()
+            };
+            inherited.merge_from(&imported);
+            assert_eq!(serde_json::to_value(&inherited.disabled_globs)?, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_import_disabled_globs_omits_empty_results() -> Result<()> {
+        let inherited = AllLanguageSettingsContent {
+            edit_predictions: Some(EditPredictionSettingsContent {
+                disabled_globs: Some(SplicingVec::from(vec!["**/inherited/**".to_string()])),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        for content in [
+            r#"{"cursor.general.globalCursorIgnoreList": "**/build/**"}"#,
+            r#"{"cursor.general.globalCursorIgnoreList": []}"#,
+            r#"{"cursor.general.globalCursorIgnoreList": [false, null, 1, {}, []]}"#,
+            r#"{"cursor.general.globalCursorIgnoreList": null}"#,
+            r#"{}"#,
+        ] {
+            let imported =
+                VsCodeSettings::from_str(content, VsCodeSettingsSource::Cursor)?.settings_content();
+            assert_eq!(imported.project.all_languages.edit_predictions, None);
+            let mut unchanged = inherited.clone();
+            unchanged.merge_from(&imported.project.all_languages);
+            assert_eq!(unchanged.edit_predictions, inherited.edit_predictions);
+        }
+        Ok(())
     }
 
     #[test]
