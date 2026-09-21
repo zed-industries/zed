@@ -1443,7 +1443,7 @@ fn node_or_native_command(
         Ok(metadata) if metadata.is_file() => {
             std::fs::File::open(&executable).and_then(has_native_executable_header)
         }
-        // Node can resolve directory entry points or add a missing extension.
+        // Let Node resolve directory entry points and omitted extensions (e.g. `.js`).
         Ok(_) => Ok(false),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
@@ -1487,7 +1487,7 @@ fn has_native_executable_header(mut reader: impl io::Read + io::Seek) -> io::Res
         return Ok(NATIVE_EXECUTABLE_HEADERS.contains(&magic));
     }
 
-    // PE only guarantees "MZ", which can also begin valid JavaScript (`MZ = 1;`).
+    // PE's initial "MZ" can also begin valid JavaScript (`MZ = 1;`).
     // Confirm the "PE\0\0" signature at the offset stored at 0x3c (`e_lfanew`).
     reader.seek(io::SeekFrom::Start(0x3c))?;
     let Some(signature_offset) = read_four_bytes(&mut reader)? else {
