@@ -1580,6 +1580,7 @@ impl Editor {
                         // ToggleComments with `comment_empty_lines: true` would add comment to the block,
                         // even though it should be uncommented
                         if !is_blank {
+                            // A matching prefix may open non-comment syntax, such as a PHP attribute.
                             if prefix_range.is_empty()
                                 || is_outside_comment(
                                     snapshot.language_scope_at(prefix_range.start),
