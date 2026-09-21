@@ -677,6 +677,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Mac, |job| {
+                job.add_env(("RUST_LIB_BACKTRACE", 0))
+            })
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
