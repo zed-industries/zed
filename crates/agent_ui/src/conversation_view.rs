@@ -9526,6 +9526,108 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_display_terminal_does_not_move_to_background_when_tool_completes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for (exit_status, failure_selector) in [
+            (
+                acp::TerminalExitStatus::new().exit_code(7),
+                "terminal-tool-failed-Some(7)",
+            ),
+            (
+                acp::TerminalExitStatus::new().signal("SIGTERM"),
+                "terminal-tool-failed-None",
+            ),
+            (
+                acp::TerminalExitStatus::new().exit_code(u32::MAX),
+                "terminal-tool-failed-Some(4294967295)",
+            ),
+        ] {
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+            add_to_workspace_with_size(conversation_view.clone(), true, cx);
+            let thread_view = active_thread(&conversation_view, cx);
+            let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+            let terminal_id = acp::TerminalId::new("provider-terminal");
+            let tool_id = acp::ToolCallId::new("provider-tool");
+            let terminal = cx.new(|cx| {
+                terminal::TerminalBuilder::new_display_only(
+                    Default::default(),
+                    terminal::terminal_settings::AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    util::paths::PathStyle::local(),
+                )
+                .subscribe(cx)
+            });
+            thread.update(cx, |thread, cx| {
+                thread.on_terminal_provider_event(
+                    acp_thread::TerminalProviderEvent::Created {
+                        terminal_id: terminal_id.clone(),
+                        label: "provider command".into(),
+                        cwd: None,
+                        output_byte_limit: None,
+                        terminal,
+                    },
+                    cx,
+                );
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::ToolCall(
+                            acp::ToolCall::new(tool_id.clone(), "provider command")
+                                .kind(acp::ToolKind::Execute)
+                                .status(acp::ToolCallStatus::InProgress)
+                                .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                                    terminal_id.clone(),
+                                ))]),
+                        ),
+                        cx,
+                    )
+                    .expect("terminal tool call");
+            });
+            cx.run_until_parked();
+            let entry_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
+            entry_state.update(cx, |state, cx| {
+                state.expand_tool_call(tool_id.clone());
+                cx.notify();
+            });
+            assert!(cx.debug_bounds("ICON-Stop").is_none());
+            thread.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                            tool_id.clone(),
+                            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
+                        )),
+                        cx,
+                    )
+                    .expect("tool completion");
+            });
+            cx.run_until_parked();
+            assert!(entry_state.read_with(cx, |state, _| state.is_tool_call_expanded(&tool_id)));
+            assert!(cx.debug_bounds(failure_selector).is_none());
+            thread.update(cx, |thread, cx| {
+                thread.on_terminal_provider_event(
+                    acp_thread::TerminalProviderEvent::Exit {
+                        terminal_id,
+                        status: exit_status,
+                    },
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            assert!(entry_state.read_with(cx, |state, _| state.is_tool_call_expanded(&tool_id)));
+            assert!(
+                cx.debug_bounds(failure_selector).is_some(),
+                "expected rendered header metadata: {failure_selector}",
+            );
+            assert!(cx.debug_bounds("ICON-Stop").is_none());
+        }
+    }
+
+    #[gpui::test]
     async fn test_tool_permission_buttons_terminal_with_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
