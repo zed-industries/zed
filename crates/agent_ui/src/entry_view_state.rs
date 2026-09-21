@@ -643,6 +643,7 @@ fn create_terminal(
     cx: &mut App,
 ) -> Entity<TerminalView> {
     cx.new(|cx| {
+        let read_only = !terminal.read(cx).is_process_backed();
         let mut view = TerminalView::new(
             terminal.read(cx).inner().clone(),
             workspace,
@@ -650,7 +651,8 @@ fn create_terminal(
             project,
             window,
             cx,
-        );
+        )
+        .with_read_only(read_only);
         view.set_embedded_mode(Some(1000), cx);
         view
     })
