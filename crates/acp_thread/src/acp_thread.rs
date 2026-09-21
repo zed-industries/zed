@@ -796,7 +796,6 @@ impl ContextCompaction {
         &mut self,
         update: acp::CompactionUpdate,
         language_registry: &Arc<LanguageRegistry>,
-        path_style: PathStyle,
         cx: &mut App,
     ) {
         self.status = update.status.into();
@@ -806,7 +805,7 @@ impl ContextCompaction {
             MaybeUndefined::Value(blocks) => {
                 self.summary.clear();
                 for block in blocks {
-                    self.append_summary(block, language_registry, path_style, cx);
+                    self.append_summary(block, language_registry, cx);
                 }
             }
         }
@@ -827,7 +826,6 @@ impl ContextCompaction {
         &mut self,
         content: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
-        path_style: PathStyle,
         cx: &mut App,
     ) {
         if let acp::ContentBlock::Text(text) = &content
@@ -835,12 +833,8 @@ impl ContextCompaction {
         {
             markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
         } else {
-            self.summary.push(ContentBlock::new_output(
-                content,
-                language_registry,
-                path_style,
-                cx,
-            ));
+            self.summary
+                .push(ContentBlock::new_output(content, language_registry, cx));
         }
     }
 }
@@ -971,7 +965,6 @@ impl ToolCall {
         tool_call: acp::ToolCall,
         status: ToolCallStatus,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
@@ -979,13 +972,9 @@ impl ToolCall {
             Some(SharedString::from(tool_call.title)).filter(|title| !title.trim().is_empty());
         let mut content = Vec::with_capacity(tool_call.content.len());
         for item in tool_call.content {
-            if let Some(item) = ToolCallContent::from_acp(
-                item,
-                language_registry.clone(),
-                path_style,
-                terminals,
-                cx,
-            )? {
+            if let Some(item) =
+                ToolCallContent::from_acp(item, language_registry.clone(), terminals, cx)?
+            {
                 content.push(item);
             }
         }
@@ -1081,7 +1070,6 @@ impl ToolCall {
         fields: acp::ToolCallUpdateFields,
         meta: Option<acp::Meta>,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
@@ -1173,19 +1161,15 @@ impl ToolCall {
             // Reuse existing content if we can
             for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
                 let valid_content =
-                    old.update_from_acp(new, language_registry.clone(), path_style, terminals, cx)?;
+                    old.update_from_acp(new, language_registry.clone(), terminals, cx)?;
                 if !valid_content {
                     new_content_len -= 1;
                 }
             }
             for new in content {
-                if let Some(new) = ToolCallContent::from_acp(
-                    new,
-                    language_registry.clone(),
-                    path_style,
-                    terminals,
-                    cx,
-                )? {
+                if let Some(new) =
+                    ToolCallContent::from_acp(new, language_registry.clone(), terminals, cx)?
+                {
                     self.content.push(new);
                 } else {
                     new_content_len -= 1;
@@ -1568,12 +1552,8 @@ impl MessageContent {
                 return;
             }
         }
-        self.blocks.push(ContentBlock::new_output(
-            block,
-            language_registry,
-            path_style,
-            cx,
-        ));
+        self.blocks
+            .push(ContentBlock::new_output(block, language_registry, cx));
     }
 
     fn append_prompt(
@@ -1626,7 +1606,6 @@ impl ContentBlock {
     pub fn new_output(
         block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
-        _path_style: PathStyle,
         cx: &mut App,
     ) -> Self {
         match block {
@@ -2015,19 +1994,13 @@ impl ToolCallContent {
     pub fn from_acp(
         content: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Option<Self>> {
         match content {
-            acp::ToolCallContent::Content(acp::Content { content, .. }) => {
-                Ok(Some(Self::ContentBlock(ContentBlock::new_output(
-                    content,
-                    &language_registry,
-                    path_style,
-                    cx,
-                ))))
-            }
+            acp::ToolCallContent::Content(acp::Content { content, .. }) => Ok(Some(
+                Self::ContentBlock(ContentBlock::new_output(content, &language_registry, cx)),
+            )),
             acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
                     diff.path.to_string_lossy().into_owned(),
@@ -2050,7 +2023,6 @@ impl ToolCallContent {
         &mut self,
         new: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<bool> {
@@ -2076,7 +2048,7 @@ impl ToolCallContent {
             _ => true,
         };
 
-        if let Some(update) = Self::from_acp(new, language_registry, path_style, terminals, cx)? {
+        if let Some(update) = Self::from_acp(new, language_registry, terminals, cx)? {
             if needs_update {
                 *self = update;
             }
@@ -3282,7 +3254,6 @@ impl AcpThread {
     ) {
         let id = ContextCompactionId(update.compaction_id.0.clone());
         let language_registry = self.project.read(cx).languages().clone();
-        let path_style = self.project.read(cx).path_style(cx);
 
         if let Some((entry_index, compaction)) =
             self.entries
@@ -3296,7 +3267,7 @@ impl AcpThread {
                     _ => None,
                 })
         {
-            compaction.apply_update(update, &language_registry, path_style, cx);
+            compaction.apply_update(update, &language_registry, cx);
             cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
             return;
         }
@@ -3307,7 +3278,7 @@ impl AcpThread {
             error: None,
             summary: Vec::new(),
         };
-        compaction.apply_update(update, &language_registry, path_style, cx);
+        compaction.apply_update(update, &language_registry, cx);
         self.push_entry(AgentThreadEntry::ContextCompaction(compaction), cx);
     }
 
@@ -3317,7 +3288,6 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
-        let path_style = self.project.read(cx).path_style(cx);
         if let Some((entry_index, compaction)) =
             self.entries
                 .iter_mut()
@@ -3333,7 +3303,7 @@ impl AcpThread {
                     _ => None,
                 })
         {
-            compaction.append_summary(chunk.content, &language_registry, path_style, cx);
+            compaction.append_summary(chunk.content, &language_registry, cx);
             cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
         }
     }
@@ -3344,7 +3314,6 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
-        let path_style = self.project.read(cx).path_style(cx);
         let Some((ix, compaction)) =
             self.entries
                 .iter_mut()
@@ -3362,7 +3331,6 @@ impl AcpThread {
             compaction.append_summary(
                 acp::ContentBlock::Text(acp::TextContent::new(update.summary_delta)),
                 &language_registry,
-                path_style,
                 cx,
             );
         }
@@ -3425,7 +3393,6 @@ impl AcpThread {
     ) -> Result<()> {
         let update = update.into();
         let languages = self.project.read(cx).languages().clone();
-        let path_style = self.project.read(cx).path_style(cx);
 
         let ix = match self.index_for_tool_call(update.id()) {
             Some(ix) => ix,
@@ -3439,7 +3406,6 @@ impl AcpThread {
                     content: vec![ToolCallContent::ContentBlock(ContentBlock::new_output(
                         "Tool call not found".into(),
                         &languages,
-                        PathStyle::local(),
                         cx,
                     ))],
                     status: ToolCallStatus::Failed,
@@ -3465,14 +3431,9 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                if let Err(error) = call.update_fields(
-                    update.fields,
-                    update.meta,
-                    languages,
-                    path_style,
-                    &self.terminals,
-                    cx,
-                ) {
+                if let Err(error) =
+                    call.update_fields(update.fields, update.meta, languages, &self.terminals, cx)
+                {
                     cx.emit(AcpThreadEvent::EntryUpdated(ix));
                     return Err(error);
                 }
@@ -3514,7 +3475,6 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
         let language_registry = self.project.read(cx).languages().clone();
-        let path_style = self.project.read(cx).path_style(cx);
         let id = update.tool_call_id.clone();
 
         let agent_telemetry_id = self.connection().telemetry_id();
@@ -3544,7 +3504,6 @@ impl AcpThread {
                 update.fields,
                 update.meta,
                 language_registry,
-                path_style,
                 &self.terminals,
                 cx,
             ) {
@@ -3559,7 +3518,6 @@ impl AcpThread {
                 update.try_into()?,
                 status,
                 language_registry,
-                path_style,
                 &self.terminals,
                 cx,
             )?;
@@ -5638,8 +5596,7 @@ mod tests {
                 ),
             ));
 
-            let block =
-                ContentBlock::new_output(content, &language_registry, PathStyle::local(), cx);
+            let block = ContentBlock::new_output(content, &language_registry, cx);
 
             let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
                 panic!("expected embedded resource block, got {block:?}");
@@ -5673,7 +5630,6 @@ mod tests {
                     ),
                 )),
                 &language_registry,
-                PathStyle::local(),
                 cx,
             );
             assert_eq!(untyped.to_markdown(cx), "```\n# plain preview\n```");
@@ -5703,7 +5659,6 @@ mod tests {
             let block = ContentBlock::new_output(
                 image_blob,
                 &language_registry,
-                PathStyle::local(),
                 cx,
             );
 
@@ -5736,8 +5691,7 @@ mod tests {
                 ),
             ));
 
-            let block =
-                ContentBlock::new_output(archive_blob, &language_registry, PathStyle::local(), cx);
+            let block = ContentBlock::new_output(archive_blob, &language_registry, cx);
 
             let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
                 panic!("expected embedded resource block, got {block:?}");
@@ -5759,12 +5713,7 @@ mod tests {
                         .mime_type("image/png".to_string()),
                 ),
             ));
-            let invalid = ContentBlock::new_output(
-                invalid_image_blob,
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
+            let invalid = ContentBlock::new_output(invalid_image_blob, &language_registry, cx);
             let ContentBlock::EmbeddedResource { resource, markdown } = &invalid else {
                 panic!("expected embedded resource block, got {invalid:?}");
             };
@@ -7502,7 +7451,6 @@ mod tests {
                     call,
                     ToolCallStatus::Pending,
                     languages.clone(),
-                    PathStyle::local(),
                     &HashMap::default(),
                     cx,
                 )
@@ -7543,7 +7491,6 @@ mod tests {
                 acp::ToolCall::new("tool", ""),
                 ToolCallStatus::Pending,
                 languages.clone(),
-                PathStyle::local(),
                 &HashMap::default(),
                 cx,
             )
@@ -7599,15 +7546,8 @@ mod tests {
             ),
         ] {
             cx.update(|cx| {
-                call.update_fields(
-                    update,
-                    None,
-                    languages.clone(),
-                    PathStyle::local(),
-                    &HashMap::default(),
-                    cx,
-                )
-                .expect("tool label update should apply");
+                call.update_fields(update, None, languages.clone(), &HashMap::default(), cx)
+                    .expect("tool label update should apply");
             });
             cx.run_until_parked();
             cx.read(|cx| {
