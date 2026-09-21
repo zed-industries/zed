@@ -237,13 +237,27 @@ pub async fn open_remote_project(
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
             });
-            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+            cx.new(|cx| {
+                let mut multi_workspace = MultiWorkspace::new(workspace, window, cx);
+                multi_workspace.is_remote_connection_placeholder = true;
+                multi_workspace
+            })
         })?;
         let workspace = window.update(cx, |multi_workspace, _, _cx| {
             multi_workspace.workspace().clone()
         })?;
         (window, workspace)
     };
+    let _placeholder = created_new_window.then(|| {
+        let mut cx = cx.clone();
+        util::defer(move || {
+            window
+                .update(&mut cx, |multi_workspace, _, _| {
+                    multi_workspace.is_remote_connection_placeholder = false;
+                })
+                .ok();
+        })
+    });
 
     loop {
         let (cancel_tx, mut cancel_rx) = oneshot::channel();

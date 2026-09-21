@@ -2869,11 +2869,13 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
+    use db::kvp::KeyValueStore;
     use editor::{
         DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
     };
     use extension::ExtensionHostProxy;
     use fs::FakeFs;
+    use futures::channel::oneshot;
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, Modifiers, OwnedMenuItem,
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions, point, px,
@@ -2882,15 +2884,18 @@ mod tests {
     use language::LanguageRegistry;
     use languages::{markdown_lang, rust_lang};
     use node_runtime::NodeRuntime;
+    use onboarding::FIRST_OPEN;
     use pretty_assertions::{assert_eq, assert_ne};
     use project::{Project, ProjectPath};
     use prompt_store::PromptBuilder;
-    use remote::RemoteClient;
+    use remote::{MockConnectionOptions, RemoteClient, RemoteConnectionOptions};
     use remote_server::{HeadlessAppState, HeadlessProject};
     use semver::Version;
     use serde_json::json;
+    use session::Session;
     use settings::{SaturatingBool, SettingsStore, SplicingVec, watch_config_file};
     use std::{
+        cell::Cell,
         path::{Path, PathBuf},
         sync::Arc,
         time::Duration,
@@ -2898,12 +2903,14 @@ mod tests {
     use theme::ThemeRegistry;
     use util::{
         path,
+        path_list::PathList,
         rel_path::{RelPath, rel_path},
     };
     use workspace::MultiWorkspace;
     use workspace::{
-        NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
-        WorkspaceHandle,
+        MultiWorkspaceState, NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME,
+        SaveIntent, SerializedMultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace,
+        SplitDirection, WorkspaceHandle, WorkspaceId,
         item::SaveOptions,
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
@@ -7484,10 +7491,20 @@ mod tests {
             "expected one group with 1 workspace"
         );
 
-        let mut async_cx = cx.to_async();
-        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
-            .await
-            .expect("failed to restore workspaces");
+        let restore_order =
+            cx.read(|cx| workspace::read_serialized_multi_workspaces(locations, cx));
+        let (listener, requests) = OpenListener::new();
+        listener.open(RawOpenRequest {
+            urls: vec![format!(
+                "file://{}",
+                restore_order[1].active_workspace.paths.paths()[0].display()
+            )],
+            open_behavior: Some(cli::OpenBehavior::Classic),
+            ..RawOpenRequest::default()
+        });
+        let startup = cx.update(|cx| crate::restore_and_open_workspaces(app_state, requests, cx));
+        drop(listener);
+        startup.await;
         cx.run_until_parked();
 
         // --- Verify the restored windows ---
@@ -7652,7 +7669,7 @@ mod tests {
         });
 
         let mut async_cx = cx.to_async();
-        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+        crate::restore_or_create_workspace(app_state.clone(), None, &mut async_cx)
             .await
             .expect("failed to restore workspaces");
         cx.run_until_parked();
@@ -7760,7 +7777,7 @@ mod tests {
         });
 
         let mut async_cx = cx.to_async();
-        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+        crate::restore_or_create_workspace(app_state.clone(), None, &mut async_cx)
             .await
             .expect("failed to restore workspaces");
         cx.run_until_parked();
@@ -7811,6 +7828,277 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_startup_open_preserves_unsaved_buffer(cx: &mut TestAppContext) {
+        for queued_before_startup in [true, false] {
+            let cx = &mut cx.new_app();
+            cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+            let app_state = init_test(cx);
+            cx.update(init);
+            app_state
+                .fs
+                .as_fake()
+                .insert_tree(path!("/other"), json!({ "file.txt": "requested file" }))
+                .await;
+            let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+            let workspace::OpenResult { window, .. } = cx
+                .update(|cx| {
+                    Workspace::new_local(
+                        Vec::new(),
+                        app_state.clone(),
+                        None,
+                        None,
+                        None,
+                        workspace::OpenMode::Activate,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+            let editor = window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.workspace().update(cx, |workspace, cx| {
+                        Editor::new_in_workspace(workspace, window, cx)
+                    })
+                })
+                .unwrap()
+                .await
+                .unwrap();
+            let scratch_text = "unsaved scratch\nλ 🦀";
+            editor.update(cx, |editor, cx| {
+                editor.edit(
+                    [(MultiBufferOffset(0)..MultiBufferOffset(0), scratch_text)],
+                    cx,
+                );
+            });
+            drop(editor);
+            flush_workspace_serialization(&window, cx).await;
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap();
+            cx.run_until_parked();
+            cx.update(|cx| {
+                app_state.session.update(cx, |session, _| {
+                    session.replace_session_for_test(Session::test_with_old_session(session_id));
+                });
+            });
+
+            let (first_window_sender, first_window_receiver) = oneshot::channel();
+            let first_window_sender = Cell::new(Some(first_window_sender));
+            let _first_window_subscription = cx.update(|cx| {
+                cx.observe_new::<MultiWorkspace>(move |_, _, _| {
+                    if let Some(sender) = first_window_sender.take() {
+                        sender.send(()).unwrap();
+                    }
+                })
+            });
+            let (listener, requests) = OpenListener::new();
+            let mut request = Some(RawOpenRequest {
+                urls: vec![format!("file://{}", path!("/other/file.txt"))],
+                ..RawOpenRequest::default()
+            });
+            if queued_before_startup {
+                listener.open(request.take().unwrap());
+            }
+            let startup =
+                cx.update(|cx| crate::restore_and_open_workspaces(app_state, requests, cx));
+            if let Some(request) = request {
+                first_window_receiver.await.unwrap();
+                listener.open(request);
+            }
+            drop(listener);
+            startup.await;
+            cx.run_until_parked();
+
+            let windows = cx.windows();
+            assert_eq!(windows.len(), 1);
+            let mut contents = windows[0]
+                .downcast::<MultiWorkspace>()
+                .unwrap()
+                .read_with(cx, |multi_workspace, cx| {
+                    multi_workspace
+                        .workspace()
+                        .read(cx)
+                        .items_of_type::<Editor>(cx)
+                        .map(|editor| (editor.read(cx).text(cx), editor.read(cx).is_dirty(cx)))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap();
+            contents.sort();
+            assert_eq!(
+                contents,
+                vec![
+                    ("requested file".to_string(), false),
+                    (scratch_text.to_string(), true)
+                ],
+                "queued_before_startup={queued_before_startup}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_cancel_remote_restore_preserves_local_window(cx: &mut TestAppContext) {
+        for open_file in [false, true] {
+            let cx = &mut cx.new_app();
+            cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+            let app_state = init_test(cx);
+            cx.read(KeyValueStore::global)
+                .write_kvp(FIRST_OPEN.to_owned(), "false".to_owned())
+                .await
+                .unwrap();
+            app_state
+                .fs
+                .as_fake()
+                .insert_tree(path!("/local"), json!({ "file.txt": "requested file" }))
+                .await;
+            let workspaces = vec![SerializedMultiWorkspace {
+                active_workspace: SessionWorkspace {
+                    workspace_id: WorkspaceId::from_i64(1),
+                    location: SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Mock(
+                        MockConnectionOptions { id: u64::MAX },
+                    )),
+                    paths: PathList::new(&[path!("/remote")]),
+                    window_id: None,
+                },
+                state: MultiWorkspaceState::default(),
+            }];
+            let (local_restore_sender, local_restore_receiver) = oneshot::channel();
+            let restore = cx
+                .spawn({
+                    let app_state = app_state.clone();
+                    async move |mut cx| {
+                        crate::restore_workspaces(
+                            app_state,
+                            Some(workspaces),
+                            false,
+                            Some(local_restore_sender),
+                            &mut cx,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                })
+                .shared();
+            local_restore_receiver.await.unwrap();
+            cx.run_until_parked();
+            assert!(cx.has_pending_prompt());
+            if open_file {
+                cx.update(|cx| {
+                    open_paths(
+                        &[PathBuf::from(path!("/local/file.txt"))],
+                        app_state.clone(),
+                        OpenOptions::default(),
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+            }
+            let fallback = (!open_file).then(|| {
+                let restore = restore.clone();
+                cx.spawn(async move |mut cx| {
+                    crate::restore_or_create_workspace(app_state, Some(restore), &mut cx).await
+                })
+            });
+            cx.run_until_parked();
+            assert!(cx.has_pending_prompt());
+            assert_eq!(cx.windows().len(), 1 + usize::from(open_file));
+            cx.simulate_prompt_answer("Cancel");
+            restore.await;
+            if let Some(fallback) = fallback {
+                fallback.await.unwrap();
+            }
+            cx.run_until_parked();
+            let windows = cx.windows();
+            assert_eq!(windows.len(), 1);
+            let contents = windows[0]
+                .downcast::<MultiWorkspace>()
+                .unwrap()
+                .read_with(cx, |multi_workspace, cx| {
+                    multi_workspace
+                        .workspace()
+                        .read(cx)
+                        .items_of_type::<Editor>(cx)
+                        .map(|editor| editor.read(cx).text(cx))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap();
+            assert_eq!(
+                contents,
+                vec![if open_file { "requested file" } else { "" }]
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_startup_open_without_restoration_creates_one_window(cx: &mut TestAppContext) {
+        for restore_behavior in [
+            workspace::RestoreOnStartupBehavior::EmptyTab,
+            workspace::RestoreOnStartupBehavior::Launchpad,
+        ] {
+            for open_behavior in [
+                None,
+                Some(cli::OpenBehavior::AlwaysNew),
+                Some(cli::OpenBehavior::PreferNewWindow),
+            ] {
+                let cx = &mut cx.new_app();
+                cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+                let app_state = init_test(cx);
+                cx.read(KeyValueStore::global)
+                    .write_kvp(FIRST_OPEN.to_owned(), "false".to_owned())
+                    .await
+                    .unwrap();
+                cx.update(|cx| {
+                    SettingsStore::update_global(cx, |store, cx| {
+                        store.update_user_settings(cx, |settings| {
+                            settings.workspace.restore_on_startup = Some(restore_behavior);
+                        });
+                    });
+                });
+                app_state
+                    .fs
+                    .as_fake()
+                    .insert_tree(path!("/other"), json!({ "file.txt": "requested file" }))
+                    .await;
+                let (listener, requests) = OpenListener::new();
+                if let Some(open_behavior) = open_behavior {
+                    listener.open(RawOpenRequest {
+                        urls: vec![format!("file://{}", path!("/other/file.txt"))],
+                        open_behavior: Some(open_behavior),
+                        ..RawOpenRequest::default()
+                    });
+                }
+                let startup =
+                    cx.update(|cx| crate::restore_and_open_workspaces(app_state, requests, cx));
+                drop(listener);
+                startup.await;
+                cx.run_until_parked();
+
+                let windows = cx.windows();
+                assert_eq!(
+                    windows.len(),
+                    1,
+                    "restore_behavior={restore_behavior:?}, open_behavior={open_behavior:?}"
+                );
+                if open_behavior.is_some() {
+                    let contents = windows[0]
+                        .downcast::<MultiWorkspace>()
+                        .unwrap()
+                        .read_with(cx, |multi_workspace, cx| {
+                            multi_workspace
+                                .workspace()
+                                .read(cx)
+                                .items_of_type::<Editor>(cx)
+                                .map(|editor| editor.read(cx).text(cx))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap();
+                    assert_eq!(contents, vec!["requested file".to_owned()]);
+                }
+            }
+        }
     }
 
     #[gpui::test]
@@ -7913,7 +8201,7 @@ mod tests {
         });
 
         let mut async_cx = cx.to_async();
-        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+        crate::restore_or_create_workspace(app_state.clone(), None, &mut async_cx)
             .await
             .expect("failed to restore workspace");
         cx.run_until_parked();
