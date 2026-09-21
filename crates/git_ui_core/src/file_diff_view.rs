@@ -129,6 +129,22 @@ impl FileDiffView {
             splittable
         });
 
+        let include_root = project.read(cx).visible_worktrees(cx).count() > 1;
+        let breadcrumb_path = |buffer: &Entity<Buffer>| {
+            buffer
+                .read(cx)
+                .snapshot()
+                .resolve_file_path(include_root, cx)
+                .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.to_string())
+        };
+        let old_path = breadcrumb_path(&old_buffer);
+        let new_path = breadcrumb_path(&new_buffer);
+        editor.update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, _| {
+                editor.set_breadcrumb_header(format!("{old_path} ↔ {new_path}"));
+            });
+        });
+
         let (buffer_changes_tx, mut buffer_changes_rx) = watch::channel(());
 
         // The buffers' languages may load after the diff was built, e.g. when
@@ -612,7 +628,34 @@ mod tests {
                     path!("test/new_file.txt")
                 )
             );
-        })
+            let (breadcrumbs, _) = diff_view.breadcrumbs(cx).unwrap();
+            assert_eq!(
+                breadcrumbs
+                    .iter()
+                    .map(|crumb| crumb.text.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["old_file.txt ↔ new_file.txt"]
+            );
+        });
+
+        let toolbar = cx.new(FileDiffStyleToolbar::new);
+        let location = toolbar.update_in(cx, |toolbar, window, cx| {
+            toolbar.set_active_pane_item(Some(&diff_view), window, cx)
+        });
+        assert_eq!(location, ToolbarItemLocation::PrimaryLeft);
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, _| toolbar.file_diff()),
+            Some(diff_view.clone())
+        );
+
+        let location = toolbar.update_in(cx, |toolbar, window, cx| {
+            toolbar.set_active_pane_item(None, window, cx)
+        });
+        assert_eq!(location, ToolbarItemLocation::Hidden);
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, _| toolbar.file_diff()),
+            None
+        );
     }
 
     #[gpui::test]
