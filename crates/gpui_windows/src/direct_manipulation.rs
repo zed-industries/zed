@@ -113,7 +113,7 @@ impl DirectManipulationHandler {
                     let mut pointer_info = POINTER_INFO::default();
                     if GetPointerInfo(pointer_id, &mut pointer_info).is_ok() {
                         let mut position = pointer_info.ptPixelLocation;
-                        if ScreenToClient(self.window, &mut position).is_ok() {
+                        if ScreenToClient(self.window, &mut position).as_bool() {
                             self.touch_position.set(Some(logical_point(
                                 position.x as f32,
                                 position.y as f32,
