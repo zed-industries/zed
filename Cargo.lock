@@ -5556,7 +5556,6 @@ dependencies = [
  "multi_buffer",
  "paths",
  "project",
- "regex",
  "settings",
  "telemetry",
  "text",
