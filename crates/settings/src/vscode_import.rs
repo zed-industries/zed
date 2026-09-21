@@ -677,20 +677,22 @@ impl VsCodeSettings {
     }
 
     fn edit_predictions_settings_content(&self) -> Option<EditPredictionSettingsContent> {
-        let disabled_globs = self
+        let mut disabled_globs = self
             .read_value("cursor.general.globalCursorIgnoreList")?
-            .as_array()?;
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|glob| !glob.is_empty() && *glob != SplicingVec::REST)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if disabled_globs.is_empty() {
+            return None;
+        }
+        disabled_globs.push(SplicingVec::REST.to_owned());
 
-        skip_default(EditPredictionSettingsContent {
-            disabled_globs: skip_default(SplicingVec::from(
-                disabled_globs
-                    .iter()
-                    .filter_map(|glob| glob.as_str())
-                    .filter(|glob| *glob != SplicingVec::REST)
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>(),
-            )),
-            ..Default::default()
+        Some(EditPredictionSettingsContent {
+            disabled_globs: Some(SplicingVec::from(disabled_globs)),
+            ..EditPredictionSettingsContent::default()
         })
     }
 
@@ -1237,20 +1239,27 @@ mod tests {
     }
 
     #[test]
-    fn test_import_disabled_globs_replaces_inherited_patterns() -> Result<()> {
-        for (ignore_list, expected) in [
-            (serde_json::json!([""]), serde_json::json!([""])),
+    fn test_import_disabled_globs_extends_inherited_patterns() -> Result<()> {
+        for (ignore_list, expected_imported, expected_merged) in [
             (
                 serde_json::json!(["**/build/**", "**/cache/**"]),
-                serde_json::json!(["**/build/**", "**/cache/**"]),
+                serde_json::json!(["**/build/**", "**/cache/**", "..."]),
+                serde_json::json!(["**/build/**", "**/cache/**", "**/inherited/**"]),
             ),
             (
-                serde_json::json!(["**/build/**", false, null, 1, {}, []]),
-                serde_json::json!(["**/build/**"]),
+                serde_json::json!(["**/build/**", "", false, null, 1, {}, []]),
+                serde_json::json!(["**/build/**", "..."]),
+                serde_json::json!(["**/build/**", "**/inherited/**"]),
             ),
             (
                 serde_json::json!(["...", "**/build/**", false]),
-                serde_json::json!(["**/build/**"]),
+                serde_json::json!(["**/build/**", "..."]),
+                serde_json::json!(["**/build/**", "**/inherited/**"]),
+            ),
+            (
+                serde_json::json!(["**/inherited/**", "**/build/**"]),
+                serde_json::json!(["**/inherited/**", "**/build/**", "..."]),
+                serde_json::json!(["**/inherited/**", "**/build/**"]),
             ),
         ] {
             let content = serde_json::json!({
@@ -1264,14 +1273,20 @@ mod tests {
                 .all_languages
                 .edit_predictions
                 .context("imported edit prediction settings")?;
-            assert_eq!(serde_json::to_value(&imported.disabled_globs)?, expected);
+            assert_eq!(
+                serde_json::to_value(&imported.disabled_globs)?,
+                expected_imported
+            );
 
             let mut inherited = EditPredictionSettingsContent {
                 disabled_globs: Some(SplicingVec::from(vec!["**/inherited/**".to_string()])),
                 ..Default::default()
             };
             inherited.merge_from(&imported);
-            assert_eq!(serde_json::to_value(&inherited.disabled_globs)?, expected);
+            assert_eq!(
+                serde_json::to_value(&inherited.disabled_globs)?,
+                expected_merged
+            );
         }
         Ok(())
     }
@@ -1288,7 +1303,8 @@ mod tests {
         for content in [
             r#"{"cursor.general.globalCursorIgnoreList": "**/build/**"}"#,
             r#"{"cursor.general.globalCursorIgnoreList": ["..."]}"#,
-            r#"{"cursor.general.globalCursorIgnoreList": ["...", false, null]}"#,
+            r#"{"cursor.general.globalCursorIgnoreList": [""]}"#,
+            r#"{"cursor.general.globalCursorIgnoreList": ["...", "", false, null]}"#,
             r#"{"cursor.general.globalCursorIgnoreList": []}"#,
             r#"{"cursor.general.globalCursorIgnoreList": [false, null, 1, {}, []]}"#,
             r#"{"cursor.general.globalCursorIgnoreList": null}"#,

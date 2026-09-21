@@ -23,14 +23,11 @@ use language::{
     },
 };
 use project::{DisableAiSettings, Project};
-use regex::Regex;
-use settings::{Settings, SettingsContent, SettingsStore, SplicingVec, update_settings_file};
-use std::{
-    ops::Range,
-    rc::Rc,
-    sync::{Arc, LazyLock},
-    time::Duration,
+use settings::{
+    Settings, SettingsContent, SettingsStore, SplicingVec, find_value_range_in_json_text,
+    update_settings_file,
 };
+use std::{ops::Range, rc::Rc, sync::Arc, time::Duration};
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
     Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
@@ -1413,15 +1410,13 @@ fn initialize_disabled_globs_setting(file: &mut SettingsContent) {
 }
 
 fn disabled_globs_content_range(text: &str) -> Option<Range<usize>> {
-    static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        // Treat strings and comments as units so their brackets do not end the selection
-        Regex::new(
-            r#""disabled_globs":\s*\[\s*(?P<content>(?:"(?:[^"\\]|\\.)*"|/\*(?s:.*?)\*/|//[^\r\n]*|[^"/\]])*?)\s*\]"#,
-        )
-        .expect("disabled globs selection regex should compile")
-    });
-    let content = DISABLED_GLOBS_REGEX.captures(text)?.name("content")?;
-    Some(content.range())
+    let array_range = find_value_range_in_json_text(text, &["edit_predictions", "disabled_globs"])?;
+    let content = text
+        .get(array_range.clone())?
+        .strip_prefix('[')?
+        .strip_suffix(']')?;
+    let start = array_range.start + 1 + (content.len() - content.trim_start().len());
+    Some(start..start + content.trim().len())
 }
 
 async fn open_disabled_globs_setting_in_editor(
@@ -1711,7 +1706,10 @@ mod tests {
             "\n  ",
         ] {
             let mut text = format!(
-                r#"{{"edit_predictions":{{"disabled_globs":[{contents}],"mode":"subtle"}}}}"#
+                r#"// "disabled_globs": ["commented/**"]
+{{"languages":{{"Rust":{{"disabled_globs":["nested/**"]}}}},
+/* "disabled_globs": ["commented/**"] */
+"edit_predictions":{{"disabled_globs":[{contents}],"mode":"subtle"}}}}"#
             );
             let mut expected = SettingsContent::parse_json_with_comments(&text)?;
             let range = disabled_globs_content_range(&text).context("disabled globs selection")?;

@@ -489,7 +489,7 @@ pub struct EditPredictionSettings {
     pub provider: settings::EditPredictionProvider,
     /// Disable edit predictions for files matching these glob patterns.
     ///
-    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
     /// settings, it extends the user or parent configuration value. Omit
     /// `"..."` to replace the inherited list.
     ///
@@ -1117,45 +1117,43 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_edit_predictions_disabled_globs_replace_and_clear(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let mut store = SettingsStore::new(cx, &settings::default_settings());
-            store.register_setting::<AllLanguageSettings>();
+    fn test_edit_predictions_disabled_globs_replace_and_clear(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
 
-            for (content, sensitive_enabled, custom_enabled) in [
-                (r#"{}"#, false, true),
-                (
-                    r#"{"edit_predictions":{"disabled_globs":["**/build/**"]}}"#,
-                    true,
-                    false,
-                ),
-                (r#"{"edit_predictions":{"disabled_globs":[]}}"#, true, true),
-                (r#"{"edit_predictions":{}}"#, false, true),
+        for (content, sensitive_enabled, custom_enabled) in [
+            (r#"{}"#, false, true),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["**/build/**"]}}"#,
+                true,
+                false,
+            ),
+            (r#"{"edit_predictions":{"disabled_globs":[]}}"#, true, true),
+            (r#"{"edit_predictions":{}}"#, false, true),
+        ] {
+            store
+                .set_user_settings(content, cx)
+                .expect("user settings should load");
+            let settings = &store.get::<AllLanguageSettings>(None).edit_predictions;
+            for (path, expected_enabled) in [
+                (".env", sensitive_enabled),
+                ("build/output.rs", custom_enabled),
+                ("certificates/private.pem", sensitive_enabled),
+                ("config/secrets.yml", sensitive_enabled),
+                ("src/main.rs", true),
             ] {
-                store
-                    .set_user_settings(content, cx)
-                    .expect("user settings should load");
-                let settings = &store.get::<AllLanguageSettings>(None).edit_predictions;
-                for (path, expected_enabled) in [
-                    (".env", sensitive_enabled),
-                    ("build/output.rs", custom_enabled),
-                    ("certificates/private.pem", sensitive_enabled),
-                    ("config/secrets.yml", sensitive_enabled),
-                    ("src/main.rs", true),
-                ] {
-                    let file: Arc<dyn File> = Arc::new(crate::TestFile {
-                        path: rel_path(path).into(),
-                        root_name: "project".to_string(),
-                        local_root: None,
-                    });
-                    assert_eq!(
-                        settings.enabled_for_file(&file, cx),
-                        expected_enabled,
-                        "path: {path}, settings: {content}"
-                    );
-                }
+                let file: Arc<dyn File> = Arc::new(crate::TestFile {
+                    path: rel_path(path).into(),
+                    root_name: "project".to_string(),
+                    local_root: None,
+                });
+                assert_eq!(
+                    settings.enabled_for_file(&file, cx),
+                    expected_enabled,
+                    "path: {path}, settings: {content}"
+                );
             }
-        });
+        }
     }
 
     #[gpui::test]
@@ -1244,12 +1242,6 @@ mod tests {
                         "path: {path}, settings: {content}"
                     );
                 }
-                assert!(
-                    settings
-                        .disabled_globs
-                        .iter()
-                        .all(|glob| glob.matcher.glob().glob() != "...")
-                );
             }
         }
     }

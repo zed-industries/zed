@@ -100,7 +100,7 @@ To configure panel sizing, open the Settings Editor and search for “Agent Pane
 
 ### Flexible Sizing {#agent-panel-flexible-sizing}
 
-- Description: Whether the agent panel uses flexible (proportional) sizing when docked to the left or right. When enabled, `agent.default_width` does not control the panel width, and double-clicking the panel’s outer resize handle restores the default proportion.
+- Description: Whether the agent panel uses flexible (proportional) sizing when docked to the left or right. When enabled, `agent.default_width` does not control the panel width, and double-clicking the panel's outer resize handle restores the default proportion.
 - Setting: `agent.flexible`
 - Default: `true`
 
@@ -141,7 +141,7 @@ Open the Settings Editor and search for “Threads Sidebar Default Width”. Or 
 }
 ```
 
-If you haven’t manually resized the sidebar, its width follows changes to this setting immediately. A manually resized width takes precedence until you double-click the divider to reset it. After resetting, the sidebar follows this setting again.
+If you haven't manually resized the sidebar, its width follows changes to this setting immediately. A manually resized width takes precedence until you double-click the divider to reset it. After resetting, the sidebar follows this setting again.
 
 Widths saved by older versions of Zed are preserved if they differ from the previous default of 300 pixels. A saved width of 300 pixels uses this setting instead.
 
@@ -857,7 +857,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 
 List of `string` values.
 
-Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
@@ -1896,13 +1896,13 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 ## Use System Tabs
 
-- Description: Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+- Description: Whether to allow windows to tab together based on the user's tabbing preference (macOS only).
 - Setting: `use_system_window_tabs`
 - Default: `false`
 
 **Options**
 
-This setting enables integration with macOS’s native window tabbing feature. When set to `true`, Zed windows can be grouped together as tabs in a single macOS window, following the system-wide tabbing preferences set by the user (such as "Always", "In Full Screen", or "Never"). This setting is only available on macOS.
+This setting enables integration with macOS's native window tabbing feature. When set to `true`, Zed windows can be grouped together as tabs in a single macOS window, following the system-wide tabbing preferences set by the user (such as "Always", "In Full Screen", or "Never"). This setting is only available on macOS.
 
 ## Fullscreen Mode
 
@@ -2371,7 +2371,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 }
 ```
 
-Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
@@ -2393,7 +2393,7 @@ Inherited patterns are inserted at `"..."`, and duplicates keep their first occu
 }
 ```
 
-Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
@@ -2962,7 +2962,7 @@ Example:
 }
 ```
 
-Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
@@ -3926,7 +3926,7 @@ List of `string` glob patterns
 }
 ```
 
-Use `"..."` to add patterns without repeating Zed’s defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
