@@ -1320,6 +1320,21 @@ impl ClickState {
         self.current_count.get()
     }
 
+    /// Windows が認定済みの double-click を受け取った時は、マウス座標で再判定しない。
+    /// タッチから昇格した互換マウスでは指の重心が少し動くため、この再判定だと本来の
+    /// double-tap を single click 二回へ落としてしまう。
+    pub fn update_system_double_click(
+        &self,
+        button: MouseButton,
+        new_position: Point<DevicePixels>,
+    ) -> usize {
+        self.button.set(button);
+        self.last_click.set(Instant::now());
+        self.last_position.set(new_position);
+        self.current_count.set(2);
+        2
+    }
+
     pub fn system_update(&self, wparam: usize) {
         match wparam {
             // SPI_SETDOUBLECLKWIDTH
@@ -1422,7 +1437,7 @@ fn register_window_class(icon_handle: HICON) {
             lpfnWndProc: Some(window_procedure),
             hIcon: icon_handle,
             lpszClassName: PCWSTR(WINDOW_CLASS_NAME.as_ptr()),
-            style: CS_HREDRAW | CS_VREDRAW,
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
             hInstance: get_module_handle().into(),
             hbrBackground: unsafe { CreateSolidBrush(COLORREF(0x00000000)) },
             ..Default::default()
@@ -1724,6 +1739,22 @@ mod tests {
         assert_eq!(
             state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
             1
+        );
+    }
+
+    #[test]
+    fn system_double_click_overrides_local_position_inference() {
+        let state = ClickState::new();
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            1
+        );
+        assert_eq!(
+            state.update_system_double_click(
+                MouseButton::Left,
+                point(DevicePixels(100), DevicePixels(0))
+            ),
+            2
         );
     }
 }

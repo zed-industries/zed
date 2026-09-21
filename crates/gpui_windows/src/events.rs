@@ -229,6 +229,18 @@ impl WindowsWindowInner {
             WM_XBUTTONDOWN => {
                 self.handle_xbutton_msg(handle, wparam, lparam, Self::handle_mouse_down_msg)
             }
+            WM_LBUTTONDBLCLK => {
+                self.handle_mouse_double_click_msg(handle, MouseButton::Left, lparam)
+            }
+            WM_RBUTTONDBLCLK => {
+                self.handle_mouse_double_click_msg(handle, MouseButton::Right, lparam)
+            }
+            WM_MBUTTONDBLCLK => {
+                self.handle_mouse_double_click_msg(handle, MouseButton::Middle, lparam)
+            }
+            WM_XBUTTONDBLCLK => {
+                self.handle_xbutton_msg(handle, wparam, lparam, Self::handle_mouse_double_click_msg)
+            }
             WM_LBUTTONUP => self.handle_mouse_up_msg(handle, MouseButton::Left, lparam),
             WM_RBUTTONUP => self.handle_mouse_up_msg(handle, MouseButton::Right, lparam),
             WM_MBUTTONUP => self.handle_mouse_up_msg(handle, MouseButton::Middle, lparam),
@@ -767,6 +779,39 @@ impl WindowsWindowInner {
         let y = lparam.signed_hiword();
         let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
         let click_count = self.state.click_state.update(button, physical_point);
+        let scale_factor = self.state.scale_factor.get();
+
+        let input = PlatformInput::MouseDown(MouseDownEvent {
+            button,
+            position: logical_point(x as f32, y as f32, scale_factor),
+            modifiers: current_modifiers(),
+            click_count,
+            first_mouse: false,
+        });
+        let handled = !func(input).propagate;
+        self.state.callbacks.input.set(Some(func));
+
+        if handled { Some(0) } else { Some(1) }
+    }
+
+    fn handle_mouse_double_click_msg(
+        &self,
+        handle: HWND,
+        button: MouseButton,
+        lparam: LPARAM,
+    ) -> Option<isize> {
+        unsafe { SetCapture(handle) };
+
+        let Some(mut func) = self.state.callbacks.input.take() else {
+            return Some(1);
+        };
+        let x = lparam.signed_loword();
+        let y = lparam.signed_hiword();
+        let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
+        let click_count = self
+            .state
+            .click_state
+            .update_system_double_click(button, physical_point);
         let scale_factor = self.state.scale_factor.get();
 
         let input = PlatformInput::MouseDown(MouseDownEvent {
