@@ -589,7 +589,7 @@ impl WindowsWindowInner {
         // We have consumed the gesture-info handle, so it is ours to close.
         unsafe { CloseGestureInfoHandle(gesture_handle) }.log_err();
 
-        if gesture.dwID != GID_PAN {
+        if gesture.dwID != GID_PAN.0 {
             return Some(0);
         }
 
