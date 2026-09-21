@@ -19277,7 +19277,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-go"
 version = "0.25.0"
-source = "git+https://github.com/ndellosa95/tree-sitter-go?rev=4dad1ce9adf55bea9dfe9a459d57f5e9b9bc5187#4dad1ce9adf55bea9dfe9a459d57f5e9b9bc5187"
+source = "git+https://github.com/yodalee/tree-sitter-go?rev=2a37d91d26d36a2709c3d0dbcfa9ba79f9e58a87#2a37d91d26d36a2709c3d0dbcfa9ba79f9e58a87"
 dependencies = [
  "cc",
  "tree-sitter-language",
