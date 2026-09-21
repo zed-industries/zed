@@ -106,6 +106,19 @@ struct DrawWindowGuard<'a> {
     coordinator: &'a DrawCoordinator,
 }
 
+// Windows stamps promoted touch mouse messages with this signature. Pen has the
+// same signature family but not the touch flag, so physical mouse and pen retain
+// the system double-click tolerance.
+const MI_WP_SIGNATURE_MASK: usize = 0xffff_ff00;
+const MI_WP_SIGNATURE: usize = 0xff51_5700;
+const MI_WP_FLAG_TOUCH: usize = 0x80;
+const PROMOTED_TOUCH_DOUBLE_CLICK_SLOP_LOGICAL: f32 = 16.0;
+
+fn is_touch_promoted_mouse_message() -> bool {
+    let extra_info = unsafe { GetMessageExtraInfo().0 as usize };
+    (extra_info & MI_WP_SIGNATURE_MASK) == MI_WP_SIGNATURE && (extra_info & MI_WP_FLAG_TOUCH) != 0
+}
+
 #[derive(Clone, Copy)]
 struct ActiveTouch {
     id: TouchId,
@@ -778,8 +791,16 @@ impl WindowsWindowInner {
         let x = lparam.signed_loword();
         let y = lparam.signed_hiword();
         let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
-        let click_count = self.state.click_state.update(button, physical_point);
         let scale_factor = self.state.scale_factor.get();
+        let click_count = if button == MouseButton::Left && is_touch_promoted_mouse_message() {
+            let touch_slop =
+                (PROMOTED_TOUCH_DOUBLE_CLICK_SLOP_LOGICAL * scale_factor).ceil() as i32;
+            self.state
+                .click_state
+                .update_with_minimum_spatial_tolerance(button, physical_point, touch_slop)
+        } else {
+            self.state.click_state.update(button, physical_point)
+        };
 
         let input = PlatformInput::MouseDown(MouseDownEvent {
             button,

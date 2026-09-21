@@ -1308,7 +1308,20 @@ impl ClickState {
 
     /// update self and return the needed click count
     pub fn update(&self, button: MouseButton, new_position: Point<DevicePixels>) -> usize {
-        if self.button.get() == button && self.is_double_click(new_position) {
+        self.update_with_minimum_spatial_tolerance(button, new_position, 0)
+    }
+
+    /// タッチから昇格した互換マウスは指の重心が揺れる。物理マウスの Windows 設定値は
+    /// 保ったまま、呼び出し元が指定した最小の位置許容だけを追加できる。
+    pub fn update_with_minimum_spatial_tolerance(
+        &self,
+        button: MouseButton,
+        new_position: Point<DevicePixels>,
+        minimum_spatial_tolerance: i32,
+    ) -> usize {
+        if self.button.get() == button
+            && self.is_double_click(new_position, minimum_spatial_tolerance)
+        {
             self.current_count.update(|it| it + 1);
         } else {
             self.current_count.set(1);
@@ -1354,12 +1367,24 @@ impl ClickState {
     }
 
     #[inline]
-    fn is_double_click(&self, new_position: Point<DevicePixels>) -> bool {
+    fn is_double_click(
+        &self,
+        new_position: Point<DevicePixels>,
+        minimum_spatial_tolerance: i32,
+    ) -> bool {
         let diff = self.last_position.get() - new_position;
+        let tolerance_width = self
+            .double_click_spatial_tolerance_width
+            .get()
+            .max(minimum_spatial_tolerance);
+        let tolerance_height = self
+            .double_click_spatial_tolerance_height
+            .get()
+            .max(minimum_spatial_tolerance);
 
         self.last_click.get().elapsed() < self.double_click_interval.get()
-            && diff.x.0.abs() <= self.double_click_spatial_tolerance_width.get()
-            && diff.y.0.abs() <= self.double_click_spatial_tolerance_height.get()
+            && diff.x.0.abs() <= tolerance_width
+            && diff.y.0.abs() <= tolerance_height
     }
 }
 
@@ -1753,6 +1778,23 @@ mod tests {
             state.update_system_double_click(
                 MouseButton::Left,
                 point(DevicePixels(100), DevicePixels(0))
+            ),
+            2
+        );
+    }
+
+    #[test]
+    fn touch_double_click_uses_the_larger_requested_spatial_tolerance() {
+        let state = ClickState::new();
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            1
+        );
+        assert_eq!(
+            state.update_with_minimum_spatial_tolerance(
+                MouseButton::Left,
+                point(DevicePixels(16), DevicePixels(0)),
+                16,
             ),
             2
         );
