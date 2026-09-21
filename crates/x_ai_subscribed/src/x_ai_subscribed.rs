@@ -1009,7 +1009,7 @@ mod tests {
     }
 
     #[test]
-    fn grok_46_omits_reasoning_effort_when_thinking_is_disabled() {
+    fn grok_47_and_46_omits_reasoning_effort_when_thinking_is_disabled() {
         let request = LanguageModelRequest {
             thinking_allowed: false,
             thinking_effort: Some("medium".to_string()),
