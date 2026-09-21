@@ -586,7 +586,7 @@
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false,
   },
-  // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+  // Whether to allow windows to tab together based on the user's tabbing preference (macOS only).
   "use_system_window_tabs": false,
   // Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
   //
@@ -1873,11 +1873,20 @@
   "edit_predictions": {
     // Which edit prediction provider to use.
     "provider": "zed",
-    // A list of globs representing files that edit predictions should be disabled for.
-    // There's a sensible default list of globs already included.
-    // Any addition to this list will be merged with the default list.
-    // Globs are matched relative to the worktree root,
-    // except when starting with a slash (/) or equivalent in Windows.
+    // Disable edit predictions for files matching these glob patterns.
+    //
+    // Use `"..."` to add patterns without repeating Zed's defaults. In project
+    // settings, it extends the user or parent configuration value. Omit
+    // `"..."` to replace the inherited list.
+    //
+    // Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    // occurrence.
+    //
+    // Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+    //
+    // Relative patterns are matched against paths relative to the worktree root.
+    // Absolute patterns are matched against absolute paths.
+    // A leading `~` is expanded to your home folder.
     "disabled_globs": [
       "**/.env*",
       "**/*.pem",
