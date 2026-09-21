@@ -9562,6 +9562,7 @@ pub(crate) mod tests {
                 )
                 .subscribe(cx)
             });
+            let display_terminal = terminal.clone();
             thread.update(cx, |thread, cx| {
                 thread.on_terminal_provider_event(
                     acp_thread::TerminalProviderEvent::Created {
@@ -9593,6 +9594,49 @@ pub(crate) mod tests {
                 state.expand_tool_call(tool_id.clone());
                 cx.notify();
             });
+            let acp_terminal = thread.read_with(cx, |thread, _| {
+                thread
+                    .terminal(terminal_id.clone())
+                    .expect("terminal tool call should contain a terminal")
+            });
+            let terminal_view = entry_state.read_with(cx, |state, _| {
+                state
+                    .entry(0)
+                    .and_then(|entry| entry.terminal(&acp_terminal))
+                    .expect("terminal tool card should contain a terminal view")
+            });
+            assert!(terminal_view.read_with(cx, |view, _| view.is_read_only()));
+
+            display_terminal.update(cx, |terminal, _| {
+                assert!(terminal.take_input_log().is_empty());
+            });
+            terminal_view.update_in(cx, |view, window, cx| {
+                window.focus(&view.focus_handle(cx), cx);
+            });
+            cx.simulate_keystrokes("a");
+            assert!(
+                display_terminal
+                    .update(cx, |terminal, _| terminal.take_input_log())
+                    .is_empty(),
+                "input dispatched to a display-only terminal view must not reach the lower terminal",
+            );
+
+            thread.update(cx, |thread, cx| {
+                thread.on_terminal_provider_event(
+                    acp_thread::TerminalProviderEvent::Output {
+                        terminal_id: terminal_id.clone(),
+                        data: b"provider output remains visible".to_vec(),
+                    },
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            assert!(
+                display_terminal
+                    .read_with(cx, |terminal, _| terminal.get_content())
+                    .contains("provider output remains visible"),
+                "provider output should continue to render in a read-only terminal",
+            );
             assert!(cx.debug_bounds("ICON-Stop").is_none());
             thread.update(cx, |thread, cx| {
                 thread
@@ -9625,6 +9669,85 @@ pub(crate) mod tests {
             );
             assert!(cx.debug_bounds("ICON-Stop").is_none());
         }
+    }
+
+    #[gpui::test]
+    async fn test_acp_owned_terminal_tool_card_is_interactive(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let terminal_id = acp::TerminalId::new("acp-owned-terminal");
+        let tool_id = acp::ToolCallId::new("acp-owned-tool");
+        let lower_terminal = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                Default::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                util::paths::PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        assert!(!lower_terminal.read_with(cx, |terminal, _| terminal.is_pty()));
+
+        let acp_terminal = thread.update(cx, |thread, cx| {
+            let acp_terminal = thread.register_terminal_created(
+                terminal_id.clone(),
+                "client-owned command".into(),
+                None,
+                None,
+                lower_terminal.clone(),
+                cx,
+            );
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_id.clone(), "client-owned command")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::InProgress)
+                            .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                                terminal_id,
+                            ))]),
+                    ),
+                    cx,
+                )
+                .expect("terminal tool call");
+            acp_terminal
+        });
+        assert!(
+            acp_terminal.read_with(cx, |terminal, _| terminal.is_process_backed()),
+            "registration ownership, not the lower renderer's PTY, marks this terminal process-backed",
+        );
+
+        cx.run_until_parked();
+        let entry_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
+        entry_state.update(cx, |state, cx| {
+            state.expand_tool_call(tool_id);
+            cx.notify();
+        });
+        let terminal_view = entry_state.read_with(cx, |state, _| {
+            state
+                .entry(0)
+                .and_then(|entry| entry.terminal(&acp_terminal))
+                .expect("terminal tool card should contain a terminal view")
+        });
+        assert!(!terminal_view.read_with(cx, |view, _| view.is_read_only()));
+
+        lower_terminal.update(cx, |terminal, _| {
+            assert!(terminal.take_input_log().is_empty());
+        });
+        terminal_view.update_in(cx, |view, window, cx| {
+            window.focus(&view.focus_handle(cx), cx);
+        });
+        cx.simulate_keystrokes("a");
+        assert_eq!(
+            lower_terminal.update(cx, |terminal, _| terminal.take_input_log()),
+            vec![b"a".to_vec()],
+        );
     }
 
     #[gpui::test]
