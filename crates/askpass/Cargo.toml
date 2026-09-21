@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/askpass.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
@@ -30,6 +31,3 @@ windows.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-
-[package.metadata.cargo-machete]
-ignored = ["log"]

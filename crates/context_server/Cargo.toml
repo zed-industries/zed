@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/context_server.rs"
+doctest = false
 
 [features]
 test-support = ["gpui/test-support"]
@@ -42,4 +43,3 @@ util.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-pollster.workspace = true

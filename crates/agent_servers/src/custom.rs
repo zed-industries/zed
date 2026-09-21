@@ -361,6 +361,7 @@ mod tests {
                         version: SharedString::from("1.0.0"),
                         repository: None,
                         website: None,
+                        license_url: None,
                         icon_path: None,
                     },
                     package: id,

@@ -25,7 +25,7 @@ In particular **we love PRs that are**:
 If you're looking for concrete ideas:
 
 - [Docs issues](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ADocs)
-- Issues suitable for [first-time contributors](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20first%20issue%22), [returning contributors](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20second%20issue%22), and [expert contributors](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20expert%20issue%22)
+- Issues suitable for [first-time contributors](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20first%20issue%22) and [returning contributors](https://github.com/zed-industries/zed/issues?q=state%3Aopen%20label%3A%22.contrib%2Fgood%20non-first%20issue%22)
 - [Triaged bugs with confirmed steps to reproduce](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ABug%20label%3Astate%3Areproducible)
 - [Area labels](https://github.com/zed-industries/zed/labels?q=area%3A*) to browse bugs in a specific part of the product you care about (after clicking on an area label, add type:Bug to the search)
 - [The board with the features](https://github.com/orgs/zed-industries/projects/78/views/4) we explicitly invited the community's contributions for.

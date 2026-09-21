@@ -79,7 +79,8 @@ The checkpoint button appears even if you interrupt the thread midway through an
 
 Right-click on any agent response in the thread view to access a context menu with the following actions:
 
-- **Copy Selection**: Copies the currently selected text as Markdown (available when text is selected).
+- **Copy**: Copies the currently selected text as plain text (available when text is selected).
+- **Copy as Markdown**: Copies the currently selected text as Markdown (available when text is selected).
 - **Copy This Agent Response**: Copies the full text of the agent response you right-clicked on.
 - **Scroll to Top / Scroll to Bottom**: Scrolls to the beginning or end of the thread, depending on your current position.
 - **Open Thread as Markdown**: Opens the entire thread as a Markdown file in a new tab.
@@ -101,6 +102,14 @@ Follow the agent as it reads and edits files by clicking the crosshair icon at t
 Your editor will jump to each file the agent touches.
 
 You can also hold `cmd`/`ctrl` when submitting a message to automatically follow.
+
+### Keeping the System Awake {#prevent-idle-sleep}
+
+While an agent thread is running, Zed asks the operating system not to idle-sleep, so long-running turns are not interrupted when you step away.
+The display can still turn off and the screen can still lock; only system sleep is held back, and only while a thread is generating, not while it waits for your confirmation.
+
+Turn this off with the `agent.prevent_idle_sleep` setting.
+If the operating system rejects the request, Zed logs the reason and continues without it.
 
 ### Get Notified {#get-notified}
 
@@ -131,7 +140,7 @@ The Agent Panel can host Terminal Threads alongside your agent threads. For open
 The agent can search your codebase to find relevant context, but providing it explicitly improves response quality and reduces latency.
 
 Add context by typing `@` in the message editor.
-You can mention files, directories, symbols, previous threads, skills, diagnostics, branch diffs, and URLs to fetch.
+You can mention files, directories, symbols, previous threads, [skills](./skills.md), diagnostics, branch diffs, and URLs to fetch.
 
 When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.

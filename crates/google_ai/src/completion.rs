@@ -1,10 +1,10 @@
 use anyhow::Result;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use language_model_core::{
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelRequest,
-    LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role, StopReason,
-    TokenUsage,
+    GOOGLE_PROVIDER_NAME, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelRequest, LanguageModelRequestToolInput, LanguageModelToolChoice,
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
+    StopReason, TokenUsage,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -113,6 +113,10 @@ pub fn into_google(
     }
 
     let thinking_config = thinking_config_for_request(&request, &model_id, mode);
+    let max_output_tokens = request
+        .effective_max_output_tokens(None)
+        .map(usize::try_from)
+        .transpose()?;
 
     let system_instructions = if request
         .messages
@@ -139,7 +143,8 @@ pub fn into_google(
                         Ok(FunctionDeclaration {
                             name: tool.name,
                             description: tool.description,
-                            parameters: input_schema,
+                            parameters: None,
+                            parameters_json_schema: Some(input_schema),
                         })
                     }
                     LanguageModelRequestToolInput::Custom { .. } => {
@@ -178,7 +183,7 @@ pub fn into_google(
         generation_config: Some(GenerationConfig {
             candidate_count: Some(1),
             stop_sequences: Some(request.stop),
-            max_output_tokens: None,
+            max_output_tokens,
             temperature: request.temperature.map(|t| t as f64),
             thinking_config,
             top_p: None,
@@ -249,10 +254,11 @@ fn is_google_thinking_model(model_id: &str) -> bool {
 
 fn disabled_thinking_level(model_id: &str) -> Option<ThinkingLevel> {
     match model_id {
-        // `gemini-3.7-flash` rejects `MINIMAL` with a validation error, so `LOW` is
-        // the lowest level available to it.
+        // Gemini 3.7 and 3.8 Flash reject `MINIMAL` with a validation error, so
+        // `LOW` is the lowest level available to them.
         model_id
             if model_id.starts_with("gemini-3.7-flash")
+                || model_id.starts_with("gemini-3.8-flash")
                 || (model_id.starts_with("gemini-3") && model_id.contains("-pro")) =>
         {
             Some(ThinkingLevel::Low)
@@ -276,34 +282,38 @@ fn supports_thinking_budget_disable(model_id: &str) -> bool {
 
 pub struct GoogleEventMapper {
     usage: UsageMetadata,
-    stop_reason: StopReason,
+    stop_emitted: bool,
 }
 
 impl GoogleEventMapper {
     pub fn new() -> Self {
         Self {
             usage: UsageMetadata::default(),
-            stop_reason: StopReason::EndTurn,
+            stop_emitted: false,
         }
     }
 
     pub fn map_stream(
-        mut self,
+        self,
         events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
-        events
-            .map(Some)
-            .chain(futures::stream::once(async { None }))
-            .flat_map(move |event| {
-                futures::stream::iter(match event {
-                    Some(Ok(event)) => self.map_event(event),
-                    Some(Err(error)) => {
-                        vec![Err(LanguageModelCompletionError::from(error))]
-                    }
-                    None => vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))],
-                })
-            })
+        futures::stream::try_unfold((self, events), |(mut mapper, mut events)| async move {
+            match events.next().await {
+                Some(event) => {
+                    let event = event.map_err(LanguageModelCompletionError::from)?;
+                    Ok(Some((
+                        futures::stream::iter(mapper.map_event(event)),
+                        (mapper, events),
+                    )))
+                }
+                None if mapper.stop_emitted => Ok(None),
+                None => Err(LanguageModelCompletionError::StreamEndedUnexpectedly {
+                    provider: GOOGLE_PROVIDER_NAME,
+                }),
+            }
+        })
+        .try_flatten()
     }
 
     pub fn map_event(
@@ -314,6 +324,7 @@ impl GoogleEventMapper {
 
         let mut events: Vec<_> = Vec::new();
         let mut wants_to_use_tool = false;
+        let mut stop_reason = None;
         if let Some(usage_metadata) = event.usage_metadata {
             update_usage(&mut self.usage, &usage_metadata);
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
@@ -324,7 +335,7 @@ impl GoogleEventMapper {
         if let Some(prompt_feedback) = event.prompt_feedback
             && let Some(block_reason) = prompt_feedback.block_reason.as_deref()
         {
-            self.stop_reason = match block_reason {
+            let stop_reason = match block_reason {
                 "SAFETY" | "OTHER" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "IMAGE_SAFETY" => {
                     StopReason::Refusal
                 }
@@ -333,7 +344,10 @@ impl GoogleEventMapper {
                     StopReason::Refusal
                 }
             };
-            events.push(Ok(LanguageModelCompletionEvent::Stop(self.stop_reason)));
+            if !self.stop_emitted {
+                self.stop_emitted = true;
+                events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
+            }
 
             return events;
         }
@@ -341,7 +355,7 @@ impl GoogleEventMapper {
         if let Some(candidates) = event.candidates {
             for candidate in candidates {
                 if let Some(finish_reason) = candidate.finish_reason.as_deref() {
-                    self.stop_reason = match finish_reason {
+                    stop_reason = Some(match finish_reason {
                         "STOP" => StopReason::EndTurn,
                         "MAX_TOKENS" => StopReason::MaxTokens,
                         "SAFETY"
@@ -365,7 +379,7 @@ impl GoogleEventMapper {
                             log::error!("Unexpected google finish_reason: {finish_reason}");
                             StopReason::EndTurn
                         }
-                    };
+                    });
                 }
                 candidate
                     .content
@@ -435,8 +449,13 @@ impl GoogleEventMapper {
         // Even when Gemini wants to use a Tool, the API
         // responds with `finish_reason: STOP`
         if wants_to_use_tool {
-            self.stop_reason = StopReason::ToolUse;
-            events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+            stop_reason = Some(StopReason::ToolUse);
+        }
+        if let Some(stop_reason) = stop_reason
+            && !self.stop_emitted
+        {
+            self.stop_emitted = true;
+            events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
         }
         events
     }
@@ -484,8 +503,111 @@ mod tests {
         Content, FunctionCall, FunctionCallPart, GenerateContentCandidate, GenerateContentResponse,
         Part, Role as GoogleRole,
     };
-    use language_model_core::LanguageModelRequestMessage;
+    use language_model_core::{LanguageModelRequestMessage, LanguageModelRequestTool};
     use serde_json::json;
+
+    #[test]
+    fn completed_stream_emits_stop_once() {
+        for (response, expected_stop) in [
+            (
+                json!({"candidates": [{
+                    "content": {"role": "model", "parts": [{"text": "Answer"}]},
+                    "finishReason": "STOP"
+                }]}),
+                StopReason::EndTurn,
+            ),
+            (
+                json!({"candidates": [{
+                    "content": {"role": "model", "parts": [{
+                        "functionCall": {"name": "list_directory", "args": {}}
+                    }]},
+                    "finishReason": "STOP"
+                }]}),
+                StopReason::ToolUse,
+            ),
+            (
+                json!({"promptFeedback": {"blockReason": "SAFETY"}}),
+                StopReason::Refusal,
+            ),
+        ] {
+            let responses = vec![
+                Ok(serde_json::from_value(response).unwrap()),
+                Ok(serde_json::from_value(json!({"candidates": [{
+                    "content": {"role": "model", "parts": []},
+                    "finishReason": "STOP"
+                }]}))
+                .unwrap()),
+            ];
+            let events = futures::executor::block_on(
+                GoogleEventMapper::new()
+                    .map_stream(Box::pin(futures::stream::iter(responses)))
+                    .collect::<Vec<_>>(),
+            );
+            let stops = events
+                .into_iter()
+                .filter_map(|event| match event.unwrap() {
+                    LanguageModelCompletionEvent::Stop(reason) => Some(reason),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(stops, vec![expected_stop]);
+        }
+    }
+
+    #[test]
+    fn incomplete_stream_reports_unexpected_end() {
+        for has_content in [false, true] {
+            let mut responses = Vec::new();
+            if has_content {
+                responses.push(Ok(serde_json::from_value(json!({"candidates": [{
+                    "content": {"role": "model", "parts": [{"text": "Partial answer"}]}
+                }]}))
+                .unwrap()));
+            }
+            futures::executor::block_on(async {
+                let mut stream = GoogleEventMapper::new()
+                    .map_stream(Box::pin(futures::stream::iter(responses)))
+                    .boxed();
+                if has_content {
+                    assert!(matches!(
+                        stream.next().await,
+                        Some(Ok(LanguageModelCompletionEvent::Text(text))) if text == "Partial answer"
+                    ));
+                }
+                assert!(matches!(
+                    stream.next().await,
+                    Some(Err(LanguageModelCompletionError::StreamEndedUnexpectedly { provider }))
+                        if provider == language_model_core::GOOGLE_PROVIDER_NAME
+                ));
+                assert!(stream.next().await.is_none());
+            });
+        }
+    }
+
+    #[test]
+    fn stream_read_error_is_not_followed_by_completion() {
+        let responses = vec![
+            Ok(serde_json::from_value(json!({"candidates": [{
+                "content": {"role": "model", "parts": [{"text": "Partial answer"}]}
+            }]}))
+            .unwrap()),
+            Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "read failed").into()),
+        ];
+        let events = futures::executor::block_on(
+            GoogleEventMapper::new()
+                .map_stream(Box::pin(futures::stream::iter(responses)))
+                .collect::<Vec<_>>(),
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Ok(LanguageModelCompletionEvent::Text(text)),
+                Err(LanguageModelCompletionError::Other(error)),
+            ] if text == "Partial answer"
+                && error.downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset)
+        ));
+    }
 
     fn text_request() -> LanguageModelRequest {
         LanguageModelRequest {
@@ -514,6 +636,11 @@ mod tests {
         )
         .unwrap();
 
+        assert!(
+            serde_json::to_value(&request).unwrap()["generationConfig"]
+                .get("maxOutputTokens")
+                .is_none()
+        );
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.include_thoughts, Some(true));
         assert_eq!(thinking_config.thinking_level, Some(ThinkingLevel::Low));
@@ -524,9 +651,49 @@ mod tests {
     }
 
     #[test]
+    fn into_google_uses_json_schema_function_parameters() {
+        let input_schema = json!({
+            "type": "object",
+            "properties": {
+                "globs": {
+                    "anyOf": [
+                        { "type": "string" },
+                        {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    ]
+                }
+            }
+        });
+        let mut request = text_request();
+        request.max_output_tokens = Some(1024);
+        request.tools = vec![LanguageModelRequestTool::function(
+            "grep".to_string(),
+            "Search files".to_string(),
+            input_schema.clone(),
+            false,
+        )];
+
+        let request = into_google(
+            request,
+            "gemini-3.5-flash".to_string(),
+            GoogleModelMode::Default,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        assert_eq!(serialized["generationConfig"]["maxOutputTokens"], 1024);
+        let declaration = &serialized["tools"][0]["functionDeclarations"][0];
+
+        assert_eq!(declaration["parametersJsonSchema"], input_schema);
+        assert_eq!(declaration.get("parameters"), None);
+    }
+
+    #[test]
     fn into_google_turns_off_budget_thinking_when_supported() {
         let mut request = text_request();
         request.thinking_allowed = false;
+        request.max_output_tokens = Some(0);
 
         let request = into_google(
             request,
@@ -537,6 +704,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["generationConfig"]["maxOutputTokens"],
+            0
+        );
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.thinking_budget, Some(0));
         assert_eq!(thinking_config.include_thoughts, None);
@@ -705,12 +876,18 @@ mod tests {
             usage_metadata: None,
         };
 
-        mapper.map_event(response);
-        assert_eq!(mapper.stop_reason, StopReason::Refusal);
+        assert!(matches!(
+            mapper.map_event(response).as_slice(),
+            [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal))]
+        ));
     }
 
     #[test]
     fn test_disabled_thinking_level_per_model() {
+        assert_eq!(
+            disabled_thinking_level("gemini-3.8-flash"),
+            Some(ThinkingLevel::Low)
+        );
         assert_eq!(
             disabled_thinking_level("gemini-3.7-flash"),
             Some(ThinkingLevel::Low)
