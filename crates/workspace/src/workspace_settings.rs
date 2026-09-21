@@ -2,7 +2,7 @@ use std::{num::NonZeroUsize, time::Duration};
 
 use crate::DockPosition;
 use collections::HashMap;
-use gpui::{App, Subscription};
+use gpui::{App, SharedString, Subscription};
 use serde::Deserialize;
 pub use settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
@@ -213,7 +213,7 @@ impl Settings for TabBarSettings {
     }
 }
 
-#[derive(Deserialize, RegisterSetting)]
+#[derive(RegisterSetting)]
 pub struct StatusBarSettings {
     pub show: bool,
     pub show_active_file: bool,
@@ -222,6 +222,58 @@ pub struct StatusBarSettings {
     pub line_endings_button: bool,
     pub active_encoding_button: EncodingDisplayOptions,
     pub pending_keystrokes_indicator: bool,
+    pub document_stats_button: bool,
+    pub document_stats: DocumentStats,
+}
+
+/// Resolved (defaults-applied) configuration for the document statistics display.
+/// See [`settings::DocumentStatsSettingsContent`] for the raw user-facing settings.
+#[derive(Clone, Debug, Default)]
+pub struct DocumentStats {
+    /// Which statistics to display, in order, paired with their resolved label.
+    pub items: Vec<(settings::DocumentStatsItem, SharedString)>,
+    /// Text inserted between consecutive statistics.
+    pub separator: String,
+}
+
+impl DocumentStats {
+    fn default_label(item: settings::DocumentStatsItem) -> &'static str {
+        match item {
+            settings::DocumentStatsItem::Lines => "lines",
+            settings::DocumentStatsItem::Characters => "chars",
+            settings::DocumentStatsItem::Blocks => "blocks",
+        }
+    }
+
+    fn from_content(content: Option<&settings::DocumentStatsSettingsContent>) -> Self {
+        let items = content
+            .and_then(|content| content.items.clone())
+            .unwrap_or_else(|| {
+                vec![
+                    settings::DocumentStatsItemContent {
+                        item: settings::DocumentStatsItem::Characters,
+                        label: None,
+                    },
+                    settings::DocumentStatsItemContent {
+                        item: settings::DocumentStatsItem::Blocks,
+                        label: None,
+                    },
+                ]
+            })
+            .into_iter()
+            .map(|entry| {
+                let label = entry
+                    .label
+                    .map(SharedString::from)
+                    .unwrap_or_else(|| Self::default_label(entry.item).into());
+                (entry.item, label)
+            })
+            .collect();
+        let separator = content
+            .and_then(|content| content.separator.clone())
+            .unwrap_or_else(|| ", ".to_string());
+        Self { items, separator }
+    }
 }
 
 impl Settings for StatusBarSettings {
@@ -235,6 +287,8 @@ impl Settings for StatusBarSettings {
             line_endings_button: status_bar.line_endings_button.unwrap(),
             active_encoding_button: status_bar.active_encoding_button.unwrap(),
             pending_keystrokes_indicator: status_bar.pending_keystrokes_indicator.unwrap(),
+            document_stats_button: status_bar.document_stats_button.unwrap(),
+            document_stats: DocumentStats::from_content(status_bar.document_stats.as_ref()),
         }
     }
 }

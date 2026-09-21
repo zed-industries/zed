@@ -832,6 +832,8 @@ impl VsCodeSettings {
             line_endings_button: None,
             active_encoding_button: None,
             pending_keystrokes_indicator: None,
+            document_stats_button: None,
+            document_stats: None,
         })
     }
 

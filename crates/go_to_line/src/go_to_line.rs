@@ -1,4 +1,5 @@
 pub mod cursor_position;
+pub mod document_stats;
 
 use cursor_position::UserCaretPosition;
 use editor::{
@@ -353,15 +354,16 @@ mod tests {
     use super::*;
     use cursor_position::{CursorPosition, SelectionStats, UserCaretPosition};
     use editor::actions::{MoveRight, MoveToBeginning, SelectAll};
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::Capability;
     use multi_buffer::{MultiBuffer, PathKey};
     use project::{FakeFs, Project};
     use serde_json::json;
+    use settings::SettingsStore;
     use std::{num::NonZeroU32, sync::Arc, time::Duration};
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, MultiWorkspace, Workspace};
+    use workspace::{AppState, MultiWorkspace, StatusItemView, Workspace};
 
     #[gpui::test]
     async fn test_go_to_line_view_row_highlights(cx: &mut TestAppContext) {
@@ -539,7 +541,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
@@ -607,6 +609,285 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_document_stats(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_document_stats(cx);
+
+        // Blocks (paragraphs): a run of consecutive non-empty lines. Two or more
+        // consecutive empty lines separate blocks (rows 2-3); a single line break
+        // does not (row 6, within the second block); a whitespace-only line does
+        // not count as empty, so it does not split a block either (row 5).
+        // No trailing newline, so this is exactly 9 lines / 3 blocks.
+        let text = "para one\nstill one\n\n\npara two\n   \npara two continued\n\npara three";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.txt": text })).await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, window, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.txt")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(200));
+        let read_document_stats = |cx: &mut VisualTestContext| {
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .status_bar()
+                    .read(cx)
+                    .item_of_type::<CursorPosition>()
+                    .expect("missing cursor position item")
+                    .read(cx)
+                    .document_stats()
+            })
+        };
+        let document_stats = read_document_stats(cx)
+            .expect("document stats should be computed once the setting is enabled");
+        assert_eq!(
+            document_stats.lines, 9,
+            "total line count should follow line breaks in the buffer, not the current selection"
+        );
+        assert_eq!(
+            document_stats.characters,
+            text.chars().count(),
+            "character count should cover the whole document"
+        );
+        assert_eq!(
+            document_stats.blocks, 3,
+            "blocks are separated by two or more consecutive empty lines; \
+             a single line break or a whitespace-only line must not split a block"
+        );
+
+        // A plain cursor move (no content change) must not perturb the cached
+        // document stats -- they only depend on buffer content.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_right(&MoveRight, window, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        assert_eq!(
+            read_document_stats(cx),
+            Some(document_stats),
+            "moving the cursor without editing the buffer should not change the document stats"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_document_stats_disabled_by_default(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.txt": "one\ntwo\nthree" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, window, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let _editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.txt")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(200));
+        workspace.update(cx, |workspace, cx| {
+            let document_stats = workspace
+                .status_bar()
+                .read(cx)
+                .item_of_type::<CursorPosition>()
+                .expect("missing cursor position item")
+                .read(cx)
+                .document_stats();
+            assert_eq!(
+                document_stats, None,
+                "document stats must not be computed while the setting is off (the default)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_document_stats_populates_when_enabled_while_open(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.txt": "one\ntwo\nthree" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, window, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let _editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.txt")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(200));
+        workspace.update(cx, |workspace, cx| {
+            let document_stats = workspace
+                .status_bar()
+                .read(cx)
+                .item_of_type::<CursorPosition>()
+                .expect("missing cursor position item")
+                .read(cx)
+                .document_stats();
+            assert_eq!(document_stats, None, "stats must not be computed before the setting is enabled");
+        });
+
+        // Enabling the setting on an already-open document, without any
+        // subsequent edit or tab switch, must populate its stats immediately.
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.status_bar.get_or_insert_default().document_stats_button = Some(true);
+                });
+            });
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let document_stats = workspace
+                .status_bar()
+                .read(cx)
+                .item_of_type::<CursorPosition>()
+                .expect("missing cursor position item")
+                .read(cx)
+                .document_stats()
+                .expect(
+                    "enabling the setting on an already-open document should populate stats \
+                     immediately, without needing an edit or tab switch",
+                );
+            assert_eq!(document_stats.lines, 3);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_document_stats_hidden_for_multibuffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_document_stats(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.txt": "" })).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        // A multi-excerpt view (as used for search results / references), not a
+        // normal single-file editor: `position.line` here is relative to the
+        // excerpt's own underlying buffer, so a document-wide line/char/block
+        // count over the combined multi-buffer view would not describe the same
+        // document and must stay hidden.
+        let file_content = (1..=20)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let buffer = cx.new(|cx| Buffer::local(file_content, cx));
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_excerpts_for_path(
+                PathKey::for_buffer(&buffer, cx),
+                buffer.clone(),
+                [Point::new(0, 0)..Point::new(3, 0)],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let editor = workspace.update_in(cx, |_, window, cx| {
+            cx.new(|cx| Editor::for_multibuffer(multibuffer.clone(), None, window, cx))
+        });
+
+        let cursor_position = workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position.clone(), window, cx);
+            });
+            cursor_position
+        });
+        cursor_position.update_in(cx, |cursor_position, window, cx| {
+            cursor_position.set_active_pane_item(Some(&editor), window, cx);
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cursor_position.read_with(cx, |cursor_position, _| {
+            assert_eq!(
+                cursor_position.document_stats(),
+                None,
+                "document stats must stay hidden for a multi-excerpt buffer, since \
+                 position.line is relative to the excerpt's own buffer, not this view"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_unicode_line_numbers(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -625,7 +906,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
@@ -704,7 +985,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
@@ -890,6 +1171,16 @@ mod tests {
             editor::init(cx);
             state
         })
+    }
+
+    fn enable_document_stats(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.status_bar.get_or_insert_default().document_stats_button = Some(true);
+                });
+            });
+        });
     }
 
     #[gpui::test]

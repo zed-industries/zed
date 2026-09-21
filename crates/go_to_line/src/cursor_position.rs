@@ -1,6 +1,7 @@
+use crate::document_stats::{self, DocumentStatsValues};
 use editor::{Editor, EditorEvent, MBTextSummary, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Styled, Subscription, Task, WeakEntity};
-use settings::{RegisterSetting, Settings};
+use settings::{RegisterSetting, Settings, SettingsStore};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
@@ -8,7 +9,10 @@ use ui::{
     Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
+use workspace::{
+    DocumentStats as DocumentStatsSettings, HideStatusItem, StatusBarSettings, StatusItemView,
+    Workspace, item::ItemHandle,
+};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -20,10 +24,13 @@ pub(crate) struct SelectionStats {
 pub struct CursorPosition {
     position: Option<UserCaretPosition>,
     selected_count: SelectionStats,
+    document_stats: Option<DocumentStatsValues>,
     context: Option<FocusHandle>,
     workspace: WeakEntity<Workspace>,
+    active_editor: Option<WeakEntity<Editor>>,
     update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
+    _observe_document_stats_setting: Subscription,
 }
 
 /// A position in the editor, where user's caret is located at.
@@ -67,14 +74,43 @@ impl UserCaretPosition {
 }
 
 impl CursorPosition {
-    pub fn new(workspace: &Workspace) -> Self {
+    pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
+        // Toggling `document_stats_button` on with a document already open must
+        // populate its stats immediately, not wait for the next edit or tab
+        // switch (`update_position` is otherwise only driven by editor events).
+        let _observe_document_stats_setting =
+            cx.observe_global::<SettingsStore>(|cursor_position, cx| {
+                let Some(editor) = cursor_position
+                    .active_editor
+                    .as_ref()
+                    .and_then(|editor| editor.upgrade())
+                else {
+                    return;
+                };
+                cursor_position.document_stats = editor.update(cx, |editor, cx| {
+                    match editor.mode() {
+                        editor::EditorMode::Full { .. } => {
+                            let is_singleton = editor.buffer().read(cx).is_singleton();
+                            let snapshot = editor.display_snapshot(cx);
+                            (is_singleton && StatusBarSettings::get_global(cx).document_stats_button)
+                                .then(|| document_stats::compute(snapshot.buffer_snapshot()))
+                        }
+                        _ => None,
+                    }
+                });
+                cx.notify();
+            });
+
         Self {
             position: None,
             context: None,
             selected_count: Default::default(),
+            document_stats: None,
+            active_editor: None,
             workspace: workspace.weak_handle(),
             update_position: Task::ready(()),
             _observe_active_editor: None,
+            _observe_document_stats_setting,
         }
     }
 
@@ -82,6 +118,7 @@ impl CursorPosition {
         &mut self,
         editor: &Entity<Editor>,
         debounce: Option<Duration>,
+        recompute_document_stats: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -106,11 +143,28 @@ impl CursorPosition {
                             | editor::EditorMode::SingleLine
                             | editor::EditorMode::Minimap { .. } => {
                                 cursor_position.position = None;
+                                cursor_position.document_stats = None;
                                 cursor_position.context = None;
                             }
                             editor::EditorMode::Full { .. } => {
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.display_snapshot(cx);
+                                // Document stats only make sense for a single whole
+                                // document (not a combined multi-buffer view, where
+                                // `position.line` is already relative to the
+                                // underlying excerpt's own buffer, not this
+                                // snapshot), and only cost anything (the O(lines)
+                                // block scan) when the setting is on. Recomputing is
+                                // also skipped on a plain cursor move
+                                // (`recompute_document_stats` is false for
+                                // `SelectionsChanged`): the result only depends on
+                                // buffer content, so the previous value is reused.
+                                if recompute_document_stats {
+                                    cursor_position.document_stats = (is_singleton
+                                        && StatusBarSettings::get_global(cx)
+                                            .document_stats_button)
+                                        .then(|| document_stats::compute(snapshot.buffer_snapshot()));
+                                }
                                 if snapshot.buffer_snapshot().excerpts().count() > 0 {
                                     for selection in editor.selections.all_adjusted(&snapshot) {
                                         let selection_summary = snapshot
@@ -205,6 +259,37 @@ impl CursorPosition {
     pub(crate) fn position(&self) -> Option<UserCaretPosition> {
         self.position
     }
+
+    #[cfg(test)]
+    pub(crate) fn document_stats(&self) -> Option<DocumentStatsValues> {
+        self.document_stats
+    }
+}
+
+/// Appends the configured document-wide statistics (for example "120 chars, 4 blocks")
+/// to `text`, unconditionally (unlike [`CursorPosition::write_position`], this does not
+/// depend on whether anything is selected). Pure formatting: takes the already-computed
+/// values and resolved settings, so it has no dependency on `CursorPosition` itself.
+fn write_document_stats(
+    values: &DocumentStatsValues,
+    settings: &DocumentStatsSettings,
+    text: &mut String,
+) {
+    if settings.items.is_empty() {
+        return;
+    }
+    write!(text, " — ").unwrap();
+    for (index, (item, label)) in settings.items.iter().enumerate() {
+        if index > 0 {
+            text.push_str(&settings.separator);
+        }
+        let count = match item {
+            settings::DocumentStatsItem::Lines => values.lines as usize,
+            settings::DocumentStatsItem::Characters => values.characters,
+            settings::DocumentStatsItem::Blocks => values.blocks,
+        };
+        write!(text, "{count} {label}").unwrap();
+    }
 }
 
 impl Render for CursorPosition {
@@ -214,11 +299,30 @@ impl Render for CursorPosition {
         }
 
         div().when_some(self.position, |el, position| {
-            let mut text = format!(
-                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
-                position.line, position.character,
-            );
+            let status_bar_settings = StatusBarSettings::get_global(cx);
+            let mut text = if status_bar_settings.document_stats_button
+                && let Some(document_stats) = self.document_stats.as_ref()
+            {
+                format!(
+                    "{}/{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                    position.line, document_stats.lines, position.character,
+                )
+            } else {
+                format!(
+                    "{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                    position.line, position.character,
+                )
+            };
             self.write_position(&mut text, cx);
+            if status_bar_settings.document_stats_button
+                && let Some(document_stats) = self.document_stats.as_ref()
+            {
+                write_document_stats(
+                    document_stats,
+                    &status_bar_settings.document_stats,
+                    &mut text,
+                );
+            }
 
             let context = self.context.clone();
 
@@ -273,6 +377,7 @@ impl StatusItemView for CursorPosition {
         cx: &mut Context<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+            self.active_editor = Some(editor.downgrade());
             self._observe_active_editor = Some(cx.subscribe_in(
                 &editor,
                 window,
@@ -281,15 +386,25 @@ impl StatusItemView for CursorPosition {
                         cursor_position,
                         editor,
                         Some(UPDATE_DEBOUNCE),
+                        false,
+                        window,
+                        cx,
+                    ),
+                    EditorEvent::BufferEdited => Self::update_position(
+                        cursor_position,
+                        editor,
+                        Some(UPDATE_DEBOUNCE),
+                        true,
                         window,
                         cx,
                     ),
                     _ => {}
                 },
             ));
-            self.update_position(&editor, None, window, cx);
+            self.update_position(&editor, None, true, window, cx);
         } else {
             self.position = None;
+            self.active_editor = None;
             self._observe_active_editor = None;
         }
 

@@ -587,6 +587,64 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: true
     pub pending_keystrokes_indicator: Option<bool>,
+    /// Whether to show document-wide statistics (total lines, characters, blocks) next to the
+    /// cursor position button in the status bar. Always reflects the whole active document,
+    /// not just the current selection.
+    ///
+    /// Default: false
+    pub document_stats_button: Option<bool>,
+    /// Configuration for the document statistics display (see `document_stats_button`).
+    pub document_stats: Option<DocumentStatsSettingsContent>,
+}
+
+/// A single statistic that can be shown in the document statistics display.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantNames,
+    strum::VariantArray,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentStatsItem {
+    /// The total number of lines in the document.
+    Lines,
+    /// The total number of characters in the document.
+    Characters,
+    /// The number of blocks (paragraphs) in the document, where a block is a run of
+    /// non-empty lines separated by one or more empty lines.
+    Blocks,
+}
+
+/// A single entry in the document statistics display: which statistic to show, and
+/// optionally a custom label overriding the built-in one.
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct DocumentStatsItemContent {
+    /// Which statistic this entry displays.
+    pub item: DocumentStatsItem,
+    /// Custom label text for this entry. Defaults to a built-in label for `item`
+    /// (for example, "chars" for `characters`) when not set.
+    pub label: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct DocumentStatsSettingsContent {
+    /// Which statistics to display, and in what order.
+    ///
+    /// Default: [{"item": "characters"}, {"item": "blocks"}]
+    pub items: Option<Vec<DocumentStatsItemContent>>,
+    /// Text inserted between consecutive statistics.
+    ///
+    /// Default: ", "
+    pub separator: Option<String>,
 }
 
 #[derive(
