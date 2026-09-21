@@ -7,13 +7,13 @@ pub const XAI_API_URL: &str = "https://api.x.ai/v1";
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[default]
     #[serde(rename = "grok-4.3", alias = "grok-4.3-latest")]
     Grok43,
     #[serde(rename = "grok-4.5", alias = "grok-4.5-latest")]
     Grok45,
     #[serde(rename = "grok-4.6", alias = "grok-4.6-latest")]
     Grok46,
+    #[default]
     #[serde(rename = "grok-4.7", alias = "grok-4.7-latest")]
     Grok47,
     #[serde(rename = "grok-4.20-0309-reasoning")]
