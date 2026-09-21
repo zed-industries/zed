@@ -15,6 +15,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
+use async_lock::Semaphore;
 use buffer_diff::{
     BufferDiff, DiffHunk, DiffHunkSecondaryStatus, DiffOperations, PendingHunk, PendingSense,
 };
@@ -115,10 +116,13 @@ pub struct GitStore {
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
     buffer_ids_by_index_text_buffer_id: HashMap<BufferId, BufferId>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
+    blob_read_limiter: Arc<Semaphore>,
     _subscriptions: Vec<Subscription>,
 }
 
 const MIN_PARKED_REPOSITORY_DEPTH: usize = 2;
+
+pub const MAX_CONCURRENT_BLOB_READS: usize = 16;
 
 #[derive(Clone, Debug)]
 pub struct ParkedRepository {
@@ -683,6 +687,7 @@ pub struct Repository {
     unshallow_state: UnshallowState,
     commit_message_buffer: Option<Entity<Buffer>>,
     git_store: WeakEntity<GitStore>,
+    blob_read_limiter: Arc<Semaphore>,
     // For a local repository, holds paths that have had worktree events since the last status scan completed,
     // and that should be examined during the next status scan.
     paths_needing_status_update: Vec<Vec<RepoPath>>,
@@ -1019,6 +1024,7 @@ impl GitStore {
             _subscriptions,
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
+            blob_read_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_BLOB_READS)),
             diffs: HashMap::default(),
             buffer_ids_by_index_text_buffer_id: HashMap::default(),
         }
@@ -2912,6 +2918,7 @@ impl GitStore {
 
         let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
         let git_store = cx.weak_entity();
+        let blob_read_limiter = self.blob_read_limiter.clone();
         let repo = cx.new(|cx| {
             let mut repo = Repository::local(
                 id,
@@ -2923,6 +2930,7 @@ impl GitStore {
                 fs,
                 is_trusted,
                 git_store,
+                blob_read_limiter,
                 cx,
             );
             if let Some(updates_tx) = updates_tx.as_ref() {
@@ -3391,6 +3399,7 @@ impl GitStore {
                 .map(|p| Path::new(p).into());
 
             let mut repo_subscription = None;
+            let blob_read_limiter = this.blob_read_limiter.clone();
             let repo = this.repositories.entry(id).or_insert_with(|| {
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
@@ -3403,6 +3412,7 @@ impl GitStore {
                         ProjectId(update.project_id),
                         client,
                         git_store,
+                        blob_read_limiter,
                         cx,
                     )
                 });
@@ -6530,6 +6540,7 @@ impl Repository {
         fs: Arc<dyn Fs>,
         is_trusted: bool,
         git_store: WeakEntity<GitStore>,
+        blob_read_limiter: Arc<Semaphore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let snapshot = RepositorySnapshot::empty(
@@ -6544,6 +6555,7 @@ impl Repository {
         let mut repo = Repository {
             this: cx.weak_entity(),
             git_store,
+            blob_read_limiter,
             snapshot,
             unshallow_state: UnshallowState::default(),
             pending_ops: Default::default(),
@@ -6575,6 +6587,7 @@ impl Repository {
         project_id: ProjectId,
         client: AnyProtoClient,
         git_store: WeakEntity<GitStore>,
+        blob_read_limiter: Arc<Semaphore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let snapshot = RepositorySnapshot::empty(
@@ -6597,6 +6610,7 @@ impl Repository {
             unshallow_state: UnshallowState::default(),
             commit_message_buffer: None,
             git_store,
+            blob_read_limiter,
             pending_ops: Default::default(),
             paths_needing_status_update: Default::default(),
             job_sender,
@@ -8413,7 +8427,7 @@ impl Repository {
         is_dir: bool,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        let repository_dir = self.snapshot.repository_dir_abs_path.clone();
+        let repository_dir = self.snapshot.common_dir_abs_path.clone();
         let path_display = repo_path.as_ref().display(PathStyle::Unix);
         let path = repo_path.as_unix_str().to_owned();
         let file_path_str = if is_dir {
@@ -10381,10 +10395,15 @@ impl Repository {
         })
     }
 
-    fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
+    /// Bypasses the serial git job queue: blobs are content-addressed, so this read
+    /// doesn't depend on the status snapshot, and a diff issues one per changed file.
+    fn load_blob_content(&self, oid: Oid, cx: &App) -> Task<Result<String>> {
         let repository_id = self.snapshot.id;
-        let rx = self.send_job("load_blob_content", None, move |state, _| async move {
-            match state {
+        let repository_state = self.repository_state.clone();
+        let blob_read_limiter = self.blob_read_limiter.clone();
+        cx.background_spawn(async move {
+            let _permit = blob_read_limiter.acquire_arc().await;
+            match repository_state.await.map_err(|err| anyhow::anyhow!(err))? {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     decode_git_text(backend.load_blob_content(oid).await?)
                 }
@@ -10399,8 +10418,7 @@ impl Repository {
                     Ok(response.content)
                 }
             }
-        });
-        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+        })
     }
 
     fn paths_changed(
@@ -11361,7 +11379,7 @@ impl Repository {
 mod tests {
     use super::*;
     use crate::Project;
-    use fs::{FakeFs, Fs};
+    use fs::{FakeBlobReadGate, FakeFs, Fs};
     use git::repository::{RepoPath, repo_path};
     use gpui::proptest::prelude::*;
     use gpui::{TestAppContext, UpdateGlobal};
@@ -11746,29 +11764,25 @@ mod tests {
 
     #[gpui::test]
     async fn test_merge_base_status_uses_worktree_contents(cx: &mut TestAppContext) {
-        use util::rel_path::rel_path;
+        use util::{path, rel_path::rel_path};
 
         init_test(cx);
 
+        let project_root = Path::new(path!("/project"));
+        let dot_git = project_root.join(".git");
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            Path::new("/project"),
+            project_root,
             json!({
                 ".git": {},
                 "committed.txt": "base\n",
             }),
         )
         .await;
-        fs.set_head_and_index_for_repo(
-            Path::new("/project/.git"),
-            &[("committed.txt", "head\n".into())],
-        );
-        fs.set_merge_base_content_for_repo(
-            Path::new("/project/.git"),
-            &[("committed.txt", "base\n".into())],
-        );
+        fs.set_head_and_index_for_repo(&dot_git, &[("committed.txt", "head\n".into())]);
+        fs.set_merge_base_content_for_repo(&dot_git, &[("committed.txt", "base\n".into())]);
 
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let project = Project::test(fs.clone(), [project_root], cx).await;
         project
             .update(cx, |project, cx| project.git_scans_complete(cx))
             .await;
@@ -11836,10 +11850,7 @@ mod tests {
             assert_eq!(display_snapshot.statuses_by_path.iter().count(), 0);
         });
 
-        fs.set_merge_base_content_for_repo(
-            Path::new("/project/.git"),
-            &[("committed.txt", "head\n".into())],
-        );
+        fs.set_merge_base_content_for_repo(&dot_git, &[("committed.txt", "head\n".into())]);
         let repository =
             project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
         let branches = repository.read_with(cx, |repository, _| {
@@ -11881,6 +11892,95 @@ mod tests {
             assert!(git_store.display_diff_for_repo(repository_id).is_none());
         });
         assert!(weak_display_diff_list.upgrade().is_none());
+    }
+
+    async fn setup_gated_blob_reads(
+        cx: &mut TestAppContext,
+        count: usize,
+    ) -> (FakeBlobReadGate, Entity<Repository>, Vec<git::Oid>) {
+        use util::path;
+
+        let project_root = Path::new(path!("/project"));
+        let dot_git = project_root.join(".git");
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(project_root, json!({ ".git": {} })).await;
+
+        let entries = (0..count)
+            .map(|index| (format!("f{index:02}.txt"), format!("blob-{index:02}\n")))
+            .collect::<Vec<_>>();
+        let entry_refs = entries
+            .iter()
+            .map(|(name, content)| (name.as_str(), content.clone()))
+            .collect::<Vec<_>>();
+        let oids = fs.set_merge_base_content_for_repo(&dot_git, &entry_refs);
+        let gate = fs.install_blob_read_gate_for_repo(&dot_git);
+
+        let project = Project::test(fs, [project_root], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        (gate, repository, oids)
+    }
+
+    #[gpui::test]
+    async fn test_blob_reads_are_bounded(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (gate, repository, oids) =
+            setup_gated_blob_reads(cx, MAX_CONCURRENT_BLOB_READS + 4).await;
+
+        let reads = oids
+            .iter()
+            .map(|oid| {
+                repository.update(cx, |repository, cx| repository.load_blob_content(*oid, cx))
+            })
+            .collect::<Vec<_>>();
+        cx.run_until_parked();
+
+        assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_BLOB_READS);
+        assert_eq!(gate.waiting(), MAX_CONCURRENT_BLOB_READS);
+
+        gate.open();
+        cx.run_until_parked();
+        for read in reads {
+            read.await.unwrap();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_cancelled_blob_read_releases_permit(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (gate, repository, oids) =
+            setup_gated_blob_reads(cx, MAX_CONCURRENT_BLOB_READS + 1).await;
+
+        let mut holding = oids[..MAX_CONCURRENT_BLOB_READS]
+            .iter()
+            .map(|oid| {
+                repository.update(cx, |repository, cx| repository.load_blob_content(*oid, cx))
+            })
+            .collect::<Vec<_>>();
+        cx.run_until_parked();
+        assert_eq!(gate.waiting(), MAX_CONCURRENT_BLOB_READS);
+
+        // One more read can't get a permit, so it never reaches the backend.
+        let blocked_oid = oids[MAX_CONCURRENT_BLOB_READS];
+        let _blocked = repository.update(cx, |repository, cx| {
+            repository.load_blob_content(blocked_oid, cx)
+        });
+        cx.run_until_parked();
+        assert!(!gate.is_waiting(blocked_oid));
+
+        let cancelled_oid = oids[0];
+        drop(holding.remove(0));
+        cx.run_until_parked();
+        assert!(gate.is_waiting(blocked_oid));
+        assert!(!gate.is_waiting(cancelled_oid));
+        assert_eq!(gate.waiting(), MAX_CONCURRENT_BLOB_READS);
+        assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_BLOB_READS);
+
+        gate.open();
+        cx.run_until_parked();
     }
 
     #[gpui::test]
