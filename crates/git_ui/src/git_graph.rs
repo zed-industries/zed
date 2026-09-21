@@ -1,7 +1,7 @@
 pub use crate::commit_context_menu::{CopyCommitSha, CopyCommitTag, OpenCommitView};
 use crate::{
     commit_context_menu::{CommitContextMenuData, CommitContextMenuSource, commit_context_menu},
-    commit_tooltip::CommitAvatar,
+    commit_tooltip::{CommitAvatar, CommitMessageTooltip},
     commit_view::CommitView,
     git_status_icon,
 };
@@ -1953,58 +1953,83 @@ impl GitGraph {
 
                 let is_selected = self.selected_entry_idx == Some(idx);
                 if self.compact {
-                    let short_sha = commit.data.sha.display_short();
-                    let meta_text = format!(
-                        "{} · {} · {}",
-                        short_sha, author_name, formatted_time
-                    );
-                    let subject_for_tooltip = subject.clone();
                     let reference = commit
                         .data
                         .ref_names
                         .iter()
                         .find(|name| Self::is_head_ref(name.as_ref(), &head_branch_name))
                         .or_else(|| commit.data.ref_names.first());
-                    return vec![
-                        h_flex()
-                            .id(("compact-commit", idx))
-                            .w_full()
-                            .min_w_0()
-                            .gap_1()
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(Label::new(subject).truncate()),
-                            )
-                            .children(reference.map(|name| {
-                                div()
-                                    .max_w(px(100.))
-                                    .overflow_hidden()
-                                    .child(self.render_ref_chip(
-                                        name,
-                                        accent_color,
-                                        Self::is_head_ref(name.as_ref(), &head_branch_name),
-                                        idx,
-                                        cx,
-                                    ))
-                            }))
-                            .when(commit.data.ref_names.len() > 1, |this| {
-                                this.child(
-                                    Label::new(format!("+{}", commit.data.ref_names.len() - 1))
-                                        .color(Color::Muted),
-                                )
-                            })
-                            .tooltip(move |_, cx| {
-                                Tooltip::with_meta(
-                                    subject_for_tooltip.clone(),
-                                    None,
-                                    meta_text.clone(),
+                    let repo = self.get_repository(cx);
+                    let tag_names = commit
+                        .data
+                        .tag_names()
+                        .into_iter()
+                        .map(|tag| SharedString::from(tag.to_string()))
+                        .collect::<Vec<_>>();
+                    let sha = SharedString::from(commit.data.sha.to_string());
+                    let workspace = self.workspace.clone();
+
+                    let mut row = h_flex()
+                        .id(("compact-commit", idx))
+                        .w_full()
+                        .min_w_0()
+                        .gap_1()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Label::new(subject.clone()).truncate()),
+                        )
+                        .children(reference.map(|name| {
+                            div()
+                                .max_w(px(100.))
+                                .overflow_hidden()
+                                .child(self.render_ref_chip(
+                                    name,
+                                    accent_color,
+                                    Self::is_head_ref(name.as_ref(), &head_branch_name),
+                                    idx,
                                     cx,
-                                )
-                            })
-                            .into_any_element(),
+                                ))
+                        }))
+                        .when(commit.data.ref_names.len() > 1, |this| {
+                            this.child(
+                                Label::new(format!("+{}", commit.data.ref_names.len() - 1))
+                                    .color(Color::Muted),
+                            )
+                        });
+
+                    if let Some(repository) = repo {
+                        row = row.hoverable_tooltip(move |window, cx| {
+                            CommitMessageTooltip::new(
+                                sha.clone(),
+                                tag_names.clone(),
+                                repository.clone(),
+                                workspace.clone(),
+                                window,
+                                cx,
+                            )
+                            .into()
+                        });
+                    } else {
+                        let short_sha = commit.data.sha.display_short();
+                        let meta_text = format!(
+                            "{} · {} · {}",
+                            short_sha, author_name, formatted_time
+                        );
+                        row = row.tooltip(move |_, cx| {
+                            Tooltip::with_meta(
+                                subject.clone(),
+                                None,
+                                meta_text.clone(),
+                                cx,
+                            )
+                        });
+                    }
+
+                    return vec![
+                        row.into_any_element(),
                         Empty.into_any_element(),
                         Empty.into_any_element(),
                         Empty.into_any_element(),

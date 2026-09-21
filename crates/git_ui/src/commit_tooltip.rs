@@ -5,7 +5,7 @@ use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
 use git::repository::CommitSummary;
-use git::{GitRemote, commit::ParsedCommitMessage};
+use git::{GitHostingProviderRegistry, GitRemote, commit::ParsedCommitMessage};
 use git_ui_core::askpass_modal::AskPassModal;
 use git_ui_core::notifications::show_error_toast;
 use gpui::{
@@ -642,3 +642,70 @@ pub(crate) fn fetch_unshallow(
         })?
     })
 }
+
+pub struct CommitMessageTooltip {
+    commit_tooltip: Option<Entity<CommitTooltip>>,
+}
+
+impl CommitMessageTooltip {
+    pub fn new(
+        sha: SharedString,
+        tag_names: Vec<SharedString>,
+        repository: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let remote_url = repository.read(cx).default_remote_url();
+        cx.new(|cx| {
+            let show_task = repository.update(cx, |repo, cx| {
+                let show = repo.show(sha.to_string());
+                cx.spawn(async move |_, _| show.await?)
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                let details = show_task.await?;
+                let provider_registry = cx
+                    .update(|_, app| GitHostingProviderRegistry::default_global(app))
+                    .ok();
+
+                let commit_details = CommitDetails {
+                    sha: details.sha.clone(),
+                    author_name: details.author_name.clone(),
+                    author_email: details.author_email.clone(),
+                    commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
+                    message: Some(ParsedCommitMessage::parse(
+                        details.sha.to_string(),
+                        details.message.to_string(),
+                        remote_url.as_deref(),
+                        provider_registry,
+                    )),
+                    tag_names,
+                    boundary: false,
+                };
+
+                this.update(cx, |this: &mut CommitMessageTooltip, cx| {
+                    this.commit_tooltip = Some(cx.new(move |cx| {
+                        CommitTooltip::new(commit_details, repository, workspace, cx)
+                    }));
+                    cx.notify();
+                })
+            })
+            .detach();
+
+            Self {
+                commit_tooltip: None,
+            }
+        })
+    }
+}
+
+impl Render for CommitMessageTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(commit_tooltip) = &self.commit_tooltip {
+            commit_tooltip.clone().into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
+        }
+    }
+}
+

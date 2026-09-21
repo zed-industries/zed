@@ -5,7 +5,7 @@ use crate::commit_context_menu::{
     CommitContextMenuData, CommitContextMenuSource, commit_context_menu,
 };
 use crate::commit_modal::CommitModal;
-use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
+use crate::commit_tooltip::{CommitAvatar, CommitMessageTooltip};
 use crate::commit_view::CommitView;
 use crate::git_graph::GitGraph;
 use crate::git_panel_settings::GitPanelScrollbarAccessor;
@@ -31,7 +31,6 @@ use file_icons::FileIcons;
 use futures::StreamExt as _;
 use futures::channel::oneshot::Canceled;
 use git::Oid;
-use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
     GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
@@ -88,12 +87,11 @@ use std::rc::Rc;
 use std::{sync::Arc, time::Duration};
 use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
-use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, Chip, ContextMenu, ContextMenuEntry, Divider, DocumentationSide,
-    ElevationIndex, IndentGuideColors, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    ProjectEmptyState, ScrollAxes, Scrollbars, SplitButton, Tab, TintColor, Tooltip, WithScrollbar,
-    prelude::*,
+    ButtonLike, Checkbox, Chip, CommonAnimationExt as _, ContextMenu, ContextMenuEntry, Divider,
+    DocumentationSide, ElevationIndex, IndentGuideColors, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, ProjectEmptyState, ScrollAxes, Scrollbars, SplitButton, Tab, TintColor,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
@@ -1127,6 +1125,8 @@ pub struct GitPanel {
     graph_height: Option<Pixels>,
     graph_bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
     graph_history_ref: HistoryRefSelection,
+    graph_is_refreshing: bool,
+    _graph_refresh_task: Option<Task<()>>,
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
     /// Whether the commit editor should fill the vertical height of the panel.
@@ -1482,6 +1482,8 @@ impl GitPanel {
                 graph_height,
                 graph_bounds: Rc::new(Cell::new(gpui::Bounds::default())),
                 graph_history_ref,
+                graph_is_refreshing: false,
+                _graph_refresh_task: None,
                 active_repository,
                 commit_editor,
                 commit_editor_expanded: false,
@@ -6864,7 +6866,6 @@ impl GitPanel {
         let branch = active_repository.read(cx).branch.as_ref()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
         let workspace = self.workspace.clone();
-        let this = cx.entity();
 
         Some(
             h_flex()
@@ -6889,6 +6890,7 @@ impl GitPanel {
                         .on_click({
                             let commit = commit.clone();
                             let repo = active_repository.downgrade();
+                            let workspace = workspace.clone();
                             move |_, window, cx| {
                                 CommitView::open(
                                     commit.sha.to_string(),
@@ -6904,10 +6906,11 @@ impl GitPanel {
                         .hoverable_tooltip({
                             let repo = active_repository.clone();
                             move |window, cx| {
-                                GitPanelMessageTooltip::new(
-                                    this.clone(),
+                                CommitMessageTooltip::new(
                                     commit.sha.clone(),
+                                    Vec::new(),
                                     repo.clone(),
+                                    workspace.clone(),
                                     window,
                                     cx,
                                 )
@@ -9125,6 +9128,17 @@ impl GitPanel {
             });
         }
         self.schedule_update(window, cx);
+        self.graph_is_refreshing = true;
+        let executor = cx.background_executor().clone();
+        self._graph_refresh_task = Some(cx.spawn(async move |this, cx| {
+            executor.timer(std::time::Duration::from_millis(600)).await;
+            this.update(cx, |this, cx| {
+                this.graph_is_refreshing = false;
+                cx.notify();
+            })
+            .log_err();
+        }));
+        cx.notify();
     }
 
     fn render_graph_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -9285,14 +9299,25 @@ impl GitPanel {
                         )
                         .child(pull_button)
                         .child(push_button)
-                        .child(
+                        .child(if self.graph_is_refreshing {
+                            ButtonLike::new("graph-refresh-loading")
+                                .disabled(true)
+                                .tooltip(Tooltip::text("Refreshing..."))
+                                .child(
+                                    Icon::new(IconName::RotateCw)
+                                        .color(Color::Accent)
+                                        .with_rotate_animation(1),
+                                )
+                                .into_any_element()
+                        } else {
                             IconButton::new("graph-refresh", IconName::RotateCw)
                                 .tooltip(Tooltip::text("Refresh"))
                                 .disabled(self.active_repository.is_none())
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.refresh_graph(window, cx);
-                                })),
-                        )
+                                }))
+                                .into_any_element()
+                        })
                     })
                     .child(
                         IconButton::new("expand-panel-graph", IconName::Maximize)
@@ -9645,73 +9670,6 @@ pub(crate) fn git_commit_editor_style(font_size: gpui::Pixels, cx: &App) -> Edit
         },
         syntax: cx.theme().syntax().clone(),
         ..Default::default()
-    }
-}
-
-struct GitPanelMessageTooltip {
-    commit_tooltip: Option<Entity<CommitTooltip>>,
-}
-
-impl GitPanelMessageTooltip {
-    fn new(
-        git_panel: Entity<GitPanel>,
-        sha: SharedString,
-        repository: Entity<Repository>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Entity<Self> {
-        let remote_url = repository.read(cx).default_remote_url();
-        cx.new(|cx| {
-            cx.spawn_in(window, async move |this, cx| {
-                let (details, workspace) = git_panel.update(cx, |git_panel, cx| {
-                    (
-                        git_panel.load_commit_details(sha.to_string(), cx),
-                        git_panel.workspace.clone(),
-                    )
-                });
-                let details = details.await?;
-                let provider_registry = cx
-                    .update(|_, app| GitHostingProviderRegistry::default_global(app))
-                    .ok();
-
-                let commit_details = crate::commit_tooltip::CommitDetails {
-                    sha: details.sha.clone(),
-                    author_name: details.author_name.clone(),
-                    author_email: details.author_email.clone(),
-                    commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
-                    message: Some(ParsedCommitMessage::parse(
-                        details.sha.to_string(),
-                        details.message.to_string(),
-                        remote_url.as_deref(),
-                        provider_registry,
-                    )),
-                    tag_names: Vec::new(),
-                    boundary: false,
-                };
-
-                this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
-                    this.commit_tooltip = Some(cx.new(move |cx| {
-                        CommitTooltip::new(commit_details, repository, workspace, cx)
-                    }));
-                    cx.notify();
-                })
-            })
-            .detach();
-
-            Self {
-                commit_tooltip: None,
-            }
-        })
-    }
-}
-
-impl Render for GitPanelMessageTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(commit_tooltip) = &self.commit_tooltip {
-            commit_tooltip.clone().into_any_element()
-        } else {
-            gpui::Empty.into_any_element()
-        }
     }
 }
 
@@ -10787,6 +10745,42 @@ mod tests {
 
             drop(panel.render_graph_section(window, cx));
             assert!(panel.graph.is_some());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel_graph_refresh_animation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({".git": {}}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+
+        let serialized: SerializedGitPanel =
+            serde_json::from_str(r#"{"graph_collapsed":false}"#).expect("panel state");
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            GitPanel::new_with_serialized_panel(workspace, Some(serialized), window, cx)
+        });
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(!panel.graph_is_refreshing);
+            panel.refresh_graph(window, cx);
+            assert!(panel.graph_is_refreshing);
+        });
+
+        cx.executor().advance_clock(std::time::Duration::from_millis(700));
+        cx.run_until_parked();
+
+        panel.update(cx, |panel, _| {
+            assert!(!panel.graph_is_refreshing);
         });
     }
 
