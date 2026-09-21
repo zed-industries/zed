@@ -7,7 +7,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
 use crate::{
-    DelayMs, DocumentFoldingRanges, DocumentSymbols, ExtendingSet, SemanticTokens, merge_from,
+    DelayMs, DocumentFoldingRanges, DocumentSymbols, ExtendingSet, ProjectSymbols, SemanticTokens,
+    merge_from,
 };
 
 /// The state of the modifier keys at some point in time
@@ -624,6 +625,15 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: "off"
     pub document_symbols: Option<DocumentSymbols>,
+    /// Controls the source of project symbols used by "Go to Symbol in Project".
+    ///
+    /// Options:
+    /// - "auto": Use the language server's `workspace/symbol` when available, falling back to the tree-sitter symbol index for languages without a supporting language server (default).
+    /// - "language_server": Always use `workspace/symbol`. Languages without a supporting language server have no project symbols (previous behavior).
+    /// - "tree_sitter": Always use the tree-sitter symbol index.
+    ///
+    /// Default: "auto"
+    pub project_symbols: Option<ProjectSymbols>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already
