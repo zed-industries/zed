@@ -502,6 +502,9 @@ pub struct Markdown {
     mermaid_views: HashMap<usize, MermaidViewState>,
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
+    /// Code blocks the user opened while the element collapses them by default.
+    /// Keyed by the block's source offset, like `wrapped_code_blocks`.
+    expanded_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<SharedString>,
@@ -697,6 +700,7 @@ impl Markdown {
             mermaid_views: HashMap::default(),
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
+            expanded_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
@@ -729,6 +733,23 @@ impl Markdown {
         if !self.wrapped_code_blocks.remove(&id) {
             self.wrapped_code_blocks.insert(id);
         }
+    }
+
+    fn is_code_block_expanded(&self, id: usize) -> bool {
+        self.expanded_code_blocks.contains(&id)
+    }
+
+    fn expand_code_block(&mut self, id: usize) {
+        self.expanded_code_blocks.insert(id);
+    }
+
+    fn collapse_code_block(&mut self, id: usize) {
+        self.expanded_code_blocks.remove(&id);
+    }
+
+    fn active_search_highlight_range(&self) -> Option<Range<usize>> {
+        self.active_search_highlight
+            .and_then(|index| self.search_highlights.get(index).cloned())
     }
 
     fn code_block_scroll_handle(&mut self, id: usize) -> Option<ScrollHandle> {
@@ -1721,6 +1742,7 @@ pub struct MarkdownElement {
     on_mermaid_zoom: Option<MermaidZoomCallback>,
     image_resolver: Option<Box<dyn Fn(&str, &App) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
+    collapse_code_blocks: bool,
     autoscroll: AutoscrollBehavior,
     /// Test-only hook to observe the laid-out text when this element is
     /// rendered beneath a view, where the layout state isn't otherwise
@@ -1747,6 +1769,7 @@ impl MarkdownElement {
             on_mermaid_zoom: None,
             image_resolver: None,
             show_root_block_markers: false,
+            collapse_code_blocks: false,
             autoscroll: AutoscrollBehavior::Propagate,
             #[cfg(test)]
             on_render: None,
@@ -1848,9 +1871,93 @@ impl MarkdownElement {
         self
     }
 
+    /// Renders code blocks collapsed to a single row showing their language and
+    /// line count. Each block can still be expanded individually, and a block
+    /// that contains the active search match stays open so the match is visible.
+    pub fn collapse_code_blocks(mut self, collapse: bool) -> Self {
+        self.collapse_code_blocks = collapse;
+        self
+    }
+
     pub fn scroll_handle(mut self, scroll_handle: ScrollHandle) -> Self {
         self.autoscroll = AutoscrollBehavior::Controlled(scroll_handle);
         self
+    }
+
+    fn is_code_block_collapsed(&self, range: &Range<usize>, cx: &App) -> bool {
+        if !self.collapse_code_blocks {
+            return false;
+        }
+        let markdown = self.markdown.read(cx);
+        if markdown.is_code_block_expanded(range.start) {
+            return false;
+        }
+        // Collapsing here would hide the match the user just navigated to.
+        !markdown
+            .active_search_highlight_range()
+            .is_some_and(|highlight| range.contains(&highlight.start))
+    }
+
+    fn render_collapsed_code_block(
+        &self,
+        kind: &CodeBlockKind,
+        parsed_markdown: &ParsedMarkdown,
+        range: Range<usize>,
+        cx: &App,
+    ) -> AnyElement {
+        let id = range.start;
+        let source = &parsed_markdown.source()[range];
+        let content_range = parser::extract_code_block_content_range(source);
+        let line_count = source[content_range].lines().count();
+        let border = matches!(
+            self.code_block_renderer,
+            CodeBlockRenderer::Default { border: true, .. }
+        );
+
+        let mut container = h_flex()
+            .id(("collapsed-code-block", id))
+            .w_full()
+            .justify_between()
+            .gap_2()
+            .cursor_pointer()
+            .when(border, |this| {
+                this.rounded_md()
+                    .border_1()
+                    .border_color(cx.theme().colors().border_variant)
+            });
+        container.style().refine(&self.style.code_block);
+
+        container
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Label::new(collapsed_code_block_label(kind))
+                            .size(LabelSize::Small)
+                            .buffer_font(cx),
+                    )
+                    .child(
+                        Label::new(line_count_label(line_count))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    ),
+            )
+            .child(
+                Icon::new(IconName::ChevronDown)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .on_click({
+                let markdown = self.markdown.clone();
+                move |_event, _window, cx| {
+                    markdown.update(cx, |markdown, cx| {
+                        markdown.expand_code_block(id);
+                        cx.notify();
+                    });
+                }
+            })
+            .into_any_element()
     }
 
     fn push_markdown_code_span(
@@ -2612,6 +2719,7 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
+        let mut collapsed_code_block = false;
         let mut rendered_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
@@ -2632,6 +2740,13 @@ impl Element for MarkdownElement {
             if rendered_mermaid_block {
                 if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
                     rendered_mermaid_block = false;
+                }
+                continue;
+            }
+
+            if collapsed_code_block {
+                if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
+                    collapsed_code_block = false;
                 }
                 continue;
             }
@@ -2762,6 +2877,20 @@ impl Element for MarkdownElement {
                                     ),
                                 );
                                 rendered_mermaid_block = true;
+                                continue;
+                            }
+
+                            if self.is_code_block_collapsed(range, cx) {
+                                builder.push_sourced_element(
+                                    range.clone(),
+                                    self.render_collapsed_code_block(
+                                        kind,
+                                        &parsed_markdown,
+                                        range.clone(),
+                                        cx,
+                                    ),
+                                );
+                                collapsed_code_block = true;
                                 continue;
                             }
 
@@ -3085,7 +3214,8 @@ impl Element for MarkdownElement {
                             ..
                         } = &self.code_block_renderer
                             && (*copy_button_visibility != CopyButtonVisibility::Hidden
-                                || *wrap_button_visibility != WrapButtonVisibility::Hidden)
+                                || *wrap_button_visibility != WrapButtonVisibility::Hidden
+                                || self.collapse_code_blocks)
                         {
                             let copy_button_visibility = *copy_button_visibility;
                             let wrap_button_visibility = *wrap_button_visibility;
@@ -3101,7 +3231,8 @@ impl Element for MarkdownElement {
                                 let any_hover = copy_button_visibility
                                     == CopyButtonVisibility::VisibleOnHover
                                     || wrap_button_visibility
-                                        == WrapButtonVisibility::VisibleOnHover;
+                                        == WrapButtonVisibility::VisibleOnHover
+                                    || self.collapse_code_blocks;
                                 let any_always = copy_button_visibility
                                     == CopyButtonVisibility::AlwaysVisible
                                     || wrap_button_visibility
@@ -3119,6 +3250,12 @@ impl Element for MarkdownElement {
                                         },
                                         |this| this.top_1p5().right_1p5(),
                                     )
+                                    .when(self.collapse_code_blocks, |this| {
+                                        this.child(render_collapse_code_block_button(
+                                            range.start,
+                                            self.markdown.clone(),
+                                        ))
+                                    })
                                     .when(
                                         wrap_button_visibility != WrapButtonVisibility::Hidden,
                                         |this| {
@@ -3516,6 +3653,43 @@ fn render_copy_code_block_button(
             });
         }
     })
+}
+
+fn render_collapse_code_block_button(id: usize, markdown: Entity<Markdown>) -> impl IntoElement {
+    let button_id = ElementId::NamedChild(
+        Arc::new(ElementId::from((
+            "collapse-code-block",
+            markdown.entity_id(),
+        ))),
+        id.to_string().into(),
+    );
+
+    IconButton::new(button_id, IconName::ChevronUp)
+        .icon_size(IconSize::Small)
+        .icon_color(Color::Muted)
+        .tooltip(Tooltip::text("Collapse Code Block"))
+        .on_click(move |_event, _window, cx| {
+            markdown.update(cx, |markdown, cx| {
+                markdown.collapse_code_block(id);
+                cx.notify();
+            });
+        })
+}
+
+fn collapsed_code_block_label(kind: &CodeBlockKind) -> SharedString {
+    match kind {
+        CodeBlockKind::FencedLang(language) => language.clone(),
+        CodeBlockKind::FencedSrc(path_range) => SharedString::from(path_range.path.clone()),
+        CodeBlockKind::Fenced | CodeBlockKind::Indented => "Code".into(),
+    }
+}
+
+fn line_count_label(line_count: usize) -> SharedString {
+    if line_count == 1 {
+        "1 line".into()
+    } else {
+        format!("{line_count} lines").into()
+    }
 }
 
 impl IntoElement for MarkdownElement {
@@ -7424,5 +7598,140 @@ mod tests {
                 .expect("code block highlights must be computed during parse")
                 .clone()
         })
+    }
+
+    struct CollapsibleCodeBlockTestView {
+        markdown: Entity<Markdown>,
+        collapse_code_blocks: bool,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl Render for CollapsibleCodeBlockTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let rendered_text = self.rendered_text.clone();
+            MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                .collapse_code_blocks(self.collapse_code_blocks)
+                .on_render(move |text| *rendered_text.borrow_mut() = Some(text))
+        }
+    }
+
+    /// Renders `markdown` in a fresh window and returns the laid-out text, so
+    /// each call observes the entity's current code block state.
+    fn render_markdown_text(
+        markdown: &Entity<Markdown>,
+        collapse_code_blocks: bool,
+        cx: &mut TestAppContext,
+    ) -> String {
+        ensure_theme_initialized(cx);
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let markdown = markdown.clone();
+            let rendered_text = rendered_text.clone();
+            move |_, _| CollapsibleCodeBlockTestView {
+                markdown,
+                collapse_code_blocks,
+                rendered_text,
+            }
+        });
+        cx.run_until_parked();
+
+        let rendered = rendered_text
+            .borrow()
+            .clone()
+            .expect("markdown should be rendered in the test view");
+        rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[gpui::test]
+    fn test_collapsed_code_blocks_hide_content_until_expanded(cx: &mut TestAppContext) {
+        let source = "Intro\n\n```rust\nfn main() {}\nlet hidden = 1;\n```\n\nOutro";
+        let code_block_start = source.find("```").expect("source has a code block");
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        let text = render_markdown_text(&markdown, false, cx);
+        assert!(
+            text.contains("let hidden = 1;"),
+            "code blocks render in full by default; got {text:?}"
+        );
+
+        let text = render_markdown_text(&markdown, true, cx);
+        assert!(
+            text.contains("Intro") && text.contains("Outro"),
+            "surrounding prose still renders; got {text:?}"
+        );
+        assert!(
+            !text.contains("let hidden = 1;"),
+            "collapsed code block hides its content; got {text:?}"
+        );
+
+        markdown.update(cx, |markdown, _| {
+            markdown.expand_code_block(code_block_start)
+        });
+        let text = render_markdown_text(&markdown, true, cx);
+        assert!(
+            text.contains("let hidden = 1;"),
+            "expanding the block reveals its content; got {text:?}"
+        );
+
+        markdown.update(cx, |markdown, _| {
+            markdown.collapse_code_block(code_block_start)
+        });
+        let text = render_markdown_text(&markdown, true, cx);
+        assert!(
+            !text.contains("let hidden = 1;"),
+            "collapsing the block hides its content again; got {text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_collapsed_code_block_stays_open_for_active_search_match(cx: &mut TestAppContext) {
+        let source = "Intro\n\n```rust\nlet hidden = 1;\n```\n";
+        let match_start = source.find("hidden").expect("source contains the match");
+        let match_range = match_start..match_start + "hidden".len();
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_search_highlights(vec![match_range], None, cx);
+        });
+        let text = render_markdown_text(&markdown, true, cx);
+        assert!(
+            !text.contains("let hidden = 1;"),
+            "an inactive match leaves the block collapsed; got {text:?}"
+        );
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_active_search_highlight(Some(0), cx);
+        });
+        let text = render_markdown_text(&markdown, true, cx);
+        assert!(
+            text.contains("let hidden = 1;"),
+            "the active match keeps the block open; got {text:?}"
+        );
+
+        markdown.update(cx, |markdown, cx| markdown.clear_search_highlights(cx));
+        let text = render_markdown_text(&markdown, true, cx);
+        assert!(
+            !text.contains("let hidden = 1;"),
+            "the block collapses again once the search ends; got {text:?}"
+        );
+    }
+
+    #[test]
+    fn test_collapsed_code_block_labels() {
+        assert_eq!(
+            collapsed_code_block_label(&CodeBlockKind::FencedLang("rust".into())),
+            "rust"
+        );
+        assert_eq!(collapsed_code_block_label(&CodeBlockKind::Fenced), "Code");
+        assert_eq!(collapsed_code_block_label(&CodeBlockKind::Indented), "Code");
+        assert_eq!(line_count_label(1), "1 line");
+        assert_eq!(line_count_label(3), "3 lines");
     }
 }
