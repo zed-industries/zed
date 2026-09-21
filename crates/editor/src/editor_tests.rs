@@ -23255,14 +23255,46 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions::default()),
-            ..lsp::ServerCapabilities::default()
+    let mut cx = EditorTestContext::new(cx).await;
+    let language_registry = cx.language_registry();
+    let language = rust_lang();
+    let completion_item = Arc::new(Mutex::new(None::<lsp::CompletionItem>));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        language.name(),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let completion_item = completion_item.clone();
+                move |server| {
+                    let completion_item = completion_item.clone();
+                    server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+                        let completion_item = completion_item
+                            .lock()
+                            .clone()
+                            .expect("completion item should be set before requesting completions");
+                        async move {
+                            Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                                is_incomplete: true,
+                                items: vec![completion_item],
+                                item_defaults: None,
+                            })))
+                        }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
         },
-        cx,
-    )
-    .await;
+    );
+    language_registry.add(language.clone());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    let _language_server = fake_servers
+        .next()
+        .await
+        .expect("language server should start");
+    cx.executor().run_until_parked();
 
     for (initial_state, completion_text, filter_text, expected_states) in [
         (
@@ -23395,27 +23427,17 @@ async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
                     "{initial_state:?}, {lsp_insert_mode:?}, {insert_text:?}, {detail:?}, {description:?}, {use_filter_text:?}"
                 );
                 cx.set_state(initial_state);
-                cx.set_request_handler::<lsp::request::Completion, _, _>(
-                    move |_, _, _| async move {
-                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                            is_incomplete: true,
-                            items: vec![lsp::CompletionItem {
-                                label: completion_text.to_string(),
-                                filter_text: use_filter_text.then(|| filter_text.to_string()),
-                                insert_text: insert_text.map(str::to_string),
-                                detail: detail.map(str::to_string),
-                                label_details: description.map(|description| {
-                                    lsp::CompletionItemLabelDetails {
-                                        detail: None,
-                                        description: Some(description.to_string()),
-                                    }
-                                }),
-                                ..lsp::CompletionItem::default()
-                            }],
-                            item_defaults: None,
-                        })))
-                    },
-                );
+                *completion_item.lock() = Some(lsp::CompletionItem {
+                    label: completion_text.to_string(),
+                    filter_text: use_filter_text.then(|| filter_text.to_string()),
+                    insert_text: insert_text.map(str::to_string),
+                    detail: detail.map(str::to_string),
+                    label_details: description.map(|description| lsp::CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some(description.to_string()),
+                    }),
+                    ..lsp::CompletionItem::default()
+                });
                 cx.update_editor(|editor, window, cx| {
                     editor.show_completions(&ShowCompletions, window, cx);
                 });
@@ -23509,14 +23531,40 @@ async fn test_completion_with_explicit_replace_range(cx: &mut TestAppContext) {
             ..CompletionSettingsContent::default()
         });
     });
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions::default()),
-            ..lsp::ServerCapabilities::default()
+    let mut cx = EditorTestContext::new(cx).await;
+    let language_registry = cx.language_registry();
+    let language = rust_lang();
+    let completion_list = Arc::new(Mutex::new(None::<lsp::CompletionList>));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        language.name(),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let completion_list = completion_list.clone();
+                move |server| {
+                    let completion_list = completion_list.clone();
+                    server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+                        let completion_list = completion_list
+                            .lock()
+                            .clone()
+                            .expect("completion list should be set before requesting completions");
+                        async move { Ok(Some(lsp::CompletionResponse::List(completion_list))) }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
         },
-        cx,
-    )
-    .await;
+    );
+    language_registry.add(language.clone());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    let _language_server = fake_servers
+        .next()
+        .await
+        .expect("language server should start");
+    cx.executor().run_until_parked();
 
     for (lsp_insert_mode, expected_pair_state) in [
         (LspInsertMode::ReplaceSuffix, "test(value1, value2=ˇvalue2)"),
@@ -23539,49 +23587,38 @@ async fn test_completion_with_explicit_replace_range(cx: &mut TestAppContext) {
                     "{lsp_insert_mode:?}, {use_default_range:?}, {use_insert_range:?}, {filter_text:?}"
                 );
                 cx.set_state("test(value1, ˇvalue2)");
-                cx.set_request_handler::<lsp::request::Completion, _, _>(
-                    move |_, _, _| async move {
-                        let insert =
-                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 13));
-                        let replace =
-                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 19));
-                        let text_edit = if use_insert_range {
-                            lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
-                                insert,
-                                replace,
-                                new_text: "value2=".to_string(),
-                            })
-                        } else {
-                            lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: replace,
-                                new_text: "value2=".to_string(),
-                            })
-                        };
-                        let edit_range = if use_insert_range {
-                            lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
-                                insert,
-                                replace,
-                            }
-                        } else {
-                            lsp::CompletionListItemDefaultsEditRange::Range(replace)
-                        };
-                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                            items: vec![lsp::CompletionItem {
-                                label: "value2=".to_string(),
-                                filter_text: filter_text.map(str::to_string),
-                                text_edit: (!use_default_range).then_some(text_edit),
-                                ..lsp::CompletionItem::default()
-                            }],
-                            item_defaults: use_default_range.then(|| {
-                                lsp::CompletionListItemDefaults {
-                                    edit_range: Some(edit_range),
-                                    ..lsp::CompletionListItemDefaults::default()
-                                }
-                            }),
-                            ..lsp::CompletionList::default()
-                        })))
-                    },
-                );
+                let insert = lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 13));
+                let replace = lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 19));
+                let text_edit = if use_insert_range {
+                    lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
+                        insert,
+                        replace,
+                        new_text: "value2=".to_string(),
+                    })
+                } else {
+                    lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: replace,
+                        new_text: "value2=".to_string(),
+                    })
+                };
+                let edit_range = if use_insert_range {
+                    lsp::CompletionListItemDefaultsEditRange::InsertAndReplace { insert, replace }
+                } else {
+                    lsp::CompletionListItemDefaultsEditRange::Range(replace)
+                };
+                *completion_list.lock() = Some(lsp::CompletionList {
+                    items: vec![lsp::CompletionItem {
+                        label: "value2=".to_string(),
+                        filter_text: filter_text.map(str::to_string),
+                        text_edit: (!use_default_range).then_some(text_edit),
+                        ..lsp::CompletionItem::default()
+                    }],
+                    item_defaults: use_default_range.then(|| lsp::CompletionListItemDefaults {
+                        edit_range: Some(edit_range),
+                        ..lsp::CompletionListItemDefaults::default()
+                    }),
+                    ..lsp::CompletionList::default()
+                });
                 cx.update_editor(|editor, window, cx| {
                     editor.show_completions(&ShowCompletions, window, cx);
                 });
