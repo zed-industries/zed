@@ -3774,10 +3774,18 @@ impl MultiBufferSnapshot {
         cursor.seek(&start);
 
         std::iter::from_fn(move || {
-            let region = cursor.region()?;
-            if region.range.start > end {
-                return None;
-            }
+            let Some(region) = cursor.region().filter(|region| {
+                region.range.start < end || (region.range.start == end && start == end)
+            }) else {
+                let excerpt = cursor.excerpt()?;
+                if excerpt.text_summary.len != 0 || end != self.len() {
+                    return None;
+                }
+                let buffer = excerpt.buffer_snapshot(self);
+                let offset = BufferOffset(excerpt.range.context.start.to_offset(buffer));
+                cursor.next_excerpt();
+                return Some((buffer, offset..offset, None));
+            };
             let start_overshoot = start.saturating_sub(region.range.start);
             let end_overshoot = end.saturating_sub(region.range.start);
             let start = region
@@ -4532,8 +4540,15 @@ impl MultiBufferSnapshot {
         if self.language_settings(cx).extend_comment_on_newline
             && let Some(language_scope) = self.language_scope_at(Point::new(row.0, 0))
         {
-            let delimiters = language_scope.line_comment_prefixes();
-            for delimiter in delimiters {
+            let documentation_delimiter = language_scope
+                .documentation_comment()
+                .filter(|_| language_scope.override_name() == Some("comment"))
+                .map(|comment| &comment.prefix);
+            for delimiter in language_scope
+                .line_comment_prefixes()
+                .iter()
+                .chain(documentation_delimiter)
+            {
                 if *self
                     .chars_at(Point::new(row.0, indent.len() as u32))
                     .take(delimiter.chars().count())
