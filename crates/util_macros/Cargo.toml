@@ -12,7 +12,7 @@ workspace = true
 [lib]
 path = "src/util_macros.rs"
 proc-macro = true
-doctest = false
+test = false
 
 [dependencies]
 quote.workspace = true

@@ -1864,7 +1864,7 @@ impl ThreadView {
     fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
         let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
             match error {
-                ThreadError::PaymentRequired => (
+                ThreadError::ZedPaymentRequired => (
                     "payment_required",
                     None,
                     "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
@@ -3945,17 +3945,22 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let is_compacting = compaction.is_in_progress();
-        let summary = compaction.summary.clone();
+        let summary = &compaction.summary;
+        let error = compaction.error.clone();
+        let has_details = !summary.is_empty() || error.is_some();
         let is_expanded = self
             .entry_view_state
             .read(cx)
             .is_compaction_expanded(entry_ix);
+        let details = (is_expanded && has_details).then_some((summary, error));
 
         let id = format!("context-compaction-{entry_ix}");
-        let header_label = match compaction.status {
+        let header_label = match &compaction.status {
             acp_thread::ContextCompactionStatus::InProgress => "Compacting Context…",
             acp_thread::ContextCompactionStatus::Completed => "Context Compacted",
+            acp_thread::ContextCompactionStatus::Failed => "Compaction Failed",
             acp_thread::ContextCompactionStatus::Canceled => "Compaction Canceled",
+            acp_thread::ContextCompactionStatus::Other(_) => "Context Compaction",
         };
         let chevron_end = if is_expanded {
             IconName::ChevronUp
@@ -3970,13 +3975,13 @@ impl ThreadView {
                 Button::new(id, header_label)
                     .label_size(LabelSize::Small)
                     .loading(is_compacting)
-                    .disabled(is_compacting)
+                    .disabled(!has_details)
                     .start_icon(
                         Icon::new(IconName::Compact)
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .when(!is_compacting, |this| {
+                    .when(has_details, |this| {
                         this.end_icon(
                             Icon::new(chevron_end)
                                 .size(IconSize::XSmall)
@@ -4003,20 +4008,37 @@ impl ThreadView {
                     .border_color(gpui::transparent_black())
                     .rounded_sm()
                     .child(header)
-                    .when_some(summary.filter(|_| is_expanded), |this, summary| {
+                    .when_some(details, |this, (summary, error)| {
                         this.border_color(self.tool_card_border_color(cx))
                             .bg(cx.theme().colors().editor_background.opacity(0.2))
-                            .child(
-                                div()
-                                    .id(("compaction-summary", entry_ix))
-                                    .p_2()
-                                    .text_ui(cx)
-                                    .child(self.render_markdown(
-                                        summary,
-                                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                                        cx,
-                                    )),
-                            )
+                            .when(!summary.is_empty(), |this| {
+                                this.child(
+                                    v_flex()
+                                        .id(("compaction-summary", entry_ix))
+                                        .p_2()
+                                        .gap_2()
+                                        .text_ui(cx)
+                                        .children(summary.iter().enumerate().map(
+                                            |(content_ix, content)| {
+                                                self.render_output_content_block(
+                                                    entry_ix, content_ix, content, None, true,
+                                                    window, cx,
+                                                )
+                                            },
+                                        )),
+                                )
+                            })
+                            .when_some(error, |this, error| {
+                                let mut style =
+                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                                style.base_text_style.color = Color::Error.color(cx);
+                                this.child(
+                                    div()
+                                        .id(("compaction-error", entry_ix))
+                                        .p_2()
+                                        .child(self.render_markdown(error, style, cx)),
+                                )
+                            })
                             .child(
                                 h_flex()
                                     .border_t_1()
@@ -4048,7 +4070,7 @@ impl ThreadView {
             .into_any()
     }
 
-    fn toggle_compaction_expansion(
+    pub(super) fn toggle_compaction_expansion(
         &mut self,
         entry_ix: usize,
         window: &mut Window,
@@ -4740,13 +4762,20 @@ impl ThreadView {
 
         let workspace = self.workspace.clone();
 
-        let max_output_tokens = self
+        let (max_input_tokens, max_output_tokens) = self
             .as_native_thread(cx)
-            .and_then(|thread| thread.read(cx).model())
-            .and_then(|model| model.max_output_tokens())
-            .unwrap_or(0);
-        let input_max_label =
-            crate::humanize_token_count(usage.max_tokens.saturating_sub(max_output_tokens));
+            .map(|thread| {
+                let thread = thread.read(cx);
+                (
+                    thread.input_token_capacity().unwrap_or(usage.max_tokens),
+                    thread
+                        .model()
+                        .and_then(|model| model.max_output_tokens())
+                        .unwrap_or(0),
+                )
+            })
+            .unwrap_or((usage.max_tokens, 0));
+        let input_max_label = crate::humanize_token_count(max_input_tokens);
         let output_max_label = crate::humanize_token_count(max_output_tokens);
 
         let build_tooltip = {
@@ -4782,7 +4811,7 @@ impl ThreadView {
         };
 
         if show_split {
-            let input_max_raw = usage.max_tokens.saturating_sub(max_output_tokens);
+            let input_max_raw = max_input_tokens;
             let output_max_raw = max_output_tokens;
 
             let input_ratio = if input_max_raw > 0 {
@@ -7995,7 +8024,7 @@ impl ThreadView {
                         .border_t_1()
                         .when(tool_failed || command_failed, |card| card.border_dashed())
                         .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
+                        .bg(cx.theme().colors().terminal_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
                         .h_full()
@@ -9976,6 +10005,19 @@ impl ThreadView {
             .into_any_element()
     }
 
+    fn tool_call_icon_tooltip(
+        tool_name: Option<&SharedString>,
+        interrupted_edit: bool,
+    ) -> Option<SharedString> {
+        let tool_name = tool_name.filter(|name| !name.trim().is_empty());
+        match (tool_name, interrupted_edit) {
+            (Some(name), true) => Some(format!("Interrupted Edit\nTool: {name}").into()),
+            (Some(name), false) => Some(format!("Tool: {name}").into()),
+            (None, true) => Some("Interrupted Edit".into()),
+            (None, false) => None,
+        }
+    }
+
     fn render_tool_call_label(
         &self,
         entry_ix: usize,
@@ -9999,10 +10041,9 @@ impl ThreadView {
             Icon::new(IconName::ToolPencil).color(Color::Muted)
         };
 
-        let tool_icon = if is_file && has_failed && has_revealed_diff {
+        let interrupted_edit = is_file && has_failed && has_revealed_diff;
+        let tool_icon = if interrupted_edit {
             div()
-                .id(entry_ix)
-                .tooltip(Tooltip::text("Interrupted Edit"))
                 .child(DecoratedIcon::new(
                     file_icon,
                     Some(
@@ -10084,7 +10125,19 @@ impl ThreadView {
                     .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.5)))
             })
             .overflow_hidden()
-            .child(tool_icon)
+            .child(
+                div()
+                    .id(("tool-call-icon", entry_ix))
+                    .flex_none()
+                    .when_some(
+                        Self::tool_call_icon_tooltip(
+                            tool_call.tool_name.as_ref(),
+                            interrupted_edit,
+                        ),
+                        |this, tooltip| this.tooltip(Tooltip::text(tooltip)),
+                    )
+                    .child(tool_icon),
+            )
             .child(if has_location {
                 h_flex()
                     .id(("open-tool-call-location", entry_ix))
@@ -10208,37 +10261,15 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
-            ToolCallContent::ContentBlock(content) => {
-                if let Some((resource, markdown)) = content.embedded_resource() {
-                    self.render_embedded_resource_output(
-                        resource,
-                        markdown.cloned(),
-                        entry_ix,
-                        context_ix,
-                        tool_call,
-                        card_layout,
-                        window,
-                        cx,
-                    )
-                } else if let Some(resource_link) = content.resource_link() {
-                    self.render_resource_link(resource_link, cx)
-                } else if let Some(markdown) = content.markdown() {
-                    self.render_markdown_output(
-                        markdown.clone(),
-                        entry_ix,
-                        context_ix,
-                        tool_call,
-                        card_layout,
-                        window,
-                        cx,
-                    )
-                } else if let Some((image, _)) = content.image() {
-                    let location = tool_call.locations.first().cloned();
-                    self.render_image_output(entry_ix, image.clone(), location, card_layout, cx)
-                } else {
-                    Empty.into_any_element()
-                }
-            }
+            ToolCallContent::ContentBlock(content) => self.render_output_content_block(
+                entry_ix,
+                context_ix,
+                content,
+                Some(tool_call),
+                card_layout,
+                window,
+                cx,
+            ),
             ToolCallContent::Diff(diff) => {
                 self.render_diff_editor(entry_ix, diff, tool_call, has_failed, cx)
             }
@@ -10255,35 +10286,58 @@ impl ThreadView {
         }
     }
 
-    fn render_embedded_resource_output(
+    fn render_output_content_block(
         &self,
-        resource: &acp::EmbeddedResource,
-        markdown: Option<Entity<Markdown>>,
         entry_ix: usize,
         context_ix: usize,
-        tool_call: &ToolCall,
+        content: &acp_thread::ContentBlock,
+        tool_call: Option<&ToolCall>,
         card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        if let Some(markdown) = markdown {
-            return self.render_markdown_output(
-                markdown,
-                entry_ix,
-                context_ix,
-                tool_call,
-                card_layout,
-                window,
-                cx,
-            );
+        if let Some(markdown) = content.markdown() {
+            if let Some(tool_call) = tool_call {
+                self.render_markdown_output(
+                    markdown.clone(),
+                    entry_ix,
+                    context_ix,
+                    tool_call,
+                    card_layout,
+                    window,
+                    cx,
+                )
+            } else {
+                self.render_markdown(
+                    markdown.clone(),
+                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                    cx,
+                )
+                .into_any()
+            }
+        } else if let Some((resource, _)) = content.embedded_resource() {
+            if tool_call.is_some() {
+                self.render_embedded_resource_output(resource, context_ix, card_layout, cx)
+            } else {
+                self.render_embedded_resource_label(resource)
+            }
+        } else if let Some(resource_link) = content.resource_link() {
+            self.render_resource_link(resource_link, cx)
+        } else if let Some((image, _)) = content.image() {
+            let location = tool_call.and_then(|tool_call| tool_call.locations.first().cloned());
+            self.render_image_output(entry_ix, image.clone(), location, card_layout, cx)
+        } else {
+            Empty.into_any_element()
         }
+    }
 
-        let uri = match &resource.resource {
-            acp::EmbeddedResourceResource::BlobResourceContents(blob) => blob.uri.as_str(),
-            acp::EmbeddedResourceResource::TextResourceContents(text) => text.uri.as_str(),
-            _ => "",
-        };
-
+    fn render_embedded_resource_output(
+        &self,
+        resource: &acp::EmbeddedResource,
+        context_ix: usize,
+        card_layout: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         v_flex()
             .gap_1()
             .map(|this| {
@@ -10299,14 +10353,24 @@ impl ThreadView {
                         .border_color(self.tool_card_border_color(cx))
                 }
             })
-            .when(!uri.is_empty(), |this| {
-                this.child(
-                    Label::new(uri.to_string())
-                        .size(LabelSize::XSmall)
-                        .color(Color::Muted),
-                )
-            })
+            .child(self.render_embedded_resource_label(resource))
             .into_any_element()
+    }
+
+    fn render_embedded_resource_label(&self, resource: &acp::EmbeddedResource) -> AnyElement {
+        let uri = match &resource.resource {
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => blob.uri.as_str(),
+            acp::EmbeddedResourceResource::TextResourceContents(text) => text.uri.as_str(),
+            _ => "",
+        };
+        if uri.is_empty() {
+            Empty.into_any_element()
+        } else {
+            Label::new(uri.to_string())
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+                .into_any_element()
+        }
     }
 
     fn render_resource_link(
@@ -11050,7 +11114,7 @@ impl ThreadView {
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
-            ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::ZedPaymentRequired => self.render_zed_payment_required_error(cx),
             ThreadError::RateLimitExceeded { provider } => self.render_error_callout(
                 "Rate Limit Reached",
                 format!(
@@ -11183,7 +11247,7 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
+    fn render_zed_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
         const ERROR_MESSAGE: &str =
             "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
 
@@ -12691,6 +12755,33 @@ mod tests {
     use std::path::Path;
     use util::path;
     use workspace::MultiWorkspace;
+
+    #[test]
+    fn test_tool_call_icon_tooltip() {
+        for (name, interrupted_edit, expected) in [
+            (None, false, None),
+            (Some(" \t\n"), false, None),
+            (Some("read_file"), false, Some("Tool: read_file")),
+            (
+                Some("  mcp__server__**read_file**<raw>  "),
+                false,
+                Some("Tool:   mcp__server__**read_file**<raw>  "),
+            ),
+            (None, true, Some("Interrupted Edit")),
+            (Some(" \t\n"), true, Some("Interrupted Edit")),
+            (
+                Some("edit_file"),
+                true,
+                Some("Interrupted Edit\nTool: edit_file"),
+            ),
+        ] {
+            let name = name.map(SharedString::from);
+            assert_eq!(
+                ThreadView::tool_call_icon_tooltip(name.as_ref(), interrupted_edit).as_deref(),
+                expected,
+            );
+        }
+    }
 
     fn native_command(name: &str) -> acp::AvailableCommand {
         acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(

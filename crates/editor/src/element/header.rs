@@ -54,7 +54,7 @@ pub(super) struct StickyHeaders {
 pub(super) struct StickyHeaderLine {
     row: DisplayRow,
     pub(super) offset: Pixels,
-    line: Rc<LineWithInvisibles>,
+    pub(super) line: Rc<LineWithInvisibles>,
     line_number: Option<ShapedLine>,
     elements: SmallVec<[AnyElement; 1]>,
     available_text_width: Pixels,
@@ -256,7 +256,7 @@ impl EditorElement {
             offset,
         } in rows.into_iter().rev()
         {
-            let line = layout_line(
+            let mut line = layout_line(
                 sticky_row,
                 snapshot,
                 &self.style,
@@ -287,12 +287,19 @@ impl EditorElement {
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
 
+            self.populate_point_diagnostics(
+                snapshot,
+                sticky_row..sticky_row.next_row(),
+                std::slice::from_mut(&mut line),
+            );
+
             lines.push(StickyHeaderLine::new(
                 sticky_row,
                 line_height * offset as f32,
                 line,
                 line_number,
                 line_height,
+                self.style.text.text_align,
                 scroll_pixel_position,
                 content_origin,
                 gutter_hitbox,
@@ -476,6 +483,7 @@ impl StickyHeaderLine {
         mut line: LineWithInvisibles,
         line_number: Option<ShapedLine>,
         line_height: Pixels,
+        text_align: TextAlign,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
         gutter_hitbox: &Hitbox,
@@ -489,6 +497,8 @@ impl StickyHeaderLine {
             scroll_pixel_position,
             content_origin,
             offset,
+            text_align,
+            text_hitbox.size.width,
             &mut elements,
             window,
             cx,

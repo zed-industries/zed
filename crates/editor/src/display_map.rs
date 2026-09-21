@@ -126,7 +126,7 @@ use std::{
     fmt::Debug,
     iter,
     num::NonZeroU32,
-    ops::{self, Add, Range, Sub},
+    ops::{self, Add, Range, RangeInclusive, Sub},
     sync::Arc,
 };
 
@@ -141,7 +141,8 @@ use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
 use fold_map::{Chunk, FoldPointCursor, FoldSnapshot};
 use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
 use itertools::Either;
-use tab_map::{TabPoint, TabPointCursor, TabSnapshot};
+pub(crate) use tab_map::TabPoint;
+use tab_map::{TabPointCursor, TabSnapshot};
 use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
 
 const BULLETS: &str = match std::str::from_utf8(&[b'*'; rope::Chunk::MASK_BITS]) {
@@ -1418,6 +1419,7 @@ pub enum ChunkReplacement {
 pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
+    pub(crate) diagnostic_underline_severity: Option<lsp::DiagnosticSeverity>,
     pub is_tab: bool,
     pub is_inlay: bool,
     pub replacement: Option<ChunkReplacement>,
@@ -1431,6 +1433,7 @@ impl<'a> HighlightedChunk<'a> {
     ) -> impl Iterator<Item = Self> + 'a {
         let mut text = self.text;
         let style = self.style;
+        let diagnostic_underline_severity = self.diagnostic_underline_severity;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
         let is_inlay = self.is_inlay;
@@ -1452,6 +1455,7 @@ impl<'a> HighlightedChunk<'a> {
                     return Some(HighlightedChunk {
                         text: prefix,
                         style,
+                        diagnostic_underline_severity,
                         is_tab,
                         is_inlay,
                         replacement: renderer.clone(),
@@ -1476,6 +1480,7 @@ impl<'a> HighlightedChunk<'a> {
                 return Some(HighlightedChunk {
                     text: invisible_text,
                     style: Some(invisible_style),
+                    diagnostic_underline_severity: None,
                     is_tab: false,
                     is_inlay,
                     replacement: match replacement(ch) {
@@ -1491,6 +1496,7 @@ impl<'a> HighlightedChunk<'a> {
             Some(HighlightedChunk {
                 text: remainder,
                 style,
+                diagnostic_underline_severity,
                 is_tab,
                 is_inlay,
                 replacement: renderer.clone(),
@@ -1983,6 +1989,30 @@ impl DisplaySnapshot {
         self.companion_display_snapshot.as_deref()
     }
 
+    fn diagnostic_severity_is_visible(&self, severity: lsp::DiagnosticSeverity) -> bool {
+        self.diagnostics_max_severity
+            .into_lsp()
+            .is_some_and(|max_severity| severity <= max_severity)
+    }
+
+    pub(crate) fn diagnostic_underline_style(
+        &self,
+        severity: lsp::DiagnosticSeverity,
+        underline: bool,
+        is_unnecessary: bool,
+        editor_style: &EditorStyle,
+    ) -> Option<UnderlineStyle> {
+        (underline
+            && editor_style.show_underlines
+            && self.diagnostic_severity_is_visible(severity)
+            && !(is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
+            .then(|| UnderlineStyle {
+                color: Some(diagnostic_style(severity, &editor_style.status)),
+                thickness: 1.0.into(),
+                wavy: true,
+            })
+    }
+
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
     }
@@ -1993,34 +2023,6 @@ impl DisplaySnapshot {
 
     pub fn tab_snapshot(&self) -> &TabSnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot
-    }
-
-    /// The column `point` sits at once tabs are expanded, which is where it appears
-    /// on screen when the line isn't soft-wrapped. Unlike a display column this is
-    /// counted from the start of the buffer row rather than the wrapped segment.
-    pub(crate) fn tab_expanded_column(&self, point: Point) -> u32 {
-        self.tab_snapshot()
-            .point_to_tab_point(point, Bias::Left)
-            .0
-            .column
-    }
-
-    /// Inverse of [`Self::tab_expanded_column`], clamped to the end of the row.
-    pub(crate) fn point_for_tab_expanded_column(
-        &self,
-        buffer_row: MultiBufferRow,
-        column: u32,
-    ) -> Point {
-        let tab_snapshot = self.tab_snapshot();
-        let tab_row = tab_snapshot.buffer_row_to_tab_row(buffer_row);
-        let column = column.min(tab_snapshot.line_len(tab_row));
-        tab_snapshot.tab_point_to_point(TabPoint(Point::new(tab_row, column)), Bias::Left)
-    }
-
-    /// The length of `buffer_row` once tabs are expanded.
-    pub(crate) fn tab_expanded_line_len(&self, buffer_row: MultiBufferRow) -> u32 {
-        let tab_snapshot = self.tab_snapshot();
-        tab_snapshot.line_len(tab_snapshot.buffer_row_to_tab_row(buffer_row))
     }
 
     pub fn fold_snapshot(&self) -> &FoldSnapshot {
@@ -2388,6 +2390,7 @@ impl DisplaySnapshot {
             // track the current underline style so that we can apply it to
             // inlay hints within the diagnostic's span
             let mut current_diagnostic_underline: Option<UnderlineStyle> = None;
+            let mut current_diagnostic_severity: Option<lsp::DiagnosticSeverity> = None;
 
             move |chunk| {
                 let syntax_highlight_style = chunk
@@ -2412,41 +2415,35 @@ impl DisplaySnapshot {
                     }
                 });
 
-                let diagnostic_highlight = if chunk.is_inlay {
-                    current_diagnostic_underline.map(|underline| HighlightStyle {
-                        underline: Some(underline),
-                        ..Default::default()
-                    })
-                } else {
-                    let highlight = chunk
-                        .diagnostic_severity
-                        .filter(|severity| {
-                            self.diagnostics_max_severity
-                                .into_lsp()
-                                .is_some_and(|max_severity| severity <= &max_severity)
-                        })
-                        .map(|severity| HighlightStyle {
-                            fade_out: chunk
-                                .is_unnecessary
-                                .then_some(editor_style.unnecessary_code_fade),
-                            underline: (chunk.underline
-                                && editor_style.show_underlines
-                                && !(chunk.is_unnecessary
-                                    && severity > lsp::DiagnosticSeverity::WARNING))
-                                .then(|| {
-                                    let diagnostic_color =
-                                        diagnostic_style(severity, &editor_style.status);
-                                    UnderlineStyle {
-                                        color: Some(diagnostic_color),
-                                        thickness: 1.0.into(),
-                                        wavy: true,
-                                    }
-                                }),
+                let (diagnostic_highlight, diagnostic_severity) = if chunk.is_inlay {
+                    (
+                        current_diagnostic_underline.map(|underline| HighlightStyle {
+                            underline: Some(underline),
                             ..Default::default()
-                        });
+                        }),
+                        current_diagnostic_severity,
+                    )
+                } else {
+                    let severity = chunk
+                        .diagnostic_severity
+                        .filter(|severity| self.diagnostic_severity_is_visible(*severity));
+                    let highlight = severity.map(|severity| HighlightStyle {
+                        fade_out: chunk
+                            .is_unnecessary
+                            .then_some(editor_style.unnecessary_code_fade),
+                        underline: self.diagnostic_underline_style(
+                            severity,
+                            chunk.underline,
+                            chunk.is_unnecessary,
+                            editor_style,
+                        ),
+                        ..Default::default()
+                    });
 
                     current_diagnostic_underline = highlight.as_ref().and_then(|h| h.underline);
-                    highlight
+                    current_diagnostic_severity =
+                        current_diagnostic_underline.and_then(|_| severity);
+                    (highlight, current_diagnostic_severity)
                 };
 
                 let style = [
@@ -2461,6 +2458,7 @@ impl DisplaySnapshot {
                 HighlightedChunk {
                     text: chunk.text,
                     style,
+                    diagnostic_underline_severity: diagnostic_severity,
                     is_tab: chunk.is_tab,
                     is_inlay: chunk.is_inlay,
                     replacement: chunk.renderer.map(ChunkReplacement::Renderer),
@@ -2998,6 +2996,31 @@ impl DisplaySnapshot {
             ),
             Bias::Right,
         )
+    }
+
+    pub(crate) fn fully_replaced_tab_rows(&self, row: u32) -> Option<RangeInclusive<u32>> {
+        if !self.block_snapshot.has_replacement_blocks()
+            || row > self.tab_snapshot().max_point().row()
+        {
+            return None;
+        }
+        let wraps = self.wrap_snapshot();
+        let wrap_point = wraps.tab_point_to_wrap_point(TabPoint::new(row, 0));
+        let input_range = self
+            .block_snapshot
+            .replacement_block_input_range(wrap_point.row())?;
+        let start = wraps.to_tab_point(WrapPoint::new(input_range.start, 0));
+        let start_row = start.row().checked_add(u32::from(start.column() > 0))?;
+        let end_row = if input_range.end > wraps.max_point().row() {
+            self.tab_snapshot().max_point().row()
+        } else {
+            wraps
+                .to_tab_point(WrapPoint::new(input_range.end, 0))
+                .row()
+                .checked_sub(1)?
+        };
+        let rows = start_row..=end_row;
+        rows.contains(&row).then_some(rows)
     }
 }
 
@@ -5702,6 +5725,7 @@ pub mod tests {
         let chunk = HighlightedChunk {
             text: pilot_emoji,
             style: None,
+            diagnostic_underline_severity: None,
             is_tab: false,
             is_inlay: false,
             replacement: None,

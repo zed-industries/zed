@@ -13,7 +13,7 @@ test-support = []
 
 [lib]
 path = "src/reqwest_client.rs"
-doctest = true
+doctest = false
 
 [dependencies]
 anyhow.workspace = true

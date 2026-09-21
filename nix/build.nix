@@ -67,7 +67,6 @@ let
       relPath = lib.removePrefix root path;
       topLevelIncludes = [
         "crates"
-        "corgi-patches"
         "assets"
         "extensions"
         "script"
@@ -81,7 +80,7 @@ let
     builtins.elem firstComp topLevelIncludes;
 
   corgiPatches = builtins.path {
-    path = ../corgi-patches;
+    path = ../tooling/corgi/patches;
     name = "corgi-patches";
   };
   craneLib = crane.overrideToolchain rustToolchain;
@@ -318,8 +317,9 @@ let
         # `scratch` is a local dependency of `cxx-build`, so its API is needed
         # while Crane builds third-party dependencies.
         extraDummyScript = ''
-          rm -rf $out/corgi-patches
-          cp --recursive ${corgiPatches} $out/corgi-patches
+          rm -rf $out/tooling/corgi/patches
+          mkdir -p $out/tooling/corgi
+          cp --recursive ${corgiPatches} $out/tooling/corgi/patches
         '';
       };
     }

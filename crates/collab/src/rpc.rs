@@ -437,6 +437,9 @@ impl Server {
                 broadcast_project_message_from_host::<proto::RefreshDocumentColors>,
             )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshDocumentLinks>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentHighlights>,
+            )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshFoldingRanges>)
             .add_message_handler(
                 broadcast_project_message_from_host::<proto::RefreshDocumentSymbols>,

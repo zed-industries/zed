@@ -417,6 +417,9 @@ pub enum Event {
     RefreshDocumentLinks {
         server_id: Option<LanguageServerId>,
     },
+    RefreshDocumentHighlights {
+        server_id: Option<LanguageServerId>,
+    },
     RefreshFoldingRanges {
         server_id: Option<LanguageServerId>,
     },
@@ -3710,6 +3713,20 @@ impl Project {
                 Event::SupplementaryLanguageServerAdded(*server_id, name.clone()),
             ),
             LspStoreEvent::LanguageServerRemoved(server_id) => {
+                if self.is_local()
+                    && let Some(project_id) = self.remote_id()
+                {
+                    self.collab_client
+                        .send(proto::UpdateLanguageServer {
+                            project_id,
+                            server_name: None,
+                            language_server_id: server_id.to_proto(),
+                            variant: Some(proto::update_language_server::Variant::Removed(
+                                proto::ServerRemoved {},
+                            )),
+                        })
+                        .log_err();
+                }
                 cx.emit(Event::LanguageServerRemoved(*server_id))
             }
             LspStoreEvent::SupplementaryLanguageServerRemoved(server_id) => {
@@ -3748,6 +3765,11 @@ impl Project {
                     server_id: *server_id,
                 })
             }
+            LspStoreEvent::RefreshDocumentHighlights { server_id } => {
+                cx.emit(Event::RefreshDocumentHighlights {
+                    server_id: *server_id,
+                })
+            }
             LspStoreEvent::RefreshFoldingRanges { server_id } => {
                 cx.emit(Event::RefreshFoldingRanges {
                     server_id: *server_id,
@@ -3779,7 +3801,12 @@ impl Project {
                 name,
                 message,
             } => {
-                if self.is_local() {
+                if self.is_local()
+                    && !matches!(
+                        message,
+                        proto::update_language_server::Variant::MetadataUpdated(_)
+                    )
+                {
                     self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id: *language_server_id,
