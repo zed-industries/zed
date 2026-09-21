@@ -265,20 +265,25 @@ impl AgentSettings {
 
     pub fn temperature_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<f32> {
         let settings = Self::get_global(cx);
-        for setting in settings.model_parameters.iter().rev() {
-            if let Some(provider) = &setting.provider
-                && provider.0 != model.provider_id().0
-            {
-                continue;
-            }
-            if let Some(setting_model) = &setting.model
-                && *setting_model != model.id().0
-            {
-                continue;
-            }
-            return setting.temperature;
-        }
-        return None;
+        settings
+            .model_parameters_for_model(model)
+            .and_then(|parameters| parameters.temperature)
+    }
+
+    pub fn model_parameters_for_model(
+        &self,
+        model: &Arc<dyn LanguageModel>,
+    ) -> Option<&LanguageModelParameters> {
+        self.model_parameters.iter().rev().find(|parameters| {
+            parameters
+                .provider
+                .as_ref()
+                .is_none_or(|provider| provider.0 == model.provider_id().0)
+                && parameters
+                    .model
+                    .as_ref()
+                    .is_none_or(|model_id| model_id == model.id().0.as_ref())
+        })
     }
 
     pub fn sidebar_side(&self) -> SidebarSide {
@@ -303,14 +308,14 @@ impl AgentSettings {
 pub fn language_model_to_selection(
     model: &Arc<dyn LanguageModel>,
     override_selection: Option<&LanguageModelSelection>,
+    model_parameters: Option<&LanguageModelParameters>,
 ) -> LanguageModelSelection {
-    let provider = model.provider_id().0.to_string().into();
-    let model_name = model.id().0.to_string();
-    match override_selection {
+    let mut selection = match override_selection {
         Some(current) => LanguageModelSelection {
-            provider,
-            model: model_name,
-            enable_thinking: current.enable_thinking && model.supports_thinking(),
+            provider: model.provider_id().0.to_string().into(),
+            model: model.id().0.to_string(),
+            enable_thinking: model.supports_thinking()
+                && (current.enable_thinking || !model.supports_disabling_thinking()),
             effort: current
                 .effort
                 .clone()
@@ -328,15 +333,37 @@ pub fn language_model_to_selection(
             speed: current.speed.filter(|_| model.supports_fast_mode()),
         },
         None => LanguageModelSelection {
-            provider,
-            model: model_name,
+            provider: model.provider_id().0.to_string().into(),
+            model: model.id().0.to_string(),
             enable_thinking: model.supports_thinking(),
             effort: model
                 .default_effort_level()
                 .map(|effort| effort.value.to_string()),
             speed: None,
         },
+    };
+
+    if let Some(parameters) = model_parameters {
+        if let Some(enable_thinking) = parameters.enable_thinking {
+            selection.enable_thinking = model.supports_thinking()
+                && (enable_thinking || !model.supports_disabling_thinking());
+        }
+
+        if let Some(effort) = parameters.effort.as_ref()
+            && model
+                .supported_effort_levels()
+                .iter()
+                .any(|level| level.value.as_ref() == effort)
+        {
+            selection.effort = Some(effort.clone());
+        }
+
+        if let Some(speed) = parameters.speed {
+            selection.speed = model.supports_fast_mode().then_some(speed);
+        }
     }
+
+    selection
 }
 
 impl AgentSettings {

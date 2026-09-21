@@ -5220,6 +5220,13 @@ impl ThreadView {
                                     default_model.enable_thinking = enable_thinking;
                                 }
                                 if let Some((provider_id, model_id)) = &favorite_key {
+                                    agent.update_model_parameters(
+                                        provider_id,
+                                        model_id,
+                                        |parameters| {
+                                            parameters.enable_thinking = Some(enable_thinking)
+                                        },
+                                    );
                                     agent.update_favorite_model(
                                         provider_id,
                                         model_id,
@@ -5391,6 +5398,14 @@ impl ThreadView {
                                                         if let Some((provider_id, model_id)) =
                                                             &favorite_key
                                                         {
+                                                            agent.update_model_parameters(
+                                                                provider_id,
+                                                                model_id,
+                                                                |parameters| {
+                                                                    parameters.effort =
+                                                                        Some(effort.to_string())
+                                                                },
+                                                            );
                                                             agent.update_favorite_model(
                                                                 provider_id,
                                                                 model_id,
@@ -12141,6 +12156,9 @@ impl ThreadView {
                         default_model.speed = Some(new_speed);
                     }
                     if let Some((provider_id, model_id)) = &favorite_key {
+                        agent.update_model_parameters(provider_id, model_id, |parameters| {
+                            parameters.speed = Some(new_speed)
+                        });
                         agent.update_favorite_model(provider_id, model_id, |favorite| {
                             favorite.speed = Some(new_speed)
                         });

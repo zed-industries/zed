@@ -332,7 +332,8 @@ pub struct AgentSettingsContent {
     /// to a model, parameters will be taken from the last entry in this list
     /// that matches the model's provider and name. In each entry, both provider
     /// and model are optional, so that you can specify parameters for either
-    /// one.
+    /// one. Effort, thinking, and speed settings changed from the agent panel
+    /// are stored here as exact provider/model entries.
     ///
     /// Default: []
     #[serde(default)]
@@ -433,6 +434,35 @@ impl AgentSettingsContent {
 
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
         self.default_model = Some(language_model)
+    }
+
+    pub fn update_model_parameters<F>(&mut self, provider: &str, model: &str, update: F)
+    where
+        F: FnOnce(&mut LanguageModelParameters),
+    {
+        if let Some(parameters) = self.model_parameters.iter_mut().rev().find(|parameters| {
+            parameters.provider.as_ref().is_some_and(|value| value.0 == provider)
+                && parameters.model.as_deref() == Some(model)
+        }) {
+            update(parameters);
+            return;
+        }
+
+        let matching_parameters = self.model_parameters.iter().rev().find(|parameters| {
+            parameters.provider.as_ref().is_none_or(|value| value.0 == provider)
+                && parameters.model.as_deref().is_none_or(|value| value == model)
+        });
+        let mut parameters = LanguageModelParameters {
+            provider: Some(provider.to_owned().into()),
+            model: Some(model.to_owned()),
+            temperature: matching_parameters.and_then(|parameters| parameters.temperature),
+            enable_thinking: matching_parameters
+                .and_then(|parameters| parameters.enable_thinking),
+            effort: matching_parameters.and_then(|parameters| parameters.effort.clone()),
+            speed: matching_parameters.and_then(|parameters| parameters.speed),
+        };
+        update(&mut parameters);
+        self.model_parameters.push(parameters);
     }
 
     pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
@@ -668,6 +698,12 @@ pub struct LanguageModelParameters {
     pub model: Option<String>,
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub temperature: Option<f32>,
+    /// Whether thinking should be enabled for the matching model.
+    pub enable_thinking: Option<bool>,
+    /// The thinking effort to use for the matching model.
+    pub effort: Option<String>,
+    /// The response speed to use for the matching model.
+    pub speed: Option<language_model_core::Speed>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, MergeFrom)]
@@ -1186,6 +1222,40 @@ mod tests {
             .get("mcp:github:create_issue")
             .unwrap();
         assert_eq!(mcp_rules.default, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_update_model_parameters_preserves_matching_temperature() {
+        let mut settings = AgentSettingsContent::default();
+        settings.model_parameters.push(LanguageModelParameters {
+            provider: Some(LanguageModelProviderSetting("openai".to_string())),
+            model: None,
+            temperature: Some(0.4),
+            enable_thinking: None,
+            effort: None,
+            speed: None,
+        });
+
+        settings.update_model_parameters("openai", "luna", |parameters| {
+            parameters.effort = Some("max".to_string());
+            parameters.speed = Some(language_model_core::Speed::Fast);
+        });
+
+        assert_eq!(settings.model_parameters.len(), 2);
+        let parameters = settings.model_parameters.last().unwrap();
+        assert_eq!(parameters.temperature, Some(0.4));
+        assert_eq!(parameters.effort.as_deref(), Some("max"));
+        assert_eq!(parameters.speed, Some(language_model_core::Speed::Fast));
+
+        settings.update_model_parameters("openai", "luna", |parameters| {
+            parameters.speed = Some(language_model_core::Speed::Standard);
+        });
+
+        assert_eq!(settings.model_parameters.len(), 2);
+        assert_eq!(
+            settings.model_parameters.last().unwrap().speed,
+            Some(language_model_core::Speed::Standard)
+        );
     }
 
     #[test]

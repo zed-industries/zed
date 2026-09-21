@@ -12,7 +12,8 @@ pub fn toggle_in_settings(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) {
-    let current_user_selection = AgentSettings::get_global(cx)
+    let settings = AgentSettings::get_global(cx);
+    let current_user_selection = settings
         .default_model
         .as_ref()
         .filter(|selection| {
@@ -20,8 +21,13 @@ pub fn toggle_in_settings(
                 && selection.model == model.id().0.as_ref()
         })
         .cloned();
+    let model_parameters = settings.model_parameters_for_model(&model).cloned();
 
-    let selection = language_model_to_selection(&model, current_user_selection.as_ref());
+    let selection = language_model_to_selection(
+        &model,
+        current_user_selection.as_ref(),
+        model_parameters.as_ref(),
+    );
     update_settings_file(fs, cx, move |settings, _| {
         let agent = settings.agent.get_or_insert_default();
         if should_be_favorite {
