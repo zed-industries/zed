@@ -353,6 +353,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Whether to have code blocks in agent messages expanded, showing the whole code.
+    /// When disabled, code blocks start collapsed and can be expanded individually.
+    ///
+    /// Default: true
+    pub expand_code_block: Option<bool>,
     /// Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
     /// The command is sent to the shell as if typed, so it is interpreted by your
     /// configured shell (including on Windows and remote/WSL projects).

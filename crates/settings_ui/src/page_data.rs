@@ -8963,6 +8963,25 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Expand Code Block",
+                description: "Whether to have code blocks in agent messages expanded, showing the whole code. When disabled, code blocks start collapsed and can be expanded individually.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.expand_code_block"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.expand_code_block.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .expand_code_block = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Terminal Thread Init Command",
                 description: "Command to automatically run when Zed creates a Terminal Thread shell in the agent panel. Runs in your configured shell.",
                 field: Box::new(SettingField {
