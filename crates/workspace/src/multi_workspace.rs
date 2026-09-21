@@ -303,6 +303,7 @@ struct HeldWorkspace {
 }
 
 pub struct MultiWorkspace {
+    pub(crate) is_remote_connection_placeholder: bool,
     window_id: WindowId,
     held: Vec<HeldWorkspace>,
     project_groups: Vec<ProjectGroupState>,
@@ -366,6 +367,7 @@ impl MultiWorkspace {
             workspace.set_multi_workspace(weak_self, active_workspace_id.clone(), cx);
         });
         Self {
+            is_remote_connection_placeholder: false,
             window_id: window.window_handle().window_id(),
             held: vec![HeldWorkspace {
                 workspace,
@@ -382,6 +384,10 @@ impl MultiWorkspace {
             _subscriptions: vec![release_subscription, settings_subscription],
             previous_focus_handle: None,
         }
+    }
+
+    pub fn set_remote_connection_placeholder(&mut self, is_placeholder: bool) {
+        self.is_remote_connection_placeholder = is_placeholder;
     }
 
     pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>, cx: &mut Context<Self>) {
