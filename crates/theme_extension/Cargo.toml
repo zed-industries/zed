@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/theme_extension.rs"
+test = false
+doctest = false
 
 [dependencies]
 anyhow.workspace = true

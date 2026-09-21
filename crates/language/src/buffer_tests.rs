@@ -1758,7 +1758,9 @@ fn test_bracket_ranges_keep_chunk_spanning_pairs_amid_errors(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &mut App) {
+async fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(
+    cx: &mut TestAppContext,
+) {
     let mut text = String::from("void outer(void) {\n");
     for index in 0..56 {
         text.push_str(&format!("  int before_{index:02} = 0;\n"));
@@ -1782,7 +1784,10 @@ fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &m
     text.push_str("  }\n}\n");
 
     let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(c_lang(), cx));
-    let snapshot = buffer.read(cx).snapshot();
+    buffer
+        .read_with(cx, |buffer, _| buffer.parsing_idle())
+        .await;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
     assert_has_syntax_errors(&snapshot);
 
     let open_row = snapshot.offset_to_point(if_open_offset).row;
