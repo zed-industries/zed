@@ -24,7 +24,7 @@ pub use settings::{
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
-use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc, time::Duration};
+use std::{num::NonZeroU32, path::Path, sync::Arc, time::Duration};
 use text::ToOffset;
 
 /// Returns the settings for all languages from the provided file.
@@ -44,8 +44,8 @@ pub fn all_language_settings<'a>(
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,
-    pub defaults: LanguageSettings,
-    languages: HashMap<LanguageName, LanguageSettings>,
+    pub defaults: Arc<LanguageSettings>,
+    languages: HashMap<LanguageName, Arc<LanguageSettings>>,
     pub file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)>,
 }
 
@@ -277,34 +277,40 @@ pub struct PrettierSettings {
 }
 
 impl LanguageSettings {
-    pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
+    pub fn for_buffer(buffer: &Buffer, cx: &App) -> Arc<LanguageSettings> {
         Self::resolve(Some(buffer), None, cx)
     }
 
-    pub fn for_buffer_at<'a, D: ToOffset>(
-        buffer: &'a Buffer,
+    pub fn for_buffer_at<D: ToOffset>(
+        buffer: &Buffer,
         position: D,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let language = buffer.language_at(position);
         Self::resolve(Some(buffer), language.map(|l| l.name()).as_ref(), cx)
     }
 
-    pub fn for_buffer_snapshot<'a>(
-        buffer: &'a BufferSnapshot,
+    pub fn for_buffer_snapshot(
+        buffer: &BufferSnapshot,
         offset: Option<usize>,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
-        let location = buffer.file().map(|f| SettingsLocation {
-            worktree_id: f.worktree_id(cx),
-            path: f.path().as_ref(),
-        });
-
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let language = if let Some(offset) = offset {
             buffer.language_at(offset)
         } else {
             buffer.language()
         };
+
+        if let Some(resolved) = buffer.resolved_settings()
+            && language == buffer.language()
+        {
+            return Arc::clone(resolved);
+        }
+
+        let location = buffer.file().map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
 
         let mut settings = AllLanguageSettings::get(location, cx).language(
             location,
@@ -313,33 +319,48 @@ impl LanguageSettings {
         );
 
         if let Some(modeline) = buffer.modeline() {
-            merge_with_modeline(settings.to_mut(), modeline);
+            merge_with_modeline(Arc::make_mut(&mut settings), modeline);
         }
 
         settings
     }
 
-    pub fn resolve<'a>(
-        buffer: Option<&'a Buffer>,
+    pub fn resolve(
+        buffer: Option<&Buffer>,
         override_language: Option<&LanguageName>,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let Some(buffer) = buffer else {
             return AllLanguageSettings::get(None, cx).language(None, override_language, cx);
         };
+
+        if let Some(resolved) = buffer.resolved_settings()
+            && override_language.is_none_or(|language| {
+                Some(language) == buffer.language().map(|l| l.name()).as_ref()
+            })
+        {
+            return resolved.clone();
+        }
+
+        Self::resolve_uncached(buffer, override_language, cx)
+    }
+
+    pub(crate) fn resolve_uncached(
+        buffer: &Buffer,
+        override_language: Option<&LanguageName>,
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let location = buffer.file().map(|f| SettingsLocation {
             worktree_id: f.worktree_id(cx),
             path: f.path().as_ref(),
         });
-        let all = AllLanguageSettings::get(location, cx);
-        let mut settings = if override_language.is_none() {
-            all.language(location, buffer.language().map(|l| l.name()).as_ref(), cx)
-        } else {
-            all.language(location, override_language, cx)
-        };
+        let buffer_language = buffer.language().map(|l| l.name());
+        let language_name = override_language.or(buffer_language.as_ref());
+        let mut settings =
+            AllLanguageSettings::get(location, cx).language(location, language_name, cx);
 
         if let Some(modeline) = buffer.modeline() {
-            merge_with_modeline(settings.to_mut(), modeline);
+            merge_with_modeline(Arc::make_mut(&mut settings), modeline);
         }
 
         settings
@@ -643,12 +664,12 @@ impl From<EditPredictionPromptFormatContent> for EditPredictionPromptFormat {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(
-        &'a self,
-        location: Option<SettingsLocation<'a>>,
+    pub fn language(
+        &self,
+        location: Option<SettingsLocation<'_>>,
         language_name: Option<&LanguageName>,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let settings = language_name
             .and_then(|name| self.languages.get(name))
             .unwrap_or(&self.defaults);
@@ -660,11 +681,11 @@ impl AllLanguageSettings {
                 .properties(location.worktree_id, location.path)
         });
         if let Some(editorconfig_properties) = editorconfig_properties {
-            let mut settings = settings.clone();
+            let mut settings = (**settings).clone();
             merge_with_editorconfig(&mut settings, &editorconfig_properties);
-            Cow::Owned(settings)
+            Arc::new(settings)
         } else {
-            Cow::Borrowed(settings)
+            Arc::clone(settings)
         }
     }
 
@@ -873,7 +894,7 @@ impl settings::Settings for AllLanguageSettings {
             }
         }
 
-        let default_language_settings = load_from_content(all_languages.defaults.clone());
+        let default_language_settings = Arc::new(load_from_content(all_languages.defaults.clone()));
 
         let mut languages = HashMap::default();
         for (language_name, settings) in &all_languages.languages.0 {
@@ -881,7 +902,7 @@ impl settings::Settings for AllLanguageSettings {
             settings::merge_from::MergeFrom::merge_from(&mut language_settings, settings);
             languages.insert(
                 LanguageName(language_name.clone().into()),
-                load_from_content(language_settings),
+                Arc::new(load_from_content(language_settings)),
             );
         }
 
@@ -953,15 +974,27 @@ impl settings::Settings for AllLanguageSettings {
             let mut builder = GlobSetBuilder::new();
 
             for pattern in &patterns.0 {
-                builder.add(Glob::new(pattern).unwrap());
+                match Glob::new(pattern) {
+                    Ok(glob) => {
+                        builder.add(glob);
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "Failed to parse a `file_types` pattern for {language}. Skipping this pattern:\n\n{error}"
+                        );
+                    }
+                }
             }
 
+            let matcher = builder.build().unwrap_or_else(|error| {
+                log::error!(
+                    "Failed to compile `file_types` patterns for {language}. Using an empty matcher:\n\n{error}"
+                );
+                GlobSet::empty()
+            });
             file_types.insert(
                 language.clone(),
-                (
-                    builder.build().unwrap(),
-                    patterns.0.iter().cloned().collect(),
-                ),
+                (matcher, patterns.0.iter().cloned().collect()),
             );
         }
 
@@ -1014,6 +1047,54 @@ mod tests {
     use gpui::TestAppContext;
     use settings::{LocalSettingsKind, LocalSettingsPath, WorktreeId};
     use util::rel_path::rel_path;
+
+    #[gpui::test]
+    fn test_file_types_preserves_valid_patterns(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &settings::default_settings());
+            store.register_setting::<AllLanguageSettings>();
+
+            for patterns in [
+                vec!["*.rs", "[", "config.*"],
+                vec!["[", "{"],
+                vec![],
+                vec!["*.rs", "config.*"],
+            ] {
+                store
+                    .set_user_settings(
+                        &serde_json::json!({
+                            "file_types": {
+                                "Python": ["*.py"],
+                                "Rust": patterns,
+                            },
+                        })
+                        .to_string(),
+                        cx,
+                    )
+                    .unwrap();
+
+                let settings = store.get::<AllLanguageSettings>(None);
+                let (matcher, sources) = settings.file_types.get("Rust").unwrap();
+                assert_eq!(sources, &patterns);
+                assert_eq!(matcher.is_match("main.rs"), patterns.contains(&"*.rs"));
+                assert_eq!(
+                    matcher.is_match("config.custom"),
+                    patterns.contains(&"config.*")
+                );
+                assert!(!matcher.is_match("main.py"));
+                assert!(!matcher.is_match("unrelated.txt"));
+                assert!(!matcher.is_match("["));
+                assert!(!matcher.is_match("{"));
+                assert_eq!(matcher.is_empty(), !patterns.contains(&"*.rs"));
+
+                let (matcher, sources) = settings.file_types.get("Python").unwrap();
+                assert_eq!(sources, &["*.py"]);
+                assert!(matcher.is_match("main.py"));
+                assert!(!matcher.is_match("main.rs"));
+                assert!(!matcher.is_match("config.custom"));
+            }
+        });
+    }
 
     #[gpui::test]
     fn test_edit_predictions_enabled_for_file(cx: &mut TestAppContext) {
