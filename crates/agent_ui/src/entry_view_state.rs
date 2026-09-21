@@ -323,7 +323,11 @@ impl EntryViewState {
                             entry.insert(element);
                         }
                         collections::hash_map::Entry::Occupied(_entry) => {
-                            if is_tool_call_completed && terminal.read(cx).output().is_none() {
+                            let terminal = terminal.read(cx);
+                            if is_tool_call_completed
+                                && terminal.is_process_backed()
+                                && terminal.output().is_none()
+                            {
                                 cx.emit(EntryViewEvent {
                                     entry_index: index,
                                     view_event: ViewEvent::TerminalMovedToBackground(id.clone()),

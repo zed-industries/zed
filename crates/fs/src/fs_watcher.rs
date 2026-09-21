@@ -695,10 +695,6 @@ fn push_notify_event(
         .collect::<Vec<_>>();
 
     if event.need_rescan() {
-        if !watcher_logging_rate_limited() {
-            log::warn!("filesystem watcher lost sync for {watched_root:?}; scheduling rescan");
-        }
-
         // A rescan event names the subtrees that lost sync (FSEvents
         // `MustScanSubDirs`); only a pathless one (inotify queue overflow) means
         // the whole watched root is suspect.
@@ -715,28 +711,6 @@ fn push_notify_event(
     }
     log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
-}
-
-fn watcher_logging_rate_limited() -> bool {
-    static LAST_WARN: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
-    let Some((ref mut started, ref mut emitted)) = *LAST_WARN.lock() else {
-        *LAST_WARN.lock() = Some((Instant::now(), 0));
-        return false;
-    };
-
-    if started.elapsed().as_secs() < 1 {
-        if *emitted < 20 {
-            log::warn!("filesystem watcher lost sync for many files, not logging more");
-            return true;
-        } else {
-            *emitted += 1;
-        }
-    } else {
-        *emitted = 0;
-        *started = Instant::now()
-    }
-
-    true
 }
 
 fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
@@ -939,8 +913,9 @@ impl OsWatcher {
         let dispatch_task = executor.spawn({
             let state = state.clone();
             async move {
+                let mut rescan_history = diagnostics::RescanHistory::default();
                 while let Ok(first) = event_rx.recv().await {
-                    dispatch_batch(kind, &state, first, &event_rx);
+                    dispatch_batch(kind, &state, &mut rescan_history, first, &event_rx);
                 }
             }
         });
@@ -1058,7 +1033,13 @@ impl OsWatcher {
         first: notify::Result<notify::Event>,
         event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
     ) {
-        dispatch_batch(self.kind, &self.state, first, event_rx);
+        dispatch_batch(
+            self.kind,
+            &self.state,
+            &mut diagnostics::RescanHistory::default(),
+            first,
+            event_rx,
+        );
     }
 
     fn start_native_watch_limit_cooldown(&self, path: &Path) {
@@ -1219,16 +1200,11 @@ fn dispatch(
     let callbacks = {
         let state = state.lock();
         if event.need_rescan() {
-            let callbacks = state
+            state
                 .watchers
                 .values()
                 .map(|registration| registration.callback.clone())
-                .collect::<Vec<_>>();
-            log::warn!(
-                "{kind:?} filesystem watcher lost sync; scheduling rescans for {} registrations",
-                callbacks.len()
-            );
-            callbacks
+                .collect::<Vec<_>>()
         } else {
             let mut ids = Vec::new();
             for path in &event.paths {
@@ -1252,6 +1228,7 @@ fn dispatch(
 fn dispatch_batch(
     kind: OsWatcherKind,
     state: &Mutex<WatcherState>,
+    rescan_history: &mut diagnostics::RescanHistory,
     first: notify::Result<notify::Event>,
     event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
 ) {
@@ -1272,6 +1249,12 @@ fn dispatch_batch(
             rescan_dispatched = true;
         }
 
+        // Log writes can block, so keep them off the native watcher reader.
+        if let Ok(event) = &event
+            && let Some(report) = rescan_history.record(event)
+        {
+            log::error!("{kind:?} filesystem watcher requested rescan: {report}");
+        }
         dispatch(kind, state, event);
     }
 }

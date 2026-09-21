@@ -546,6 +546,7 @@ impl CodegenAlternative {
 
             LanguageModelRequest {
                 thread_id: Some(session_id),
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
                 tools,
@@ -557,6 +558,7 @@ impl CodegenAlternative {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             }
         }))
     }
@@ -628,6 +630,7 @@ impl CodegenAlternative {
 
             LanguageModelRequest {
                 thread_id: Some(session_id),
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
                 tools: Vec::new(),
@@ -639,6 +642,7 @@ impl CodegenAlternative {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             }
         }))
     }
