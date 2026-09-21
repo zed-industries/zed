@@ -53,6 +53,10 @@ const DRAG_THRESHOLD: f64 = 2.;
 const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
 
+fn exceeds_drag_threshold(down: Point<Pixels>, current: Point<Pixels>, threshold: f64) -> bool {
+    (current - down).magnitude() > threshold
+}
+
 /// The styling information for a given group.
 pub struct GroupStyle {
     /// The identifier for this group.
@@ -627,12 +631,31 @@ impl Interactivity {
         T: 'static,
         W: 'static + Render,
     {
+        self.on_drag_with_threshold(value, px(DRAG_THRESHOLD as f32), constructor);
+    }
+
+    /// Registers a drag with an element-specific movement threshold.
+    ///
+    /// The default [`Self::on_drag`] threshold remains unchanged. This is useful for surfaces
+    /// where small pointer jitter should remain a click, such as touch-accessible background
+    /// selection areas.
+    pub fn on_drag_with_threshold<T, W>(
+        &mut self,
+        value: T,
+        threshold: Pixels,
+        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+    ) where
+        Self: Sized,
+        T: 'static,
+        W: 'static + Render,
+    {
         debug_assert!(
             self.drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
         self.drag_listener = Some(DragListener {
             value: Arc::new(value),
+            threshold: threshold.as_f32().max(0.0) as f64,
             render: Box::new(move |value, offset, window, cx| {
                 constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
             }),
@@ -1626,6 +1649,24 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Registers a drag with an element-specific movement threshold while leaving
+    /// [`Self::on_drag`] at the platform default.
+    fn on_drag_with_threshold<T, W>(
+        mut self,
+        value: T,
+        threshold: Pixels,
+        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+        T: 'static,
+        W: 'static + Render,
+    {
+        self.interactivity()
+            .on_drag_with_threshold(value, threshold, constructor);
+        self
+    }
+
     /// Registers a callback resolving a payload to offer the platform if a drag started by this
     /// element leaves the window. It is invoked at most once per drag gesture, when the pointer
     /// exits the viewport. Must be called after [`Self::on_drag`], with the same dragged value
@@ -1756,6 +1797,7 @@ impl HoverListenerMode {
 
 pub(crate) struct DragListener {
     value: Arc<dyn Any>,
+    threshold: f64,
     render: Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>,
     external_payload: Option<ExternalDragPayloadResolver>,
 }
@@ -2975,7 +3017,13 @@ impl Interactivity {
                         let mut pending_mouse_down = pending_mouse_down.borrow_mut();
                         if let Some(mouse_down) = pending_mouse_down.clone()
                             && !cx.has_active_drag()
-                            && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
+                            && drag_listener.as_ref().is_some_and(|listener| {
+                                exceeds_drag_threshold(
+                                    mouse_down.position,
+                                    event.position,
+                                    listener.threshold,
+                                )
+                            })
                             && let Some(listener) = drag_listener.take()
                             && mouse_down.button == MouseButton::Left
                         {
@@ -4442,6 +4490,26 @@ mod tests {
         MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
+
+    #[test]
+    fn custom_drag_threshold_uses_distance_from_pointer_down() {
+        let down = point(px(10.0), px(20.0));
+        assert!(!exceeds_drag_threshold(
+            down,
+            point(px(22.0), px(29.0)),
+            16.0,
+        ));
+        assert!(exceeds_drag_threshold(
+            down,
+            point(px(27.0), px(20.0)),
+            16.0,
+        ));
+        assert!(exceeds_drag_threshold(
+            down,
+            point(px(13.0), px(20.0)),
+            DRAG_THRESHOLD,
+        ));
+    }
 
     struct GroupHoverTestView {
         render_count: Rc<Cell<usize>>,
