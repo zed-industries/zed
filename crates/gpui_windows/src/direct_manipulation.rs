@@ -131,10 +131,20 @@ impl DirectManipulationHandler {
         unsafe {
             let pointer_id = wparam.loword() as u32;
             let mut pointer_type = POINTER_INPUT_TYPE::default();
-            if GetPointerType(pointer_id, &mut pointer_type).is_err() {
-                return;
-            }
-            if pointer_type == PT_TOUCHPAD {
+            if GetPointerType(pointer_id, &mut pointer_type).is_ok()
+                && pointer_type == PT_TOUCHPAD
+            {
+                let mut pointer_info = POINTER_INFO::default();
+                if GetPointerInfo(pointer_id, &mut pointer_info).is_ok() {
+                    let mut point = pointer_info.ptPixelLocation;
+                    if ScreenToClient(self.window, &mut point).as_bool() {
+                        self.touch_position.set(Some(logical_point(
+                            point.x as f32,
+                            point.y as f32,
+                            self.scale_factor.get(),
+                        )));
+                    }
+                }
                 self.viewport.SetContact(pointer_id).log_err();
             }
         }
@@ -243,6 +253,7 @@ impl DirectManipulationEventHandler {
             logical_point(point.x as f32, point.y as f32, scale_factor)
         }
     }
+
 }
 
 impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHandler_Impl {
