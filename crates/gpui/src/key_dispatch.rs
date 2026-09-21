@@ -634,9 +634,9 @@ mod tests {
 
     use crate::{
         ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
-        InputHandler, IntoElement, KeyBinding, KeyContext, Keymap, Pixels, PlatformWindow, Point,
-        Render, Subscription, TestAppContext, UTF16Selection, Unbind, VisualContext,
-        VisualTestContext, Window,
+        InputHandler, IntoElement, KeyBinding, KeyContext, Keymap, Modifiers, Pixels,
+        PlatformWindow, Point, Render, Subscription, TestAppContext, UTF16Selection, Unbind,
+        VisualContext, VisualTestContext, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -1302,6 +1302,137 @@ mod tests {
             window.blur(cx);
             assert!(window.pending_input_is_none());
         });
+    }
+
+    #[crate::test]
+    fn test_standalone_modifier_interception(cx: &mut TestAppContext) {
+        let (cx, action_count, _) =
+            setup_pending_input_test(cx, [KeyBinding::new("shift", TestAction, Some("Terminal"))]);
+        let intercepted_keystrokes = Rc::new(RefCell::new(Vec::new()));
+        let should_consume = Rc::new(Cell::new(true));
+        let terminal_context = KeyContext::parse("Terminal").expect("valid key context");
+        let _subscription = cx.update(|_, cx| {
+            cx.intercept_keystrokes({
+                let intercepted_keystrokes = intercepted_keystrokes.clone();
+                let should_consume = should_consume.clone();
+                move |event, _, cx| {
+                    assert!(event.action.is_none());
+                    assert_eq!(event.context_stack, vec![terminal_context.clone()]);
+                    intercepted_keystrokes
+                        .borrow_mut()
+                        .push(event.keystroke.clone());
+                    if should_consume.get() {
+                        cx.stop_propagation();
+                    }
+                }
+            })
+        });
+        let shift = Keystroke::parse("shift").expect("valid keystroke");
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        assert!(intercepted_keystrokes.borrow().is_empty());
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(intercepted_keystrokes.borrow().as_slice(), &[shift.clone()]);
+        assert_eq!(action_count.get(), 0);
+
+        should_consume.set(false);
+        intercepted_keystrokes.borrow_mut().clear();
+        cx.simulate_modifiers_change(Modifiers::shift());
+        assert!(intercepted_keystrokes.borrow().is_empty());
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(intercepted_keystrokes.borrow().as_slice(), &[shift]);
+        assert_eq!(action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_combined_shortcut_interception_has_no_standalone_modifier(cx: &mut TestAppContext) {
+        let (cx, action_count, _) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("shift", TestAction, Some("Terminal")),
+                KeyBinding::new("shift-f1", TestAction, Some("Terminal")),
+            ],
+        );
+        let intercepted_keystrokes = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|_, cx| {
+            cx.intercept_keystrokes({
+                let intercepted_keystrokes = intercepted_keystrokes.clone();
+                move |event, _, _| {
+                    intercepted_keystrokes
+                        .borrow_mut()
+                        .push(event.keystroke.clone());
+                }
+            })
+        });
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        assert!(intercepted_keystrokes.borrow().is_empty());
+        cx.simulate_keystrokes("shift-f1");
+        cx.simulate_modifiers_change(Modifiers::none());
+
+        let shift_f1 = Keystroke::parse("shift-f1").expect("valid keystroke");
+        assert_eq!(intercepted_keystrokes.borrow().as_slice(), &[shift_f1]);
+        assert_eq!(action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_consumed_modifier_preserves_pending_input(cx: &mut TestAppContext) {
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        test.update_in(cx, |test, window, cx| {
+            window.focus(&test.focus_handle, cx);
+            window.activate_window();
+        });
+        let _subscription = cx.update(|_, cx| {
+            cx.intercept_keystrokes(|event, _, cx| {
+                if event.keystroke.key == "shift" {
+                    cx.stop_propagation();
+                }
+            })
+        });
+
+        // Exercise both paths that processing Shift would take: completing `j shift`, and
+        // replaying `j` when `j k` no longer matches.
+        for binding in ["j shift", "j k"] {
+            cx.update(|_, cx| {
+                cx.clear_key_bindings();
+                cx.bind_keys([KeyBinding::new(binding, TestAction, Some("Terminal"))]);
+            });
+            test.update(cx, |test, _| test.text.borrow_mut().clear());
+            cx.simulate_keystrokes("j");
+            cx.executor()
+                .advance_clock(crate::PENDING_INPUT_TIMEOUT / 2);
+            cx.run_until_parked();
+            let pending_keystrokes = cx.update(|window, _| {
+                window
+                    .pending_input()
+                    .expect("pending input")
+                    .keystrokes()
+                    .to_vec()
+            });
+
+            // Consuming Shift must not complete or replay the pending `j`.
+            cx.simulate_modifiers_change(Modifiers::shift());
+            cx.simulate_modifiers_change(Modifiers::none());
+            cx.update(|window, _| {
+                let pending_input = window.pending_input().expect("pending input");
+                assert_eq!(pending_input.keystrokes(), pending_keystrokes);
+                assert!(pending_input.timeout().is_some());
+            });
+            test.update(cx, |test, _| {
+                assert_eq!(test.action_count.get(), 0);
+                assert_eq!(test.text.borrow().as_str(), "");
+            });
+
+            // The unchanged timeout should replay `j` after its remaining half.
+            cx.executor()
+                .advance_clock(crate::PENDING_INPUT_TIMEOUT / 2);
+            cx.run_until_parked();
+            cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+            test.update(cx, |test, _| {
+                assert_eq!(test.action_count.get(), 0);
+                assert_eq!(test.text.borrow().as_str(), "j");
+            });
+        }
     }
 
     #[crate::test]

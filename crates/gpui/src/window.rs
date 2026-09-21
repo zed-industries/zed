@@ -2479,20 +2479,16 @@ impl Window {
 
     pub(crate) fn dispatch_keystroke_interceptors(
         &mut self,
-        event: &dyn Any,
+        keystroke: &Keystroke,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
-        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
-            return;
-        };
-
         cx.keystroke_interceptors
             .clone()
             .retain(&(), move |callback| {
                 (callback)(
                     &KeystrokeEvent {
-                        keystroke: key_down_event.keystroke.clone(),
+                        keystroke: keystroke.clone(),
                         action: None,
                         context_stack: context_stack.clone(),
                     },
@@ -5866,7 +5862,7 @@ impl Window {
         };
 
         cx.propagate_event = true;
-        self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
+        self.dispatch_keystroke_interceptors(&keystroke, self.context_stack(), cx);
         if !cx.propagate_event {
             self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
             return;
