@@ -36,6 +36,29 @@ pub enum SidebarDockPosition {
     Right,
 }
 
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct ThreadsSidebarSettingsContent {
+    /// Whether opening a folder in an existing window automatically opens the
+    /// Threads Sidebar. Applies when `default_open_behavior` or
+    /// `cli_default_open_behavior` is set to `existing_window`.
+    ///
+    /// Default: true
+    pub auto_open: Option<bool>,
+    /// Where to position the threads sidebar.
+    ///
+    /// Default: left
+    pub position: Option<SidebarDockPosition>,
+    /// Default width of the threads sidebar in pixels.
+    ///
+    /// Values range from 200 to 800, matching the widths the sidebar can be
+    /// dragged to. Values outside that range are clamped into it.
+    ///
+    /// Default: 300
+    #[schemars(range(min = 200, max = 800))]
+    pub default_width: Option<crate::PixelSetting>,
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum SidebarSide {
     #[default]
@@ -214,29 +237,23 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the sidebar holding the threads list and the agent panel.
+    /// The deprecated version of `threads_sidebar.position`.
     ///
-    /// Default: left
+    /// Don't use this field.
+    #[schemars(skip)]
     pub sidebar_side: Option<SidebarDockPosition>,
-    /// Default width in pixels for the Threads Sidebar.
+    /// The deprecated version of `threads_sidebar.default_width`.
     ///
-    /// Values range from 200 to 800, matching the widths the sidebar can be
-    /// dragged to. Values outside that range are clamped into it.
-    ///
-    /// Default: 300
-    #[schemars(range(min = 200, max = 800))]
+    /// Don't use this field.
+    #[schemars(skip)]
     pub threads_sidebar_default_width: Option<crate::PixelSetting>,
-    /// Whether opening a folder in an existing window automatically opens the
-    /// Threads Sidebar.
+    /// The deprecated version of `threads_sidebar.auto_open`.
     ///
-    /// This applies when a folder opens in an existing window instead of a new
-    /// one, which happens when `default_open_behavior` or
-    /// `cli_default_open_behavior` is set to `existing_window`. When disabled,
-    /// the folder still opens in that window, but the sidebar stays closed
-    /// until you open it.
-    ///
-    /// Default: true
+    /// Don't use this field.
+    #[schemars(skip)]
     pub threads_sidebar_auto_open: Option<bool>,
+    /// Settings for the threads sidebar.
+    pub threads_sidebar: Option<ThreadsSidebarSettingsContent>,
     /// Default fixed width in pixels when the agent panel is docked to the left or right and
     /// `flexible` is false.
     ///
@@ -392,8 +409,22 @@ impl AgentSettingsContent {
         self.dock = Some(dock);
     }
 
-    pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
-        self.sidebar_side = Some(position);
+    pub fn set_threads_sidebar_position(&mut self, position: Option<SidebarDockPosition>) {
+        self.sidebar_side = None;
+        self.threads_sidebar.get_or_insert_default().position = position;
+    }
+
+    pub fn set_threads_sidebar_default_width(
+        &mut self,
+        default_width: Option<crate::PixelSetting>,
+    ) {
+        self.threads_sidebar_default_width = None;
+        self.threads_sidebar.get_or_insert_default().default_width = default_width;
+    }
+
+    pub fn set_threads_sidebar_auto_open(&mut self, auto_open: Option<bool>) {
+        self.threads_sidebar_auto_open = None;
+        self.threads_sidebar.get_or_insert_default().auto_open = auto_open;
     }
 
     pub fn set_flexible_size(&mut self, flexible: bool) {
