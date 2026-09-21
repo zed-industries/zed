@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, fmt::Display};
 
 use serde::Deserialize;
 
@@ -50,14 +50,22 @@ where
 {
     match T::deserialize(deserializer) {
         Ok(value) => Ok(value),
-        Err(e) => ERRORS.with_borrow_mut(|errors| {
-            if let Some(errors) = errors {
-                errors.push(anyhow::anyhow!("{}", e));
-                Ok(Default::default())
-            } else {
-                Err(e)
+        Err(error) => {
+            let mut error = Some(error);
+            let mut fallback = None;
+            recover_deserialization_error(&mut |record_error| {
+                if let Some(error) = error.take() {
+                    record_error(&error);
+                    let value = T::default();
+                    drop(error);
+                    fallback = Some(value);
+                }
+            });
+            match error {
+                Some(error) => Err(error),
+                None => Ok(fallback.expect("recovery creates a fallback")),
             }
-        }),
+        }
     }
 }
 
@@ -144,6 +152,15 @@ where
     T: serde::de::DeserializeOwned,
 {
     T::deserialize(rest)
+}
+
+#[inline(never)]
+fn recover_deserialization_error(recover: &mut dyn FnMut(&mut dyn FnMut(&dyn Display))) {
+    ERRORS.with_borrow_mut(|errors| {
+        if let Some(errors) = errors {
+            recover(&mut |error| errors.push(anyhow::anyhow!("{error}")));
+        }
+    });
 }
 
 #[cfg(test)]

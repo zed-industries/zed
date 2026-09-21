@@ -252,7 +252,7 @@ fn general_page(cx: &App) -> SettingsPage {
                 field: Box::new(
                     SettingField {
                         organization_override: None,
-                        json_path: Some("worktree.private_files"),
+                        json_path: Some("private_files"),
                         pick: |settings_content| {
                             settings_content.project.worktree.private_files.as_ref()
                         },
@@ -4177,7 +4177,7 @@ fn window_and_layout_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Pending Keystrokes Indicator",
-                description: "Show an indicator with a countdown while a multi-stroke key binding is pending. Its binding preview popover is disabled when the which-key menu is enabled.",
+                description: "Show an indicator while a multi-stroke key binding is pending. If the input has a timeout, a countdown is shown and hovering pauses it. Its binding preview popover is disabled when the which-key menu is enabled.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("status_bar.pending_keystrokes_indicator"),
@@ -6064,7 +6064,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(
                     SettingField {
                         organization_override: None,
-                        json_path: Some("worktree.hidden_files"),
+                        json_path: Some("hidden_files"),
                         pick: |settings_content| {
                             settings_content.project.worktree.hidden_files.as_ref()
                         },
@@ -6829,7 +6829,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 8] {
+    fn agent_panel_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6908,6 +6908,29 @@ fn panels_page() -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .threads_sidebar_default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Threads Sidebar Auto Open",
+                description: "Whether opening a folder in an existing window automatically opens the Threads Sidebar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.threads_sidebar_auto_open"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .threads_sidebar_auto_open
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .threads_sidebar_auto_open = value;
                     },
                 }),
                 metadata: None,
@@ -11165,7 +11188,7 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 5] {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Disable in Language Scopes",
-            description: "Controls whether edit predictions are shown in the given language scopes.",
+            description: "Disable edit predictions in these language scopes, such as \"comment\" and \"string\". Use \"...\" to add scopes without repeating the inherited list.",
             field: Box::new(
                 SettingField {
                     organization_override: None,

@@ -415,6 +415,15 @@
     },
   },
   {
+    "context": "Elicitation || (Elicitation > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+      "tab": "menu::SelectNext",
+      "shift-tab": "menu::SelectPrevious",
+    },
+  },
+  {
     "context": "ThreadHistory",
     "bindings": {
       "ctrl--": "pane::GoBack",
@@ -768,7 +777,8 @@
       "cmd-k shift-down": "workspace::SwapPaneDown",
       "cmd-shift-x": "zed::Extensions",
       "f5": "debugger::Rerun",
-      "cmd-w": "workspace::CloseActiveDock",
+      "cmd-w": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-alt-w": "workspace::CloseActiveDock",
     },
   },
   {

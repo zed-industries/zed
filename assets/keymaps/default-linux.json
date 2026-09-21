@@ -380,6 +380,15 @@
     },
   },
   {
+    "context": "Elicitation || (Elicitation > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+      "tab": "menu::SelectNext",
+      "shift-tab": "menu::SelectPrevious",
+    },
+  },
+  {
     "context": "ThreadHistory",
     "bindings": {
       "backspace": "agent::RemoveSelectedThread",
@@ -728,8 +737,9 @@
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
       "f5": "debugger::Rerun",
-      "ctrl-f4": "workspace::CloseActiveDock",
-      "ctrl-w": "workspace::CloseActiveDock",
+      "ctrl-f4": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-w": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-alt-w": "workspace::CloseActiveDock",
     },
   },
   {
