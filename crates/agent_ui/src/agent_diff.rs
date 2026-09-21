@@ -1,4 +1,4 @@
-use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
+use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, ui::MD_CORNER_RADIUS};
 use acp_thread::{AcpThread, AcpThreadEvent};
 use action_log::{ActionLogTelemetry, LastRejectUndo};
 use agent_settings::AgentSettings;
@@ -809,7 +809,7 @@ fn render_diff_hunk_controls(
         .border_x_1()
         .border_b_1()
         .border_color(cx.theme().colors().border)
-        .rounded_b_md()
+        .rounded_b(MD_CORNER_RADIUS)
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .block_mouse_except_scroll()

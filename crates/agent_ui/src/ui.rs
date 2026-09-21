@@ -14,6 +14,8 @@ pub use sandbox_status_tooltip::*;
 pub use terminal_tool_header::*;
 pub use undo_reject_toast::*;
 
+pub(crate) const MD_CORNER_RADIUS: gpui::Rems = gpui::rems(0.375);
+
 /// Returns the appropriate [`DocumentationSide`] for documentation asides
 /// in the agent panel, based on the current dock position.
 pub fn documentation_aside_side(cx: &gpui::App) -> ui::DocumentationSide {

@@ -268,7 +268,7 @@ impl Component for TerminalToolHeader {
                 .w_full()
                 .border_1()
                 .border_color(cx.theme().colors().border.opacity(0.6))
-                .rounded_md()
+                .rounded(super::MD_CORNER_RADIUS)
                 .overflow_hidden()
                 .child(
                     header.command_slot(

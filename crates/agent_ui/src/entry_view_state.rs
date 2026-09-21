@@ -10,8 +10,8 @@ use editor::{
     SizingBehavior,
 };
 use gpui::{
-    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, TextStyleRefinement, WeakEntity, Window,
+    AnyEntity, App, AppContext as _, Corners, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
 use project::{AgentId, Project, project_settings::DiagnosticSeverity};
@@ -23,6 +23,8 @@ use ui::{Context, TextSize};
 use workspace::Workspace;
 
 use crate::message_editor::{MessageEditor, MessageEditorEvent, SharedSessionCapabilities};
+
+use crate::ui::MD_CORNER_RADIUS;
 
 /// Maps an entry index through the removal of `removed` (a contiguous range of
 /// entries), returning `None` if the index referred to a removed entry.
@@ -648,6 +650,14 @@ fn create_terminal(
             cx,
         );
         view.set_embedded_mode(Some(1000), cx);
+        view.set_background_corner_radii(
+            Some(Corners {
+                bottom_left: MD_CORNER_RADIUS,
+                bottom_right: MD_CORNER_RADIUS,
+                ..Default::default()
+            }),
+            cx,
+        );
         view
     })
 }

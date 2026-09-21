@@ -2,14 +2,14 @@ use std::{any::Any, fmt::Debug, ops::Not, time::Duration};
 use web_time::Instant;
 
 use gpui::{
-    Along, Anchor, AnyElement, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds,
-    ContentMask, Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId,
-    Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
-    IntoElement, IsZero, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent,
-    Size, Stateful, StatefulInteractiveElement, Style, Styled, Task, UniformListDecoration,
-    UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
-    size,
+    AbsoluteLength, Along, Anchor, AnyElement, App, AppContext as _, Axis as ScrollbarAxis,
+    BorderStyle, Bounds, ContentMask, Context, Corners, CursorStyle, DispatchPhase, Div, Edges,
+    Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
+    InteractiveElement, IntoElement, IsZero, LayoutId, ListState, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollHandle,
+    ScrollWheelEvent, Size, Stateful, StatefulInteractiveElement, Style, Styled, Task,
+    UniformListDecoration, UniformListScrollHandle, Window, ease_in_out,
+    prelude::FluentBuilder as _, px, quad, relative, size,
 };
 use gpui_util::ResultExt;
 use smallvec::SmallVec;
@@ -77,6 +77,7 @@ where
 {
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
+    let track_corner_radii = config.track_corner_radii;
     let has_border = config.border;
     let reveal_policy = config.reveal_policy;
 
@@ -87,7 +88,7 @@ where
 
     state.update(cx, |state, cx| {
         state.0.update(cx, |state, _cx| {
-            state.update_colors(track_color, has_border);
+            state.update_colors(track_color, has_border, track_corner_radii);
             state.reveal_policy = reveal_policy;
         })
     });
@@ -388,6 +389,7 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     style: Option<ScrollbarStyle>,
     reveal_policy: ScrollbarRevealPolicy,
     track_color: Option<Hsla>,
+    track_corner_radii: Corners<AbsoluteLength>,
     border: bool,
 }
 
@@ -416,6 +418,7 @@ impl Scrollbars {
             style: None,
             reveal_policy: ScrollbarRevealPolicy::default(),
             track_color: None,
+            track_corner_radii: Corners::default(),
             border: false,
         }
     }
@@ -456,6 +459,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             visibility,
             get_visibility,
             track_color,
+            track_corner_radii,
             border,
             style,
             reveal_policy,
@@ -468,6 +472,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             tracked_entity: tracked_entity_id,
             visibility,
             track_color,
+            track_corner_radii,
             border,
             get_visibility,
             style,
@@ -487,6 +492,12 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
 
     pub fn reveal_policy(mut self, reveal_policy: ScrollbarRevealPolicy) -> Self {
         self.reveal_policy = reveal_policy;
+        self
+    }
+
+    /// Set the track background corner radii. Defaults to zero.
+    pub fn track_corner_radii(mut self, corner_radii: Corners<AbsoluteLength>) -> Self {
+        self.track_corner_radii = corner_radii;
         self
     }
 
@@ -623,6 +634,7 @@ enum ParentHoverEvent {
 struct TrackColors {
     background: Hsla,
     has_border: bool,
+    corner_radii: Corners<AbsoluteLength>,
 }
 
 pub fn on_new_scrollbars<T: gpui::Global>(cx: &mut App) {
@@ -674,6 +686,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             track_color: config.track_color.map(|color| TrackColors {
                 background: color,
                 has_border: config.border,
+                corner_radii: config.track_corner_radii,
             }),
             show_behavior,
             get_visibility: config.get_visibility,
@@ -846,10 +859,16 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
-    fn update_colors(&mut self, track_color: Option<Hsla>, has_border: bool) {
+    fn update_colors(
+        &mut self,
+        track_color: Option<Hsla>,
+        has_border: bool,
+        corner_radii: Corners<AbsoluteLength>,
+    ) {
         self.track_color = track_color.map(|color| TrackColors {
             background: color,
             has_border,
+            corner_radii,
         });
     }
 
@@ -1496,7 +1515,10 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                         window.paint_quad(quad(
                             *track_bounds,
-                            Corners::default(),
+                            colors
+                                .corner_radii
+                                .to_pixels(window.rem_size())
+                                .clamp_radii_for_quad_size(track_bounds.size),
                             track_color,
                             border_edges,
                             border_color,
@@ -1671,6 +1693,25 @@ impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
 mod tests {
     use super::*;
     use gpui::point;
+
+    #[test]
+    fn track_corner_radii_default_and_tracked_handle_preservation() {
+        let scrollbars = Scrollbars::new(ScrollAxes::Horizontal);
+        assert_eq!(scrollbars.track_corner_radii, Corners::default());
+
+        let corner_radii = Corners {
+            bottom_left: gpui::rems(0.5).into(),
+            bottom_right: px(6.).into(),
+            ..Corners::default()
+        };
+        let scrollbars = scrollbars
+            .track_corner_radii(corner_radii)
+            .tracked_scroll_handle(&UniformListScrollHandle::new());
+        assert_eq!(scrollbars.track_corner_radii, corner_radii);
+
+        let scrollbars = scrollbars.track_corner_radii(Corners::default());
+        assert_eq!(scrollbars.track_corner_radii, Corners::default());
+    }
 
     #[test]
     fn default_reveal_policy_reveals_for_content_changes() {

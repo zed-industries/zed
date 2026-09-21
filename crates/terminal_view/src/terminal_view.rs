@@ -9,10 +9,10 @@ use editor::{
     ui_scrollbar_settings_from_raw,
 };
 use gpui::{
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
-    WeakEntity, actions, anchored, deferred, div,
+    Action, AnyElement, App, ClipboardEntry, Corners, DismissEvent, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, Pixels, Point as GpuiPoint, Rems, Render, ScrollWheelEvent, Styled,
+    Subscription, Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
 use persistence::TerminalDb;
@@ -138,6 +138,7 @@ pub struct TerminalView {
     cursor_shape: CursorShape,
     blink_manager: Entity<BlinkManager>,
     mode: TerminalMode,
+    background_corner_radii: Option<Corners<Rems>>,
     // Explicit override for whether workspace-specific context menu actions are shown.
     // When `None`, visibility is derived from `mode` (hidden for embedded terminals).
     show_workspace_actions: Option<bool>,
@@ -290,6 +291,7 @@ impl TerminalView {
             hover: None,
             hover_tooltip_update: Task::ready(()),
             mode: TerminalMode::Standalone,
+            background_corner_radii: None,
             show_workspace_actions: None,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
@@ -316,6 +318,16 @@ impl TerminalView {
         self.mode = TerminalMode::Embedded {
             max_lines_when_unfocused,
         };
+        cx.notify();
+    }
+
+    /// Rounds the background without clipping terminal content to the corners.
+    pub fn set_background_corner_radii(
+        &mut self,
+        corner_radii: Option<Corners<Rems>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_corner_radii = corner_radii;
         cx.notify();
     }
 
@@ -1407,6 +1419,12 @@ impl Render for TerminalView {
                     .id("terminal-view-container")
                     .size_full()
                     .bg(cx.theme().colors().editor_background)
+                    .when_some(self.background_corner_radii, |this, radii| {
+                        this.rounded_tl(radii.top_left)
+                            .rounded_tr(radii.top_right)
+                            .rounded_bl(radii.bottom_left)
+                            .rounded_br(radii.bottom_right)
+                    })
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1419,6 +1437,7 @@ impl Render for TerminalView {
                     ))
                     .when(self.content_mode(window, cx).is_scrollable(), |div| {
                         let colors = cx.theme().colors();
+                        let radii = self.background_corner_radii.unwrap_or_default();
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
                                 .show_along(ScrollAxes::Vertical)
@@ -1426,6 +1445,11 @@ impl Render for TerminalView {
                                     ScrollAxes::Vertical,
                                     colors.editor_background,
                                 )
+                                .track_corner_radii(Corners {
+                                    top_right: radii.top_right.into(),
+                                    bottom_right: radii.bottom_right.into(),
+                                    ..Default::default()
+                                })
                                 .tracked_scroll_handle(&self.scroll_handle),
                             window,
                             cx,
