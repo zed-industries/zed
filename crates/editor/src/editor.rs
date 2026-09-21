@@ -11016,11 +11016,7 @@ impl Editor {
         if source.row().as_f64() < scroll_top.floor() {
             return None;
         }
-        let em_width = ScrollPixelOffset::from(
-            editor_snapshot
-                .display_snapshot
-                .grid_cell_width(&text_layout_details),
-        );
+        let em_width = ScrollPixelOffset::from(text_layout_details.grid_cell().width);
         let scroll_left = window.pixel_snap_f64(scroll_position.x * em_width);
         let source_x = editor_snapshot.x_for_display_point(source, &text_layout_details);
         let source_y = (source.row().as_f64() - scroll_top) * f64::from(line_height);

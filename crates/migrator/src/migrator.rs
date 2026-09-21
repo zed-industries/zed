@@ -256,6 +256,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_08_17::make_git_gutter_width_an_enum),
         MigrationType::Json(migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator),
         MigrationType::Json(migrations::m_2026_08_30::nest_markdown_preview_settings),
+        MigrationType::Json(migrations::m_2026_09_21::replace_prefer_line_soft_wrap),
     ];
     run_migrations(text, migrations)
 }
@@ -5736,6 +5737,57 @@ mod tests {
                 "#
                 .unindent(),
             ),
+        );
+    }
+
+    #[test]
+    fn test_replace_prefer_line_soft_wrap() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "soft_wrap": "prefer_line",
+                "languages": {
+                    "Markdown": {
+                        "soft_wrap": "prefer_line"
+                    },
+                    "Rust": {
+                        "soft_wrap": "editor_width"
+                    }
+                },
+                "preview": {
+                    "soft_wrap": "prefer_line"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "soft_wrap": "none",
+                    "languages": {
+                        "Markdown": {
+                            "soft_wrap": "none"
+                        },
+                        "Rust": {
+                            "soft_wrap": "editor_width"
+                        }
+                    },
+                    "preview": {
+                        "soft_wrap": "none"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+        assert_migrate_settings(
+            &r#"
+            {
+                "soft_wrap": "none"
+            }
+            "#
+            .unindent(),
+            None,
         );
     }
 }

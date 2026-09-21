@@ -16,6 +16,7 @@ impl Editor {
             rem_size: window.rem_size(),
             scroll_anchor: self.scroll_manager.shared_scroll_anchor(cx),
             visible_rows: self.visible_line_count(),
+            visible_columns: self.visible_column_count(),
             vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
         }
     }

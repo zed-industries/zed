@@ -430,6 +430,45 @@ fn render_highlighted_editor(cx: &mut BenchAppContext) {
     });
 }
 
+#[gpui::bench(
+    inputs = vec!["ascii", "cjk"],
+    input_name = "script",
+    group = "Unwrapped long lines",
+    sample_size = 10
+)]
+fn editor_render_unwrapped_long_lines(script: &&str, cx: &mut BenchAppContext) {
+    init_context(cx);
+
+    let line = match *script {
+        "ascii" => "const value = { key: 'value', other: 12345 }; ".repeat(120),
+        "cjk" => "漢字仮名交じり文です。".repeat(500),
+        _ => unreachable!(),
+    };
+    assert!(line.len() > 1024);
+    let text = std::iter::repeat_n(line.as_str(), 200)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+
+    let mut window = cx.add_empty_window();
+    let editor = window.update(|window, cx| {
+        let editor = window.replace_root(cx, |window, cx| {
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.set_style(editor::EditorStyle::default(), window, cx);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+            editor
+        });
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+
+    let mut scroll_columns = 0.;
+    cx.bench_renderer(editor, move |editor, window, cx| {
+        scroll_columns = (scroll_columns + 3.) % 3_000.;
+        editor.set_scroll_position(gpui::point(scroll_columns, 0.), window, cx);
+    });
+}
+
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -455,6 +494,7 @@ gpui::bench_group!(
     editor_render,
     editor_render_with_editorconfig,
     editor_render_highlighted,
-    editor_render_highlighted_minimap
+    editor_render_highlighted_minimap,
+    editor_render_unwrapped_long_lines
 );
 gpui::bench_main!(benches);

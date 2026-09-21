@@ -27,14 +27,14 @@ use util::ResultExt;
 use workspace::{ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
 
 use super::{
-    BlockLayout, EditorElement, EditorLayout, LineWithInvisibles, grid_columns_to_shape,
-    layout_line, render_breadcrumb_text, visible_columns,
+    BlockLayout, EditorElement, EditorLayout, LineWithInvisibles, layout_line,
+    render_breadcrumb_text,
 };
 use crate::{
     BUFFER_HEADER_PADDING, DisplayRow, Editor, EditorSettings, EditorSnapshot, FILE_HEADER_HEIGHT,
     GutterDimensions, JumpData, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, Point, RowExt,
     SelectionEffects, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
-    display_map::ToDisplayPoint,
+    display_map::{HorizontalViewport, ToDisplayPoint},
     scroll::{Autoscroll, ScrollOffset, ScrollPixelOffset},
 };
 
@@ -232,6 +232,7 @@ impl EditorElement {
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        horizontal_viewport: HorizontalViewport,
         content_origin: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
@@ -249,16 +250,6 @@ impl EditorElement {
 
         let mut lines = Vec::<StickyHeaderLine>::new();
 
-        let font_id = window.text_system().resolve_font(&self.style.text.font());
-        let font_size = self.style.text.font_size.to_pixels(window.rem_size());
-        let cell_width = window.text_system().em_layout_width(font_id, font_size);
-        let grid_columns = (cell_width > Pixels::ZERO).then(|| {
-            grid_columns_to_shape(
-                scroll_pixel_position.x / f64::from(cell_width),
-                visible_columns(editor_width, cell_width),
-            )
-        });
-
         for StickyHeader {
             sticky_row,
             start_point,
@@ -270,8 +261,9 @@ impl EditorElement {
                 snapshot,
                 &self.style,
                 editor_width,
-                grid_columns.clone(),
+                Some(horizontal_viewport),
                 is_row_soft_wrapped,
+                &[],
                 window,
                 cx,
             );
