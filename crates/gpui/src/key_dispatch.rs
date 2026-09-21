@@ -633,7 +633,7 @@ mod tests {
     };
 
     use crate::{
-        ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
+        Action, ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
         InputHandler, IntoElement, KeyBinding, KeyContext, Keymap, Modifiers, Pixels,
         PlatformWindow, Point, Render, Subscription, TestAppContext, UTF16Selection, Unbind,
         VisualContext, VisualTestContext, Window,
@@ -863,6 +863,41 @@ mod tests {
         });
 
         (cx, action_count, secondary_action_count)
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct ObservedKeystroke {
+        keystroke: Keystroke,
+        action_name: Option<&'static str>,
+        context_stack: Vec<KeyContext>,
+    }
+
+    fn capture_observed_keystrokes(
+        cx: &mut VisualTestContext,
+    ) -> (Rc<RefCell<Vec<ObservedKeystroke>>>, Subscription) {
+        let observed_keystrokes = Rc::new(RefCell::new(Vec::new()));
+        let subscription = cx.update(|_, cx| {
+            cx.observe_keystrokes({
+                let observed_keystrokes = observed_keystrokes.clone();
+                move |event, _, _| {
+                    observed_keystrokes.borrow_mut().push(ObservedKeystroke {
+                        keystroke: event.keystroke.clone(),
+                        action_name: event.action.as_ref().map(|action| action.name()),
+                        context_stack: event.context_stack.clone(),
+                    });
+                }
+            })
+        });
+        (observed_keystrokes, subscription)
+    }
+
+    fn simulate_modifier_tap(cx: &mut VisualTestContext, modifiers: Modifiers) {
+        cx.simulate_modifiers_change(modifiers);
+        cx.simulate_modifiers_change(Modifiers::none());
+    }
+
+    fn terminal_context() -> KeyContext {
+        KeyContext::parse("Terminal").expect("valid key context")
     }
 
     fn setup_pending_input_timeout_test(
@@ -1305,16 +1340,18 @@ mod tests {
     }
 
     #[crate::test]
-    fn test_standalone_modifier_interception(cx: &mut TestAppContext) {
+    fn test_standalone_modifier_dispatch(cx: &mut TestAppContext) {
         let (cx, action_count, _) =
             setup_pending_input_test(cx, [KeyBinding::new("shift", TestAction, Some("Terminal"))]);
         let intercepted_keystrokes = Rc::new(RefCell::new(Vec::new()));
         let should_consume = Rc::new(Cell::new(true));
-        let terminal_context = KeyContext::parse("Terminal").expect("valid key context");
-        let _subscription = cx.update(|_, cx| {
+        let terminal_context = terminal_context();
+        let (observed_keystrokes, _observer) = capture_observed_keystrokes(cx);
+        let _interceptor = cx.update(|_, cx| {
             cx.intercept_keystrokes({
                 let intercepted_keystrokes = intercepted_keystrokes.clone();
                 let should_consume = should_consume.clone();
+                let terminal_context = terminal_context.clone();
                 move |event, _, cx| {
                     assert!(event.action.is_none());
                     assert_eq!(event.context_stack, vec![terminal_context.clone()]);
@@ -1329,7 +1366,8 @@ mod tests {
         });
         let shift = Keystroke::parse("shift").expect("valid keystroke");
 
-        // Pressing Shift is not a keystroke. Consuming its recognized release suppresses the binding.
+        // Pressing Shift is not a keystroke. Consuming its recognized release suppresses
+        // the binding.
         cx.simulate_modifiers_change(Modifiers::shift());
         assert!(intercepted_keystrokes.borrow().is_empty());
         cx.simulate_modifiers_change(Modifiers::none());
@@ -1338,6 +1376,7 @@ mod tests {
             std::slice::from_ref(&shift)
         );
         assert_eq!(action_count.get(), 0);
+        assert!(observed_keystrokes.borrow().is_empty());
 
         // Without consumption, the same recognized release reaches keymap dispatch.
         should_consume.set(false);
@@ -1350,10 +1389,155 @@ mod tests {
             std::slice::from_ref(&shift)
         );
         assert_eq!(action_count.get(), 1);
+        assert_eq!(
+            observed_keystrokes.borrow().as_slice(),
+            &[ObservedKeystroke {
+                keystroke: shift,
+                action_name: Some(TestAction.name()),
+                context_stack: vec![terminal_context],
+            }]
+        );
     }
 
     #[crate::test]
-    fn test_combined_shortcut_interception_has_no_standalone_modifier(cx: &mut TestAppContext) {
+    fn test_unbound_standalone_modifier_observation(cx: &mut TestAppContext) {
+        let (cx, _, _) = setup_pending_input_test(cx, []);
+        let terminal_context = terminal_context();
+        let (observed_keystrokes, _observer) = capture_observed_keystrokes(cx);
+
+        for (modifiers, key) in [
+            (Modifiers::shift(), "shift"),
+            (Modifiers::control(), "ctrl"),
+            (Modifiers::alt(), "alt"),
+            (Modifiers::command(), "cmd"),
+            (Modifiers::function(), "fn"),
+        ] {
+            observed_keystrokes.borrow_mut().clear();
+            cx.simulate_modifiers_change(modifiers);
+            assert!(
+                observed_keystrokes.borrow().is_empty(),
+                "modifier press must not notify observers"
+            );
+            cx.simulate_modifiers_change(Modifiers::none());
+            assert_eq!(
+                observed_keystrokes.borrow().as_slice(),
+                &[ObservedKeystroke {
+                    keystroke: Keystroke::parse(key).expect("valid modifier"),
+                    action_name: None,
+                    context_stack: vec![terminal_context.clone()],
+                }]
+            );
+        }
+    }
+
+    #[crate::test]
+    fn test_raw_modifier_handler_can_suppress_observation(cx: &mut TestAppContext) {
+        struct ModifierListenerTestView {
+            focus_handle: FocusHandle,
+            consume: Rc<Cell<bool>>,
+            releases: Rc<Cell<usize>>,
+        }
+
+        impl Render for ModifierListenerTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                use crate::{InteractiveElement as _, Styled as _};
+                let consume = self.consume.clone();
+                let releases = self.releases.clone();
+                crate::div()
+                    .key_context("Terminal")
+                    .track_focus(&self.focus_handle)
+                    .size_full()
+                    .on_action(|_: &TestAction, _, cx| cx.propagate())
+                    .on_modifiers_changed(move |event, _, cx| {
+                        if !event.modifiers.modified() {
+                            releases.set(releases.get() + 1);
+                            if consume.get() {
+                                cx.stop_propagation();
+                            }
+                        }
+                    })
+            }
+        }
+
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("shift", TestAction, Some("Terminal"))]);
+        });
+        let consume = Rc::new(Cell::new(true));
+        let releases = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view(|_, cx| ModifierListenerTestView {
+            focus_handle: cx.focus_handle(),
+            consume: consume.clone(),
+            releases: releases.clone(),
+        });
+        cx.update(|window, cx| {
+            let focus_handle = view.read(cx).focus_handle.clone();
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+        let (observed_keystrokes, _observer) = capture_observed_keystrokes(cx);
+
+        simulate_modifier_tap(cx, Modifiers::shift());
+        assert_eq!(releases.get(), 1);
+        assert!(observed_keystrokes.borrow().is_empty());
+
+        consume.set(false);
+        simulate_modifier_tap(cx, Modifiers::shift());
+        assert_eq!(releases.get(), 2);
+        assert_eq!(
+            observed_keystrokes.borrow().as_slice(),
+            &[ObservedKeystroke {
+                keystroke: Keystroke::parse("shift").expect("valid modifier"),
+                action_name: None,
+                context_stack: vec![terminal_context()],
+            }]
+        );
+    }
+
+    #[crate::test]
+    fn test_pending_modifier_observed_when_binding_resolves(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("shift", TestAction, Some("Terminal")),
+                KeyBinding::new("shift f1", SecondaryTestAction, Some("Terminal")),
+            ],
+        );
+        let (observed_keystrokes, _observer) = capture_observed_keystrokes(cx);
+
+        simulate_modifier_tap(cx, Modifiers::shift());
+        assert!(observed_keystrokes.borrow().is_empty());
+        assert_eq!(action_count.get(), 0);
+
+        cx.executor().advance_clock(crate::PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(
+            observed_keystrokes.borrow().as_slice(),
+            &[ObservedKeystroke {
+                keystroke: Keystroke::parse("shift").expect("valid modifier"),
+                action_name: Some(TestAction.name()),
+                context_stack: Vec::new(),
+            }]
+        );
+
+        observed_keystrokes.borrow_mut().clear();
+        simulate_modifier_tap(cx, Modifiers::shift());
+        assert!(observed_keystrokes.borrow().is_empty());
+        cx.simulate_keystrokes("f1");
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 1);
+        assert_eq!(
+            observed_keystrokes.borrow().as_slice(),
+            &[ObservedKeystroke {
+                keystroke: Keystroke::parse("f1").expect("valid key"),
+                action_name: Some(SecondaryTestAction.name()),
+                context_stack: vec![terminal_context()],
+            }]
+        );
+    }
+
+    #[crate::test]
+    fn test_combined_shortcut_has_no_standalone_modifier(cx: &mut TestAppContext) {
         let (cx, action_count, _) = setup_pending_input_test(
             cx,
             [
@@ -1362,7 +1546,8 @@ mod tests {
             ],
         );
         let intercepted_keystrokes = Rc::new(RefCell::new(Vec::new()));
-        let _subscription = cx.update(|_, cx| {
+        let (observed_keystrokes, _observer) = capture_observed_keystrokes(cx);
+        let _interceptor = cx.update(|_, cx| {
             cx.intercept_keystrokes({
                 let intercepted_keystrokes = intercepted_keystrokes.clone();
                 move |event, _, _| {
@@ -1380,7 +1565,18 @@ mod tests {
         cx.simulate_modifiers_change(Modifiers::none());
 
         let shift_f1 = Keystroke::parse("shift-f1").expect("valid keystroke");
-        assert_eq!(intercepted_keystrokes.borrow().as_slice(), &[shift_f1]);
+        assert_eq!(
+            intercepted_keystrokes.borrow().as_slice(),
+            std::slice::from_ref(&shift_f1)
+        );
+        assert_eq!(
+            observed_keystrokes.borrow().as_slice(),
+            &[ObservedKeystroke {
+                keystroke: shift_f1,
+                action_name: Some(TestAction.name()),
+                context_stack: vec![terminal_context()],
+            }]
+        );
         assert_eq!(action_count.get(), 1);
     }
 
