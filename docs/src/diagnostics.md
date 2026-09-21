@@ -50,7 +50,7 @@ This is disabled by default, but can either be temporarily turned on (or off) us
 
 ## Project Panel
 
-Project panel can have its entries coloured based on the severity of the diagnostics in the file.
+[Project panel](./project-panel.md) can have its entries coloured based on the severity of the diagnostics in the file.
 
 To configure, use
 
