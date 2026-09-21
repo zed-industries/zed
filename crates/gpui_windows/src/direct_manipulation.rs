@@ -131,8 +131,7 @@ impl DirectManipulationHandler {
         unsafe {
             let pointer_id = wparam.loword() as u32;
             let mut pointer_type = POINTER_INPUT_TYPE::default();
-            if GetPointerType(pointer_id, &mut pointer_type).is_ok()
-                && pointer_type == PT_TOUCHPAD
+            if GetPointerType(pointer_id, &mut pointer_type).is_ok() && pointer_type == PT_TOUCHPAD
             {
                 let mut pointer_info = POINTER_INFO::default();
                 if GetPointerInfo(pointer_id, &mut pointer_info).is_ok() {
@@ -253,7 +252,6 @@ impl DirectManipulationEventHandler {
             logical_point(point.x as f32, point.y as f32, scale_factor)
         }
     }
-
 }
 
 impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHandler_Impl {
