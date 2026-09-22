@@ -118,8 +118,18 @@ pub struct LanguageSettings {
     /// Controls whether edit predictions are shown immediately (true)
     /// or manually by triggering `editor::ShowEditPrediction` (false).
     pub show_edit_predictions: bool,
-    /// Controls whether edit predictions are shown in the given language
-    /// scopes.
+    /// Disable edit predictions in these language scopes, such as "comment" and
+    /// "string".
+    ///
+    /// Use `"..."` to add scopes without repeating the inherited list. In project
+    /// settings, it extends the user or parent configuration value. In
+    /// language-specific settings, it extends the scopes inherited by that
+    /// language. Omit `"..."` to replace the inherited list.
+    ///
+    /// Inherited scopes are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    ///
+    /// Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
     pub edit_predictions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: settings::ShowWhitespaceSetting,
@@ -487,9 +497,28 @@ impl InlayHintSettings {
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: settings::EditPredictionProvider,
-    /// A list of globs representing files that edit predictions should be disabled for.
-    /// This list adds to a pre-existing, sensible default set of globs.
-    /// Any additional ones you add are combined with them.
+    /// Disable edit predictions for files matching these glob patterns.
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "edit_predictions": {
+    ///     "disabled_globs": ["**/build/**", "..."]
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    ///
+    /// Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+    ///
+    /// Relative patterns are matched against paths relative to the worktree root.
+    /// Absolute patterns are matched against absolute paths. A leading `~` is
+    /// expanded to your home folder.
     pub disabled_globs: Vec<DisabledGlob>,
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: settings::EditPredictionsMode,
@@ -842,7 +871,7 @@ impl settings::Settings for AllLanguageSettings {
                 document_symbols: settings.document_symbols.unwrap(),
                 allow_rewrap: settings.allow_rewrap.unwrap(),
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),
-                edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
+                edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap().0,
                 show_whitespaces: settings.show_whitespaces.unwrap(),
                 whitespace_map: WhitespaceMap {
                     space: SharedString::new(whitespace_map.space.unwrap().to_string()),
@@ -918,6 +947,7 @@ impl settings::Settings for AllLanguageSettings {
             .disabled_globs
             .as_ref()
             .unwrap()
+            .0
             .iter()
             .collect();
 
@@ -1094,6 +1124,343 @@ mod tests {
                 assert!(!matcher.is_match("config.custom"));
             }
         });
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_disabled_in_language_overrides(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
+        assert!(
+            store
+                .get::<AllLanguageSettings>(None)
+                .defaults
+                .edit_predictions_disabled_in
+                .is_empty()
+        );
+
+        for (language_settings, expected) in [
+            (serde_json::json!({}), vec!["comment"]),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": ["string", "..."]}),
+                vec!["string", "comment"],
+            ),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": ["string"]}),
+                vec!["string"],
+            ),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": []}),
+                vec![],
+            ),
+        ] {
+            store
+                .set_user_settings(
+                    &serde_json::json!({
+                        "edit_predictions_disabled_in": ["comment"],
+                        "languages": {"Rust": language_settings},
+                    })
+                    .to_string(),
+                    cx,
+                )
+                .expect("user settings should load");
+            let settings = store.get::<AllLanguageSettings>(None);
+            assert_eq!(settings.defaults.edit_predictions_disabled_in, ["comment"]);
+            assert_eq!(
+                settings
+                    .languages
+                    .get(&LanguageName::from("Rust"))
+                    .expect("Rust settings should load")
+                    .edit_predictions_disabled_in,
+                expected,
+                "language settings: {language_settings}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_disabled_in_project_overrides(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
+        let worktree_id = WorktreeId::from_usize(1);
+        let root = LocalSettingsPath::InWorktree(rel_path("root").into());
+        let child = LocalSettingsPath::InWorktree(rel_path("root/child").into());
+
+        store
+            .set_user_settings(r#"{"edit_predictions_disabled_in":["comment"]}"#, cx)
+            .expect("user settings should load");
+        store
+            .set_local_settings(
+                worktree_id,
+                root,
+                LocalSettingsKind::Settings,
+                Some(r#"{"edit_predictions_disabled_in":["string","..."]}"#),
+                cx,
+            )
+            .expect("project settings should load");
+
+        for (overrides, expected) in [
+            (serde_json::json!({}), vec!["string", "comment"]),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": ["documentation", "..."]}),
+                vec!["documentation", "string", "comment"],
+            ),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": ["documentation"]}),
+                vec!["documentation"],
+            ),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": []}),
+                vec![],
+            ),
+        ] {
+            for language_specific in [false, true] {
+                let content = if language_specific {
+                    serde_json::json!({"languages": {"Rust": overrides}})
+                } else {
+                    overrides.clone()
+                };
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        child.clone(),
+                        LocalSettingsKind::Settings,
+                        Some(&content.to_string()),
+                        cx,
+                    )
+                    .expect("child settings should load");
+                let settings = store.get::<AllLanguageSettings>(Some(SettingsLocation {
+                    worktree_id,
+                    path: rel_path("root/child/file.rs"),
+                }));
+                let resolved = if language_specific {
+                    assert_eq!(
+                        settings.defaults.edit_predictions_disabled_in,
+                        ["string", "comment"]
+                    );
+                    settings
+                        .languages
+                        .get(&LanguageName::from("Rust"))
+                        .expect("Rust settings should load")
+                } else {
+                    &settings.defaults
+                };
+                assert_eq!(
+                    resolved.edit_predictions_disabled_in, expected,
+                    "project settings: {content}"
+                );
+            }
+        }
+        assert_eq!(
+            store
+                .get::<AllLanguageSettings>(None)
+                .defaults
+                .edit_predictions_disabled_in,
+            ["comment"]
+        );
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_disabled_globs_replace_and_clear(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
+
+        for (content, sensitive_enabled, custom_enabled) in [
+            (r#"{}"#, false, true),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["**/build/**"]}}"#,
+                true,
+                false,
+            ),
+            (r#"{"edit_predictions":{"disabled_globs":[]}}"#, true, true),
+            (r#"{"edit_predictions":{}}"#, false, true),
+        ] {
+            store
+                .set_user_settings(content, cx)
+                .expect("user settings should load");
+            let settings = &store.get::<AllLanguageSettings>(None).edit_predictions;
+            for (path, expected_enabled) in [
+                (".env", sensitive_enabled),
+                ("build/output.rs", custom_enabled),
+                ("certificates/private.pem", sensitive_enabled),
+                ("config/secrets.yml", sensitive_enabled),
+                ("src/main.rs", true),
+            ] {
+                let file: Arc<dyn File> = Arc::new(crate::TestFile {
+                    path: rel_path(path).into(),
+                    root_name: "project".to_string(),
+                    local_root: None,
+                });
+                assert_eq!(
+                    settings.enabled_for_file(&file, cx),
+                    expected_enabled,
+                    "path: {path}, settings: {content}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_disabled_globs_inherit_across_settings_files(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
+        let worktree_id = WorktreeId::from_usize(1);
+        let root = LocalSettingsPath::InWorktree(rel_path("root").into());
+        let child = LocalSettingsPath::InWorktree(rel_path("root/child").into());
+
+        store
+            .set_user_settings(
+                r#"{"edit_predictions":{"disabled_globs":["**/user/**","..."]}}"#,
+                cx,
+            )
+            .expect("user settings should load");
+        store
+            .set_local_settings(
+                worktree_id,
+                root,
+                LocalSettingsKind::Settings,
+                Some(r#"{"edit_predictions":{"disabled_globs":["**/project/**","..."]}}"#),
+                cx,
+            )
+            .expect("project settings should load");
+
+        for (content, inherits, child_enabled) in [
+            (
+                r#"{"edit_predictions":{"disabled_globs":["**/child/**","...","**/.env*","..."]}}"#,
+                true,
+                false,
+            ),
+            (r#"{"edit_predictions":{}}"#, true, true),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["**/child/**"]}}"#,
+                false,
+                false,
+            ),
+            (r#"{"edit_predictions":{"disabled_globs":[]}}"#, false, true),
+        ] {
+            store
+                .set_local_settings(
+                    worktree_id,
+                    child.clone(),
+                    LocalSettingsKind::Settings,
+                    Some(content),
+                    cx,
+                )
+                .expect("child settings should load");
+            for (location, expected) in [
+                (None, [false, true, true, false]),
+                (
+                    Some(SettingsLocation {
+                        worktree_id,
+                        path: rel_path("root/file.rs"),
+                    }),
+                    [false, true, false, false],
+                ),
+                (
+                    Some(SettingsLocation {
+                        worktree_id,
+                        path: rel_path("root/child/file.rs"),
+                    }),
+                    [!inherits, child_enabled, !inherits, !inherits],
+                ),
+            ] {
+                let settings = &store.get::<AllLanguageSettings>(location).edit_predictions;
+                for (path, enabled) in [
+                    ".env",
+                    "child/output.rs",
+                    "project/output.rs",
+                    "user/output.rs",
+                ]
+                .into_iter()
+                .zip(expected)
+                .chain([("...", true), ("src/main.rs", true)])
+                {
+                    let file: Arc<dyn File> = Arc::new(crate::TestFile {
+                        path: rel_path(path).into(),
+                        root_name: "project".to_string(),
+                        local_root: None,
+                    });
+                    assert_eq!(
+                        settings.enabled_for_file(&file, cx),
+                        enabled,
+                        "path: {path}, settings: {content}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_disabled_globs_preserve_matching(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
+        let absolute_root = if cfg!(windows) {
+            "C:/absolute"
+        } else {
+            "/absolute"
+        };
+        let absolute_pattern = format!("{absolute_root}/project/**/*.rs");
+        let home = shellexpand::tilde("~").into_owned();
+        for (patterns, path, local_root, enabled) in [
+            (
+                vec!["**/src/**", "..."],
+                "src/main.rs",
+                Some(absolute_root),
+                false,
+            ),
+            (
+                vec!["**/src/**", "..."],
+                "other/main.rs",
+                Some(absolute_root),
+                true,
+            ),
+            (
+                vec![absolute_pattern.as_str(), "..."],
+                "src/main.rs",
+                Some(absolute_root),
+                false,
+            ),
+            (
+                vec![absolute_pattern.as_str(), "..."],
+                "src/main.rs",
+                None,
+                true,
+            ),
+            (
+                vec!["~/project/**/*.rs", "..."],
+                "src/main.rs",
+                Some(home.as_str()),
+                false,
+            ),
+            (
+                vec!["[", "**/src/**", "..."],
+                "src/main.rs",
+                Some(absolute_root),
+                false,
+            ),
+            (vec!["[", "..."], ".env", Some(absolute_root), false),
+            (vec!["[", "{"], ".env", Some(absolute_root), true),
+            (vec!["[", "{"], "src/main.rs", Some(absolute_root), true),
+            (vec!["[.][.][.]"], "...", Some(absolute_root), false),
+        ] {
+            store
+                .set_user_settings(
+                    &serde_json::json!({"edit_predictions": {"disabled_globs": patterns}})
+                        .to_string(),
+                    cx,
+                )
+                .expect("user settings should load");
+            let file: Arc<dyn File> = Arc::new(crate::TestFile {
+                path: rel_path(path).into(),
+                root_name: "project".to_string(),
+                local_root: local_root.map(std::path::PathBuf::from),
+            });
+            let settings = &store.get::<AllLanguageSettings>(None).edit_predictions;
+            assert_eq!(
+                settings.enabled_for_file(&file, cx),
+                enabled,
+                "path: {path}, patterns: {patterns:?}"
+            );
+        }
     }
 
     #[gpui::test]
