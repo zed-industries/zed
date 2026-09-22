@@ -7100,7 +7100,7 @@ impl Editor {
         let tab_size = settings.tab_size.get() as usize;
 
         self.manipulate_mutable_lines(window, cx, |lines| {
-            // Allocates a reasonably sized scratch buffer once for the whole loop
+            // Scratch buffer, reused for every line that turns out not to need rewriting
             let mut reindented_line = String::with_capacity(MAX_LINE_LEN);
             // Avoids recomputing spaces that could be inserted many times
             let space_cache: Vec<Vec<char>> = (1..=tab_size)
@@ -7139,8 +7139,7 @@ impl Editor {
                 }
                 // Append the rest of the line and replace old reference with new one
                 reindented_line.extend(chars);
-                *line = Cow::Owned(reindented_line.clone());
-                reindented_line.clear();
+                *line = Cow::Owned(mem::take(&mut reindented_line));
             }
         });
     }
@@ -7155,7 +7154,7 @@ impl Editor {
         let tab_size = settings.tab_size.get() as usize;
 
         self.manipulate_mutable_lines(window, cx, |lines| {
-            // Allocates a reasonably sized buffer once for the whole loop
+            // Scratch buffer, reused for every line that turns out not to need rewriting
             let mut reindented_line = String::with_capacity(MAX_LINE_LEN);
             // Avoids recomputing spaces that could be inserted many times
             let space_cache: Vec<Vec<char>> = (1..=tab_size)
@@ -7205,8 +7204,7 @@ impl Editor {
                 }
                 // Append the rest of the line and replace old reference with new one
                 reindented_line.extend(chars);
-                *line = Cow::Owned(reindented_line.clone());
-                reindented_line.clear();
+                *line = Cow::Owned(mem::take(&mut reindented_line));
             }
         });
     }

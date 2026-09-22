@@ -1,3 +1,4 @@
+use std::mem;
 use std::path::PathBuf;
 use std::pin::Pin;
 
@@ -82,10 +83,9 @@ impl StdioTransport {
             if n == 0 {
                 break;
             }
-            if inbound_rx.send(line.clone()).await.is_err() {
+            if inbound_rx.send(mem::take(&mut line)).await.is_err() {
                 break;
             }
-            line.clear();
         }
     }
 
@@ -118,10 +118,9 @@ impl StdioTransport {
             if n == 0 {
                 break;
             }
-            if stderr_tx.send(line.clone()).await.is_err() {
+            if stderr_tx.send(mem::take(&mut line)).await.is_err() {
                 break;
             }
-            line.clear();
         }
     }
 }

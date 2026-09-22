@@ -245,10 +245,9 @@ fn parse_delimited_text_with_positions(
                     field_start_offset = current_offset;
                 }
                 current_row.push((
-                    current_field.clone().into(),
+                    std::mem::take(&mut current_field).into(),
                     field_start_offset..field_end_offset,
                 ));
-                current_field.clear();
                 field_start_offset = current_offset + char_byte_len;
             }
             '\n' => {
@@ -260,10 +259,9 @@ fn parse_delimited_text_with_positions(
                         field_start_offset = 0;
                     }
                     current_row.push((
-                        current_field.clone().into(),
+                        std::mem::take(&mut current_field).into(),
                         field_start_offset..field_end_offset,
                     ));
-                    current_field.clear();
 
                     // Only add non-empty rows
                     if !current_row.is_empty()
@@ -298,10 +296,9 @@ fn parse_delimited_text_with_positions(
                         // Row separator (only when not inside quotes)
                         let field_end_offset = current_offset;
                         current_row.push((
-                            current_field.clone().into(),
+                            std::mem::take(&mut current_field).into(),
                             field_start_offset..field_end_offset,
                         ));
-                        current_field.clear();
 
                         // Only add non-empty rows
                         if !current_row.is_empty()
@@ -339,10 +336,7 @@ fn parse_delimited_text_with_positions(
     // Add the last field and row if not empty
     if !current_field.is_empty() || !current_row.is_empty() {
         let field_end_offset = current_offset;
-        current_row.push((
-            current_field.clone().into(),
-            field_start_offset..field_end_offset,
-        ));
+        current_row.push((current_field.into(), field_start_offset..field_end_offset));
     }
     if !current_row.is_empty() && !current_row.iter().all(|(field, _)| field.trim().is_empty()) {
         rows.push(current_row);

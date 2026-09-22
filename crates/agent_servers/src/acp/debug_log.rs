@@ -169,11 +169,10 @@ impl AcpDebugLog {
             if state.messages.len() == MAX_DEBUG_BACKLOG_MESSAGES {
                 state.messages.pop_front();
             }
-            state.messages.push_back(message.clone());
-
             for sender in &state.subscribers {
                 sender.try_send(message.clone()).log_err();
             }
+            state.messages.push_back(message);
         }
     }
 
