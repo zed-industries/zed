@@ -504,7 +504,7 @@ fn git_panel_view_options_menu(
 
 // We only allow a single remote operation at a time to avoid concurrent
 // credential prompts and competing ref/working-tree updates.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RemoteOperationKind {
     Fetch,
     Pull,
@@ -1151,6 +1151,7 @@ pub struct GitPanel {
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
     pending_remote_operation: Option<RemoteOperationKind>,
+    pending_remote_task: Option<Task<()>>,
     amend_pending: bool,
     original_commit_message: Option<String>,
     pending_commit_message_restores: BTreeMap<String, SerializedCommitMessage>,
@@ -1504,6 +1505,7 @@ impl GitPanel {
                 diff_stat_total: DiffStat::default(),
                 pending_commit: None,
                 pending_remote_operation: None,
+                pending_remote_task: None,
                 amend_pending,
                 original_commit_message,
                 pending_commit_message_restores,
@@ -4359,39 +4361,40 @@ impl GitPanel {
             self.get_fetch_options(window, cx)
         };
 
-        window
-            .spawn(cx, async move |cx| {
-                let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
-                    this.clear_remote_operation(cx);
-                });
+        let task = window.spawn(cx, async move |cx| {
+            let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
+                this.clear_remote_operation(cx);
+            });
 
-                let Some(fetch_options) = fetch_options.await else {
-                    return Ok(());
+            let Some(fetch_options) = fetch_options.await else {
+                return Ok(());
+            };
+            let fetch = repo.update(cx, |repo, cx| {
+                repo.fetch(fetch_options.clone(), askpass, cx)
+            });
+
+            let remote_message = fetch.await?;
+            this.update(cx, |this, cx| {
+                let action = match fetch_options {
+                    FetchOptions::All | FetchOptions::Unshallow => RemoteAction::Fetch(None),
+                    FetchOptions::Remote(remote) => RemoteAction::Fetch(Some(remote)),
                 };
-                let fetch = repo.update(cx, |repo, cx| {
-                    repo.fetch(fetch_options.clone(), askpass, cx)
-                });
-
-                let remote_message = fetch.await?;
-                this.update(cx, |this, cx| {
-                    let action = match fetch_options {
-                        FetchOptions::All | FetchOptions::Unshallow => RemoteAction::Fetch(None),
-                        FetchOptions::Remote(remote) => RemoteAction::Fetch(Some(remote)),
-                    };
-                    match remote_message {
-                        Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
-                        Err(e) => {
-                            log::error!("Error while fetching {:?}", e);
-                            this.show_error_toast(action.name(), e, cx)
-                        }
+                match remote_message {
+                    Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
+                    Err(e) => {
+                        log::error!("Error while fetching {:?}", e);
+                        this.show_error_toast(action.name(), e, cx)
                     }
+                }
 
-                    anyhow::Ok(())
-                })
-                .ok();
                 anyhow::Ok(())
             })
-            .detach_and_log_err(cx);
+            .ok();
+            anyhow::Ok(())
+        });
+        self.pending_remote_task = Some(cx.spawn(async move |_this, _cx| {
+            task.await.log_err();
+        }));
     }
 
     pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -4504,7 +4507,7 @@ impl GitPanel {
 
         telemetry::event!("Git Pulled");
         let remote = self.get_remote(false, false, window, cx);
-        cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
                 this.clear_remote_operation(cx);
             });
@@ -4548,8 +4551,10 @@ impl GitPanel {
             .ok();
 
             anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        });
+        self.pending_remote_task = Some(cx.spawn(async move |_this, _cx| {
+            task.await.log_err();
+        }));
     }
 
     pub(crate) fn push(
@@ -4588,7 +4593,7 @@ impl GitPanel {
         };
         let remote = self.get_remote(select_remote, true, window, cx);
 
-        cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
                 this.clear_remote_operation(cx);
             });
@@ -4648,8 +4653,10 @@ impl GitPanel {
             })?;
 
             anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        });
+        self.pending_remote_task = Some(cx.spawn(async move |_this, _cx| {
+            task.await.log_err();
+        }));
     }
 
     /// Updates git's configuration, adding the directory of the current
@@ -4794,8 +4801,16 @@ impl GitPanel {
     }
 
     fn clear_remote_operation(&mut self, cx: &mut Context<Self>) {
-        self.pending_remote_operation.take();
-        cx.notify();
+        self.pending_remote_task.take();
+        if self.pending_remote_operation.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn cancel_remote_operation(&mut self, cx: &mut Context<Self>) {
+        if self.pending_remote_operation.is_some() {
+            self.clear_remote_operation(cx);
+        }
     }
 
     fn get_remote(
@@ -9141,6 +9156,56 @@ impl GitPanel {
         cx.notify();
     }
 
+    fn render_cancellable_remote_button(
+        id: impl Into<ElementId>,
+        tooltip_text: &'static str,
+        group_name: SharedString,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .group(group_name.clone())
+            .child(
+                ButtonLike::new(id)
+                    .tooltip(Tooltip::text(tooltip_text))
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.cancel_remote_operation(cx);
+                    }))
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .group_hover(group_name.clone(), |style| style.invisible())
+                                    .child(
+                                        Icon::new(IconName::LoadCircle)
+                                            .size(IconSize::Small)
+                                            .color(Color::Accent)
+                                            .with_rotate_animation(2),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .invisible()
+                                    .group_hover(group_name, |style| style.visible())
+                                    .child(
+                                        Icon::new(IconName::Stop)
+                                            .size(IconSize::Small)
+                                            .color(Color::Error),
+                                    ),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn render_graph_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         if !self.graph_collapsed && self.graph.is_none() {
             if let Some(repository) = self.active_repository.as_ref() {
@@ -9173,42 +9238,110 @@ impl GitPanel {
             })
             .unwrap_or((0, 0));
 
-        let pull_button: AnyElement = if behind > 0 {
-            Button::new("graph-pull", format!("{behind}"))
-                .start_icon(Icon::new(IconName::ArrowDown).size(IconSize::Small))
-                .tooltip(Tooltip::text(format!("Pull ({} behind)", behind)))
+        let fetch_button: AnyElement = match self.pending_remote_operation {
+            Some(RemoteOperationKind::Fetch) => Self::render_cancellable_remote_button(
+                "graph-fetch-cancel",
+                "Cancel Fetch",
+                "cancel-fetch".into(),
+                cx,
+            ),
+            Some(_) => IconButton::new("graph-fetch-all", IconName::CloudDownload)
+                .tooltip(Tooltip::text("Fetch in progress…"))
+                .disabled(true)
+                .into_any_element(),
+            None => IconButton::new("graph-fetch-all", IconName::CloudDownload)
+                .tooltip(Tooltip::text("Fetch From All Remotes"))
                 .disabled(self.active_repository.is_none())
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.pull(false, window, cx);
+                    this.fetch(true, window, cx);
                 }))
-                .into_any_element()
-        } else {
-            IconButton::new("graph-pull", IconName::ArrowDown)
-                .tooltip(Tooltip::text("Pull"))
-                .disabled(self.active_repository.is_none())
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.pull(false, window, cx);
-                }))
-                .into_any_element()
+                .into_any_element(),
         };
 
-        let push_button: AnyElement = if ahead > 0 {
-            Button::new("graph-push", format!("{ahead}"))
-                .start_icon(Icon::new(IconName::ArrowUp).size(IconSize::Small))
-                .tooltip(Tooltip::text(format!("Push ({} ahead)", ahead)))
-                .disabled(self.active_repository.is_none())
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.push(false, false, window, cx);
-                }))
-                .into_any_element()
-        } else {
-            IconButton::new("graph-push", IconName::ArrowUp)
-                .tooltip(Tooltip::text("Push"))
-                .disabled(self.active_repository.is_none())
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.push(false, false, window, cx);
-                }))
-                .into_any_element()
+        let pull_button: AnyElement = match self.pending_remote_operation {
+            Some(RemoteOperationKind::Pull) => Self::render_cancellable_remote_button(
+                "graph-pull-cancel",
+                "Cancel Pull",
+                "cancel-pull".into(),
+                cx,
+            ),
+            Some(_) => {
+                if behind > 0 {
+                    Button::new("graph-pull", format!("{behind}"))
+                        .start_icon(Icon::new(IconName::ArrowDown).size(IconSize::Small))
+                        .tooltip(Tooltip::text("Pull in progress…"))
+                        .disabled(true)
+                        .into_any_element()
+                } else {
+                    IconButton::new("graph-pull", IconName::ArrowDown)
+                        .tooltip(Tooltip::text("Pull in progress…"))
+                        .disabled(true)
+                        .into_any_element()
+                }
+            }
+            None => {
+                if behind > 0 {
+                    Button::new("graph-pull", format!("{behind}"))
+                        .start_icon(Icon::new(IconName::ArrowDown).size(IconSize::Small))
+                        .tooltip(Tooltip::text(format!("Pull ({} behind)", behind)))
+                        .disabled(self.active_repository.is_none())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.pull(false, window, cx);
+                        }))
+                        .into_any_element()
+                } else {
+                    IconButton::new("graph-pull", IconName::ArrowDown)
+                        .tooltip(Tooltip::text("Pull"))
+                        .disabled(self.active_repository.is_none())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.pull(false, window, cx);
+                        }))
+                        .into_any_element()
+                }
+            }
+        };
+
+        let push_button: AnyElement = match self.pending_remote_operation {
+            Some(RemoteOperationKind::Push) => Self::render_cancellable_remote_button(
+                "graph-push-cancel",
+                "Cancel Push",
+                "cancel-push".into(),
+                cx,
+            ),
+            Some(_) => {
+                if ahead > 0 {
+                    Button::new("graph-push", format!("{ahead}"))
+                        .start_icon(Icon::new(IconName::ArrowUp).size(IconSize::Small))
+                        .tooltip(Tooltip::text("Push in progress…"))
+                        .disabled(true)
+                        .into_any_element()
+                } else {
+                    IconButton::new("graph-push", IconName::ArrowUp)
+                        .tooltip(Tooltip::text("Push in progress…"))
+                        .disabled(true)
+                        .into_any_element()
+                }
+            }
+            None => {
+                if ahead > 0 {
+                    Button::new("graph-push", format!("{ahead}"))
+                        .start_icon(Icon::new(IconName::ArrowUp).size(IconSize::Small))
+                        .tooltip(Tooltip::text(format!("Push ({} ahead)", ahead)))
+                        .disabled(self.active_repository.is_none())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.push(false, false, window, cx);
+                        }))
+                        .into_any_element()
+                } else {
+                    IconButton::new("graph-push", IconName::ArrowUp)
+                        .tooltip(Tooltip::text("Push"))
+                        .disabled(self.active_repository.is_none())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.push(false, false, window, cx);
+                        }))
+                        .into_any_element()
+                }
+            }
         };
 
         let bounds = self.graph_bounds.clone();
@@ -9289,14 +9422,7 @@ impl GitPanel {
                                     }
                                 })),
                         )
-                        .child(
-                            IconButton::new("graph-fetch-all", IconName::CloudDownload)
-                                .tooltip(Tooltip::text("Fetch From All Remotes"))
-                                .disabled(self.active_repository.is_none())
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.fetch(true, window, cx);
-                                })),
-                        )
+                        .child(fetch_button)
                         .child(pull_button)
                         .child(push_button)
                         .child(if self.graph_is_refreshing {
@@ -15817,4 +15943,59 @@ mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_cancel_remote_operation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project-a": {
+                    ".git": {},
+                    "x.txt": "a",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new(path!("/root/project-a"))],
+            cx,
+        )
+        .await;
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            assert_eq!(panel.pending_remote_operation, None);
+
+            assert!(panel.start_remote_operation(RemoteOperationKind::Fetch, cx));
+            assert_eq!(panel.pending_remote_operation, Some(RemoteOperationKind::Fetch));
+
+            assert!(!panel.start_remote_operation(RemoteOperationKind::Pull, cx));
+            assert_eq!(panel.pending_remote_operation, Some(RemoteOperationKind::Fetch));
+
+            panel.cancel_remote_operation(cx);
+            assert_eq!(panel.pending_remote_operation, None);
+
+            assert!(panel.start_remote_operation(RemoteOperationKind::Pull, cx));
+            assert_eq!(panel.pending_remote_operation, Some(RemoteOperationKind::Pull));
+
+            panel.cancel_remote_operation(cx);
+            assert_eq!(panel.pending_remote_operation, None);
+        });
+    }
 }
+
