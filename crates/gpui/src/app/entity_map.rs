@@ -67,6 +67,10 @@ pub(crate) struct EntityRefCounts {
     leak_detector: LeakDetector,
 }
 
+pub(super) struct LeaseInner {
+    pub(super) entity: Option<Box<dyn Any>>,
+}
+
 impl EntityMap {
     pub fn new() -> Self {
         Self {
@@ -132,36 +136,38 @@ impl EntityMap {
     /// Move an entity to the stack.
     #[track_caller]
     pub fn lease<T>(&mut self, pointer: &Entity<T>) -> Lease<T> {
-        self.assert_valid_context(pointer);
-        let mut accessed_entities = self.accessed_entities.get_mut();
-        accessed_entities.insert(pointer.entity_id);
-
-        let entity = Some(
-            self.entities
-                .remove(pointer.entity_id)
-                .unwrap_or_else(|| double_lease_panic::<T>("update")),
-        );
         Lease {
-            entity,
+            inner: self.lease_erased(pointer, type_name::<T>()),
             id: pointer.entity_id,
             entity_type: PhantomData,
         }
     }
 
     /// Returns an entity after moving it to the stack.
-    pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
-        self.entities.insert(lease.id, lease.entity.take().unwrap());
+    pub fn end_lease<T>(&mut self, lease: Lease<T>) {
+        self.end_lease_erased(lease.id, lease.inner);
     }
 
+    #[inline(always)]
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
         self.assert_valid_context(entity);
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(entity.entity_id);
-
-        self.entities
-            .get(entity.entity_id)
+        self.read_inner(entity.entity_id)
             .and_then(|entity| entity.downcast_ref())
-            .unwrap_or_else(|| double_lease_panic::<T>("read"))
+            .unwrap_or_else(|| double_lease_panic("read", type_name::<T>()))
+    }
+
+    #[track_caller]
+    pub(super) fn lease_erased(&mut self, pointer: &AnyEntity, entity_type: &str) -> LeaseInner {
+        self.assert_valid_context(pointer);
+        let entity = Some(
+            self.lease_inner(pointer.entity_id)
+                .unwrap_or_else(|| double_lease_panic("update", entity_type)),
+        );
+        LeaseInner { entity }
+    }
+
+    pub(super) fn end_lease_erased(&mut self, entity_id: EntityId, mut lease: LeaseInner) {
+        self.end_lease_inner(entity_id, lease.entity.take().unwrap());
     }
 
     fn assert_valid_context(&self, entity: &AnyEntity) {
@@ -201,19 +207,34 @@ impl EntityMap {
             })
             .collect()
     }
+
+    #[inline(never)]
+    fn read_inner(&self, entity_id: EntityId) -> Option<&dyn Any> {
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(entity_id);
+        self.entities.get(entity_id).map(Box::as_ref)
+    }
+
+    #[inline(never)]
+    fn lease_inner(&mut self, entity_id: EntityId) -> Option<Box<dyn Any>> {
+        self.accessed_entities.get_mut().insert(entity_id);
+        self.entities.remove(entity_id)
+    }
+
+    #[inline(never)]
+    fn end_lease_inner(&mut self, entity_id: EntityId, entity: Box<dyn Any>) {
+        self.entities.insert(entity_id, entity);
+    }
 }
 
 #[track_caller]
-fn double_lease_panic<T>(operation: &str) -> ! {
-    panic!(
-        "cannot {operation} {} while it is already being updated",
-        std::any::type_name::<T>()
-    )
+fn double_lease_panic(operation: &str, entity_type: &str) -> ! {
+    panic!("cannot {operation} {entity_type} while it is already being updated")
 }
 
 pub(crate) struct Lease<T> {
-    entity: Option<Box<dyn Any>>,
     pub id: EntityId,
+    inner: LeaseInner,
     entity_type: PhantomData<T>,
 }
 
@@ -221,17 +242,17 @@ impl<T: 'static> core::ops::Deref for Lease<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.entity.as_ref().unwrap().downcast_ref().unwrap()
+        self.inner.entity.as_ref().unwrap().downcast_ref().unwrap()
     }
 }
 
 impl<T: 'static> core::ops::DerefMut for Lease<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.entity.as_mut().unwrap().downcast_mut().unwrap()
+        self.inner.entity.as_mut().unwrap().downcast_mut().unwrap()
     }
 }
 
-impl<T> Drop for Lease<T> {
+impl Drop for LeaseInner {
     fn drop(&mut self) {
         if self.entity.is_some() && !panicking() {
             panic!("Leases must be ended with EntityMap::end_lease")
@@ -774,6 +795,7 @@ impl<T: 'static> WeakEntity<T> {
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
+    #[inline(always)]
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -789,6 +811,7 @@ impl<T: 'static> WeakEntity<T> {
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the entity has been released.
+    #[inline(always)]
     pub fn update_in<C, R>(
         &self,
         cx: &mut C,
@@ -807,6 +830,7 @@ impl<T: 'static> WeakEntity<T> {
     /// Reads the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
+    #[inline(always)]
     pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> Result<R>
     where
         C: AppContext,
