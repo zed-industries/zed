@@ -4636,17 +4636,16 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("dir1", window, cx));
-        panel.confirm_edit(true, window, cx).unwrap()
+
+        panel
+            .confirm_edit(true, window, cx)
+            .expect("should be able to rename `root1` to `dir1`")
     });
     confirm.await.unwrap();
     cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v dir1  <== selected",
-            "    v dir1",
-            "          file1.txt",
-        ],
+        &["v dir1  <== selected", "    v dir1", "          file1.txt",],
         "Should update worktree name"
     );
 
@@ -4654,11 +4653,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "dir1/dir1/file1.txt", cx);
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v dir1",
-            "    v dir1",
-            "          file1.txt  <== selected",
-        ],
+        &["v dir1", "    v dir1", "          file1.txt  <== selected",],
         "Files in renamed worktree are selectable"
     );
 }
