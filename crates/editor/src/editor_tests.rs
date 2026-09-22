@@ -31392,6 +31392,108 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
 }
 
 #[gpui::test]
+async fn test_row_highlights_for_empty_conflict_side_after_edit(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    struct ReversedHighlight;
+
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &r#"
+            ˇ<<<<<<< HEAD
+            =======
+            theirs
+            >>>>>>> branch
+            after
+        "#
+        .unindent(),
+    );
+    executor.run_until_parked();
+
+    // Mirrors what `git_ui::conflict_view::update_conflict_highlighting` does
+    // with the ranges produced by the conflict parser, and additionally
+    // stores the inside-out range that empty sides used to produce.
+    cx.update_editor(|editor, _, cx| {
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+        let conflicts = project::ConflictSet::parse(&buffer.read(cx).text_snapshot());
+        assert_eq!(conflicts.conflicts.len(), 1);
+        let conflict = &conflicts.conflicts[0];
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let ours = snapshot
+            .buffer_anchor_range_to_anchor_range(conflict.ours.clone())
+            .unwrap();
+        assert!(ours.start.cmp(&ours.end, &snapshot).is_le());
+        editor.highlight_rows::<ConflictsOurs>(
+            ours,
+            |cx| cx.theme().colors().version_control_conflict_marker_ours,
+            RowHighlightOptions {
+                include_gutter: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        let marker_start = Point::new(1, 0);
+        editor.highlight_rows::<ReversedHighlight>(
+            snapshot.anchor_after(marker_start)..snapshot.anchor_before(marker_start),
+            |cx| cx.theme().colors().editor_highlighted_line_background,
+            RowHighlightOptions::default(),
+            cx,
+        );
+    });
+
+    // The user types a resolution into the empty "ours" side, on the line
+    // where the `=======` marker currently sits.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
+        });
+        editor.handle_input("one\ntwo\nthree\nfour\nfive\nsix\n", window, cx);
+    });
+
+    // Render every possible viewport, the same way `EditorElement::prepaint`
+    // does, before the conflict set has been re-parsed. The typed rows carry
+    // the "ours" highlight; the inside-out range never contributes.
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx).display_snapshot;
+        let ours_type_id = Some(TypeId::of::<ConflictsOurs>());
+        for start_row in 0..snapshot.max_point().row().0 {
+            for end_row in start_row + 1..=snapshot.max_point().row().0 {
+                let start = snapshot
+                    .buffer_snapshot()
+                    .anchor_before(Point::new(start_row, 0));
+                let end = snapshot
+                    .buffer_snapshot()
+                    .anchor_before(Point::new(end_row, 0));
+                let highlighted_rows = editor.highlighted_display_rows_in_range(
+                    start..end,
+                    DisplayRow(start_row)..DisplayRow(end_row),
+                    &snapshot,
+                    cx,
+                );
+                let expected_rows = (start_row.max(1)..end_row.min(7))
+                    .map(DisplayRow)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    highlighted_rows.keys().copied().collect::<Vec<_>>(),
+                    expected_rows,
+                    "viewport {start_row}..{end_row}"
+                );
+                assert!(
+                    highlighted_rows
+                        .values()
+                        .all(|highlight| highlight.type_id == ours_type_id),
+                    "viewport {start_row}..{end_row}"
+                );
+            }
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_go_to_singleton_buffer_point_with_expanded_deleted_hunks(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
