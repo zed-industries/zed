@@ -2845,8 +2845,13 @@ impl FakeFs {
 
                 None
             }
-            btree_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().file_content(&path)?;
+            btree_map::Entry::Occupied(entry) => {
+                // Like `unlink`, removing a symlink removes the link itself.
+                if let entry = entry.get()
+                    && !entry.is_symlink()
+                {
+                    entry.file_content(&path)?;
+                }
                 Some(entry.remove())
             }
         };
@@ -3128,33 +3133,42 @@ impl Fs for FakeFs {
         let target = normalize_path(target);
         let mut state = self.state.lock();
         let mtime = state.get_and_increment_mtime();
-        let inode = state.get_and_increment_inode();
+        let new_inode = state.get_and_increment_inode();
         let source_entry = state.entry(&source)?;
         let content = source_entry.file_content(&source)?.clone();
-        let mut kind = Some(PathEventKind::Created);
-        state.write_path(&target, |e| match e {
-            btree_map::Entry::Occupied(e) => {
-                if options.overwrite {
-                    kind = Some(PathEventKind::Changed);
-                    Ok(Some(e.get().clone()))
-                } else if !options.ignore_if_exists {
+        let new_entry = move |inode| FakeFsEntry::File {
+            inode,
+            mtime,
+            len: content.len() as u64,
+            content,
+            git_dir_path: None,
+        };
+
+        let kind = state.write_path(&target, |e| match e {
+            btree_map::Entry::Occupied(mut e) => {
+                if !options.overwrite {
+                    if options.ignore_if_exists {
+                        return Ok(None);
+                    }
                     anyhow::bail!("{target:?} already exists");
-                } else {
-                    Ok(None)
                 }
+                let inode = match e.get() {
+                    FakeFsEntry::File { inode, .. } => *inode,
+                    FakeFsEntry::Dir { .. } => anyhow::bail!("{target:?} is a directory"),
+                    FakeFsEntry::Symlink { .. } => new_inode,
+                };
+                e.insert(new_entry(inode));
+                Ok(Some(PathEventKind::Changed))
             }
-            btree_map::Entry::Vacant(e) => Ok(Some(
-                e.insert(FakeFsEntry::File {
-                    inode,
-                    mtime,
-                    len: content.len() as u64,
-                    content,
-                    git_dir_path: None,
-                })
-                .clone(),
-            )),
+            btree_map::Entry::Vacant(e) => {
+                e.insert(new_entry(new_inode));
+                Ok(Some(PathEventKind::Created))
+            }
         })?;
-        state.emit_event([(target, kind)]);
+
+        if let Some(kind) = kind {
+            state.emit_event([(target, Some(kind))]);
+        }
         Ok(())
     }
 

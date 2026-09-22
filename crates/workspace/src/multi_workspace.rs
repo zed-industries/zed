@@ -70,7 +70,7 @@ pub fn sidebar_side_context_menu(
     id: impl Into<ElementId>,
     cx: &App,
 ) -> ui::RightClickMenu<ContextMenu> {
-    let current_position = AgentSettings::get_global(cx).sidebar_side;
+    let current_position = AgentSettings::get_global(cx).threads_sidebar.position;
     right_click_menu(id).menu(move |window, cx| {
         let fs = <dyn fs::Fs>::global(cx);
         ContextMenu::build(window, cx, move |mut menu, _, _cx| {
@@ -95,7 +95,7 @@ pub fn sidebar_side_context_menu(
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_sidebar_side(position);
+                                .set_threads_sidebar_position(Some(position));
                         });
                     },
                 );

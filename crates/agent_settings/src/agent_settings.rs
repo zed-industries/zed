@@ -213,9 +213,7 @@ pub struct AgentSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub flexible: bool,
-    pub sidebar_side: SidebarDockPosition,
-    pub threads_sidebar_default_width: Pixels,
-    pub threads_sidebar_auto_open: bool,
+    pub threads_sidebar: ThreadsSidebarSettings,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub max_content_width: Option<Pixels>,
@@ -253,6 +251,13 @@ pub struct AgentSettings {
     pub sandbox_permissions: SandboxPermissions,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ThreadsSidebarSettings {
+    pub auto_open: bool,
+    pub position: SidebarDockPosition,
+    pub default_width: Pixels,
+}
+
 impl AgentSettings {
     pub fn enabled(&self, cx: &App) -> bool {
         self.enabled && !DisableAiSettings::get_global(cx).disable_ai
@@ -277,7 +282,7 @@ impl AgentSettings {
     }
 
     pub fn sidebar_side(&self) -> SidebarSide {
-        match self.sidebar_side {
+        match self.threads_sidebar.position {
             SidebarDockPosition::Left => SidebarSide::Left,
             SidebarDockPosition::Right => SidebarSide::Right,
         }
@@ -763,19 +768,22 @@ pub fn normalize_path(raw: &str) -> String {
 impl Settings for AgentSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent = content.agent.clone().unwrap();
+        let threads_sidebar = agent.threads_sidebar.unwrap();
         Self {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
-            sidebar_side: agent.sidebar_side.unwrap(),
-            // Clamped once here so that every reader gets a width the sidebar can
-            // actually hold, rather than each call site having to remember to.
-            threads_sidebar_default_width: agent
-                .threads_sidebar_default_width
-                .unwrap()
-                .into_gpui()
-                .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH),
-            threads_sidebar_auto_open: agent.threads_sidebar_auto_open.unwrap(),
+            threads_sidebar: ThreadsSidebarSettings {
+                auto_open: threads_sidebar.auto_open.unwrap(),
+                position: threads_sidebar.position.unwrap(),
+                // Clamped once here so that every reader gets a width the sidebar can
+                // actually hold, rather than each call site having to remember to.
+                default_width: threads_sidebar
+                    .default_width
+                    .unwrap()
+                    .into_gpui()
+                    .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH),
+            },
             default_width: agent.default_width.unwrap().into_gpui(),
             default_height: agent.default_height.unwrap().into_gpui(),
             max_content_width: if agent.limit_content_width.unwrap() {
@@ -1009,8 +1017,7 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal, px};
     use serde_json::json;
-    use settings::ToolPermissionMode;
-    use settings::ToolPermissionsContent;
+    use settings::{ToolPermissionMode, ToolPermissionsContent};
     use std::path::PathBuf;
 
     #[test]
@@ -1108,54 +1115,203 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_threads_sidebar_default_width(cx: &mut gpui::App) {
+    fn test_threads_sidebar_settings(cx: &mut gpui::App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         project::DisableAiSettings::register(cx);
         AgentSettings::register(cx);
 
-        assert_eq!(
-            AgentSettings::get_global(cx).threads_sidebar_default_width,
-            px(300.),
-            "default.json supplies the Threads Sidebar width"
-        );
-
-        SettingsStore::update_global(cx, |store, cx| {
-            store
-                .set_user_settings(
-                    r#"{ "agent": { "threads_sidebar_default_width": 360 } }"#,
-                    cx,
-                )
-                .expect("user settings load");
-        });
-
-        let settings = AgentSettings::get_global(cx);
-        assert_eq!(settings.threads_sidebar_default_width, px(360.));
-        assert_eq!(
-            settings.default_width,
-            px(640.),
-            "setting the Threads Sidebar width leaves the agent panel width unchanged"
-        );
-        assert_eq!(
-            settings.sidebar_side,
-            SidebarDockPosition::Left,
-            "setting the Threads Sidebar width leaves its position unchanged"
-        );
-
-        for content in [
-            r#"{ "agent": { "threads_sidebar_default_width": null } }"#,
-            r#"{ "agent": {} }"#,
+        for (content, expected_position, expected_width) in [
+            (r#"{}"#, SidebarDockPosition::Left, px(300.)),
+            (
+                r#"{ "agent": { "threads_sidebar": { "position": "right", "default_width": 360 } } }"#,
+                SidebarDockPosition::Right,
+                px(360.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "position": "right" } } }"#,
+                SidebarDockPosition::Right,
+                px(300.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "default_width": 360 } } }"#,
+                SidebarDockPosition::Left,
+                px(360.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "position": null, "default_width": null } } }"#,
+                SidebarDockPosition::Left,
+                px(300.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": null } }"#,
+                SidebarDockPosition::Left,
+                px(300.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "default_width": 5 } } }"#,
+                SidebarDockPosition::Left,
+                THREADS_LIST_MIN_WIDTH,
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "default_width": 5000 } } }"#,
+                SidebarDockPosition::Left,
+                THREADS_LIST_MAX_WIDTH,
+            ),
         ] {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(content, cx)
                     .expect("user settings load");
             });
+            let settings = AgentSettings::get_global(cx);
             assert_eq!(
-                AgentSettings::get_global(cx).threads_sidebar_default_width,
-                px(300.),
-                "an unset width falls back to the default"
+                settings.threads_sidebar.position, expected_position,
+                "{content}"
             );
+            assert_eq!(
+                settings.threads_sidebar.default_width, expected_width,
+                "{content}"
+            );
+            assert_eq!(
+                settings.sidebar_side(),
+                match expected_position {
+                    SidebarDockPosition::Left => SidebarSide::Left,
+                    SidebarDockPosition::Right => SidebarSide::Right,
+                },
+                "{content}"
+            );
+            assert_eq!(settings.default_width, px(640.), "{content}");
+            assert!(settings.threads_sidebar.auto_open, "{content}");
+        }
+
+        for (value, expected) in [("false", false), ("true", true), ("null", true)] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        &format!(r#"{{"agent":{{"threads_sidebar":{{"auto_open":{value}}}}}}}"#),
+                        cx,
+                    )
+                    .expect("user settings load");
+            });
+            assert_eq!(
+                AgentSettings::get_global(cx).threads_sidebar.auto_open,
+                expected
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_threads_sidebar_settings_edit_and_reset_clears_legacy_keys(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        #[derive(Clone, Copy)]
+        enum Field {
+            Position,
+            DefaultWidth,
+            AutoOpen,
+        }
+
+        let cases = [
+            (Field::Position, "sidebar_side"),
+            (Field::DefaultWidth, "threads_sidebar_default_width"),
+            (Field::AutoOpen, "threads_sidebar_auto_open"),
+        ];
+
+        let content = r#"
+            {
+                // This comment and the unrelated setting should survive edits.
+                "agent": {
+                    "sidebar_side": "right",
+                    "threads_sidebar_default_width": 420,
+                    "threads_sidebar_auto_open": true,
+                    "threads_sidebar": {
+                        "position": "left",
+                        "default_width": 360,
+                        "auto_open": false
+                    }
+                },
+                "unrelated": { "keep": true }
+            }
+        "#;
+
+        for (field, legacy_key) in cases {
+            let mut rewrite = |old_text: String, set_value: bool| {
+                SettingsStore::update_global(cx, |store, _| {
+                    store
+                        .new_text_for_update(old_text, |settings| {
+                            let agent = settings.agent.get_or_insert_default();
+                            match field {
+                                Field::Position => agent.set_threads_sidebar_position(
+                                    set_value.then_some(SidebarDockPosition::Right),
+                                ),
+                                Field::DefaultWidth => agent.set_threads_sidebar_default_width(
+                                    set_value.then_some(500.0.into()),
+                                ),
+                                Field::AutoOpen => {
+                                    agent.set_threads_sidebar_auto_open(set_value.then_some(true))
+                                }
+                            }
+                        })
+                        .expect("settings update should succeed")
+                })
+            };
+            let assert_legacy_edit = |text: &str| {
+                let value: serde_json_lenient::Value =
+                    serde_json_lenient::from_str(text).expect("rewritten settings are valid");
+                let agent = value
+                    .get("agent")
+                    .and_then(serde_json_lenient::Value::as_object)
+                    .expect("agent settings should remain an object");
+                assert!(
+                    !agent.contains_key(legacy_key),
+                    "{legacy_key} was not removed"
+                );
+                for sibling in [
+                    "sidebar_side",
+                    "threads_sidebar_default_width",
+                    "threads_sidebar_auto_open",
+                ] {
+                    if sibling != legacy_key {
+                        assert!(agent.contains_key(sibling), "{sibling} was not preserved");
+                    }
+                }
+                assert_eq!(
+                    value
+                        .get("unrelated")
+                        .and_then(serde_json_lenient::Value::as_object)
+                        .and_then(|object| object.get("keep"))
+                        .and_then(serde_json_lenient::Value::as_bool),
+                    Some(true)
+                );
+                assert!(text.contains("This comment and the unrelated setting"));
+            };
+
+            let reset_text = rewrite(content.to_string(), false);
+            assert_legacy_edit(&reset_text);
+            let set_text = rewrite(content.to_string(), true);
+            assert_legacy_edit(&set_text);
+            let reset_after_set_text = rewrite(set_text, false);
+            assert_legacy_edit(&reset_after_set_text);
+
+            let expected_width = match field {
+                Field::DefaultWidth => px(300.),
+                Field::Position | Field::AutoOpen => px(360.),
+            };
+            let expected_auto_open = matches!(field, Field::AutoOpen);
+            for rewritten in [reset_text, reset_after_set_text] {
+                SettingsStore::update_global(cx, |store, cx| {
+                    let result = store.set_user_settings(&rewritten, cx);
+                    assert!(result.parse_error().is_none(), "settings should parse");
+                });
+                let settings = AgentSettings::get_global(cx);
+                assert_eq!(settings.threads_sidebar.position, SidebarDockPosition::Left);
+                assert_eq!(settings.threads_sidebar.default_width, expected_width);
+                assert_eq!(settings.threads_sidebar.auto_open, expected_auto_open);
+            }
         }
     }
 

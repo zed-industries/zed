@@ -302,7 +302,7 @@ fn set_threads_sidebar_default_width(width: f32, cx: &mut App) {
     SettingsStore::update_global(cx, |store, cx| {
         store
             .set_user_settings(
-                &format!(r#"{{"agent": {{"threads_sidebar_default_width": {width}}}}}"#),
+                &format!(r#"{{"agent": {{"threads_sidebar": {{"default_width": {width}}}}}}}"#),
                 cx,
             )
             .unwrap();
@@ -915,7 +915,7 @@ async fn test_width_reset_returns_configured_default(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_width_follows_settings_until_manually_resized(cx: &mut TestAppContext) {
+async fn test_width_setting_overrides_manual_resize(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -929,15 +929,24 @@ async fn test_width_follows_settings_until_manually_resized(cx: &mut TestAppCont
     sidebar.update_in(cx, |sidebar, _window, cx| {
         sidebar.set_width(Some(px(420.0)), cx);
     });
-    cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
-    cx.run_until_parked();
-    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
-
-    sidebar.update_in(cx, |sidebar, _window, cx| {
-        sidebar.set_width(None, cx);
+    cx.update(|_window, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{"agent":{"threads_sidebar":{"default_width":360,"position":"right"}}}"#,
+                    cx,
+                )
+                .expect("settings are valid");
+        });
     });
     cx.run_until_parked();
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
+    assert!(sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
+
+    cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
+    cx.run_until_parked();
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(500.0));
+    assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
 
     for (configured, expected) in [
         (5.0, THREADS_LIST_MIN_WIDTH),
@@ -996,10 +1005,8 @@ async fn test_restored_width_preserves_legacy_resizes(cx: &mut TestAppContext) {
 
         cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
         cx.run_until_parked();
-        assert_eq!(
-            sidebar.read_with(cx, |sidebar, _| sidebar.width),
-            px(if width_set_by_user { expected } else { 500.0 })
-        );
+        assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(500.0));
+        assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
     }
 }
 
