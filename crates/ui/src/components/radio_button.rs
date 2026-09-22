@@ -1,6 +1,8 @@
 use gpui::{
-    AnyElement, BorderStyle, ClickEvent, Corners, Edges, ElementId, Hsla, Role, canvas, quad,
+    AnyElement, BorderStyle, ClickEvent, Corners, Edges, ElementId, Hsla, ParentElement, Role,
+    canvas, quad,
 };
+use smallvec::SmallVec;
 
 use crate::prelude::*;
 
@@ -11,7 +13,7 @@ pub struct RadioButton {
     invalid: bool,
     aria_label: Option<SharedString>,
     tab_index: Option<isize>,
-    content: Option<AnyElement>,
+    children: SmallVec<[AnyElement; 2]>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -23,7 +25,7 @@ impl RadioButton {
             invalid: false,
             aria_label: None,
             tab_index: None,
-            content: None,
+            children: SmallVec::new(),
             on_click: None,
         }
     }
@@ -43,17 +45,18 @@ impl RadioButton {
         self
     }
 
-    pub fn child(mut self, child: impl IntoElement) -> Self {
-        self.content = Some(child.into_any_element());
-        self
-    }
-
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
+    }
+}
+
+impl ParentElement for RadioButton {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }
 
@@ -116,7 +119,7 @@ impl RenderOnce for RadioButton {
                         background,
                     )),
             )
-            .when_some(self.content, |this, content| this.child(content))
+            .children(self.children)
     }
 }
 
@@ -179,11 +182,28 @@ impl Component for RadioButton {
             vec![
                 single_example(
                     "Unselected",
-                    Self::new("radio-unselected", false).into_any_element(),
+                    Self::new("radio-unselected", false)
+                        .aria_label("Unselected option")
+                        .tab_index(0isize)
+                        .child(Label::new("Unselected option").size(LabelSize::Small))
+                        .into_any_element(),
                 ),
                 single_example(
                     "Selected",
-                    Self::new("radio-selected", true).into_any_element(),
+                    Self::new("radio-selected", true)
+                        .aria_label("Selected option")
+                        .tab_index(0isize)
+                        .child(Label::new("Selected option").size(LabelSize::Small))
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Invalid",
+                    Self::new("radio-invalid", false)
+                        .invalid(true)
+                        .aria_label("Invalid option")
+                        .tab_index(0isize)
+                        .child(Label::new("Invalid option").size(LabelSize::Small))
+                        .into_any_element(),
                 ),
             ],
         )

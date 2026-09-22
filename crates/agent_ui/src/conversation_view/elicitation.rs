@@ -2038,13 +2038,7 @@ impl<'a> ElicitationCard<'a> {
                         }
                         _ => Vec::new(),
                     };
-                    self.render_single_select(
-                        field_name,
-                        value.as_ref(),
-                        options,
-                        error.is_some(),
-                        cx,
-                    )
+                    self.render_single_select(field_name, value.as_ref(), options, error.is_some())
                 }
                 ElicitationFieldState::MultiSelect(selected) => {
                     let options = match property {
@@ -2119,7 +2113,6 @@ impl<'a> ElicitationCard<'a> {
         selected_value: Option<&String>,
         options: Vec<ElicitationOption>,
         has_error: bool,
-        _cx: &App,
     ) -> AnyElement {
         let entry_ix = self.entry_ix;
         let elicitation_id = self.elicitation.id.clone();
