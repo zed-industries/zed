@@ -4281,7 +4281,7 @@ impl AgentPanel {
         } else {
             cx.observe(&conversation_view, move |this, conversation_view, cx| {
                 if conversation_view.read(cx).root_thread(cx).is_some() {
-                    this.observe_retained_thread(thread_id, conversation_view.clone(), cx);
+                    this.observe_retained_thread(thread_id, conversation_view, cx);
                 }
             })
         };
