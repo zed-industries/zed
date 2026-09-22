@@ -19,13 +19,13 @@ use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
 };
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, BASETEN_PROVIDER_ID, BASETEN_PROVIDER_NAME,
-    CompactionResult, DisabledReason, GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
-    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionResult, DisabledReason,
+    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
+    LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, ProviderErrorCategory,
+    RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID,
+    ZED_CLOUD_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -607,7 +607,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
             Anthropic => ANTHROPIC_PROVIDER_ID,
-            Baseten => BASETEN_PROVIDER_ID,
             OpenAi => OPEN_AI_PROVIDER_ID,
             Google => GOOGLE_PROVIDER_ID,
             XAi => X_AI_PROVIDER_ID,
@@ -618,7 +617,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
             Anthropic => ANTHROPIC_PROVIDER_NAME,
-            Baseten => BASETEN_PROVIDER_NAME,
             OpenAi => OPEN_AI_PROVIDER_NAME,
             Google => GOOGLE_PROVIDER_NAME,
             XAi => X_AI_PROVIDER_NAME,
@@ -726,8 +724,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             // Unreachable while the `supports_explicit_compaction` guard
             // above holds, but a provider mismatch should degrade to the
             // same unsupported error rather than panic.
-            cloud_llm_client::LanguageModelProvider::Baseten
-            | cloud_llm_client::LanguageModelProvider::Google
+            cloud_llm_client::LanguageModelProvider::Google
             | cloud_llm_client::LanguageModelProvider::XAi => async {
                 Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
                     "this cloud model does not support explicit compaction"
@@ -765,7 +762,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
 
     fn supports_split_token_display(&self) -> bool {
         use cloud_llm_client::LanguageModelProvider::*;
-        matches!(self.model.provider, Baseten | OpenAi | XAi)
+        matches!(self.model.provider, OpenAi | XAi)
     }
 
     fn telemetry_id(&self) -> String {
@@ -969,8 +966,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
-            provider @ (cloud_llm_client::LanguageModelProvider::Baseten
-            | cloud_llm_client::LanguageModelProvider::XAi) => {
+            cloud_llm_client::LanguageModelProvider::XAi => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
                 let request = match into_open_ai(
@@ -1000,7 +996,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            provider,
+                            provider: cloud_llm_client::LanguageModelProvider::XAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request).map_err(|error| {
                                 LanguageModelCompletionError::SerializeRequest {
@@ -1288,7 +1284,6 @@ pub fn provider_name(
 ) -> LanguageModelProviderName {
     match provider {
         cloud_llm_client::LanguageModelProvider::Anthropic => ANTHROPIC_PROVIDER_NAME,
-        cloud_llm_client::LanguageModelProvider::Baseten => BASETEN_PROVIDER_NAME,
         cloud_llm_client::LanguageModelProvider::OpenAi => OPEN_AI_PROVIDER_NAME,
         cloud_llm_client::LanguageModelProvider::Google => GOOGLE_PROVIDER_NAME,
         cloud_llm_client::LanguageModelProvider::XAi => X_AI_PROVIDER_NAME,
@@ -1357,10 +1352,128 @@ mod tests {
     use http_client::http::{HeaderMap, StatusCode};
     use language_model::{
         LanguageModelCompletionError, LanguageModelRequestMessage, MessageContent,
-        ProviderErrorCategory, Role, Speed,
+        ProviderErrorCategory, Role, Speed, StopReason,
     };
     use serde_json::json;
     use std::sync::Mutex;
+
+    #[gpui::test]
+    async fn cloud_google_completion_emits_stop(cx: &mut gpui::TestAppContext) {
+        for (finish_reason, expected_stop) in [
+            ("STOP", StopReason::EndTurn),
+            ("MAX_TOKENS", StopReason::MaxTokens),
+            ("SAFETY", StopReason::Refusal),
+        ] {
+            let model = cloud_google_test_model(vec![
+                json!({"event": {"candidates": [{
+                    "content": {"role": "model", "parts": [{"text": "Hello"}]}
+                }]}}),
+                json!({"event": {
+                    "candidates": [{
+                        "content": {"role": "model", "parts": [{"text": " world"}]},
+                        "finishReason": finish_reason
+                    }],
+                    "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 2}
+                }}),
+                json!({"status": "stream_ended"}),
+            ]);
+            let mut stream = model
+                .stream_completion(LanguageModelRequest::default(), &cx.to_async())
+                .await
+                .unwrap();
+
+            assert!(matches!(
+                stream.next().await,
+                Some(Ok(LanguageModelCompletionEvent::Text(text))) if text == "Hello"
+            ));
+            assert!(matches!(
+                stream.next().await,
+                Some(Ok(LanguageModelCompletionEvent::UsageUpdate(usage)))
+                    if usage.input_tokens == 10 && usage.output_tokens == 2
+            ));
+            assert!(matches!(
+                stream.next().await,
+                Some(Ok(LanguageModelCompletionEvent::Text(text))) if text == " world"
+            ));
+            assert!(matches!(
+                stream.next().await,
+                Some(Ok(LanguageModelCompletionEvent::Stop(reason))) if reason == expected_stop
+            ));
+            assert!(stream.next().await.is_none());
+        }
+    }
+
+    #[gpui::test]
+    async fn cloud_google_tool_completion_preserves_transport_errors(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for stream_ended in [false, true] {
+            let mut events = vec![json!({"event": {"candidates": [{
+                "content": {"role": "model", "parts": [{
+                    "functionCall": {"name": "list_directory", "args": {"path": "."}}
+                }]},
+                "finishReason": "STOP"
+            }]}})];
+            if stream_ended {
+                events.push(json!({"status": "stream_ended"}));
+            }
+            let model = cloud_google_test_model(events);
+            let mut stream = model
+                .stream_completion(LanguageModelRequest::default(), &cx.to_async())
+                .await
+                .unwrap();
+
+            assert!(matches!(
+                stream.next().await,
+                Some(Ok(LanguageModelCompletionEvent::ToolUse(tool)))
+                    if tool.name.as_ref() == "list_directory"
+            ));
+            assert!(matches!(
+                stream.next().await,
+                Some(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)))
+            ));
+            if !stream_ended {
+                assert!(matches!(
+                    stream.next().await,
+                    Some(Err(
+                        LanguageModelCompletionError::StreamEndedUnexpectedly { .. }
+                    ))
+                ));
+            }
+            assert!(stream.next().await.is_none());
+        }
+    }
+
+    #[gpui::test]
+    async fn cloud_google_incomplete_completion_does_not_emit_stop(cx: &mut gpui::TestAppContext) {
+        for stream_ended in [false, true] {
+            let mut events = vec![json!({"event": {"candidates": [{
+                "content": {"role": "model", "parts": [{"text": "Partial answer"}]}
+            }]}})];
+            if stream_ended {
+                events.push(json!({"status": "stream_ended"}));
+            }
+            let model = cloud_google_test_model(events);
+            let mut stream = model
+                .stream_completion(LanguageModelRequest::default(), &cx.to_async())
+                .await
+                .unwrap();
+
+            assert!(matches!(
+                stream.next().await,
+                Some(Ok(LanguageModelCompletionEvent::Text(text))) if text == "Partial answer"
+            ));
+            if !stream_ended {
+                assert!(matches!(
+                    stream.next().await,
+                    Some(Err(
+                        LanguageModelCompletionError::StreamEndedUnexpectedly { .. }
+                    ))
+                ));
+            }
+            assert!(stream.next().await.is_none());
+        }
+    }
 
     #[gpui::test]
     async fn cloud_explicit_compaction_forwards_supported_request_fields(
@@ -2106,6 +2219,30 @@ mod tests {
                 event.unwrap();
             }
         }
+    }
+
+    fn cloud_google_test_model(
+        events: Vec<serde_json::Value>,
+    ) -> CloudLanguageModel<TestTokenProvider> {
+        let body = events
+            .into_iter()
+            .map(|event| format!("{event}\n"))
+            .collect::<String>();
+        let http_client = FakeHttpClient::create(move |_| {
+            let body = body.clone();
+            async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                    .body(AsyncBody::from(body))?)
+            }
+        });
+        let mut model = cloud_test_model(http_client);
+        model.id = LanguageModelId::from("gemini-3.1-pro-preview".to_string());
+        let metadata = Arc::make_mut(&mut model.model);
+        metadata.provider = cloud_llm_client::LanguageModelProvider::Google;
+        metadata.id = cloud_llm_client::LanguageModelId(Arc::from("gemini-3.1-pro-preview"));
+        model
     }
 
     fn compact_test_request() -> LanguageModelRequest {
