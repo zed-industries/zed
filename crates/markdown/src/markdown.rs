@@ -4163,6 +4163,7 @@ impl MarkdownElementBuilder {
         let styled_text = StyledText::new(text).with_runs(vec![text_style.to_run(text.len())]);
         self.rendered_lines.push(Rc::new(RenderedLine {
             layout: styled_text.layout().clone(),
+            visible_bounds: Cell::new(None),
             source_mappings: vec![SourceMapping {
                 rendered_index: 0,
                 source_index: source_range.start,
@@ -4200,6 +4201,7 @@ impl MarkdownElementBuilder {
         let text = StyledText::new(line.text).with_runs(line.runs);
         let rendered_line = Rc::new(RenderedLine {
             layout: text.layout().clone(),
+            visible_bounds: Cell::new(None),
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
             language: self
@@ -4211,19 +4213,14 @@ impl MarkdownElementBuilder {
             highlights,
             code_chips: line.code_chips.into_iter().collect(),
         });
-        if rendered_line.highlights.is_empty() && rendered_line.code_chips.is_empty() {
-            self.rendered_lines.push(rendered_line);
-            self.append_child(text.into_any());
-        } else {
-            self.rendered_lines.push(rendered_line.clone());
-            self.append_child(
-                HighlightedLine {
-                    text: text.into_any(),
-                    line: rendered_line,
-                }
-                .into_any_element(),
-            );
-        }
+        self.rendered_lines.push(rendered_line.clone());
+        self.append_child(
+            RenderedLineElement {
+                text: text.into_any(),
+                line: rendered_line,
+            }
+            .into_any_element(),
+        );
     }
 
     fn build(mut self) -> RenderedMarkdown {
@@ -4241,15 +4238,14 @@ impl MarkdownElementBuilder {
     }
 }
 
-/// Wraps a rendered line's text and paints the line's highlight quads during the
-/// line's own paint, so the ancestor content masks clip them like they clip the
-/// glyphs themselves.
-struct HighlightedLine {
+/// Wraps a rendered line so its code chips and highlights share the glyphs'
+/// ancestor content masks, and records the clipped bounds for platform text hit testing.
+struct RenderedLineElement {
     text: AnyElement,
     line: Rc<RenderedLine>,
 }
 
-impl Element for HighlightedLine {
+impl Element for RenderedLineElement {
     type RequestLayoutState = ();
     type PrepaintState = ();
 
@@ -4275,11 +4271,14 @@ impl Element for HighlightedLine {
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        self.line
+            .visible_bounds
+            .set(Some(bounds.intersect(&window.content_mask().bounds)));
         self.text.prepaint(window, cx);
     }
 
@@ -4299,7 +4298,7 @@ impl Element for HighlightedLine {
     }
 }
 
-impl IntoElement for HighlightedLine {
+impl IntoElement for RenderedLineElement {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -4309,6 +4308,7 @@ impl IntoElement for HighlightedLine {
 
 struct RenderedLine {
     layout: TextLayout,
+    visible_bounds: Cell<Option<Bounds<Pixels>>>,
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
     language: Option<Arc<Language>>,
@@ -4849,6 +4849,16 @@ impl RenderedText {
         Err(self.lines.last().map_or(0, |line| line.source_end))
     }
 
+    fn source_index_for_visible_position(&self, position: Point<Pixels>) -> Option<usize> {
+        self.lines.iter().find_map(|line| {
+            if line.visible_bounds.get()?.contains(&position) {
+                line.source_index_for_position(position).ok()
+            } else {
+                None
+            }
+        })
+    }
+
     fn position_for_source_index(&self, source_index: usize) -> Option<(Point<Pixels>, Pixels)> {
         for line in self.lines.iter() {
             if source_index > line.source_end {
@@ -5078,7 +5088,9 @@ impl InputHandler for MarkdownInputHandler {
         _: &mut Window,
         _: &mut App,
     ) -> Option<usize> {
-        let source_index = self.rendered_text.source_index_for_position(point).ok()?;
+        let source_index = self
+            .rendered_text
+            .source_index_for_visible_position(point)?;
         Some(
             self.rendered_text
                 .utf16_index_for_source_index(source_index),
@@ -5345,6 +5357,137 @@ mod tests {
                 (5, 83),
                 (6, 84),
             ]],
+        );
+    }
+
+    #[gpui::test]
+    fn test_lookup_rejects_clipped_text(cx: &mut TestAppContext) {
+        struct ClippedMarkdownView(Entity<MarkdownTestView>);
+
+        impl Render for ClippedMarkdownView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("clipped-markdown")
+                    .w(px(300.))
+                    .h(px(80.))
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .child(self.0.clone())
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let source = indoc::indoc! {r#"
+            ```txt
+            one_extremely_long_code_line_that_overflows_the_viewport_and_keeps_going_and_going
+            ```
+
+            first paragraph
+
+            second paragraph
+
+            last paragraph
+        "#};
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let rendered_text = rendered_text.clone();
+            let markdown = markdown.clone();
+            move |_, cx| {
+                ClippedMarkdownView(cx.new(|_| MarkdownTestView {
+                    markdown,
+                    style: MarkdownStyle {
+                        code_block_overflow_x_scroll: true,
+                        ..MarkdownStyle::default()
+                    },
+                    code_span_link: None,
+                    rendered_text,
+                }))
+            }
+        });
+        cx.simulate_resize(size(px(1000.), px(200.)));
+        cx.run_until_parked();
+        let rendered = rendered_text.borrow().clone().expect("rendered");
+        let first_line = &rendered.lines[0];
+        let clipped_character_index = 60;
+        let horizontal_clipped_position = first_line
+            .layout
+            .position_for_index(clipped_character_index)
+            .expect("clipped character position")
+            + point(px(0.1), first_line.layout.line_height() / 2.);
+        assert!(
+            horizontal_clipped_position.x > px(300.),
+            "test point must lie outside viewport: {horizontal_clipped_position:?}"
+        );
+        assert!(
+            horizontal_clipped_position.x < px(1000.),
+            "test point must remain inside the window"
+        );
+        let visible_character_index = 2;
+        let visible_position = first_line
+            .layout
+            .position_for_index(visible_character_index)
+            .expect("visible character position")
+            + point(px(0.1), first_line.layout.line_height() / 2.);
+        let last_line = rendered.lines.last().expect("last paragraph");
+        let vertical_clipped_position = last_line
+            .layout
+            .position_for_index(visible_character_index)
+            .expect("paragraph position")
+            + point(px(0.1), last_line.layout.line_height() / 2.);
+        assert!(vertical_clipped_position.y > px(80.));
+        assert!(vertical_clipped_position.y < px(200.));
+
+        let mut handler = MarkdownInputHandler::new(markdown.clone(), rendered);
+        assert_eq!(
+            cx.update(|window, cx| handler.character_index_for_point(
+                horizontal_clipped_position,
+                window,
+                cx
+            )),
+            None,
+            "point outside visible viewport must not expose clipped text: {horizontal_clipped_position:?}"
+        );
+        assert_eq!(
+            cx.update(|window, cx| handler.character_index_for_point(
+                vertical_clipped_position,
+                window,
+                cx
+            )),
+            None,
+        );
+        assert_eq!(
+            cx.update(|window, cx| handler.character_index_for_point(visible_position, window, cx)),
+            Some(visible_character_index),
+        );
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: visible_position,
+            delta: ScrollDelta::Pixels(point(px(-400.), px(0.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+        let rendered = rendered_text
+            .borrow()
+            .clone()
+            .expect("rendered after scrolling");
+        let first_line = &rendered.lines[0];
+        let revealed_position = first_line
+            .layout
+            .position_for_index(clipped_character_index)
+            .expect("revealed character position")
+            + point(px(0.1), first_line.layout.line_height() / 2.);
+        assert!(revealed_position.x > px(0.) && revealed_position.x < px(300.));
+        let mut handler = MarkdownInputHandler::new(markdown, rendered);
+        assert_eq!(
+            cx.update(|window, cx| handler.character_index_for_point(
+                revealed_position,
+                window,
+                cx
+            )),
+            Some(clipped_character_index),
         );
     }
 
