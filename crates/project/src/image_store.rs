@@ -127,6 +127,24 @@ impl Asset for ProjectImageAsset {
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let svg_renderer = cx.svg_renderer();
         let load_image = cx.spawn(async move |cx| {
+            if source
+                .path
+                .path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+            {
+                // SVGs are text buffers in the project; the image store requires raster metadata.
+                let open_buffer = source
+                    .project
+                    .update(cx, |project, cx| project.open_buffer(source.path, cx))?;
+                let buffer = open_buffer.await?;
+                let content = buffer.read_with(cx, |buffer, _cx| buffer.text());
+                return Ok(Arc::new(gpui::Image::from_bytes(
+                    gpui::ImageFormat::Svg,
+                    content.into_bytes(),
+                )));
+            }
+
             let open_image = source
                 .project
                 .update(cx, |project, cx| project.open_image(source.path, cx))?;

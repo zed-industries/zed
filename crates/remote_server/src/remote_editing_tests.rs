@@ -463,7 +463,9 @@ async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &m
         json!({
             "project": {
                 "docs": {
-                    "image.ppm": "P3\n1 1\n255\n255 0 0\n"
+                    "image.ppm": "P3\n1 1\n255\n255 0 0\n",
+                    "image.svg": r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="red"/></svg>"#,
+                    "image.SVG": r#"<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="red"/></svg>"#
                 }
             }
         }),
@@ -478,48 +480,56 @@ async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &m
         .await
         .expect("remote worktree should open");
     let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id());
-    let source = image_store::project_image_source(
-        project.downgrade(),
-        ProjectPath {
-            worktree_id,
-            path: rel_path("docs/image.ppm").into(),
-        },
-    );
-    let ImageSource::Custom(load_image) = source else {
-        panic!("expected a project-backed image source");
-    };
-    let loaded_bytes = Arc::new(std::sync::Mutex::new(None));
-    let observed_source = ImageSource::from({
-        let loaded_bytes = loaded_bytes.clone();
-        move |window: &mut gpui::Window, cx: &mut gpui::App| {
-            let result = load_image(window, cx);
-            if let Some(Ok(image)) = &result {
-                *loaded_bytes.lock().expect("loaded image mutex poisoned") =
-                    image.as_bytes(0).map(ToOwned::to_owned);
+    let svg_pixel_count = (gpui::SMOOTH_SVG_SCALE_FACTOR as usize).pow(2);
+    for (path, pixel_count) in [
+        ("docs/image.ppm", 1),
+        ("docs/image.svg", svg_pixel_count),
+        ("docs/image.SVG", svg_pixel_count),
+    ] {
+        let source = image_store::project_image_source(
+            project.downgrade(),
+            ProjectPath {
+                worktree_id,
+                path: rel_path(path).into(),
+            },
+        );
+        let ImageSource::Custom(load_image) = source else {
+            panic!("expected a project-backed image source");
+        };
+        let loaded_bytes = Arc::new(std::sync::Mutex::new(None));
+        let observed_source = ImageSource::from({
+            let loaded_bytes = loaded_bytes.clone();
+            move |window: &mut gpui::Window, cx: &mut gpui::App| {
+                let result = load_image(window, cx);
+                if let Some(Ok(image)) = &result {
+                    *loaded_bytes.lock().expect("loaded image mutex poisoned") =
+                        image.as_bytes(0).map(ToOwned::to_owned);
+                }
+                result
             }
-            result
-        }
-    });
+        });
 
-    let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageTestView {
-        source: observed_source,
-    });
-    cx.draw(Default::default(), size(px(10.), px(10.)), {
-        let view = view.clone();
-        move |_, _| view.into_any_element()
-    });
-    cx.run_until_parked();
-    cx.draw(Default::default(), size(px(10.), px(10.)), move |_, _| {
-        view.into_any_element()
-    });
+        let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageTestView {
+            source: observed_source,
+        });
+        cx.draw(Default::default(), size(px(10.), px(10.)), {
+            let view = view.clone();
+            move |_, _| view.into_any_element()
+        });
+        cx.run_until_parked();
+        cx.draw(Default::default(), size(px(10.), px(10.)), move |_, _| {
+            view.into_any_element()
+        });
 
-    assert_eq!(
-        loaded_bytes
-            .lock()
-            .expect("loaded image mutex poisoned")
-            .as_deref(),
-        Some([0, 0, 255, 255].as_slice())
-    );
+        assert_eq!(
+            loaded_bytes
+                .lock()
+                .expect("loaded image mutex poisoned")
+                .as_deref(),
+            Some([0, 0, 255, 255].repeat(pixel_count).as_slice()),
+            "failed to render {path}"
+        );
+    }
 }
 
 #[gpui::test]
