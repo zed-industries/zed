@@ -193,6 +193,12 @@ impl Model {
             _ => false,
         }
     }
+
+    /// Whether thinking can be turned off. Z.ai GLM models always think and
+    /// reject `reasoning_effort: "none"`.
+    pub fn supports_disabling_thinking(&self) -> bool {
+        !matches!(self, Self::ZaiGlmLatest)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

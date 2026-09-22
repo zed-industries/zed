@@ -587,9 +587,18 @@ pub fn into_mistral(
                     })
                 })
                 .collect::<Result<_>>()?,
-            reasoning_effort: if model.supports_thinking() && request.thinking_allowed {
+            reasoning_effort: if !model.supports_thinking() {
+                None
+            } else if request.thinking_allowed {
                 Some(mistral::ReasoningEffort::High)
+            } else if model.supports_disabling_thinking() {
+                // The API currently treats an omitted field as thinking-off
+                // too, but pinning the value guards against a change of that
+                // default.
+                Some(mistral::ReasoningEffort::None)
             } else {
+                // Models that always think reject "none"; omitting the field
+                // is the only way to request the API's default effort.
                 None
             },
         },
@@ -948,10 +957,19 @@ mod tests {
 
         let (mistral_request, _) =
             into_mistral(request(false), mistral::Model::MistralMediumLatest, None).unwrap();
-        assert_eq!(mistral_request.reasoning_effort, None);
+        assert_eq!(
+            mistral_request.reasoning_effort,
+            Some(mistral::ReasoningEffort::None)
+        );
 
         let (mistral_request, _) =
             into_mistral(request(true), mistral::Model::CodestralLatest, None).unwrap();
+        assert_eq!(mistral_request.reasoning_effort, None);
+
+        // Z.ai GLM always thinks and rejects "none", so the field is omitted
+        // when the toggle is off instead of sending an explicit value.
+        let (mistral_request, _) =
+            into_mistral(request(false), mistral::Model::ZaiGlmLatest, None).unwrap();
         assert_eq!(mistral_request.reasoning_effort, None);
     }
 
