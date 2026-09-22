@@ -1222,7 +1222,7 @@ impl LanguageServer {
         Some(async move {
             log::debug!("language server shutdown started");
 
-            select! {
+            let shutdown_timed_out = select! {
                 request_result = shutdown_request.fuse() => {
                     match request_result {
                         ConnectionResult::Timeout => {
@@ -1236,19 +1236,32 @@ impl LanguageServer {
                         },
                         ConnectionResult::Result(Ok(())) => {}
                     }
+                    false
                 }
 
                 _ = timer => {
                     log::info!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                    true
                 },
-            }
+            };
 
             response_handlers.lock().take();
             Self::notify_internal::<notification::Exit>(&notification_serializers, ()).ok();
             notification_serializers.close();
-            output_done.recv().await;
-            server.lock().take().map(|mut child| child.kill());
+            if !shutdown_timed_out {
+                select! {
+                    _ = output_done.recv().fuse() => {},
+                    _ = timer => {
+                        log::info!("timeout draining output for language server {name} (id {server_id}) during shutdown");
+                    },
+                }
+            }
             drop(tasks);
+            if let Some(mut child) = server.lock().take()
+                && let Err(error) = child.kill()
+            {
+                log::warn!("failed to kill language server {name} (id {server_id}): {error}");
+            }
             log::debug!("language server shutdown finished");
             Some(())
         })
@@ -2154,7 +2167,7 @@ impl FakeLanguageServer {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use std::str::FromStr;
+    use std::{io, str::FromStr, task::Context};
 
     #[ctor::ctor(unsafe)]
     fn init_logger() {
@@ -2245,6 +2258,50 @@ mod tests {
         drop(server);
         cx.run_until_parked();
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    async fn test_shutdown_bounds_output_drain(cx: &mut TestAppContext) {
+        for remaining_flushes in [Some(0), Some(1), None] {
+            let (server, mut stdout, output) = shutdown_test_server(remaining_flushes, cx);
+            let io_handlers = Arc::downgrade(&server.io_handlers);
+            let mut shutdown = cx
+                .executor()
+                .spawn(server.shutdown().expect("shutdown must start"));
+            drop(server);
+            cx.run_until_parked();
+            let mut expected = if remaining_flushes == Some(0) {
+                Vec::new()
+            } else {
+                framed_test_message(r#"{"jsonrpc":"2.0","id":0,"method":"shutdown"}"#)
+            };
+            assert_eq!(output.lock().bytes, expected);
+            assert_eq!((&mut shutdown).now_or_never(), None);
+            cx.executor().advance_clock(Duration::from_secs(4));
+            if remaining_flushes != Some(0) {
+                stdout
+                    .write_all(&framed_test_message(
+                        r#"{"jsonrpc":"2.0","id":0,"result":null}"#,
+                    ))
+                    .await
+                    .expect("shutdown response must reach stdout");
+            }
+            cx.run_until_parked();
+            if remaining_flushes.is_none() {
+                expected.extend(framed_test_message(r#"{"jsonrpc":"2.0","method":"exit"}"#));
+            } else {
+                assert!(output.lock().blocked);
+                cx.executor().advance_clock(Duration::from_millis(999));
+                cx.run_until_parked();
+                assert_eq!((&mut shutdown).now_or_never(), None);
+                assert!(io_handlers.upgrade().is_some());
+                cx.executor().advance_clock(Duration::from_millis(1));
+                cx.run_until_parked();
+            }
+            assert_eq!(shutdown.now_or_never(), Some(Some(())));
+            assert_eq!(output.lock().bytes, expected);
+            assert!(io_handlers.upgrade().is_none());
+        }
     }
 
     #[gpui::test]
@@ -2529,5 +2586,80 @@ mod tests {
             name: "my project".to_string(),
         }];
         assert_eq!(workspace_folders, expected_workspace_folders);
+    }
+
+    struct ShutdownTestOutput {
+        bytes: Vec<u8>,
+        remaining_flushes: Option<usize>,
+        blocked: bool,
+    }
+
+    struct ShutdownTestWriter(Arc<Mutex<ShutdownTestOutput>>);
+
+    impl AsyncWrite for ShutdownTestWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            bytes: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            let mut output = self.0.lock();
+            if output.remaining_flushes == Some(0) {
+                output.blocked = true;
+                return Poll::Pending;
+            }
+            output.bytes.extend_from_slice(bytes);
+            Poll::Ready(Ok(bytes.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            if let Some(remaining_flushes) = &mut self.0.lock().remaining_flushes {
+                *remaining_flushes = remaining_flushes.saturating_sub(1);
+            }
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn shutdown_test_server(
+        remaining_flushes: Option<usize>,
+        cx: &mut TestAppContext,
+    ) -> (
+        LanguageServer,
+        async_pipe::PipeWriter,
+        Arc<Mutex<ShutdownTestOutput>>,
+    ) {
+        let (stdout_writer, stdout_reader) = async_pipe::pipe();
+        let output = Arc::new(Mutex::new(ShutdownTestOutput {
+            bytes: Vec::new(),
+            remaining_flushes,
+            blocked: false,
+        }));
+        let server = LanguageServer::new_internal(
+            LanguageServerId(0),
+            LanguageServerName::from("shutdown-test"),
+            ShutdownTestWriter(output.clone()),
+            stdout_reader,
+            None::<async_pipe::PipeReader>,
+            Arc::new(Mutex::new(None)),
+            None,
+            None,
+            LanguageServerBinary {
+                path: PathBuf::from("shutdown-test"),
+                arguments: Vec::new(),
+                env: None,
+            },
+            FakeLanguageServer::root_path(),
+            None,
+            &mut cx.to_async(),
+            |_| false,
+        );
+        (server, stdout_writer, output)
+    }
+
+    fn framed_test_message(payload: &str) -> Vec<u8> {
+        format!("Content-Length: {}\r\n\r\n{payload}", payload.len()).into_bytes()
     }
 }

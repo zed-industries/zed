@@ -743,7 +743,10 @@ impl Bounds<Pixels> {
             .or_else(|| cx.primary_display());
 
         display
-            .map(|display| Bounds::centered_at(display.bounds().center(), size))
+            .map(|display| {
+                let visible_bounds = display.visible_bounds();
+                Bounds::centered_at(visible_bounds.center(), size.min(&visible_bounds.size))
+            })
             .unwrap_or_else(|| Bounds {
                 origin: point(px(0.), px(0.)),
                 size,

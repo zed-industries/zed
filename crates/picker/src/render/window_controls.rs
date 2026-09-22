@@ -58,7 +58,9 @@
 
 use std::{any::type_name, marker::PhantomData};
 
-use gpui::{ClickEvent, Context, CursorStyle, DragMoveEvent, MouseButton, Point, Styled, Window};
+use gpui::{
+    ClickEvent, Context, CursorStyle, DragMoveEvent, MouseButton, Point, Stateful, Styled, Window,
+};
 use ui::prelude::*;
 
 use crate::shape::{Centered, PositionAndShape, Shape, SizeBounds};
@@ -430,50 +432,31 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        div()
-            .id(S::id())
-            .absolute()
-            .cursor(side.cursor())
-            .map(|this| {
-                side.position(
-                    this,
-                    self.shape.clamped_position_and_size(
-                        self.preview_layout_rendered(window),
-                        &self.size_bounds,
-                        window,
-                    ),
+        render_resize_handle(
+            side,
+            self.shape,
+            &self.size_bounds,
+            self.preview_layout_rendered(window),
+            window,
+        )
+        .on_drag_move::<ResizeDrag<S>>(cx.listener(
+            move |picker, event: &DragMoveEvent<ResizeDrag<S>>, window, cx| {
+                let drag = event.drag(cx);
+                let delta = event.event.position - drag.mouse_pos_before;
+                let mut working = side.current_position_and_shape(drag.shape_before, delta);
+                side.clamp(
+                    &mut working,
+                    &picker.size_bounds,
+                    picker.preview_layout_rendered(window),
                     window,
-                )
-            })
-            .block_mouse_except_scroll()
-            .on_mouse_down(MouseButton::Left, do_nothing)
-            .on_drag(
-                ResizeDrag::<S>::start_new(
-                    self.shape,
-                    &self.size_bounds,
-                    self.preview_layout_rendered(window),
-                    window,
-                ),
-                |_, _, _, cx| cx.new(|_| DragPreview),
-            )
-            .on_drag_move::<ResizeDrag<S>>(cx.listener(
-                move |this, event: &DragMoveEvent<ResizeDrag<S>>, window, cx| {
-                    let drag = event.drag(cx);
-                    let delta = event.event.position - drag.mouse_pos_before;
-                    let mut working = side.current_position_and_shape(drag.shape_before, delta);
-                    side.clamp(
-                        &mut working,
-                        &this.size_bounds,
-                        this.preview_layout_rendered(window),
-                        window,
-                    );
-                    this.shape = Shape::Resizing(working);
-                    cx.notify();
-                },
-            ))
-            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                this.reset_size_to_default_on_double_click(side, event, window, cx)
-            }))
+                );
+                picker.shape = Shape::Resizing(working);
+                cx.notify();
+            },
+        ))
+        .on_click(cx.listener(move |picker, event: &ClickEvent, window, cx| {
+            picker.reset_size_to_default_on_double_click(side, event, window, cx)
+        }))
     }
 
     fn reset_size_to_default_on_double_click<S: Side>(
@@ -495,6 +478,34 @@ impl<D: PickerDelegate> Picker<D> {
         self.shape = Shape::Resizing(pos);
         cx.notify();
     }
+}
+
+#[inline(never)]
+#[track_caller]
+fn render_resize_handle<S: Side>(
+    side: S,
+    shape: Shape,
+    bounds: &SizeBounds,
+    layout: Option<Layout>,
+    window: &mut Window,
+) -> Stateful<Div> {
+    div()
+        .id(S::id())
+        .absolute()
+        .cursor(side.cursor())
+        .map(|handle| {
+            side.position(
+                handle,
+                shape.clamped_position_and_size(layout, bounds, window),
+                window,
+            )
+        })
+        .block_mouse_except_scroll()
+        .on_mouse_down(MouseButton::Left, do_nothing)
+        .on_drag(
+            ResizeDrag::<S>::start_new(shape, bounds, layout, window),
+            |_, _, _, cx| cx.new(|_| DragPreview),
+        )
 }
 
 fn do_nothing(_: &gpui::MouseDownEvent, window: &mut Window, cx: &mut App) {
