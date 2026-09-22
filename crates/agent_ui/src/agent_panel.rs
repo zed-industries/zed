@@ -9384,18 +9384,16 @@ mod tests {
             terminal.take_input_log();
         });
 
-        // With only a cursor and nothing highlighted, the action is a no-op and
-        // must not paste anything into the terminal.
         workspace.update_in(&mut cx, |_, window, cx| {
             window.dispatch_action(AddSelectionToThread.boxed_clone(), cx);
         });
         cx.run_until_parked();
-        let pasted_without_selection =
-            terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
-        assert!(
-            pasted_without_selection.is_empty(),
-            "no selection should paste nothing, got {pasted_without_selection:?}"
-        );
+        let pasted_current_line: String = terminal
+            .update(&mut cx, |terminal, _| terminal.take_input_log())
+            .into_iter()
+            .map(|bytes| String::from_utf8(bytes).expect("pasted bytes should be valid UTF-8"))
+            .collect();
+        assert_eq!(pasted_current_line, "file.rs:1 ");
 
         // Now highlight a portion of the file: from the start of line 2 into line 3.
         editor.update_in(&mut cx, |editor, window, cx| {
