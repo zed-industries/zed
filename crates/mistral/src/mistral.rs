@@ -141,7 +141,7 @@ impl Model {
             Self::Ministral3bLatest => 256000,
             Self::Ministral8bLatest => 256000,
             Self::Ministral14bLatest => 256000,
-            Self::ZaiGlmLatest => 1000000,
+            Self::ZaiGlmLatest => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
