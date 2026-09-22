@@ -3129,8 +3129,8 @@ impl Fs for FakeFs {
             content,
             git_dir_path: None,
         };
-        let mut kind = Some(PathEventKind::Created);
-        state.write_path(&target, |e| match e {
+
+        let kind = state.write_path(&target, |e| match e {
             btree_map::Entry::Occupied(mut e) => {
                 if !options.overwrite {
                     if options.ignore_if_exists {
@@ -3143,13 +3143,18 @@ impl Fs for FakeFs {
                     FakeFsEntry::Dir { .. } => anyhow::bail!("{target:?} is a directory"),
                     FakeFsEntry::Symlink { .. } => new_inode,
                 };
-                kind = Some(PathEventKind::Changed);
                 e.insert(new_entry(inode));
-                Ok(Some(e.get().clone()))
+                Ok(Some(PathEventKind::Changed))
             }
-            btree_map::Entry::Vacant(e) => Ok(Some(e.insert(new_entry(new_inode)).clone())),
+            btree_map::Entry::Vacant(e) => {
+                e.insert(new_entry(new_inode));
+                Ok(Some(PathEventKind::Created))
+            }
         })?;
-        state.emit_event([(target, kind)]);
+
+        if let Some(kind) = kind {
+            state.emit_event([(target, Some(kind))]);
+        }
         Ok(())
     }
 
