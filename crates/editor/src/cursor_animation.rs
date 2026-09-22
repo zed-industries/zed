@@ -602,10 +602,26 @@ pub(crate) fn animated_corners_overlap_target(
     target_bounds: Bounds<Pixels>,
     corners: &[Point<Pixels>; 4],
 ) -> bool {
-    let min_x = corners.iter().map(|p| p.x).min().unwrap();
-    let max_x = corners.iter().map(|p| p.x).max().unwrap();
-    let min_y = corners.iter().map(|p| p.y).min().unwrap();
-    let max_y = corners.iter().map(|p| p.y).max().unwrap();
+    let min_x = corners
+        .iter()
+        .map(|p| p.x)
+        .min()
+        .expect("the corners argument is a 4 item array, which should alway have an x min");
+    let max_x = corners
+        .iter()
+        .map(|p| p.x)
+        .max()
+        .expect("the corners argument is a 4 item array, which should alway have an x max");
+    let min_y = corners
+        .iter()
+        .map(|p| p.y)
+        .min()
+        .expect("the corners argument is a 4 item array, which should alway have an y min");
+    let max_y = corners
+        .iter()
+        .map(|p| p.y)
+        .max()
+        .expect("the corners argument is a 4 item array, which should alway have an x max");
     let animated_bounds = Bounds::from_corners(point(min_x, min_y), point(max_x, max_y));
 
     animated_bounds.intersects(&target_bounds)
