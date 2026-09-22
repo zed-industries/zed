@@ -10686,6 +10686,13 @@ impl ThreadView {
                 _ => false,
             });
 
+        let model_name = thread_view
+            .and_then(|view| view.read(cx).as_native_thread(cx))
+            .and_then(|thread| {
+                let thread = thread.read(cx);
+                let model = thread.model()?;
+                Some(model.name().0)
+            });
         let thread_title = thread
             .as_ref()
             .and_then(|t| t.read(cx).title())
@@ -10787,33 +10794,64 @@ impl ThreadView {
                             .child(
                                 h_flex()
                                     .min_w_0()
-                                    .w_full()
+                                    .flex_1()
                                     .gap_1p5()
-                                    .child(icon)
+                                    .justify_between()
                                     .child(
-                                        Label::new(title.to_string())
-                                            .size(LabelSize::Custom(self.tool_name_font_size()))
-                                            .truncate(),
+                                        h_flex()
+                                            .min_w_0()
+                                            .flex_initial()
+                                            .gap_1p5()
+                                            .child(icon)
+                                            .child(
+                                                Label::new(title.to_string())
+                                                    .size(LabelSize::Custom(
+                                                        self.tool_name_font_size(),
+                                                    ))
+                                                    .flex_1()
+                                                    .truncate(),
+                                            )
+                                            .when_some(model_name, |this, model_name| {
+                                                this.child(
+                                                    Label::new(format!("· {model_name}"))
+                                                        .size(LabelSize::Custom(
+                                                            self.tool_name_font_size(),
+                                                        ))
+                                                        .color(Color::Muted)
+                                                        .truncate(),
+                                                )
+                                            }),
                                     )
                                     .when(files_changed > 0, |this| {
                                         this.child(
-                                            Label::new(format!(
-                                                "— {} {} changed",
-                                                files_changed,
-                                                if files_changed == 1 { "file" } else { "files" }
-                                            ))
-                                            .size(LabelSize::Custom(self.tool_name_font_size()))
-                                            .color(Color::Muted),
-                                        )
-                                        .child(
-                                            DiffStat::new(
-                                                diff_stat_id.clone(),
-                                                diff_stats.lines_added as usize,
-                                                diff_stats.lines_removed as usize,
-                                            )
-                                            .label_size(LabelSize::Custom(
-                                                self.tool_name_font_size(),
-                                            )),
+                                            h_flex()
+                                                .flex_none()
+                                                .gap_1p5()
+                                                .child(
+                                                    Label::new(format!(
+                                                        "— {} {} changed",
+                                                        files_changed,
+                                                        if files_changed == 1 {
+                                                            "file"
+                                                        } else {
+                                                            "files"
+                                                        }
+                                                    ))
+                                                    .size(LabelSize::Custom(
+                                                        self.tool_name_font_size(),
+                                                    ))
+                                                    .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    DiffStat::new(
+                                                        diff_stat_id.clone(),
+                                                        diff_stats.lines_added as usize,
+                                                        diff_stats.lines_removed as usize,
+                                                    )
+                                                    .label_size(LabelSize::Custom(
+                                                        self.tool_name_font_size(),
+                                                    )),
+                                                ),
                                         )
                                     }),
                             )
