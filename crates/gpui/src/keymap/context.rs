@@ -261,7 +261,7 @@ impl KeyBindingContextPredicate {
         for depth in (0..=contexts.len()).rev() {
             let context_slice = &contexts[0..depth];
             if self.eval_inner(context_slice, contexts) {
-                return Some(depth);
+                return Some(depth + usize::from(matches!(self, Self::Descendant(..))));
             }
         }
         None
