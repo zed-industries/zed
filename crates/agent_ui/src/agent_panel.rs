@@ -11410,7 +11410,7 @@ mod tests {
             thread_ids.push(thread_id);
         }
 
-        cx.update(|cx| {
+        cx.update(|_window, cx| {
             AgentSettings::override_global(
                 AgentSettings {
                     max_idle_retained_threads: 6,
@@ -11497,7 +11497,7 @@ mod tests {
             assert_eq!(panel.retained_threads.len(), 1);
         });
 
-        cx.update(|cx| {
+        cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(r#"{ "agent": { "max_idle_retained_threads": 0 } }"#, cx)
@@ -11527,7 +11527,7 @@ mod tests {
 
         open_generating_thread_with_loadable_connection(&panel, &connection, &mut cx);
 
-        cx.update(|cx| {
+        cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(r#"{ "agent": { "max_idle_retained_threads": 0 } }"#, cx)
@@ -11584,7 +11584,7 @@ mod tests {
             loadable_thread_ids.push(thread_id);
         }
 
-        cx.update(|cx| {
+        cx.update(|_window, cx| {
             AgentSettings::override_global(
                 AgentSettings {
                     max_idle_retained_threads: 6,
