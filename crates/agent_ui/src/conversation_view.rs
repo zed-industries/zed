@@ -297,8 +297,8 @@ impl Conversation {
         let subscription = cx.subscribe(&thread, {
             let session_id = session_id.clone();
             move |this, _thread, event, _cx| {
-                this.updated_at = Some(Instant::now());
                 match event {
+                    AcpThreadEvent::NoticesUpdated => return,
                     AcpThreadEvent::ToolAuthorizationRequested(id) => {
                         this.permission_requests
                             .entry(session_id.clone())
@@ -346,6 +346,7 @@ impl Conversation {
                     | AcpThreadEvent::WorkingDirectoriesUpdated
                     | AcpThreadEvent::PromptUpdated => {}
                 }
+                this.updated_at = Some(Instant::now());
             }
         });
         self.subscriptions.push(subscription);
@@ -598,6 +599,7 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::ModeUpdated(_)
         | AcpThreadEvent::ConfigOptionsUpdated(_)
         | AcpThreadEvent::SubagentSpawned(_)
+        | AcpThreadEvent::NoticesUpdated
         | AcpThreadEvent::PromptUpdated => false,
     }
 }
@@ -1882,6 +1884,11 @@ impl ConversationView {
             }
             AcpThreadEvent::WorkingDirectoriesUpdated => {
                 cx.notify();
+            }
+            AcpThreadEvent::NoticesUpdated => {
+                if let Some(thread_view) = self.thread_view(&session_id) {
+                    thread_view.update(cx, |_, cx| cx.notify());
+                }
             }
             AcpThreadEvent::PromptUpdated => {
                 if !is_subagent && thread.read(cx).is_draft_thread() {
@@ -4357,6 +4364,248 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
         );
+    }
+
+    #[gpui::test]
+    async fn test_session_notices_render_and_dismiss_outside_transcript(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let notice = acp::Notice::new(acp::NoticeSeverity::Error, "Optional integration failed")
+            .description("**Plain text**, not Markdown. Work continues.");
+        thread.update(cx, |thread, cx| {
+            for _ in 0..2 {
+                thread
+                    .handle_session_update(acp::SessionUpdate::Notice(notice.clone()), cx)
+                    .expect("notice should be accepted");
+            }
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.list_state.item_count(), 0);
+            assert!(view.thread.read(cx).entries().is_empty());
+            assert!(!view.thread.read(cx).had_error());
+        });
+        let dismiss = cx
+            .debug_bounds("dismiss-session-notice-0")
+            .expect("the first notice should render a dismiss button");
+        assert!(cx.debug_bounds("dismiss-session-notice-1").is_some());
+        cx.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.notices(), &[(1, notice)]);
+        });
+        assert!(cx.debug_bounds("dismiss-session-notice-0").is_none());
+
+        assert!(cx.debug_bounds("dismiss-session-notice-1").is_some());
+        thread_view.update_in(cx, |view, window, cx| {
+            view.focus_handle(cx).focus(window, cx);
+            window.focus_next(cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").expect("valid keystroke"),
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("session-notices").is_none());
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(view.activation_focus_handle(cx).is_focused(window));
+            assert_eq!(view.list_state.item_count(), 0);
+            assert!(view.thread.read(cx).notices().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_session_notices_stay_with_background_session_without_metadata_updates(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let root_thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        let root_session_id = root_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let other_session_id = acp::SessionId::new("other-session");
+        conversation_view.update_in(cx, |view, window, cx| {
+            view.load_subagent_session(
+                other_session_id.clone(),
+                root_session_id.clone(),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let baseline_updated_at = Instant::now();
+        conversation_view.update_in(cx, |view, window, cx| {
+            view.set_updated_at(baseline_updated_at, cx);
+            view.navigate_to_thread(other_session_id.clone(), window, cx);
+        });
+        cx.run_until_parked();
+        let metadata_updates = Rc::new(std::cell::Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&conversation_view, {
+                let metadata_updates = metadata_updates.clone();
+                move |_, _: &RootThreadUpdated, _| {
+                    metadata_updates.set(metadata_updates.get() + 1);
+                }
+            })
+        });
+
+        cx.deactivate_window();
+        cx.update(|_, cx| {
+            connection.send_update(
+                root_session_id.clone(),
+                acp::SessionUpdate::Notice(acp::Notice::new(
+                    acp::NoticeSeverity::Error,
+                    "Optional integration failed",
+                )),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("session-notices").is_none());
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).session_id(), &other_session_id);
+            assert!(view.thread.read(cx).notices().is_empty());
+        });
+
+        conversation_view.update_in(cx, |view, window, cx| {
+            window.activate_window();
+            view.navigate_to_thread(root_session_id.clone(), window, cx);
+        });
+        cx.run_until_parked();
+        let dismiss = cx
+            .debug_bounds("dismiss-session-notice-0")
+            .expect("the background notice should render when its session becomes active");
+        cx.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+
+        for session_id in [other_session_id, root_session_id] {
+            conversation_view.update_in(cx, |view, window, cx| {
+                view.navigate_to_thread(session_id, window, cx);
+            });
+            cx.run_until_parked();
+            assert!(cx.debug_bounds("session-notices").is_none());
+        }
+        root_thread.read_with(cx, |thread, cx| {
+            assert!(thread.notices().is_empty());
+            assert!(thread.entries().is_empty());
+            assert!(thread.to_markdown(cx).is_empty());
+            assert!(!thread.had_error());
+        });
+        assert_eq!(metadata_updates.get(), 0);
+        assert_eq!(
+            conversation_view.read_with(cx, |view, cx| view.updated_at(cx)),
+            Some(baseline_updated_at)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_session_notices_scroll_without_hiding_composer(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        cx.simulate_resize(size(px(480.), px(480.)));
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            for index in 0..8 {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::Notice(
+                            acp::Notice::new(
+                                acp::NoticeSeverity::Other("_advisory".into()),
+                                "The optional documentation integration is unavailable",
+                            )
+                            .description(if index == 0 {
+                                "Work continues using local files instead.\n".repeat(30)
+                            } else {
+                                "Work continues.\nUsing local files instead.".to_string()
+                            }),
+                        ),
+                        cx,
+                    )
+                    .expect("notice should be accepted");
+            }
+        });
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        cx.run_until_parked();
+
+        let notices = cx
+            .debug_bounds("session-notices")
+            .expect("notices received before mounting the view should render");
+        let max_height = cx.update(|window, _| rems_from_px(192_f32).to_pixels(window.rem_size()));
+        assert!(notices.size.height <= max_height);
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: notices.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-10_000.))),
+            modifiers: gpui::Modifiers::default(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+
+        let dismiss = cx
+            .debug_bounds("dismiss-session-notice-7")
+            .expect("the final notice should be reachable by scrolling");
+        assert!(dismiss.center().y >= notices.top());
+        assert!(dismiss.center().y < notices.bottom());
+        cx.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.notices().len(), 7);
+            assert!(thread.notices().iter().all(|(id, _)| *id != 7));
+        });
+
+        let editor = message_editor(&conversation_view, cx);
+        for expanded in [false, true] {
+            if expanded {
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .handle_session_update(
+                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                                "Work is continuing.".into(),
+                            )),
+                            cx,
+                        )
+                        .expect("message should be accepted");
+                });
+                active_thread(&conversation_view, cx)
+                    .update(cx, |view, cx| view.set_editor_is_expanded(true, cx));
+            }
+            editor.update_in(cx, |editor, window, cx| editor.set_text("", window, cx));
+            cx.run_until_parked();
+            let editor_bounds = editor.read_with(cx, |editor, cx| {
+                *editor
+                    .editor()
+                    .read(cx)
+                    .last_bounds()
+                    .expect("the composer should be laid out")
+            });
+            let viewport_size = cx.update(|window, _| window.viewport_size());
+            assert!(editor_bounds.size.height > px(20.));
+            assert!(editor_bounds.top() >= px(0.));
+            assert!(editor_bounds.bottom() <= viewport_size.height);
+            assert!(editor_bounds.left() >= px(0.));
+            assert!(editor_bounds.right() <= viewport_size.width);
+            cx.simulate_click(editor_bounds.center(), gpui::Modifiers::default());
+            cx.simulate_keystrokes("c o n t i n u e");
+            assert_eq!(editor.update(cx, |editor, cx| editor.text(cx)), "continue");
+        }
     }
 
     #[gpui::test]
