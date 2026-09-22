@@ -233,6 +233,7 @@ function DownloadAMDGpuServices {
 }
 
 function DownloadConpty {
+    # TODO: Switch back to the stable channel once Microsoft finally decides to publish v1.26
     $url = "https://github.com/microsoft/terminal/releases/download/v1.25.1912.0/Microsoft.Windows.Console.ConPTY.1.25.260710002-preview.nupkg"
     $zipPath = ".\Microsoft.Windows.Console.ConPTY.1.25.260710002-preview.nupkg"
     Invoke-WebRequest -Uri $url -OutFile $zipPath

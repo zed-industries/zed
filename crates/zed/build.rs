@@ -102,6 +102,7 @@ fn main() {
             let conpty_dll_target = target_dir.join("conpty.dll");
             let open_console_target = target_dir.join("OpenConsole.exe");
 
+            // TODO: Switch back to the stable channel once Microsoft finally decides to publish v1.26
             let conpty_url = "https://github.com/microsoft/terminal/releases/download/v1.25.1912.0/Microsoft.Windows.Console.ConPTY.1.25.260710002-preview.nupkg";
             let nupkg_path = out_dir.join("conpty.nupkg.zip");
             let extract_dir = out_dir.join("conpty");
