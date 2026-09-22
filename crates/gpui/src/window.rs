@@ -6,8 +6,8 @@ use crate::Inspector;
 use crate::profiler;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
-    Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    AsyncWindowContext, AtlasTile, AvailableSpace, Axis, Background, BorderStyle, Bounds,
+    BoxShadow, Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
@@ -16,13 +16,14 @@ use crate::{
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
     Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, ScrollWheelEvent, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1198,6 +1199,15 @@ pub struct Window {
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
     default_prevented: bool,
+    /// Which input-delta axes and destination scroll axes have already been consumed by a
+    /// scrollable element for the current wheel event.
+    ///
+    /// Scroll-wheel callbacks still bubble normally. This only prevents a scrollable
+    /// ancestor from applying the same input axis, or scrolling the same destination axis, a
+    /// second time. Tracking both matters because single-axis containers may map a delta from the
+    /// other input axis.
+    default_scroll_delta_consumption: DefaultScrollDeltaConsumption,
+    scroll_container_stack: SmallVec<[HitboxId; 8]>,
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
@@ -1243,6 +1253,41 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     pub(crate) a11y: A11y,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ConsumedAxes {
+    horizontal: bool,
+    vertical: bool,
+}
+
+impl ConsumedAxes {
+    fn is_consumed(self, axis: Axis) -> bool {
+        match axis {
+            Axis::Horizontal => self.horizontal,
+            Axis::Vertical => self.vertical,
+        }
+    }
+
+    fn consume(&mut self, axis: Axis) {
+        match axis {
+            Axis::Horizontal => self.horizontal = true,
+            Axis::Vertical => self.vertical = true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct DefaultScrollDeltaConsumption {
+    input: ConsumedAxes,
+    scroll: ConsumedAxes,
+    chain: Option<SmallVec<[HitboxId; 8]>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DefaultScrollContainer {
+    hitbox_id: HitboxId,
+    chain: SmallVec<[HitboxId; 8]>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2054,6 +2099,8 @@ impl Window {
             focus_lost_listeners: SubscriberSet::new(),
             focus_lost_path: SmallVec::new(),
             default_prevented: true,
+            default_scroll_delta_consumption: DefaultScrollDeltaConsumption::default(),
+            scroll_container_stack: SmallVec::new(),
             mouse_position,
             mouse_hit_test: HitTest::default(),
             modifiers,
@@ -5750,6 +5797,10 @@ impl Window {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        if event.is::<ScrollWheelEvent>() {
+            self.default_scroll_delta_consumption = DefaultScrollDeltaConsumption::default();
+        }
+
         let hit_test = self.rendered_frame.hit_test(self.mouse_position());
         if hit_test != self.mouse_hit_test {
             self.mouse_hit_test = hit_test;
@@ -5804,6 +5855,58 @@ impl Window {
         // Auto-release pointer capture on mouse up
         if event.is::<MouseUpEvent>() && self.captured_hitbox.is_some() {
             self.captured_hitbox = None;
+        }
+    }
+
+    pub(crate) fn default_scroll_input_consumed(&self, axis: Axis) -> bool {
+        self.default_scroll_delta_consumption
+            .input
+            .is_consumed(axis)
+    }
+
+    pub(crate) fn default_scroll_axis_consumed(&self, axis: Axis) -> bool {
+        self.default_scroll_delta_consumption
+            .scroll
+            .is_consumed(axis)
+    }
+
+    pub(crate) fn consume_default_scroll_delta(&mut self, input_axis: Axis, scroll_axis: Axis) {
+        self.default_scroll_delta_consumption
+            .input
+            .consume(input_axis);
+        self.default_scroll_delta_consumption
+            .scroll
+            .consume(scroll_axis);
+    }
+
+    pub(crate) fn default_scroll_container(&self, hitbox_id: HitboxId) -> DefaultScrollContainer {
+        let mut chain = SmallVec::with_capacity(self.scroll_container_stack.len() + 1);
+        chain.push(hitbox_id);
+        chain.extend(self.scroll_container_stack.iter().rev().copied());
+        DefaultScrollContainer { hitbox_id, chain }
+    }
+
+    pub(crate) fn with_scroll_container<R>(
+        &mut self,
+        hitbox_id: HitboxId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.scroll_container_stack.push(hitbox_id);
+        let result = f(self);
+        let popped = self.scroll_container_stack.pop();
+        debug_assert_eq!(popped, Some(hitbox_id));
+        result
+    }
+
+    pub(crate) fn default_scroll_container_should_handle(
+        &mut self,
+        container: &DefaultScrollContainer,
+    ) -> bool {
+        if let Some(chain) = &self.default_scroll_delta_consumption.chain {
+            chain.contains(&container.hitbox_id)
+        } else {
+            self.default_scroll_delta_consumption.chain = Some(container.chain.clone());
+            true
         }
     }
 

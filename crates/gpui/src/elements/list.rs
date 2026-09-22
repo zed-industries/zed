@@ -8,10 +8,10 @@
 //! If all of your elements are the same height, see [`crate::UniformList`] for a simpler API
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    AnyElement, App, AvailableSpace, Axis, Bounds, ContentMask, DispatchPhase, Edges, Element,
+    EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    IntoElement, Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style,
+    StyleRefinement, Styled, Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -903,19 +903,18 @@ impl StateInner {
         current_view: EntityId,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> bool {
         // Drop scroll events after a reset, since we can't calculate
         // the new logical scroll top without the item heights
         if self.reset {
-            return;
+            return false;
         }
 
         let padding = self.last_padding.unwrap_or_default();
         let scroll_max =
             (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
-        let new_scroll_top = (self.scroll_top(scroll_top) - delta.y)
-            .max(px(0.))
-            .min(scroll_max);
+        let old_scroll_top = self.scroll_top(scroll_top);
+        let new_scroll_top = (old_scroll_top - delta.y).max(px(0.)).min(scroll_max);
 
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.pending_scroll = None;
@@ -957,6 +956,7 @@ impl StateInner {
         }
 
         cx.notify(current_view);
+        new_scroll_top != old_scroll_top
     }
 
     fn logical_scroll_top(&self) -> ListOffset {
@@ -1597,26 +1597,37 @@ impl Element for List {
         let height = bounds.size.height;
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
+        let scroll_container = window.default_scroll_container(hitbox_id);
         let mut accumulated_scroll_delta = ScrollDelta::default();
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
+            if phase == DispatchPhase::Bubble
+                && hitbox_id.should_handle_scroll(window)
+                && window.default_scroll_container_should_handle(&scroll_container)
+                && !window.default_scroll_input_consumed(Axis::Vertical)
+                && !window.default_scroll_axis_consumed(Axis::Vertical)
+            {
                 accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
                 let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
-                list_state.0.borrow_mut().scroll(
+                let consumed = list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
                     pixel_delta,
                     current_view,
                     window,
                     cx,
-                )
+                );
+                if consumed {
+                    window.consume_default_scroll_delta(Axis::Vertical, Axis::Vertical);
+                }
             }
         });
 
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            for item in &mut prepaint.layout.item_layouts {
-                item.element.paint(window, cx);
-            }
+        window.with_scroll_container(hitbox_id, |window| {
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                for item in &mut prepaint.layout.item_layouts {
+                    item.element.paint(window, cx);
+                }
+            });
         });
     }
 }
@@ -1725,8 +1736,8 @@ mod test {
 
     use crate::{
         self as gpui, AppContext, Bounds, Context, Element, FollowMode, InteractiveElement,
-        IntoElement, ListState, Render, Styled, TestAppContext, Window, canvas, div, list, point,
-        px, size,
+        IntoElement, ListState, ParentElement, Render, ScrollHandle, StatefulInteractiveElement,
+        Styled, TestAppContext, Window, canvas, div, list, point, px, size,
     };
 
     #[gpui::test]
@@ -1922,6 +1933,79 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn nested_list_scrolls_before_its_parent(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let list_state = ListState::new(20, crate::ListAlignment::Top, px(20.));
+        let outer_scroll = ScrollHandle::new();
+
+        struct TestView {
+            list_state: ListState,
+            outer_scroll: ScrollHandle,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("outer-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.outer_scroll)
+                    .child(
+                        div().w_full().h(px(300.)).flex_none().child(
+                            list(self.list_state.clone(), |_, _, _| {
+                                div().w_full().h(px(20.)).into_any()
+                            })
+                            .w_full()
+                            .h(px(50.)),
+                        ),
+                    )
+            }
+        }
+
+        let view = cx.update(|_, cx| {
+            cx.new(|_| TestView {
+                list_state: list_state.clone(),
+                outer_scroll: outer_scroll.clone(),
+            })
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        draw(cx);
+
+        let scroll = |cx: &mut gpui::VisualTestContext, delta_y| {
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(px(10.), px(10.)),
+                delta: ScrollDelta::Pixels(point(px(0.), delta_y)),
+                ..Default::default()
+            });
+        };
+
+        scroll(cx, px(-20.));
+        assert_eq!(list_state.logical_scroll_top().item_ix, 1);
+        assert_eq!(outer_scroll.offset().y, px(0.));
+        draw(cx);
+
+        list_state.scroll_to_end();
+        draw(cx);
+
+        let list_offset_at_end = list_state.logical_scroll_top();
+        scroll(cx, px(-20.));
+        let list_offset_after_boundary_scroll = list_state.logical_scroll_top();
+        assert_eq!(
+            list_offset_after_boundary_scroll.item_ix,
+            list_offset_at_end.item_ix
+        );
+        assert_eq!(
+            list_offset_after_boundary_scroll.offset_in_item,
+            list_offset_at_end.offset_in_item
+        );
+        assert_eq!(outer_scroll.offset().y, px(-20.));
     }
 
     struct TestListView(ListState);
