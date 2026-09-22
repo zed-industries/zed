@@ -16,7 +16,7 @@ use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{
     Proxy,
-    protocol::{wl_callback, wl_output, wl_seat, wl_surface},
+    protocol::{wl_callback, wl_output, wl_region, wl_seat, wl_surface},
 };
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
@@ -2323,6 +2323,61 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
     }
 }
 
+fn add_rounded_rect(region: &wl_region::WlRegion, area: Bounds<i32>, radius: i32) {
+    if area.size.width <= 0 || area.size.height <= 0 {
+        return;
+    }
+
+    let radius = radius
+        .max(0)
+        .min(area.size.width / 2)
+        .min(area.size.height / 2);
+
+    if radius == 0 {
+        region.add(
+            area.origin.x,
+            area.origin.y,
+            area.size.width,
+            area.size.height,
+        );
+        return;
+    }
+
+    let radius_squared = f64::from(radius).powi(2);
+
+    for row in 0..radius {
+        let y = f64::from(radius) - (f64::from(row) + 0.5);
+        let x = (radius_squared - y * y).sqrt();
+        let inset = (f64::from(radius) - x - 0.5).ceil() as i32;
+
+        let width = area.size.width - 2 * inset;
+        if width <= 0 {
+            continue;
+        }
+
+        // Add the scanline for the top pair of rounded corners.
+        region.add(area.origin.x + inset, area.origin.y + row, width, 1);
+
+        // Mirror the scanline vertically for the bottom pair of rounded corners.
+        region.add(
+            area.origin.x + inset,
+            area.origin.y + area.size.height - row - 1,
+            width,
+            1,
+        );
+    }
+
+    let height = area.size.height - radius * 2;
+    if height > 0 {
+        region.add(
+            area.origin.x,
+            area.origin.y + radius,
+            area.size.width,
+            height,
+        );
+    }
+}
+
 fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
@@ -2335,8 +2390,8 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         state.inset(),
         state.tiling,
     )
-    .map(|v| f32::from(v) as i32)
-    .map_size(|v| v.max(0));
+    .map(|value| i32::from(value))
+    .map_size(|value| value.max(0));
 
     let region = state
         .globals
@@ -2378,11 +2433,10 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
                 state.background_effects = Some(background_effects);
             }
 
-            region.add(
-                area.origin.x,
-                area.origin.y,
-                area.size.width,
-                area.size.height,
+            add_rounded_rect(
+                &region,
+                area,
+                i32::from(theme::CLIENT_SIDE_DECORATION_ROUNDING),
             );
 
             state
