@@ -10691,7 +10691,7 @@ impl ThreadView {
             .and_then(|thread| {
                 let thread = thread.read(cx);
                 let model = thread.model()?;
-                Some(SharedString::from(model.name().0))
+                Some(model.name().0)
             });
         let thread_title = thread
             .as_ref()
