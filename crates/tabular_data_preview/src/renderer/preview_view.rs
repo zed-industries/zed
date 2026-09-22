@@ -6,6 +6,14 @@ use crate::TabularDataPreviewPane;
 
 use super::settings::settings_popover_menu;
 
+impl TabularDataPreviewPane {
+    fn is_ready_to_render_content(&self) -> bool {
+        !self.is_parsing
+            && self.parse_error.is_none()
+            && (self.engine.contents.number_of_cols > 0 || !self.engine.contents.rows.is_empty())
+    }
+}
+
 impl Render for TabularDataPreviewPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -25,11 +33,7 @@ impl Render for TabularDataPreviewPane {
             .track_focus(&self.focus_handle)
             .child({
                 let is_parsing = self.is_parsing;
-                if is_parsing
-                    || self.parse_error.is_some()
-                    || (self.engine.contents.number_of_cols == 0
-                        && self.engine.contents.rows.is_empty())
-                {
+                if !self.is_ready_to_render_content() {
                     v_flex()
                         .size_full()
                         .child(

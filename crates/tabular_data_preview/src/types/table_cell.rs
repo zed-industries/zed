@@ -20,6 +20,7 @@ pub enum TableCell {
         /// Cached display value (for performance)
         cached_value: SharedString,
     },
+    /// Display text without a source span, used for generated column headings.
     Generated(SharedString),
     /// Virtual cell, created to pad malformed row
     Virtual,
