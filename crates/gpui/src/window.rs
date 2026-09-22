@@ -983,6 +983,8 @@ pub(crate) struct Frame {
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
+    /// Atlas entries used by each paint range, including ranges replayed from cached views.
+    painted_images: Vec<RenderImageParams>,
     pub(crate) hitboxes: Vec<Hitbox>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
@@ -1013,6 +1015,7 @@ pub(crate) struct PrepaintStateIndex {
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     scene_index: usize,
+    painted_images_index: usize,
     #[cfg(any(test, feature = "test-support"))]
     debug_bounds_index: usize,
     mouse_listeners_index: usize,
@@ -1039,6 +1042,7 @@ impl Frame {
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
+            painted_images: Vec::new(),
             hitboxes: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
@@ -1066,6 +1070,7 @@ impl Frame {
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
+        self.painted_images.clear();
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
@@ -1163,6 +1168,7 @@ pub struct Window {
     is_resizable: bool,
     is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    pending_image_removals: FxHashSet<RenderImageParams>,
     text_system: Arc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     rem_size: Pixels,
@@ -2027,6 +2033,7 @@ impl Window {
             is_resizable,
             is_minimizable,
             sprite_atlas,
+            pending_image_removals: FxHashSet::default(),
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
             rem_size: px(16.),
@@ -3354,6 +3361,7 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        self.remove_unused_images();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
         let mut focus_before_listeners = self.focus;
@@ -3873,6 +3881,7 @@ impl Window {
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
+            painted_images_index: self.next_frame.painted_images.len(),
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index: self.next_frame.debug_bounds_records.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
@@ -3924,6 +3933,10 @@ impl Window {
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.next_frame.painted_images.extend_from_slice(
+            &self.rendered_frame.painted_images
+                [range.start.painted_images_index..range.end.painted_images_index],
+        );
         self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
@@ -4902,7 +4915,7 @@ impl Window {
 
         let tile = self
             .sprite_atlas
-            .get_or_insert_with(params.into(), &mut || {
+            .get_or_insert_with(params.clone().into(), &mut || {
                 Ok(Some((
                     data.size(frame_index),
                     Cow::Borrowed(
@@ -4912,6 +4925,7 @@ impl Window {
                 )))
             })?
             .expect("Callback above only returns Some");
+        self.next_frame.painted_images.push(params);
 
         let visible_bounds_snapped = self.snap_bounds(visible_bounds);
 
@@ -4993,7 +5007,11 @@ impl Window {
         });
     }
 
-    /// Removes an image from the sprite atlas.
+    /// Removes an image once no presentable frame uses its atlas entries.
+    ///
+    /// Entries referenced by the current or in-progress frame remain valid through
+    /// presentation and cached paint replay. They are freed when a later frame
+    /// stops using them.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
         for frame_index in 0..data.frame_count() {
             let params = RenderImageParams {
@@ -5001,10 +5019,37 @@ impl Window {
                 frame_index,
             };
 
-            self.sprite_atlas.remove(&params.clone().into());
+            if self.rendered_frame.painted_images.contains(&params)
+                || self.next_frame.painted_images.contains(&params)
+            {
+                self.pending_image_removals.insert(params);
+            } else {
+                self.sprite_atlas.remove(&params.into());
+            }
         }
 
         Ok(())
+    }
+
+    fn remove_unused_images(&mut self) {
+        if self.pending_image_removals.is_empty() {
+            return;
+        }
+
+        let painted_images: FxHashSet<_> = self
+            .rendered_frame
+            .painted_images
+            .iter()
+            .chain(&self.next_frame.painted_images)
+            .collect();
+        self.pending_image_removals.retain(|params| {
+            if painted_images.contains(params) {
+                true
+            } else {
+                self.sprite_atlas.remove(&params.clone().into());
+                false
+            }
+        });
     }
 
     /// Returns whether every frame of an image is present in the sprite atlas.
@@ -7640,6 +7685,7 @@ mod tests {
         cell::{Cell, RefCell},
         path::PathBuf,
         rc::Rc,
+        sync::Arc,
         time::Duration,
     };
 
@@ -7648,11 +7694,145 @@ mod tests {
         DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent,
         FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent,
         Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
-        Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
+        Pixels, PlatformInput, Point, Render, RenderImage, RequestFrameOptions, ScaledPixels,
         StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
         TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
         canvas, div, hsla, point, px, size,
     };
+
+    #[gpui::test]
+    fn dropped_images_remain_live_in_cached_frames(cx: &mut TestAppContext) {
+        let image = atlas_test_image();
+        let paints = Rc::new(Cell::new(0));
+        let windows = [(); 2].map(|_| {
+            cx.add_window(|_, cx| AtlasImageRoot {
+                children: vec![cx.new(|_| AtlasImageView {
+                    image: image.clone(),
+                    paints: paints.clone(),
+                    drop_during_paint: false,
+                })],
+            })
+        });
+        for handle in windows {
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                assert_eq!(window.rendered_frame.scene.polychrome_sprites.len(), 1);
+                assert!(window.has_image_atlas_entry(&image));
+            })
+            .expect("paint image");
+        }
+        let initial_paints = paints.get();
+
+        cx.update(|cx| cx.drop_image(image.clone(), None));
+        for handle in windows {
+            cx.update_window(handle.into(), |_, window, cx| {
+                assert!(
+                    window.has_image_atlas_entry(&image),
+                    "the currently presentable frame still needs the image"
+                );
+                window.present();
+                window.draw(cx).clear(cx);
+                assert_eq!(window.rendered_frame.scene.polychrome_sprites.len(), 1);
+                assert!(window.has_image_atlas_entry(&image));
+                window.present();
+            })
+            .expect("replay cached image");
+        }
+        assert_eq!(paints.get(), initial_paints, "reuse cached paint");
+
+        for (index, handle) in windows.into_iter().enumerate() {
+            handle
+                .update(cx, |root, _, cx| {
+                    root.children.clear();
+                    cx.notify();
+                })
+                .expect("remove image view");
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(window.rendered_frame.scene.polychrome_sprites.is_empty());
+                assert!(
+                    !window.has_image_atlas_entry(&image),
+                    "retire the image once this window stops drawing it"
+                );
+            })
+            .expect("draw without image");
+            if index == 0 {
+                cx.update_window(windows[1].into(), |_, window, _| {
+                    assert!(
+                        window.has_image_atlas_entry(&image),
+                        "the other window still needs its texture"
+                    );
+                })
+                .expect("check other window");
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn image_removal_tracks_partial_cached_paint_replay(cx: &mut TestAppContext) {
+        let images = [atlas_test_image(), atlas_test_image()];
+        let paints = Rc::new(Cell::new(0));
+        let handle = cx.add_window(|_, cx| AtlasImageRoot {
+            children: images
+                .iter()
+                .map(|image| {
+                    cx.new(|_| AtlasImageView {
+                        image: image.clone(),
+                        paints: paints.clone(),
+                        drop_during_paint: false,
+                    })
+                })
+                .collect(),
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(window.rendered_frame.scene.polychrome_sprites.len(), 2);
+            for image in &images {
+                window.drop_image(image.clone()).expect("queue removal");
+            }
+        })
+        .expect("paint both images");
+        let initial_paints = paints.get();
+
+        handle
+            .update(cx, |root, _, cx| {
+                root.children.pop();
+                cx.notify();
+            })
+            .expect("remove second image");
+        cx.update_window(handle.into(), |_, window, cx| {
+            for _ in 0..2 {
+                window.draw(cx).clear(cx);
+                assert_eq!(window.rendered_frame.scene.polychrome_sprites.len(), 1);
+                assert!(window.has_image_atlas_entry(&images[0]));
+                assert!(!window.has_image_atlas_entry(&images[1]));
+            }
+        })
+        .expect("replay only the remaining image");
+        assert_eq!(paints.get(), initial_paints, "reuse the sibling's paint");
+    }
+
+    #[gpui::test]
+    fn images_dropped_during_paint_survive_presentation(cx: &mut TestAppContext) {
+        let image = atlas_test_image();
+        let handle = cx.add_window(|_, cx| AtlasImageRoot {
+            children: vec![cx.new(|_| AtlasImageView {
+                image: image.clone(),
+                paints: Rc::new(Cell::new(0)),
+                drop_during_paint: true,
+            })],
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(window.rendered_frame.scene.polychrome_sprites.len(), 1);
+            assert!(
+                window.has_image_atlas_entry(&image),
+                "cleanup during paint must not invalidate the frame being built"
+            );
+            window.present();
+        })
+        .expect("present image removed during paint");
+    }
 
     /// Visibility transitions reach observers exactly once each, with the new
     /// state already stored on the window, and never wake the platform for a
@@ -7770,6 +7950,54 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    fn atlas_test_image() -> Arc<RenderImage> {
+        Arc::new(RenderImage::new(vec![image::Frame::new(
+            image::RgbaImage::from_pixel(16, 16, image::Rgba([255, 0, 0, 255])),
+        )]))
+    }
+
+    struct AtlasImageRoot {
+        children: Vec<crate::Entity<AtlasImageView>>,
+    }
+
+    impl Render for AtlasImageRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().children(
+                self.children
+                    .iter()
+                    .cloned()
+                    .map(|child| child.cached(crate::StyleRefinement::default().size(px(32.)))),
+            )
+        }
+    }
+
+    struct AtlasImageView {
+        image: Arc<RenderImage>,
+        paints: Rc<Cell<usize>>,
+        drop_during_paint: bool,
+    }
+
+    impl Render for AtlasImageView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let image = self.image.clone();
+            let paints = self.paints.clone();
+            let drop_during_paint = self.drop_during_paint;
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, cx| {
+                    paints.set(paints.get() + 1);
+                    window
+                        .paint_image(bounds, bounds, Default::default(), image.clone(), 0, false)
+                        .expect("paint image");
+                    if drop_during_paint {
+                        cx.drop_image(image, Some(window));
+                    }
+                },
+            )
+            .size(px(32.))
+        }
     }
 
     struct EmptyView;
