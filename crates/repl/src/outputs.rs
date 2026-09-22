@@ -201,8 +201,6 @@ impl Output {
                         CopyButton::new(("copy-output", v.entity_id()), "")
                             .tooltip_label("Copy Output")
                             .custom_on_click(move |window, cx| {
-                                cx.stop_propagation();
-
                                 if let Some(clipboard_item) = v.clipboard_content(window, cx) {
                                     cx.write_to_clipboard(clipboard_item);
                                 }
