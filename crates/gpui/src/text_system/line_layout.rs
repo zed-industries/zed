@@ -1,5 +1,6 @@
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
 use collections::FxHashMap;
+use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
@@ -205,7 +206,7 @@ impl LineLayout {
             glyph_ix: 0,
         };
         let mut last_boundary_x = px(0.);
-        let mut prev_ch = '\0';
+        let break_indices: Vec<_> = LineWrapper::break_indices(text).collect();
         let mut glyphs = self
             .runs
             .iter()
@@ -215,37 +216,30 @@ impl LineLayout {
                     let character = text[glyph.index..].chars().next().unwrap();
                     (
                         WrapBoundary { run_ix, glyph_ix },
+                        glyph.index,
                         character,
                         glyph.position.x,
                     )
                 })
             })
+            .dedup_by(|(_, previous_index, ..), (_, index, ..)| previous_index == index)
             .peekable();
 
-        while let Some((boundary, ch, x)) = glyphs.next() {
+        while let Some((boundary, index, ch, x)) = glyphs.next() {
             if ch == '\n' {
                 continue;
             }
 
-            // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
-            // but there are some differences, so we have to duplicate the code here.
-            if LineWrapper::is_word_char(ch) {
-                if prev_ch == ' ' && ch != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(boundary);
-                    last_candidate_x = x;
-                }
-            } else {
-                if ch != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(boundary);
-                    last_candidate_x = x;
-                }
+            if break_indices.binary_search(&index).is_ok() && first_non_whitespace_ix.is_some() {
+                last_candidate_ix = Some(boundary);
+                last_candidate_x = x;
             }
 
             if ch != ' ' && first_non_whitespace_ix.is_none() {
                 first_non_whitespace_ix = Some(boundary);
             }
 
-            let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
+            let next_x = glyphs.peek().map_or(self.width, |(_, _, _, x)| *x);
             let width = next_x - last_boundary_x;
 
             if width > wrap_width && boundary > last_boundary {
@@ -265,7 +259,6 @@ impl LineLayout {
                 }
                 boundaries.push(last_boundary);
             }
-            prev_ch = ch;
         }
 
         boundaries
@@ -1102,6 +1095,36 @@ mod tests {
             .iter()
             .map(|g| f32::from(g.position.x))
             .collect()
+    }
+
+    #[test]
+    fn test_wrap_preserves_shaped_clusters() {
+        let mut layout = make_layout(vec![
+            glyph_at(0., 0),
+            glyph_at(5., 0),
+            glyph_at(10., 3),
+            glyph_at(15., 3),
+        ]);
+        layout.width = px(20.);
+        layout.len = "你好".len();
+        assert_eq!(
+            layout
+                .compute_wrap_boundaries("你好", px(15.), None)
+                .as_slice(),
+            &[WrapBoundary {
+                run_ix: 0,
+                glyph_ix: 2
+            }],
+        );
+
+        let mut layout = make_layout(vec![glyph_at(0., 0), glyph_at(10., 0)]);
+        layout.width = px(20.);
+        layout.len = 1;
+        assert!(
+            layout
+                .compute_wrap_boundaries("a", px(10.), None)
+                .is_empty()
+        );
     }
 
     #[test]

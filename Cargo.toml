@@ -640,6 +640,7 @@ http = "1.1"
 http-body = "1.0"
 httparse = "1.10"
 human_bytes = "0.4.1"
+icu_segmenter = { version = "2.3.0", default-features = false, features = ["compiled_data"] }
 idna = "1.0"
 ignore = "0.4.22"
 # image's default features minus "avif", which only adds an encoder (rav1e);
