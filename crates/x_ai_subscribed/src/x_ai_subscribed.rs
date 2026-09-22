@@ -241,6 +241,7 @@ impl State {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SuperGrokModel {
+    Grok47,
     Grok46,
     Grok45,
     GrokBuild01,
@@ -248,11 +249,12 @@ pub enum SuperGrokModel {
 
 impl SuperGrokModel {
     pub fn all() -> Vec<Self> {
-        vec![Self::Grok46, Self::Grok45, Self::GrokBuild01]
+        vec![Self::Grok47, Self::Grok46, Self::Grok45, Self::GrokBuild01]
     }
 
     fn x_ai_model(&self) -> Option<x_ai::Model> {
         match self {
+            Self::Grok47 => Some(x_ai::Model::Grok47),
             Self::Grok46 => Some(x_ai::Model::Grok46),
             Self::Grok45 => Some(x_ai::Model::Grok45),
             // grok-build-0.1 is SuperGrok-only; it is not in the BYOK catalog.
@@ -262,6 +264,7 @@ impl SuperGrokModel {
 
     pub fn id(&self) -> &str {
         match self {
+            Self::Grok47 => "grok-4.7",
             Self::Grok46 => "grok-4.6",
             Self::Grok45 => "grok-4.5",
             Self::GrokBuild01 => "grok-build-0.1",
@@ -270,6 +273,7 @@ impl SuperGrokModel {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::Grok47 => "Grok 4.7",
             Self::Grok46 => "Grok 4.6",
             Self::Grok45 => "Grok 4.5",
             Self::GrokBuild01 => "Grok Build 0.1",
@@ -340,15 +344,15 @@ struct SuperGrokLanguageModel {
 }
 
 fn advertised_reasoning_efforts(model: &SuperGrokModel) -> &'static [ReasoningEffort] {
-    // xAI rejects `reasoning_effort: "none"` on grok-4.5/4.6. Compact and title
-    // requests disable thinking, so we omit the field instead of sending none.
+    // xAI rejects `reasoning_effort: "none"` on grok-4.5 and newer. Compact and
+    // title requests disable thinking, so we omit the field instead of sending none.
     match model.x_ai_model() {
         Some(x_ai::Model::Grok45) => &[
             ReasoningEffort::Low,
             ReasoningEffort::Medium,
             ReasoningEffort::High,
         ],
-        Some(x_ai::Model::Grok46) => &[
+        Some(x_ai::Model::Grok46 | x_ai::Model::Grok47) => &[
             ReasoningEffort::Low,
             ReasoningEffort::Medium,
             ReasoningEffort::High,
@@ -360,7 +364,9 @@ fn advertised_reasoning_efforts(model: &SuperGrokModel) -> &'static [ReasoningEf
 
 fn default_thinking_reasoning_effort(model: &SuperGrokModel) -> Option<ReasoningEffort> {
     match model.x_ai_model() {
-        Some(x_ai::Model::Grok45 | x_ai::Model::Grok46) => Some(ReasoningEffort::High),
+        Some(x_ai::Model::Grok45 | x_ai::Model::Grok46 | x_ai::Model::Grok47) => {
+            Some(ReasoningEffort::High)
+        }
         _ => None,
     }
 }
@@ -967,49 +973,52 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
-    fn grok_46_supports_xhigh_and_defaults_to_high() {
-        let effort_levels = supported_thinking_effort_levels(&SuperGrokModel::Grok46);
-        let values = effort_levels
-            .iter()
-            .map(|level| level.value.as_ref())
-            .collect::<Vec<_>>();
-
-        assert_eq!(values, ["low", "medium", "high", "xhigh"]);
-        assert_eq!(
-            effort_levels
+    fn grok_47_and_46_supports_xhigh_and_defaults_to_high() {
+        for model in [SuperGrokModel::Grok46, SuperGrokModel::Grok47] {
+            let effort_levels = supported_thinking_effort_levels(&model);
+            let values = effort_levels
                 .iter()
-                .find(|level| level.is_default)
-                .map(|level| level.value.as_ref()),
-            Some("high")
-        );
+                .map(|level| level.value.as_ref())
+                .collect::<Vec<_>>();
+
+            assert_eq!(values, ["low", "medium", "high", "xhigh"]);
+            assert_eq!(
+                effort_levels
+                    .iter()
+                    .find(|level| level.is_default)
+                    .map(|level| level.value.as_ref()),
+                Some("high")
+            );
+        }
     }
 
     #[test]
-    fn grok_46_request_uses_selected_reasoning_effort() {
+    fn grok_47_and_46_request_uses_selected_reasoning_effort() {
         let request = LanguageModelRequest {
             thinking_allowed: true,
             thinking_effort: Some("xhigh".to_string()),
             ..Default::default()
         };
 
-        assert_eq!(
-            reasoning_effort_for_request(&request, &SuperGrokModel::Grok46),
-            Some(ReasoningEffort::XHigh)
-        );
+        for model in [SuperGrokModel::Grok46, SuperGrokModel::Grok47] {
+            assert_eq!(
+                reasoning_effort_for_request(&request, &model),
+                Some(ReasoningEffort::XHigh)
+            );
+        }
     }
 
     #[test]
-    fn grok_46_omits_reasoning_effort_when_thinking_is_disabled() {
+    fn grok_47_and_46_omits_reasoning_effort_when_thinking_is_disabled() {
         let request = LanguageModelRequest {
             thinking_allowed: false,
             thinking_effort: Some("medium".to_string()),
             ..Default::default()
         };
 
-        assert_eq!(
-            reasoning_effort_for_request(&request, &SuperGrokModel::Grok46),
-            None
-        );
+        for model in [SuperGrokModel::Grok46, SuperGrokModel::Grok47] {
+            assert_eq!(reasoning_effort_for_request(&request, &model), None);
+        }
     }
 
     #[test]
@@ -1044,7 +1053,8 @@ mod tests {
     }
 
     #[test]
-    fn grok_46_and_45_omit_max_output_tokens() {
+    fn grok_47_and_46_and_45_omit_max_output_tokens() {
+        assert_eq!(SuperGrokModel::Grok47.max_output_tokens(), None);
         assert_eq!(SuperGrokModel::Grok46.max_output_tokens(), None);
         assert_eq!(SuperGrokModel::Grok45.max_output_tokens(), None);
         assert_eq!(

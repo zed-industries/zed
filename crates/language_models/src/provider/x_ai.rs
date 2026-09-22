@@ -271,7 +271,7 @@ fn x_ai_reasoning_efforts(model: &x_ai::Model) -> &'static [open_ai::ReasoningEf
             open_ai::ReasoningEffort::Medium,
             open_ai::ReasoningEffort::High,
         ],
-        x_ai::Model::Grok46 => &[
+        x_ai::Model::Grok46 | x_ai::Model::Grok47 => &[
             open_ai::ReasoningEffort::Low,
             open_ai::ReasoningEffort::Medium,
             open_ai::ReasoningEffort::High,
@@ -284,7 +284,9 @@ fn x_ai_reasoning_efforts(model: &x_ai::Model) -> &'static [open_ai::ReasoningEf
 fn default_thinking_reasoning_effort(model: &x_ai::Model) -> Option<open_ai::ReasoningEffort> {
     match model {
         x_ai::Model::Grok43 => Some(open_ai::ReasoningEffort::Low),
-        x_ai::Model::Grok45 | x_ai::Model::Grok46 => Some(open_ai::ReasoningEffort::High),
+        x_ai::Model::Grok45 | x_ai::Model::Grok46 | x_ai::Model::Grok47 => {
+            Some(open_ai::ReasoningEffort::High)
+        }
         _ => None,
     }
 }
