@@ -11544,6 +11544,63 @@ impl Editor {
         }
     }
 
+    /// Returns one anchor per breadcrumb segment, aligned 1:1 with the segments
+    /// from `breadcrumbs()`. The root file-path segment maps to `None`;
+    /// outline symbols map to `Some(text_anchor)` at their selection/range start.
+    pub(crate) fn breadcrumb_symbol_anchors(&self, cx: &App) -> Vec<Option<language::Anchor>> {
+        let multi_buffer = self.buffer().read(cx);
+        let mut anchors = Vec::new();
+        if multi_buffer.as_singleton().is_some() {
+            anchors.push(None);
+        }
+
+        if let Some((buffer_id, symbols)) = self.outline_symbols_at_cursor.as_ref()
+            && multi_buffer.buffer(*buffer_id).is_some()
+        {
+            anchors.extend(symbols.iter().map(|symbol| {
+                let anchor = if symbol.selection_range.start != Anchor::Min {
+                    symbol.selection_range.start
+                } else {
+                    symbol.range.start
+                };
+                anchor.raw_text_anchor()
+            }));
+        }
+
+        anchors
+    }
+
+    pub(crate) fn go_to_breadcrumb_symbol(
+        &mut self,
+        anchor: language::Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let multi_buffer = self.buffer.read(cx);
+        let snapshot = multi_buffer.snapshot(cx);
+
+        let Some(multi_buffer_anchor) = snapshot
+            .anchor_in_excerpt(anchor)
+            .or_else(|| snapshot.anchor_in_buffer(anchor))
+        else {
+            return;
+        };
+
+        let autoscroll = Autoscroll::for_go_to_definition(self.cursor_top_offset(cx), cx);
+        let offset = multi_buffer_anchor.to_offset(&snapshot);
+
+        self.change_selections(
+            SelectionEffects::scroll(autoscroll).nav_history(true),
+            window,
+            cx,
+            |selections| {
+                selections.select_ranges([offset..offset]);
+            },
+        );
+
+        window.focus(&self.focus_handle(cx), cx);
+    }
+
     fn disable_lsp_data(&mut self) {
         self.enable_lsp_data = false;
     }
