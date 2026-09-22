@@ -193,6 +193,19 @@ impl ScrollPhysics {
         }
     }
 
+    /// OpenHarmony scroll feel: ArkUI's API 12 friction motion uses the
+    /// default friction coefficient `0.75` and decays velocity according to
+    /// `v(t) = v₀ · exp(-4.2 · friction · t)` with `t` measured in seconds.
+    pub fn ohos() -> Self {
+        const DEFAULT_FRICTION: f32 = 0.75;
+        const FRICTION_SCALE: f32 = 4.2;
+        const MILLISECONDS_PER_SECOND: f32 = 1000.;
+
+        Self::Exponential {
+            decay_per_ms: (-FRICTION_SCALE * DEFAULT_FRICTION / MILLISECONDS_PER_SECOND).exp(),
+        }
+    }
+
     /// How long a fling released at `speed` pixels per second coasts before
     /// it stops.
     fn fling_duration(self, speed: f32) -> Duration {
@@ -1866,8 +1879,12 @@ mod tests {
     }
 
     #[test]
-    fn fling_curves_are_sane_for_both_physics() {
-        for physics in [ScrollPhysics::ios(), ScrollPhysics::android()] {
+    fn fling_curves_are_sane_for_all_physics() {
+        for physics in [
+            ScrollPhysics::ios(),
+            ScrollPhysics::android(),
+            ScrollPhysics::ohos(),
+        ] {
             let slow = physics.fling_duration(500.);
             let fast = physics.fling_duration(4000.);
             assert!(slow > Duration::ZERO, "{physics:?}");
@@ -1885,6 +1902,23 @@ mod tests {
                 "faster flings must travel further: {physics:?}"
             );
         }
+    }
+
+    #[test]
+    fn ohos_scroll_physics_matches_arkui_friction_motion() {
+        let ScrollPhysics::Exponential { decay_per_ms } = ScrollPhysics::ohos() else {
+            panic!("OHOS scrolling must use ArkUI's exponential friction model");
+        };
+
+        let expected_decay_per_ms = (-4.2_f32 * 0.75 / 1000.).exp();
+        assert!((decay_per_ms - expected_decay_per_ms).abs() < f32::EPSILON);
+
+        let speed = 4000.;
+        let elapsed = Duration::from_millis(250);
+        let expected_distance = speed / (4.2 * 0.75) * (1. - (-4.2_f32 * 0.75 * 0.25).exp());
+        assert!(
+            (ScrollPhysics::ohos().fling_distance(speed, elapsed) - expected_distance).abs() < 0.01
+        );
     }
 
     #[test]
