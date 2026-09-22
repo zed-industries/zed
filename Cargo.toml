@@ -518,7 +518,7 @@ accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.22"
 accesskit_windows = "0.34"
-agent-client-protocol = { version = "=2.1.0", features = ["unstable"] }
+agent-client-protocol = { version = "=2.2.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
@@ -1023,7 +1023,7 @@ webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev 
 # needs symlink support that Windows CI lacks). webrtc-sys is self-contained, so
 # per-crate scratch dirs are sufficient. Upstream issue:
 # https://github.com/dtolnay/cxx/issues/1752
-scratch = { path = "corgi-patches/scratch" }
+scratch = { path = "tooling/corgi/patches/scratch" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
