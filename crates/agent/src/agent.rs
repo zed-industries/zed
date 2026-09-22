@@ -3594,9 +3594,8 @@ impl TerminalHandle for AcpTerminalHandle {
     }
 
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
-        Ok(self
-            .terminal
-            .read_with(cx, |term, _cx| term.wait_for_exit()))
+        self.terminal
+            .read_with(cx, |term, _cx| term.wait_for_exit())
     }
 
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {

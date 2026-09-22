@@ -934,6 +934,12 @@ fn init_command_startup_marker_command(shell_kind: ShellKind, marker_id: u64) ->
 /// sender and receiver remain paired.
 pub struct TerminalMode(TerminalModeKind);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MouseInputMode {
+    ReportToTerminal,
+    LocalSelection,
+}
+
 enum TerminalModeKind {
     Interactive,
     InteractiveWithCompletion(Sender<Option<ExitStatus>>),
@@ -2476,13 +2482,15 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_mode(&self, shift: bool) -> bool {
-        self.last_content.mode.intersects(Modes::MOUSE_MODE) && !shift
+    pub fn mouse_mode(&self, shift: bool, mode: MouseInputMode) -> bool {
+        mode == MouseInputMode::ReportToTerminal
+            && self.last_content.mode.intersects(Modes::MOUSE_MODE)
+            && !shift
     }
 
-    pub fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
+    pub fn mouse_move(&mut self, e: &MouseMoveEvent, mode: MouseInputMode, cx: &mut Context<Self>) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
-        if self.mouse_mode(e.modifiers.shift) {
+        if self.mouse_mode(e.modifiers.shift, mode) {
             // A ctrl/cmd press on a link suppressed its button-press report in
             // `mouse_down`. Since the app never saw the press, we must swallow
             // the whole gesture rather than forward later motion/release
@@ -2580,10 +2588,11 @@ impl Terminal {
         &mut self,
         e: &MouseMoveEvent,
         region: Bounds<Pixels>,
+        mode: MouseInputMode,
         cx: &mut Context<Self>,
     ) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
-        if !self.mouse_mode(e.modifiers.shift) {
+        if !self.mouse_mode(e.modifiers.shift, mode) {
             if let Some(hyperlink) = &self.mouse_down_hyperlink {
                 let point = grid_point(
                     position,
@@ -2646,7 +2655,7 @@ impl Terminal {
         Some(scroll_lines.clamp(-3, 3))
     }
 
-    pub fn mouse_down(&mut self, e: &MouseDownEvent, cx: &mut Context<Self>) {
+    pub fn mouse_down(&mut self, e: &MouseDownEvent, mode: MouseInputMode, cx: &mut Context<Self>) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         let point = grid_point(
             position,
@@ -2657,7 +2666,7 @@ impl Terminal {
         if e.button == MouseButton::Left
             && e.modifiers.secondary()
             && (TerminalSettings::get_global(cx).open_links_in_mouse_mode
-                || !self.mouse_mode(e.modifiers.shift))
+                || !self.mouse_mode(e.modifiers.shift, mode))
         {
             self.mouse_down_hyperlink = self.find_hyperlink_at_point(point);
 
@@ -2666,7 +2675,7 @@ impl Terminal {
             }
         }
 
-        if self.mouse_mode(e.modifiers.shift) {
+        if self.mouse_mode(e.modifiers.shift, mode) {
             let bytes =
                 mouse_button_report(point, e.button, e.modifiers, true, self.last_content.mode);
 
@@ -2717,7 +2726,9 @@ impl Terminal {
                 }
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 MouseButton::Middle => {
-                    if let Some(item) = cx.read_from_primary() {
+                    if mode == MouseInputMode::ReportToTerminal
+                        && let Some(item) = cx.read_from_primary()
+                    {
                         let text = item.text().unwrap_or_default();
                         self.paste(&text);
                     }
@@ -2727,7 +2738,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(&mut self, e: &MouseUpEvent, cx: &Context<Self>) {
+    pub fn mouse_up(&mut self, e: &MouseUpEvent, mode: MouseInputMode, cx: &Context<Self>) {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
@@ -2750,7 +2761,7 @@ impl Terminal {
                 return;
             }
 
-            if self.mouse_mode(e.modifiers.shift) {
+            if self.mouse_mode(e.modifiers.shift, mode) {
                 self.selection_phase = SelectionPhase::Ended;
                 self.last_mouse = None;
                 self.mouse_down_position = None;
@@ -2758,7 +2769,7 @@ impl Terminal {
             }
         }
 
-        if self.mouse_mode(e.modifiers.shift) {
+        if self.mouse_mode(e.modifiers.shift, mode) {
             let point = grid_point(
                 position,
                 self.last_content.terminal_bounds,
@@ -2800,8 +2811,13 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, scroll_multiplier: f32) {
-        let mouse_mode = self.mouse_mode(e.shift);
+    pub fn scroll_wheel(
+        &mut self,
+        e: &ScrollWheelEvent,
+        scroll_multiplier: f32,
+        mode: MouseInputMode,
+    ) {
+        let mouse_mode = self.mouse_mode(e.shift, mode);
         let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
 
         if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier)
@@ -2820,10 +2836,11 @@ impl Terminal {
                         self.write_to_pty(scroll);
                     }
                 };
-            } else if self
-                .last_content
-                .mode
-                .contains(Modes::ALT_SCREEN | Modes::ALTERNATE_SCROLL)
+            } else if mode == MouseInputMode::ReportToTerminal
+                && self
+                    .last_content
+                    .mode
+                    .contains(Modes::ALT_SCREEN | Modes::ALTERNATE_SCROLL)
                 && !e.shift
             {
                 self.write_to_pty(alt_scroll(scroll_lines));
@@ -3580,7 +3597,8 @@ mod tests {
     };
     use collections::HashMap;
     use gpui::{
-        ClipboardItem, Entity, Pixels, TestAppContext, VisualTestContext, bounds, point, size,
+        ClipboardItem, Entity, Pixels, ScrollDelta, TestAppContext, VisualContext,
+        VisualTestContext, bounds, point, size,
     };
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
@@ -3927,7 +3945,7 @@ mod tests {
             click_count: 1,
             first_mouse: true,
         };
-        terminal.mouse_down(&mouse_down, cx);
+        terminal.mouse_down(&mouse_down, MouseInputMode::ReportToTerminal, cx);
     }
 
     fn left_mouse_up_at(
@@ -3941,7 +3959,7 @@ mod tests {
             modifiers: Modifiers::none(),
             click_count: 1,
         };
-        terminal.mouse_up(&mouse_up, cx);
+        terminal.mouse_up(&mouse_up, MouseInputMode::ReportToTerminal, cx);
     }
 
     fn left_mouse_drag_to(
@@ -3955,7 +3973,7 @@ mod tests {
             pressed_button: Some(MouseButton::Left),
             modifiers: Modifiers::none(),
         };
-        terminal.mouse_drag(&drag_event, region, cx);
+        terminal.mouse_drag(&drag_event, region, MouseInputMode::ReportToTerminal, cx);
     }
 
     /// A left click that jitters by a pixel or two (e.g. the window-focusing
@@ -4006,6 +4024,92 @@ mod tests {
         });
     }
 
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[gpui::test]
+    async fn test_local_selection_does_not_paste_primary_selection(cx: &mut TestAppContext) {
+        let terminal = init_terminal_test(cx, b"hello world\r\n");
+        terminal.update(cx, |terminal, cx| {
+            cx.write_to_primary(ClipboardItem::new_string("primary selection".into()));
+            let event = MouseDownEvent {
+                button: MouseButton::Middle,
+                position: point(px(50.), px(10.)),
+                modifiers: Modifiers::none(),
+                click_count: 1,
+                first_mouse: true,
+            };
+            terminal.mouse_down(&event, MouseInputMode::LocalSelection, cx);
+            assert!(terminal.take_input_log().is_empty());
+            assert!(terminal.take_pty_write_log().is_empty());
+
+            terminal.mouse_down(&event, MouseInputMode::ReportToTerminal, cx);
+            assert_eq!(
+                terminal.take_input_log(),
+                vec![b"primary selection".to_vec()]
+            );
+            assert_eq!(
+                terminal.take_pty_write_log(),
+                vec![b"primary selection".to_vec()]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_local_selection_scrolls_without_terminal_reports(cx: &mut TestAppContext) {
+        let mut output = Vec::new();
+        output.extend_from_slice(b"\x1b[?1002h\x1b[?1006h");
+        for line in 0..80 {
+            output.extend_from_slice(format!("scrollback line {line}\r\n").as_bytes());
+        }
+        let (terminal, cx) = init_terminal_test_with_window(cx, &output);
+        cx.run_until_parked();
+
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            terminal.sync(window, cx);
+            assert!(terminal.last_content.mode.intersects(Modes::MOUSE_MODE));
+            assert_eq!(display_offset(&terminal.term.lock()), 0);
+
+            let scroll_event = ScrollWheelEvent {
+                position: point(px(50.0), px(10.0)),
+                delta: ScrollDelta::Lines(point(0.0, 1.0)),
+                ..Default::default()
+            };
+
+            terminal.scroll_wheel(&scroll_event, 1.0, MouseInputMode::LocalSelection);
+            terminal.sync(window, cx);
+            assert!(display_offset(&terminal.term.lock()) > 0);
+            assert!(terminal.take_input_log().is_empty());
+            assert!(terminal.take_pty_write_log().is_empty());
+
+            terminal.scroll_wheel(&scroll_event, 1.0, MouseInputMode::ReportToTerminal);
+            assert!(!terminal.take_pty_write_log().is_empty());
+
+            terminal.write_output(b"\x1b[?1049h\x1b[?1007h", cx);
+        });
+        cx.run_until_parked();
+
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            terminal.sync(window, cx);
+            assert!(
+                terminal
+                    .last_content
+                    .mode
+                    .contains(Modes::ALT_SCREEN | Modes::ALTERNATE_SCROLL)
+            );
+            assert_eq!(display_offset(&terminal.term.lock()), 0);
+
+            let scroll_event = ScrollWheelEvent {
+                position: point(px(50.0), px(10.0)),
+                delta: ScrollDelta::Lines(point(0.0, 1.0)),
+                ..Default::default()
+            };
+            terminal.scroll_wheel(&scroll_event, 1.0, MouseInputMode::LocalSelection);
+            terminal.sync(window, cx);
+            assert_eq!(display_offset(&terminal.term.lock()), 0);
+            assert!(terminal.take_input_log().is_empty());
+            assert!(terminal.take_pty_write_log().is_empty());
+        });
+    }
+
     /// With mouse tracking active (e.g. htop), Shift is the escape hatch to
     /// select terminal text. Shift+drag must start a selection rather than being
     /// swallowed as a "extend existing selection" no-op. Regression test for #60254.
@@ -4032,6 +4136,7 @@ mod tests {
                     click_count: 1,
                     first_mouse: true,
                 },
+                MouseInputMode::ReportToTerminal,
                 cx,
             );
 
@@ -4054,6 +4159,7 @@ mod tests {
                     modifiers: shift,
                 },
                 region,
+                MouseInputMode::ReportToTerminal,
                 cx,
             );
 
@@ -4094,6 +4200,7 @@ mod tests {
                     click_count: 1,
                     first_mouse: true,
                 },
+                MouseInputMode::ReportToTerminal,
                 cx,
             );
 
@@ -4822,7 +4929,7 @@ mod tests {
                 click_count: 1,
                 first_mouse: true,
             };
-            terminal.mouse_down(&mouse_down, cx);
+            terminal.mouse_down(&mouse_down, MouseInputMode::ReportToTerminal, cx);
         }
 
         fn ctrl_mouse_drag_to(
@@ -4836,7 +4943,12 @@ mod tests {
                 pressed_button: Some(MouseButton::Left),
                 modifiers: Modifiers::secondary_key(),
             };
-            terminal.mouse_drag(&drag_event, terminal_bounds, cx);
+            terminal.mouse_drag(
+                &drag_event,
+                terminal_bounds,
+                MouseInputMode::ReportToTerminal,
+                cx,
+            );
         }
 
         fn ctrl_mouse_up_at(
@@ -4850,7 +4962,7 @@ mod tests {
                 modifiers: Modifiers::secondary_key(),
                 click_count: 1,
             };
-            terminal.mouse_up(&mouse_up, cx);
+            terminal.mouse_up(&mouse_up, MouseInputMode::ReportToTerminal, cx);
         }
 
         macro_rules! any_event_matches {
@@ -4898,6 +5010,38 @@ mod tests {
         }
 
         #[gpui::test]
+        async fn test_local_selection_activates_hyperlink_in_mouse_mode(cx: &mut TestAppContext) {
+            let terminal = init_terminal_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+            terminal.update(cx, |terminal, cx| {
+                terminal.last_content.mode = Modes::MOUSE_MODE;
+                let position = point(px(80.0), px(10.0));
+                let mouse_down = MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Modifiers::secondary_key(),
+                    click_count: 1,
+                    first_mouse: true,
+                };
+                let mouse_up = MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Modifiers::secondary_key(),
+                    click_count: 1,
+                };
+
+                terminal.mouse_down(&mouse_down, MouseInputMode::LocalSelection, cx);
+                terminal.mouse_up(&mouse_up, MouseInputMode::LocalSelection, cx);
+
+                assert!(any_event_matches!(
+                    terminal,
+                    InternalEvent::ProcessHyperlink(_, true)
+                ));
+                assert!(terminal.take_pty_write_log().is_empty());
+            });
+        }
+
+        #[gpui::test]
         async fn test_hyperlink_ctrl_click_mismatch_in_mouse_mode_consumes_gesture(
             cx: &mut TestAppContext,
         ) {
@@ -4920,6 +5064,7 @@ mod tests {
                     pressed_button: Some(MouseButton::Left),
                     modifiers: Modifiers::secondary_key(),
                 },
+                MouseInputMode::ReportToTerminal,
                 cx,
             );
             ctrl_mouse_up_at(terminal, up_position, cx);
@@ -5205,7 +5350,8 @@ mod tests {
                 };
                 self.window.simulate_mouse_move(position, self.cx);
                 self.unthrottle();
-                self.terminal.mouse_move(&move_event, self.cx);
+                self.terminal
+                    .mouse_move(&move_event, MouseInputMode::ReportToTerminal, self.cx);
             }
 
             fn try_modifiers_change(&mut self, modifiers: Modifiers) {
@@ -5752,6 +5898,7 @@ mod tests {
                             position,
                             ..default()
                         },
+                        MouseInputMode::ReportToTerminal,
                         cx,
                     );
 
@@ -5762,6 +5909,7 @@ mod tests {
                             ..default()
                         },
                         1.0,
+                        MouseInputMode::ReportToTerminal,
                     );
 
                     assert!(

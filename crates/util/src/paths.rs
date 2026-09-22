@@ -1,4 +1,4 @@
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -258,6 +258,10 @@ impl SanitizedPath {
 
         #[cfg(target_os = "windows")]
         {
+            let path = match path.to_str().and_then(|s| s.strip_prefix(r"\\?\UNC\")) {
+                Some(rest) => PathBuf::from(format!(r"\\{rest}")).into(),
+                None => path,
+            };
             let simplified = dunce::simplified(path.as_ref());
             if simplified == path.as_ref() {
                 // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
@@ -768,6 +772,44 @@ impl PathMatcher {
                     .build()
             })
             .collect::<Result<Vec<_>, _>>()?;
+        Self::from_globs(globs, path_style)
+    }
+
+    /// Skips invalid globs, reporting each error to `on_error`.
+    /// If the combined set cannot be built, reports the error and matches nothing.
+    pub fn new_lenient(
+        globs: impl IntoIterator<Item = impl AsRef<str>>,
+        path_style: PathStyle,
+        mut on_error: impl FnMut(globset::Error),
+    ) -> Self {
+        let globs = globs
+            .into_iter()
+            .filter_map(|pattern| {
+                match GlobBuilder::new(pattern.as_ref())
+                    .backslash_escape(path_style.is_posix())
+                    .build()
+                {
+                    Ok(glob) => Some(glob),
+                    Err(error) => {
+                        on_error(error);
+                        None
+                    }
+                }
+            })
+            .collect();
+        match Self::from_globs(globs, path_style) {
+            Ok(matcher) => matcher,
+            Err(error) => {
+                on_error(error);
+                Self {
+                    path_style,
+                    ..Self::default()
+                }
+            }
+        }
+    }
+
+    fn from_globs(globs: Vec<Glob>, path_style: PathStyle) -> Result<Self, globset::Error> {
         let sources = globs
             .iter()
             .filter_map(|glob| {
@@ -1470,6 +1512,67 @@ impl UrlExt for url::Url {
 mod tests {
     use super::*;
     use util_macros::perf;
+
+    #[test]
+    fn test_lenient_path_matcher() {
+        for path_style in [PathStyle::Unix, PathStyle::Windows] {
+            let patterns = ["**/.git", "[", "target/**", "{"];
+            let mut errors = Vec::new();
+            let matcher =
+                PathMatcher::new_lenient(patterns, path_style, |error| errors.push(error));
+            let expected = PathMatcher::new(["**/.git", "target/**"], path_style).unwrap();
+            assert_eq!(matcher, expected);
+            assert_eq!(errors.len(), 2);
+            assert_eq!(errors[0].glob(), Some("["));
+            assert_eq!(errors[1].glob(), Some("{"));
+            for path in ["nested/.git", "src/file.rs", "target/file.rs"] {
+                let path = RelPath::from_unix_str(path).unwrap();
+                assert_eq!(matcher.is_match(path), expected.is_match(path));
+            }
+            if path_style == PathStyle::local() {
+                assert!(matcher.is_match(RelPath::from_unix_str("nested/.git").unwrap()));
+                assert!(matcher.is_match(RelPath::from_unix_str("target/file.rs").unwrap()));
+            }
+            assert!(PathMatcher::new(patterns, path_style).is_err());
+
+            let mut errors = Vec::new();
+            let matcher =
+                PathMatcher::new_lenient(["[", "{"], path_style, |error| errors.push(error));
+            assert_eq!(errors.len(), 2);
+            assert_eq!(matcher.path_style, path_style);
+            assert_eq!(matcher.sources().count(), 0);
+            assert!(!matcher.is_match(RelPath::from_unix_str("file.rs").unwrap()));
+            assert!(!matcher.is_match_std_path("file.rs"));
+
+            let matcher = PathMatcher::new_lenient([] as [&str; 0], path_style, |_| {
+                panic!("empty patterns are valid")
+            });
+            assert_eq!(matcher.path_style, path_style);
+            assert_eq!(matcher.sources().count(), 0);
+            assert!(!matcher.is_match(RelPath::from_unix_str("file.rs").unwrap()));
+        }
+    }
+
+    #[test]
+    fn test_lenient_path_matcher_preserves_escaping() {
+        for path_style in [PathStyle::Unix, PathStyle::Windows] {
+            let patterns = [r"directory\file.rs", r"literal\*", r"literal\[name]"];
+            let strict = PathMatcher::new(patterns, path_style).unwrap();
+            let lenient = PathMatcher::new_lenient(patterns, path_style, |_| {
+                panic!("valid patterns are preserved")
+            });
+            assert_eq!(lenient, strict);
+            for path in [
+                "directory/file.rs",
+                "literal*",
+                "literal/file.rs",
+                "literal[name]",
+            ] {
+                let path = RelPath::from_unix_str(path).unwrap();
+                assert_eq!(lenient.is_match(path), strict.is_match(path));
+            }
+        }
+    }
 
     #[test]
     fn test_parse_str_treats_paren_suffix_as_position() {
@@ -2640,6 +2743,14 @@ mod tests {
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
         );
+    }
+
+    #[perf]
+    #[cfg(target_os = "windows")]
+    fn test_sanitized_path_verbatim_unc() {
+        let path: Arc<Path> = PathBuf::from("\\\\?\\UNC\\server\\share\\file.txt").into();
+        let sanitized_path = SanitizedPath::from_arc(path);
+        assert_eq!(sanitized_path.to_string(), "\\\\server\\share\\file.txt");
     }
 
     #[perf]

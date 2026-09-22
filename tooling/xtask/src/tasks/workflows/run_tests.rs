@@ -100,11 +100,12 @@ pub(crate) fn run_tests() -> Workflow {
         (Platform::Mac, Arch::AARCH64),
         (Platform::Windows, Arch::X86_64),
     ] {
-        jobs.push(
-            should_run_tests
-                .and_always()
-                .then(check_remote_server(platform, arch)),
-        );
+        let condition = if platform == Platform::Linux {
+            should_run_tests.and_always()
+        } else {
+            should_run_tests.and_not_in_merge_queue()
+        };
+        jobs.push(condition.then(check_remote_server(platform, arch)));
     }
     let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
@@ -676,6 +677,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Mac, |job| {
+                job.add_env(("RUST_LIB_BACKTRACE", 0))
+            })
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",

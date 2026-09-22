@@ -7,7 +7,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
 use crate::{
-    DelayMs, DocumentFoldingRanges, DocumentSymbols, ExtendingSet, SemanticTokens, merge_from,
+    DelayMs, DocumentFoldingRanges, DocumentSymbols, ExtendingSet, SemanticTokens, SplicingVec,
+    merge_from,
 };
 
 /// The state of the modifier keys at some point in time
@@ -132,10 +133,29 @@ impl EditPredictionProvider {
 pub struct EditPredictionSettingsContent {
     /// Determines which edit prediction provider to use.
     pub provider: Option<EditPredictionProvider>,
-    /// A list of globs representing files that edit predictions should be disabled for.
-    /// This list adds to a pre-existing, sensible default set of globs.
-    /// Any additional ones you add are combined with them.
-    pub disabled_globs: Option<Vec<String>>,
+    /// Disable edit predictions for files matching these glob patterns.
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "edit_predictions": {
+    ///     "disabled_globs": ["**/build/**", "..."]
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    ///
+    /// Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+    ///
+    /// Relative patterns are matched against paths relative to the worktree root.
+    /// Absolute patterns are matched against absolute paths. A leading `~` is
+    /// expanded to your home folder.
+    pub disabled_globs: Option<SplicingVec>,
     /// The mode used to display edit predictions in the buffer.
     /// Provider support required.
     pub mode: Option<EditPredictionsMode>,
@@ -636,13 +656,38 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub show_edit_predictions: Option<bool>,
-    /// Controls whether edit predictions are shown in the given language
-    /// scopes.
+    /// Disable edit predictions in these language scopes, such as "comment" and
+    /// "string".
     ///
-    /// Example: ["string", "comment"]
+    /// Default:
     ///
-    /// Default: []
-    pub edit_predictions_disabled_in: Option<Vec<String>>,
+    /// ```json
+    /// {
+    ///   "edit_predictions_disabled_in": []
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add scopes without repeating the inherited list. In project
+    /// settings, it extends the user or parent configuration value. In
+    /// language-specific settings, it extends the scopes inherited by that
+    /// language. Omit `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "edit_predictions_disabled_in": ["comment"],
+    ///   "languages": {
+    ///     "Go": {
+    ///       "edit_predictions_disabled_in": ["string", "..."]
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Inherited scopes are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    ///
+    /// Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+    pub edit_predictions_disabled_in: Option<SplicingVec>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
     /// Visible characters used to render whitespace when show_whitespaces is enabled.

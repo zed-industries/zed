@@ -5680,6 +5680,31 @@ pub(crate) mod tests {
         setup_conversation_view_with_initial_content_opt(agent, None, cx).await
     }
 
+    fn png_image() -> acp::ContentBlock {
+        acp::ContentBlock::Image(acp::ImageContent::new(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+            "image/png",
+        ))
+    }
+
+    async fn setup_full_size_conversation_and_send<'a>(
+        connection: StubAgentConnection,
+        prompt: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<ConversationView>, &'a mut VisualTestContext) {
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw(prompt, cx))
+            .await
+            .expect("prompt should succeed");
+        cx.run_until_parked();
+        (conversation_view, cx)
+    }
+
     #[gpui::test]
     async fn test_completed_plan_snapshot_keeps_list_state_in_sync(cx: &mut TestAppContext) {
         init_test(cx);
@@ -5791,13 +5816,24 @@ pub(crate) mod tests {
     }
 
     fn add_to_workspace(conversation_view: Entity<ConversationView>, cx: &mut VisualTestContext) {
+        add_to_workspace_with_size(conversation_view, false, cx);
+    }
+
+    fn add_to_workspace_with_size(
+        conversation_view: Entity<ConversationView>,
+        fill_space: bool,
+        cx: &mut VisualTestContext,
+    ) {
         let workspace =
             conversation_view.read_with(cx, |thread_view, _cx| thread_view.workspace.clone());
 
         workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|_| ThreadViewItem(conversation_view.clone()))),
+                    Box::new(cx.new(|_| ThreadViewItem {
+                        conversation_view: conversation_view.clone(),
+                        fill_space,
+                    })),
                     None,
                     true,
                     window,
@@ -5807,7 +5843,10 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    struct ThreadViewItem(Entity<ConversationView>);
+    struct ThreadViewItem {
+        conversation_view: Entity<ConversationView>,
+        fill_space: bool,
+    }
 
     impl Item for ThreadViewItem {
         type Event = ();
@@ -5825,7 +5864,7 @@ pub(crate) mod tests {
 
     impl Focusable for ThreadViewItem {
         fn focus_handle(&self, cx: &App) -> FocusHandle {
-            self.0.read(cx).focus_handle(cx)
+            self.conversation_view.read(cx).focus_handle(cx)
         }
     }
 
@@ -5834,12 +5873,15 @@ pub(crate) mod tests {
             // Render the title editor in the element tree too. In the real app
             // it is part of the agent panel
             let title_editor = self
-                .0
+                .conversation_view
                 .read(cx)
                 .active_thread()
                 .map(|t| t.read(cx).title_editor.clone());
 
-            v_flex().children(title_editor).child(self.0.clone())
+            v_flex()
+                .when(self.fill_space, |this| this.size_full())
+                .children(title_editor)
+                .child(self.conversation_view.clone())
         }
     }
 
@@ -7265,6 +7307,17 @@ pub(crate) mod tests {
             acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
                 "Hidden papaya reasoning.".into(),
             )),
+            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new(
+                            "A second hidden papaya.",
+                            "thought://details",
+                        )
+                        .mime_type("text/markdown".to_string()),
+                    ),
+                )),
+            )),
             acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
                 "Final answer without that fruit.".into(),
             )),
@@ -7331,9 +7384,295 @@ pub(crate) mod tests {
 
         assert_eq!(
             bar.read_with(cx, |bar, _| bar.match_count()),
-            1,
-            "expanded thinking content should be searchable",
+            2,
+            "every Markdown leaf in expanded thinking content should be searchable",
         );
+    }
+
+    #[gpui::test]
+    async fn test_empty_assistant_text_followed_by_image_is_rendered(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("".into())),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(png_image())),
+        ]);
+        let (_conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Show an image", cx).await;
+
+        let image_bounds = cx
+            .debug_bounds("agent-output-image")
+            .expect("image-only output must not be hidden as a blank assistant message");
+        assert!(
+            image_bounds.size.width > px(0.) && image_bounds.size.height > px(0.),
+            "decoded image must occupy nonzero rendered bounds, got {image_bounds:?}",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_mixed_assistant_content_search_and_copy_preserve_order(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let image = png_image();
+        let resource = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+            acp::EmbeddedResourceResource::TextResourceContents(
+                acp::TextResourceContents::new(
+                    "Resource needle follows the image.",
+                    "memory://ordered",
+                )
+                .mime_type("text/markdown".to_string()),
+            ),
+        ));
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
+                "Private needle must not be copied.".into(),
+            )),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("Before needle.".into())),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(image.clone())),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("After needle.".into())),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(image)),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(resource)),
+        ]);
+
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Show mixed content", cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let first_image_bounds = cx
+            .debug_bounds("message-content-1-1-1")
+            .expect("first mixed-content image should be rendered");
+        let second_image_bounds = cx
+            .debug_bounds("message-content-1-1-3")
+            .expect("second mixed-content image should be rendered");
+        for image_bounds in [first_image_bounds, second_image_bounds] {
+            assert!(
+                image_bounds.size.width > px(0.) && image_bounds.size.height > px(0.),
+                "each decoded image must occupy nonzero rendered bounds, got {image_bounds:?}",
+            );
+        }
+        assert!(
+            first_image_bounds.origin.y < second_image_bounds.origin.y,
+            "images must remain visible in content order: first {first_image_bounds:?}, second {second_image_bounds:?}",
+        );
+
+        let markdowns = thread.read_with(cx, |thread, _| {
+            let message = thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::AssistantMessage(message) => Some(message),
+                    _ => None,
+                })
+                .expect("assistant message should exist");
+            message
+                .chunks
+                .iter()
+                .flat_map(|chunk| match chunk {
+                    AssistantMessageChunk::Message { block, .. }
+                    | AssistantMessageChunk::Thought { block, .. } => block.markdowns(),
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+
+        let first_text_bounds = cx
+            .debug_bounds("message-content-1-1-0")
+            .expect("first text content");
+        cx.simulate_mouse_down(
+            first_text_bounds.center(),
+            gpui::MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            first_text_bounds.center(),
+            gpui::MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        let copy_response = cx
+            .debug_bounds("MENU_ITEM-Copy This Agent Response")
+            .expect("Copy This Agent Response");
+        cx.simulate_click(copy_response.center(), gpui::Modifiers::default());
+        let copied = cx
+            .update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .expect("assistant response should be copied");
+        assert_eq!(
+            copied,
+            "Before needle.\n\n`Image`\n\nAfter needle.\n\n`Image`\n\nResource needle follows the image."
+        );
+        assert!(!copied.contains("Private needle"));
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread search should be open");
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("needle", window, cx);
+            });
+            search_bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 3);
+        for (source, should_be_highlighted) in [
+            ("Private needle must not be copied.", false),
+            ("Before needle.", true),
+            ("After needle.", true),
+            ("Resource needle follows the image.", true),
+        ] {
+            let markdown = markdowns
+                .iter()
+                .find(|markdown| markdown.read_with(cx, |markdown, _| markdown.source() == source))
+                .unwrap_or_else(|| panic!("Markdown entity for {source:?} should exist"));
+            assert_eq!(
+                markdown.read_with(cx, |markdown, _| !markdown.search_highlights().is_empty()),
+                should_be_highlighted,
+                "unexpected search highlights for {source:?}",
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_message_context_menu_uses_clicked_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        let acp::ContentBlock::Image(image) = png_image() else {
+            panic!("expected image fixture");
+        };
+        let linked_image = format!(
+            "[![second](data:{};base64,{})](https://two.example/)",
+            image.mime_type, image.data,
+        );
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                "[first](https://one.example/)".into(),
+            )),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(png_image())),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(linked_image.into())),
+        ]);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Show links", cx))
+            .await
+            .expect("link prompt");
+        cx.run_until_parked();
+
+        for (selector, offset, expected) in [
+            (
+                "message-content-1-0-0",
+                point(px(12.), px(8.)),
+                "https://one.example/",
+            ),
+            (
+                "message-content-1-0-2",
+                point(px(0.5), px(0.5)),
+                "https://two.example/",
+            ),
+        ] {
+            let bounds = cx.debug_bounds(selector).expect("content leaf");
+            let position = bounds.origin + offset;
+            cx.simulate_mouse_down(
+                position,
+                gpui::MouseButton::Right,
+                gpui::Modifiers::default(),
+            );
+            cx.simulate_mouse_up(
+                position,
+                gpui::MouseButton::Right,
+                gpui::Modifiers::default(),
+            );
+            let copy = cx.debug_bounds("MENU_ITEM-Copy Link").expect("Copy Link");
+            cx.simulate_click(copy.center(), gpui::Modifiers::default());
+            let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+            assert_eq!(copied.as_deref(), Some(expected));
+        }
+
+        let image = cx
+            .debug_bounds("message-content-1-0-1")
+            .expect("image leaf");
+        cx.simulate_mouse_down(
+            image.center(),
+            gpui::MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            image.center(),
+            gpui::MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        assert!(cx.debug_bounds("MENU_ITEM-Copy Link").is_none());
+        assert!(
+            cx.debug_bounds("MENU_ITEM-Copy This Agent Response")
+                .is_some()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_message_context_menu_copies_selected_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("**first**".into())),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(png_image())),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("*second*".into())),
+        ]);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Show text", cx))
+            .await
+            .expect("text prompt");
+        cx.run_until_parked();
+
+        for (selector, plain, markdown) in [
+            ("message-content-1-0-0", "first", "**first**"),
+            ("message-content-1-0-2", "second", "*second*"),
+        ] {
+            for (menu_item, expected) in [
+                ("MENU_ITEM-Copy", plain),
+                ("MENU_ITEM-Copy as Markdown", markdown),
+            ] {
+                let bounds = cx.debug_bounds(selector).expect("content leaf");
+                let position = bounds.origin + point(px(12.), bounds.size.height / 2.);
+                cx.simulate_event(gpui::MouseDownEvent {
+                    position,
+                    button: gpui::MouseButton::Left,
+                    modifiers: gpui::Modifiers::default(),
+                    click_count: 2,
+                    first_mouse: false,
+                });
+                cx.simulate_mouse_up(
+                    position,
+                    gpui::MouseButton::Left,
+                    gpui::Modifiers::default(),
+                );
+                cx.simulate_mouse_down(
+                    position,
+                    gpui::MouseButton::Right,
+                    gpui::Modifiers::default(),
+                );
+                cx.simulate_mouse_up(
+                    position,
+                    gpui::MouseButton::Right,
+                    gpui::Modifiers::default(),
+                );
+                let copy = cx.debug_bounds(menu_item).expect("selection copy command");
+                cx.simulate_click(copy.center(), gpui::Modifiers::default());
+                let copied =
+                    cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+                assert_eq!(copied.as_deref(), Some(expected));
+            }
+        }
     }
 
     #[gpui::test]
@@ -7396,6 +7735,57 @@ pub(crate) mod tests {
             bar.read_with(cx, |bar, _| bar.match_count()),
             1,
             "expanded tool-call content should be searchable",
+        );
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        "search-tool-content",
+                        acp::ToolCallUpdateFields::new().content(vec![
+                            acp::ToolCallContent::Content(acp::Content::new(
+                                acp::ContentBlock::Text(acp::TextContent::new(
+                                    "Replacement contains mango.",
+                                )),
+                            )),
+                            acp::ToolCallContent::Content(acp::Content::new(
+                                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                                    acp::EmbeddedResourceResource::TextResourceContents(
+                                        acp::TextResourceContents::new(
+                                            "Resource mango output.",
+                                            "tool://replacement",
+                                        )
+                                        .mime_type("text/markdown".to_string()),
+                                    ),
+                                )),
+                            )),
+                        ]),
+                    )),
+                    cx,
+                )
+            })
+            .expect("tool output replacement should apply");
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            0,
+            "replaced tool output should no longer match the old query",
+        );
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            2,
+            "all Markdown leaves in replacement tool output should be searchable",
         );
     }
 
@@ -7632,7 +8022,7 @@ pub(crate) mod tests {
                     AgentThreadEntry::AssistantMessage(message) => {
                         message.chunks.iter().find_map(|chunk| match chunk {
                             AssistantMessageChunk::Message { block, .. } => {
-                                block.markdown().cloned()
+                                block.markdowns().next().cloned()
                             }
                             AssistantMessageChunk::Thought { .. } => None,
                         })
@@ -9133,6 +9523,231 @@ pub(crate) mod tests {
 
             assert_eq!(text, expected_txt);
         })
+    }
+
+    #[gpui::test]
+    async fn test_display_terminal_does_not_move_to_background_when_tool_completes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for (exit_status, failure_selector) in [
+            (
+                acp::TerminalExitStatus::new().exit_code(7),
+                "terminal-tool-failed-Some(7)",
+            ),
+            (
+                acp::TerminalExitStatus::new().signal("SIGTERM"),
+                "terminal-tool-failed-None",
+            ),
+            (
+                acp::TerminalExitStatus::new().exit_code(u32::MAX),
+                "terminal-tool-failed-Some(4294967295)",
+            ),
+        ] {
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+            add_to_workspace_with_size(conversation_view.clone(), true, cx);
+            let thread_view = active_thread(&conversation_view, cx);
+            let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+            let terminal_id = acp::TerminalId::new("provider-terminal");
+            let tool_id = acp::ToolCallId::new("provider-tool");
+            let terminal = cx.new(|cx| {
+                terminal::TerminalBuilder::new_display_only(
+                    Default::default(),
+                    terminal::terminal_settings::AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    util::paths::PathStyle::local(),
+                )
+                .subscribe(cx)
+            });
+            let display_terminal = terminal.clone();
+            thread.update(cx, |thread, cx| {
+                thread.on_terminal_provider_event(
+                    acp_thread::TerminalProviderEvent::Created {
+                        terminal_id: terminal_id.clone(),
+                        label: "provider command".into(),
+                        cwd: None,
+                        output_byte_limit: None,
+                        terminal,
+                    },
+                    cx,
+                );
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::ToolCall(
+                            acp::ToolCall::new(tool_id.clone(), "provider command")
+                                .kind(acp::ToolKind::Execute)
+                                .status(acp::ToolCallStatus::InProgress)
+                                .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                                    terminal_id.clone(),
+                                ))]),
+                        ),
+                        cx,
+                    )
+                    .expect("terminal tool call");
+            });
+            cx.run_until_parked();
+            let entry_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
+            entry_state.update(cx, |state, cx| {
+                state.expand_tool_call(tool_id.clone());
+                cx.notify();
+            });
+            let acp_terminal = thread.read_with(cx, |thread, _| {
+                thread
+                    .terminal(terminal_id.clone())
+                    .expect("terminal tool call should contain a terminal")
+            });
+            let terminal_view = entry_state.read_with(cx, |state, _| {
+                state
+                    .entry(0)
+                    .and_then(|entry| entry.terminal(&acp_terminal))
+                    .expect("terminal tool card should contain a terminal view")
+            });
+            assert!(terminal_view.read_with(cx, |view, _| view.is_read_only()));
+
+            display_terminal.update(cx, |terminal, _| {
+                assert!(terminal.take_input_log().is_empty());
+            });
+            terminal_view.update_in(cx, |view, window, cx| {
+                window.focus(&view.focus_handle(cx), cx);
+            });
+            cx.simulate_keystrokes("a");
+            assert!(
+                display_terminal
+                    .update(cx, |terminal, _| terminal.take_input_log())
+                    .is_empty(),
+                "input dispatched to a display-only terminal view must not reach the lower terminal",
+            );
+
+            thread.update(cx, |thread, cx| {
+                thread.on_terminal_provider_event(
+                    acp_thread::TerminalProviderEvent::Output {
+                        terminal_id: terminal_id.clone(),
+                        data: b"provider output remains visible".to_vec(),
+                    },
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            assert!(
+                display_terminal
+                    .read_with(cx, |terminal, _| terminal.get_content())
+                    .contains("provider output remains visible"),
+                "provider output should continue to render in a read-only terminal",
+            );
+            assert!(cx.debug_bounds("ICON-Stop").is_none());
+            thread.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                            tool_id.clone(),
+                            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
+                        )),
+                        cx,
+                    )
+                    .expect("tool completion");
+            });
+            cx.run_until_parked();
+            assert!(entry_state.read_with(cx, |state, _| state.is_tool_call_expanded(&tool_id)));
+            assert!(cx.debug_bounds(failure_selector).is_none());
+            thread.update(cx, |thread, cx| {
+                thread.on_terminal_provider_event(
+                    acp_thread::TerminalProviderEvent::Exit {
+                        terminal_id,
+                        status: exit_status,
+                    },
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            assert!(entry_state.read_with(cx, |state, _| state.is_tool_call_expanded(&tool_id)));
+            assert!(
+                cx.debug_bounds(failure_selector).is_some(),
+                "expected rendered header metadata: {failure_selector}",
+            );
+            assert!(cx.debug_bounds("ICON-Stop").is_none());
+        }
+    }
+
+    #[gpui::test]
+    async fn test_acp_owned_terminal_tool_card_is_interactive(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let terminal_id = acp::TerminalId::new("acp-owned-terminal");
+        let tool_id = acp::ToolCallId::new("acp-owned-tool");
+        let lower_terminal = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                Default::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                util::paths::PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        assert!(!lower_terminal.read_with(cx, |terminal, _| terminal.is_pty()));
+
+        let acp_terminal = thread.update(cx, |thread, cx| {
+            let acp_terminal = thread.register_terminal_created(
+                terminal_id.clone(),
+                "client-owned command".into(),
+                None,
+                None,
+                lower_terminal.clone(),
+                cx,
+            );
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_id.clone(), "client-owned command")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::InProgress)
+                            .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                                terminal_id,
+                            ))]),
+                    ),
+                    cx,
+                )
+                .expect("terminal tool call");
+            acp_terminal
+        });
+        assert!(
+            acp_terminal.read_with(cx, |terminal, _| terminal.is_process_backed()),
+            "registration ownership, not the lower renderer's PTY, marks this terminal process-backed",
+        );
+
+        cx.run_until_parked();
+        let entry_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
+        entry_state.update(cx, |state, cx| {
+            state.expand_tool_call(tool_id);
+            cx.notify();
+        });
+        let terminal_view = entry_state.read_with(cx, |state, _| {
+            state
+                .entry(0)
+                .and_then(|entry| entry.terminal(&acp_terminal))
+                .expect("terminal tool card should contain a terminal view")
+        });
+        assert!(!terminal_view.read_with(cx, |view, _| view.is_read_only()));
+
+        lower_terminal.update(cx, |terminal, _| {
+            assert!(terminal.take_input_log().is_empty());
+        });
+        terminal_view.update_in(cx, |view, window, cx| {
+            window.focus(&view.focus_handle(cx), cx);
+        });
+        cx.simulate_keystrokes("a");
+        assert_eq!(
+            lower_terminal.update(cx, |terminal, _| terminal.take_input_log()),
+            vec![b"a".to_vec()],
+        );
     }
 
     #[gpui::test]
