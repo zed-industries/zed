@@ -727,14 +727,20 @@ async fn assert_copy_and_remove_semantics(root: &Path, fs: &dyn Fs) {
         .await
         .unwrap_err();
     assert!(fs.is_dir(&root.join("dir")).await);
+}
 
+/// Removing a symlink to a directory removes the link, not the directory.
+async fn assert_remove_file_unlinks_symlink(root: &Path, fs: &dyn Fs) {
     let link = root.join("link");
     fs.remove_file(&link, RemoveOptions::default())
         .await
         .unwrap();
     assert!(fs.metadata(&link).await.unwrap().is_none());
     assert!(fs.is_dir(&root.join("dir")).await);
-    assert_eq!(fs.load(&root.join("dir/inner.txt")).await.unwrap(), "inner");
+    assert_eq!(
+        fs.load(&root.join("dir").join("inner.txt")).await.unwrap(),
+        "inner"
+    );
 }
 
 #[gpui::test]
@@ -743,15 +749,21 @@ async fn test_realfs_copy_and_remove_semantics(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let executor = cx.executor();
     let temp_dir = TempDir::new().unwrap();
-    let root = temp_dir.path().canonicalize().unwrap();
+    let root = temp_dir.path();
     std::fs::write(root.join("source.txt"), "from source").unwrap();
     std::fs::write(root.join("target.txt"), "from target").unwrap();
     std::fs::create_dir(root.join("dir")).unwrap();
-    std::fs::write(root.join(path!("dir/inner.txt")), "inner").unwrap();
-    make_dir_symlink(&root.join("dir"), &root.join("link")).unwrap();
+    std::fs::write(root.join("dir").join("inner.txt"), "inner").unwrap();
 
     let fs = RealFs::new(None, executor);
-    assert_copy_and_remove_semantics(&root, fs.as_ref()).await;
+    assert_copy_and_remove_semantics(root, fs.as_ref()).await;
+
+    // Creating symlinks requires elevated privileges on Windows, so like the
+    // watcher tests above, skip that part when it is not possible.
+    match make_dir_symlink(&root.join("dir"), &root.join("link")) {
+        Ok(()) => assert_remove_file_unlinks_symlink(root, fs.as_ref()).await,
+        Err(error) => eprintln!("skipping symlink removal check (cannot symlink: {error})"),
+    }
 }
 
 #[gpui::test]
@@ -769,7 +781,9 @@ async fn test_fake_fs_copy_and_remove_semantics(executor: BackgroundExecutor) {
     fs.insert_symlink(path!("/root/link"), PathBuf::from(path!("/root/dir")))
         .await;
 
-    assert_copy_and_remove_semantics(Path::new(path!("/root")), fs.as_ref()).await;
+    let root = Path::new(path!("/root"));
+    assert_copy_and_remove_semantics(root, fs.as_ref()).await;
+    assert_remove_file_unlinks_symlink(root, fs.as_ref()).await;
 }
 
 #[gpui::test]
