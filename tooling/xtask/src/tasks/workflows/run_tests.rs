@@ -26,10 +26,11 @@ pub(crate) fn run_tests() -> Workflow {
     // - script/update_top_ranking_issues/
     // - .github/ISSUE_TEMPLATE/
     // - .github/workflows/  (except .github/workflows/ci.yml)
+    // - .wezel/
     // - extensions/  (these have their own test workflow)
     let should_run_tests = PathCondition::inverted(
         "run_tests",
-        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)",
+        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|[.]wezel/|extensions/)",
     );
     let should_check_docs = PathCondition::new("run_docs", r"^(docs/|crates/.*\.rs)");
     let should_check_scripts = PathCondition::new(
@@ -99,11 +100,12 @@ pub(crate) fn run_tests() -> Workflow {
         (Platform::Mac, Arch::AARCH64),
         (Platform::Windows, Arch::X86_64),
     ] {
-        jobs.push(
-            should_run_tests
-                .and_always()
-                .then(check_remote_server(platform, arch)),
-        );
+        let condition = if platform == Platform::Linux {
+            should_run_tests.and_always()
+        } else {
+            should_run_tests.and_not_in_merge_queue()
+        };
+        jobs.push(condition.then(check_remote_server(platform, arch)));
     }
     let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
@@ -132,12 +134,15 @@ pub(crate) fn run_tests() -> Workflow {
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
         .map(|mut workflow| {
-            for job in jobs {
+            for mut job in jobs {
+                if !matches!(job.name.as_str(), "orchestrate" | "check_style") {
+                    job.job = job.job.add_need("check_style");
+                }
                 workflow = workflow.add_job(job.name, job.job)
             }
             workflow
         })
-        .add_job(ext_tests.name, ext_tests.job)
+        .add_job(ext_tests.name, ext_tests.job.add_need("check_style"))
         .add_job(tests_pass.name, tests_pass.job)
 }
 
@@ -672,6 +677,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Mac, |job| {
+                job.add_env(("RUST_LIB_BACKTRACE", 0))
+            })
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
@@ -784,7 +792,7 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_LARGE)
+            .runs_on(runners::LINUX_MEDIUM)
             .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
             .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
@@ -818,7 +826,7 @@ fn miri_scheduler() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_DEFAULT)
+            .runs_on(runners::LINUX_MEDIUM)
             .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))

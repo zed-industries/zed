@@ -3756,6 +3756,115 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
     });
 }
 
+#[track_caller]
+fn assert_cursor_row_and_scroll_top(
+    cx: &mut EditorTestContext,
+    expected_cursor_row: u32,
+    expected_scroll_top: f64,
+) {
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let cursor_row = editor
+            .selections
+            .newest_display(&snapshot.display_snapshot)
+            .head()
+            .row();
+
+        assert_eq!(cursor_row, DisplayRow(expected_cursor_row));
+        assert_eq!(snapshot.scroll_position().y, expected_scroll_top);
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_high_margin_keeps_cursor_centered(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let line_height = cx.update_editor(|editor, window, cx| {
+        // Let viewport space, rather than the configured margin, limit the padding.
+        editor.set_vertical_scroll_margin(999, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+
+    for autoscroll in [Autoscroll::fit(), Autoscroll::newest()] {
+        // After allowing for the cursor row, the free space is odd, fractional, or even.
+        for (visible_lines, expected_top_margin) in [(6., 2.), (6.5, 2.), (7., 3.)] {
+            cx.simulate_window_resize(window, size(px(1000.), visible_lines * line_height));
+
+            // Start at zero-based row 6, away from file boundaries that could clamp scrolling.
+            cx.set_state("0\n1\n2\n3\n4\n5\nˇ6\n7\n8\n9\n10\n11\n12\n13\n14");
+            cx.update_editor(|editor, window, cx| {
+                editor.set_scroll_position(gpui::Point::new(0., 0.), window, cx);
+                editor.request_autoscroll(autoscroll, cx);
+            });
+            cx.run_until_parked();
+
+            // The cursor's viewport offset is its row minus the scroll top.
+            assert_cursor_row_and_scroll_top(&mut cx, 6, 6. - expected_top_margin);
+
+            // Moving down to row 7 must scroll with the cursor, preserving that offset.
+            cx.update_editor(|editor, window, cx| {
+                editor.move_down(&MoveDown, window, cx);
+                editor.request_autoscroll(autoscroll, cx);
+            });
+            cx.run_until_parked();
+            assert_cursor_row_and_scroll_top(&mut cx, 7, 7. - expected_top_margin);
+
+            // Returning to row 6 must restore the viewport, not leave room for cursor drift.
+            cx.update_editor(|editor, window, cx| {
+                editor.move_up(&MoveUp, window, cx);
+                editor.request_autoscroll(autoscroll, cx);
+            });
+            cx.run_until_parked();
+            assert_cursor_row_and_scroll_top(&mut cx, 6, 6. - expected_top_margin);
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_autoscroll_auto_height_has_no_margin(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_mode(EditorMode::AutoHeight {
+            min_lines: 1,
+            max_lines: Some(4),
+        });
+
+        // Auto-height inputs must ignore even a nonzero configured margin.
+        editor.set_vertical_scroll_margin(3, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 4. * line_height));
+    cx.set_state("ˇ0\n1\n2\n3\n4\n5\n6\n7\n8\n9");
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(editor.visible_line_count(), Some(4.));
+    });
+
+    // Row 2 is already visible, so moving there must not reserve space below it.
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down_by_lines(&MoveDownByLines { lines: 2 }, window, cx);
+    });
+    cx.run_until_parked();
+    assert_cursor_row_and_scroll_top(&mut cx, 2, 0.);
+
+    // Row 4 is just outside the viewport: scroll only far enough to reveal it.
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down_by_lines(&MoveDownByLines { lines: 2 }, window, cx);
+    });
+    cx.run_until_parked();
+    assert_cursor_row_and_scroll_top(&mut cx, 4, 1.);
+}
+
 #[gpui::test]
 async fn test_cursor_animation_remains_active_during_keyboard_autoscroll(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -23146,14 +23255,46 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions::default()),
-            ..lsp::ServerCapabilities::default()
+    let mut cx = EditorTestContext::new(cx).await;
+    let language_registry = cx.language_registry();
+    let language = rust_lang();
+    let completion_item = Arc::new(Mutex::new(None::<lsp::CompletionItem>));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        language.name(),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let completion_item = completion_item.clone();
+                move |server| {
+                    let completion_item = completion_item.clone();
+                    server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+                        let completion_item = completion_item
+                            .lock()
+                            .clone()
+                            .expect("completion item should be set before requesting completions");
+                        async move {
+                            Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                                is_incomplete: true,
+                                items: vec![completion_item],
+                                item_defaults: None,
+                            })))
+                        }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
         },
-        cx,
-    )
-    .await;
+    );
+    language_registry.add(language.clone());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    let _language_server = fake_servers
+        .next()
+        .await
+        .expect("language server should start");
+    cx.executor().run_until_parked();
 
     for (initial_state, completion_text, filter_text, expected_states) in [
         (
@@ -23286,27 +23427,17 @@ async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
                     "{initial_state:?}, {lsp_insert_mode:?}, {insert_text:?}, {detail:?}, {description:?}, {use_filter_text:?}"
                 );
                 cx.set_state(initial_state);
-                cx.set_request_handler::<lsp::request::Completion, _, _>(
-                    move |_, _, _| async move {
-                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                            is_incomplete: true,
-                            items: vec![lsp::CompletionItem {
-                                label: completion_text.to_string(),
-                                filter_text: use_filter_text.then(|| filter_text.to_string()),
-                                insert_text: insert_text.map(str::to_string),
-                                detail: detail.map(str::to_string),
-                                label_details: description.map(|description| {
-                                    lsp::CompletionItemLabelDetails {
-                                        detail: None,
-                                        description: Some(description.to_string()),
-                                    }
-                                }),
-                                ..lsp::CompletionItem::default()
-                            }],
-                            item_defaults: None,
-                        })))
-                    },
-                );
+                *completion_item.lock() = Some(lsp::CompletionItem {
+                    label: completion_text.to_string(),
+                    filter_text: use_filter_text.then(|| filter_text.to_string()),
+                    insert_text: insert_text.map(str::to_string),
+                    detail: detail.map(str::to_string),
+                    label_details: description.map(|description| lsp::CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some(description.to_string()),
+                    }),
+                    ..lsp::CompletionItem::default()
+                });
                 cx.update_editor(|editor, window, cx| {
                     editor.show_completions(&ShowCompletions, window, cx);
                 });
@@ -23400,14 +23531,40 @@ async fn test_completion_with_explicit_replace_range(cx: &mut TestAppContext) {
             ..CompletionSettingsContent::default()
         });
     });
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions::default()),
-            ..lsp::ServerCapabilities::default()
+    let mut cx = EditorTestContext::new(cx).await;
+    let language_registry = cx.language_registry();
+    let language = rust_lang();
+    let completion_list = Arc::new(Mutex::new(None::<lsp::CompletionList>));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        language.name(),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let completion_list = completion_list.clone();
+                move |server| {
+                    let completion_list = completion_list.clone();
+                    server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+                        let completion_list = completion_list
+                            .lock()
+                            .clone()
+                            .expect("completion list should be set before requesting completions");
+                        async move { Ok(Some(lsp::CompletionResponse::List(completion_list))) }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
         },
-        cx,
-    )
-    .await;
+    );
+    language_registry.add(language.clone());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    let _language_server = fake_servers
+        .next()
+        .await
+        .expect("language server should start");
+    cx.executor().run_until_parked();
 
     for (lsp_insert_mode, expected_pair_state) in [
         (LspInsertMode::ReplaceSuffix, "test(value1, value2=ˇvalue2)"),
@@ -23430,49 +23587,38 @@ async fn test_completion_with_explicit_replace_range(cx: &mut TestAppContext) {
                     "{lsp_insert_mode:?}, {use_default_range:?}, {use_insert_range:?}, {filter_text:?}"
                 );
                 cx.set_state("test(value1, ˇvalue2)");
-                cx.set_request_handler::<lsp::request::Completion, _, _>(
-                    move |_, _, _| async move {
-                        let insert =
-                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 13));
-                        let replace =
-                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 19));
-                        let text_edit = if use_insert_range {
-                            lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
-                                insert,
-                                replace,
-                                new_text: "value2=".to_string(),
-                            })
-                        } else {
-                            lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: replace,
-                                new_text: "value2=".to_string(),
-                            })
-                        };
-                        let edit_range = if use_insert_range {
-                            lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
-                                insert,
-                                replace,
-                            }
-                        } else {
-                            lsp::CompletionListItemDefaultsEditRange::Range(replace)
-                        };
-                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                            items: vec![lsp::CompletionItem {
-                                label: "value2=".to_string(),
-                                filter_text: filter_text.map(str::to_string),
-                                text_edit: (!use_default_range).then_some(text_edit),
-                                ..lsp::CompletionItem::default()
-                            }],
-                            item_defaults: use_default_range.then(|| {
-                                lsp::CompletionListItemDefaults {
-                                    edit_range: Some(edit_range),
-                                    ..lsp::CompletionListItemDefaults::default()
-                                }
-                            }),
-                            ..lsp::CompletionList::default()
-                        })))
-                    },
-                );
+                let insert = lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 13));
+                let replace = lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 19));
+                let text_edit = if use_insert_range {
+                    lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
+                        insert,
+                        replace,
+                        new_text: "value2=".to_string(),
+                    })
+                } else {
+                    lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: replace,
+                        new_text: "value2=".to_string(),
+                    })
+                };
+                let edit_range = if use_insert_range {
+                    lsp::CompletionListItemDefaultsEditRange::InsertAndReplace { insert, replace }
+                } else {
+                    lsp::CompletionListItemDefaultsEditRange::Range(replace)
+                };
+                *completion_list.lock() = Some(lsp::CompletionList {
+                    items: vec![lsp::CompletionItem {
+                        label: "value2=".to_string(),
+                        filter_text: filter_text.map(str::to_string),
+                        text_edit: (!use_default_range).then_some(text_edit),
+                        ..lsp::CompletionItem::default()
+                    }],
+                    item_defaults: use_default_range.then(|| lsp::CompletionListItemDefaults {
+                        edit_range: Some(edit_range),
+                        ..lsp::CompletionListItemDefaults::default()
+                    }),
+                    ..lsp::CompletionList::default()
+                });
                 cx.update_editor(|editor, window, cx| {
                     editor.show_completions(&ShowCompletions, window, cx);
                 });
@@ -31243,6 +31389,108 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         "#
         .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_row_highlights_for_empty_conflict_side_after_edit(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    struct ReversedHighlight;
+
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &r#"
+            ˇ<<<<<<< HEAD
+            =======
+            theirs
+            >>>>>>> branch
+            after
+        "#
+        .unindent(),
+    );
+    executor.run_until_parked();
+
+    // Mirrors what `git_ui::conflict_view::update_conflict_highlighting` does
+    // with the ranges produced by the conflict parser, and additionally
+    // stores the inside-out range that empty sides used to produce.
+    cx.update_editor(|editor, _, cx| {
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+        let conflicts = project::ConflictSet::parse(&buffer.read(cx).text_snapshot());
+        assert_eq!(conflicts.conflicts.len(), 1);
+        let conflict = &conflicts.conflicts[0];
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let ours = snapshot
+            .buffer_anchor_range_to_anchor_range(conflict.ours.clone())
+            .unwrap();
+        assert!(ours.start.cmp(&ours.end, &snapshot).is_le());
+        editor.highlight_rows::<ConflictsOurs>(
+            ours,
+            |cx| cx.theme().colors().version_control_conflict_marker_ours,
+            RowHighlightOptions {
+                include_gutter: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        let marker_start = Point::new(1, 0);
+        editor.highlight_rows::<ReversedHighlight>(
+            snapshot.anchor_after(marker_start)..snapshot.anchor_before(marker_start),
+            |cx| cx.theme().colors().editor_highlighted_line_background,
+            RowHighlightOptions::default(),
+            cx,
+        );
+    });
+
+    // The user types a resolution into the empty "ours" side, on the line
+    // where the `=======` marker currently sits.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
+        });
+        editor.handle_input("one\ntwo\nthree\nfour\nfive\nsix\n", window, cx);
+    });
+
+    // Render every possible viewport, the same way `EditorElement::prepaint`
+    // does, before the conflict set has been re-parsed. The typed rows carry
+    // the "ours" highlight; the inside-out range never contributes.
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx).display_snapshot;
+        let ours_type_id = Some(TypeId::of::<ConflictsOurs>());
+        for start_row in 0..snapshot.max_point().row().0 {
+            for end_row in start_row + 1..=snapshot.max_point().row().0 {
+                let start = snapshot
+                    .buffer_snapshot()
+                    .anchor_before(Point::new(start_row, 0));
+                let end = snapshot
+                    .buffer_snapshot()
+                    .anchor_before(Point::new(end_row, 0));
+                let highlighted_rows = editor.highlighted_display_rows_in_range(
+                    start..end,
+                    DisplayRow(start_row)..DisplayRow(end_row),
+                    &snapshot,
+                    cx,
+                );
+                let expected_rows = (start_row.max(1)..end_row.min(7))
+                    .map(DisplayRow)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    highlighted_rows.keys().copied().collect::<Vec<_>>(),
+                    expected_rows,
+                    "viewport {start_row}..{end_row}"
+                );
+                assert!(
+                    highlighted_rows
+                        .values()
+                        .all(|highlight| highlight.type_id == ours_type_id),
+                    "viewport {start_row}..{end_row}"
+                );
+            }
+        }
+    });
 }
 
 #[gpui::test]
@@ -43703,6 +43951,95 @@ async fn test_no_duplicated_sticky_headers(cx: &mut TestAppContext) {
     assert_eq!(sticky_headers(4.0), vec![(struct_foo, 0.0)]);
     assert_eq!(sticky_headers(4.5), vec![(struct_foo, -0.5)]);
     assert_eq!(sticky_headers(5.0), vec![]);
+}
+
+#[gpui::test]
+async fn test_autoscroll_margin_reserves_sticky_header_space(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.vertical_scroll_margin = Some(3.0);
+        settings.sticky_scroll = Some(settings::StickyScrollContent {
+            enabled: Some(true),
+        });
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        fn demo() {
+            let value_01 = 1;
+            let value_02 = 2;
+            let value_03 = 3;
+            let value_04 = 4;
+            let value_05 = 5;
+            let value_06 = 6;
+            let value_07 = 7;
+            let value_08 = 8;
+            let value_09 = 9;
+            let value_10 = 10;
+            ˇlet value_11 = 11;
+            let value_12 = 12;
+            let value_13 = 13;
+        }
+    "});
+
+    // Use a parsed scope so the test also exercises sticky-header discovery.
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.run_until_parked();
+
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+
+    for visible_lines in [2., 2.5] {
+        cx.simulate_window_resize(window, size(px(1000.), visible_lines * line_height));
+
+        // Center explicitly so the starting viewport does not depend on the
+        // Fit calculation being tested.
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([Point::new(11, 4)..Point::new(11, 4)]);
+            });
+            editor.scroll_cursor_center(&ScrollCursorCenter, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(snapshot.scroll_position().y, 10.);
+            assert_eq!(EditorElement::sticky_headers(editor, &snapshot).len(), 1);
+
+            // Row 10 is covered by the header; moving there must scroll to expose it.
+            editor.move_up(&MoveUp, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let cursor_row = editor
+                .selections
+                .newest_display(&snapshot.display_snapshot)
+                .head()
+                .row();
+            let sticky_header_count = EditorElement::sticky_headers(editor, &snapshot).len();
+
+            assert_eq!(cursor_row, DisplayRow(10));
+            assert_eq!(snapshot.scroll_position().y, 9.);
+            assert_eq!(sticky_header_count, 1);
+
+            // A scroll alone is insufficient: the full cursor row must be unobscured.
+            assert!(
+                cursor_row.as_f64() >= snapshot.scroll_position().y + sticky_header_count as f64
+            );
+            assert!(
+                cursor_row.next_row().as_f64()
+                    <= snapshot.scroll_position().y + visible_lines as f64
+            );
+        });
+    }
 }
 
 #[gpui::test]
