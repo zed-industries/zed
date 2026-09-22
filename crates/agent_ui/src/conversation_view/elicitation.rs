@@ -8,8 +8,8 @@ use gpui::{AnyElement, App, Div, Empty, Entity, Focusable, Hsla, SharedString, W
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
-    Button, Checkbox, Color, Icon, IconName, IconSize, Label, LabelSize, RadioIndicator,
-    ToggleState, prelude::*,
+    Button, Checkbox, Color, Icon, IconName, IconSize, Label, LabelSize, RadioButton, ToggleState,
+    prelude::*,
 };
 
 #[derive(Clone)]
@@ -2119,14 +2119,9 @@ impl<'a> ElicitationCard<'a> {
         selected_value: Option<&String>,
         options: Vec<ElicitationOption>,
         has_error: bool,
-        cx: &App,
+        _cx: &App,
     ) -> AnyElement {
         let entry_ix = self.entry_ix;
-        let border_color = if has_error {
-            Color::Error.color(cx)
-        } else {
-            cx.theme().colors().border.opacity(0.8)
-        };
         let elicitation_id = self.elicitation.id.clone();
         let field_name = field_name.to_string();
         let on_single_select_change = self.handlers.on_single_select_change.clone();
@@ -2139,49 +2134,28 @@ impl<'a> ElicitationCard<'a> {
                     format!("elicitation-select-option-{entry_ix}-{field_name}-{option_value}");
                 let is_selected =
                     selected_value.is_some_and(|selected_value| selected_value == &option.value);
-                let row_background = Self::option_row_background(is_selected, cx);
-                let hover_background = Self::option_row_hover_background(is_selected, cx);
-                let control_background = Self::option_control_background(cx);
+                let option_label = option.label.clone();
                 let elicitation_id = elicitation_id.clone();
                 let field_name = field_name.clone();
                 let on_single_select_change = on_single_select_change.clone();
 
-                h_flex()
-                    .id(option_id)
-                    .tab_index(0)
-                    .w_full()
-                    .min_h(rems_from_px(28_f32))
-                    .items_start()
-                    .gap_1p5()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(border_color.opacity(0.5))
-                    .bg(row_background)
-                    .px_2()
-                    .py_1()
-                    .hover(move |this| this.bg(hover_background).cursor_pointer())
-                    .focus_visible(|this| this.border_color(cx.theme().colors().border_focused))
-                    .on_click(move |_, _window, cx| {
-                        on_single_select_change(
-                            elicitation_id.clone(),
-                            field_name.clone(),
-                            option_value.clone(),
-                            cx,
-                        );
+                RadioButton::new(option_id, is_selected)
+                    .invalid(has_error)
+                    .aria_label(option_label)
+                    .tab_index(0isize)
+                    .on_click({
+                        let elicitation_id = elicitation_id.clone();
+                        let field_name = field_name.clone();
+                        let option_value = option_value.clone();
+                        move |_event, _window, cx| {
+                            on_single_select_change(
+                                elicitation_id.clone(),
+                                field_name.clone(),
+                                option_value.clone(),
+                                cx,
+                            );
+                        }
                     })
-                    .child(
-                        div()
-                            .size(Checkbox::container_size())
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(RadioIndicator::new(
-                                is_selected,
-                                border_color,
-                                control_background,
-                            )),
-                    )
                     .child(Self::render_option_content(option))
             }))
             .into_any_element()
@@ -2221,10 +2195,6 @@ impl<'a> ElicitationCard<'a> {
                 .element_background
                 .blend(cx.theme().colors().editor_foreground.opacity(0.025))
         }
-    }
-
-    fn option_control_background(cx: &App) -> Hsla {
-        cx.theme().colors().editor_background
     }
 
     fn render_url_elicitation(&self, mode: &acp::ElicitationUrlMode) -> AnyElement {
