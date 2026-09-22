@@ -2683,6 +2683,20 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     }
 }
 
+fn subagent_model_id_to_selection(model_id: &AgentModelId, cx: &App) -> LanguageModelSelection {
+    let settings = agent_settings::AgentSettings::get_global(cx);
+    let Some((provider, model)) = model_id.as_ref().split_once('/') else {
+        return model_id_to_selection(model_id, cx);
+    };
+    if let Some(selection) = settings.subagent_model.as_ref()
+        && selection.provider.0 == provider
+        && selection.model == model
+    {
+        return selection.clone();
+    }
+    model_id_to_selection(model_id, cx)
+}
+
 fn model_id_to_selection(model_id: &AgentModelId, cx: &App) -> LanguageModelSelection {
     let id = model_id.as_ref();
     let (provider, model) = id.split_once('/').unwrap_or(("", id));
@@ -2727,7 +2741,7 @@ pub fn available_native_agent(cx: &App) -> AvailableAgent {
     let registry = LanguageModelRegistry::read_global(cx);
     let default = registry.default_model();
     let mut models = Vec::new();
-    for provider in registry.providers() {
+    for provider in registry.visible_providers() {
         if !provider.is_authenticated(cx) {
             continue;
         }
@@ -3216,11 +3230,10 @@ impl NativeThreadEnvironment {
     pub(crate) fn create_subagent_thread(
         &self,
         label: String,
-        model: Option<String>,
+        model: Option<AgentModelId>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
-        let model = if let Some(model) = model {
-            let model_id = AgentModelId::from(model);
+        let model = if let Some(model_id) = model {
             let available = self.agent.read_with(cx, |agent, _| {
                 agent.models.model_from_id(&model_id).is_some()
             })?;
@@ -3229,7 +3242,7 @@ impl NativeThreadEnvironment {
                     "Model {model_id} is unavailable. Call list_agents_and_models to inspect available models."
                 );
             }
-            Some(model_id_to_selection(&model_id, cx))
+            Some(subagent_model_id_to_selection(&model_id, cx))
         } else {
             None
         };
@@ -3443,7 +3456,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_subagent(
         &self,
         label: String,
-        model: Option<String>,
+        model: Option<AgentModelId>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         self.create_subagent_thread(label, model, cx)
@@ -3917,11 +3930,103 @@ mod internal_tests {
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         CompletionIntent, LanguageModelCompletionError, LanguageModelCompletionEvent,
-        LanguageModelProviderId, LanguageModelProviderName,
+        LanguageModelProviderId, LanguageModelProviderName, Speed,
     };
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{LanguageModelProviderSetting, SettingsStore};
     use util::{path, rel_path::rel_path};
+
+    #[gpui::test]
+    fn test_available_native_agent_hides_hidden_providers(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            LanguageModelRegistry::test(cx);
+            let registry = LanguageModelRegistry::global(cx);
+            registry.update(cx, |registry, cx| {
+                registry.set_builtin_provider_hiding_fn(Box::new(|id| {
+                    (id == "fake").then_some("fake-extension")
+                }));
+                registry.extension_installed("fake-extension".into(), cx);
+            });
+
+            assert!(available_native_agent(cx).models.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_explicit_subagent_model_preserves_configured_settings(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "fake-corp",
+            "subagent-model",
+            "Subagent Model",
+            true,
+        ));
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        let mut settings = cx.update(|cx| agent_settings::AgentSettings::get_global(cx).clone());
+        settings.subagent_model = Some(LanguageModelSelection {
+            provider: LanguageModelProviderSetting("fake-corp".to_string()),
+            model: "subagent-model".to_string(),
+            enable_thinking: true,
+            effort: Some("high".to_string()),
+            speed: Some(Speed::Fast),
+        });
+        cx.update(|cx| agent_settings::AgentSettings::override_global(settings, cx));
+
+        let acp_thread = cx
+            .update(|cx| connection.new_session(project, PathList::new(&[Path::new("/test")]), cx))
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let parent_thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        let environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: parent_thread.downgrade(),
+            acp_thread: acp_thread.downgrade(),
+        };
+
+        let handle = cx
+            .update(|cx| {
+                environment.create_subagent_thread(
+                    "subagent".to_string(),
+                    Some(AgentModelId::from("fake-corp/subagent-model".to_string())),
+                    cx,
+                )
+            })
+            .unwrap();
+        let subagent_thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&handle.id()).unwrap().thread.clone()
+        });
+        subagent_thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.model().map(|model| model.id()), Some(model.id()));
+            assert!(thread.thinking_enabled());
+            assert_eq!(thread.thinking_effort(), Some(&"high".to_string()));
+            // The fake model does not support fast mode, so the configured speed is
+            // intentionally filtered while the model selection is applied.
+            assert_eq!(thread.speed(), None);
+        });
+    }
 
     #[cfg(target_os = "macos")]
     #[gpui::test]

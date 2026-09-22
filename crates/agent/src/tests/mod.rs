@@ -1,7 +1,7 @@
 use super::*;
 use acp_thread::{
-    AgentConnection, AgentModelGroupName, AgentModelList, ClientUserMessageId, PermissionOptions,
-    ThreadStatus,
+    AgentConnection, AgentModelGroupName, AgentModelId, AgentModelList, ClientUserMessageId,
+    PermissionOptions, ThreadStatus,
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT};
@@ -192,7 +192,7 @@ pub(crate) struct FakeThreadEnvironment {
     subagent_handle: Option<Rc<FakeSubagentHandle>>,
     terminal_creations: Arc<AtomicUsize>,
     terminal_output_limits: std::cell::RefCell<Vec<Option<u64>>>,
-    subagent_models: std::cell::RefCell<Vec<Option<String>>>,
+    subagent_models: std::cell::RefCell<Vec<Option<AgentModelId>>>,
 }
 
 impl FakeThreadEnvironment {
@@ -218,7 +218,7 @@ impl FakeThreadEnvironment {
         self.terminal_output_limits.borrow().clone()
     }
 
-    fn subagent_models(&self) -> Vec<Option<String>> {
+    fn subagent_models(&self) -> Vec<Option<AgentModelId>> {
         self.subagent_models.borrow().clone()
     }
 }
@@ -247,7 +247,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
     fn create_subagent(
         &self,
         _label: String,
-        model: Option<String>,
+        model: Option<AgentModelId>,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         self.subagent_models.borrow_mut().push(model);
@@ -294,7 +294,7 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
     fn create_subagent(
         &self,
         _label: String,
-        _model: Option<String>,
+        _model: Option<AgentModelId>,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         unimplemented!()
@@ -5569,7 +5569,9 @@ async fn test_spawn_agent_tool_forwards_explicit_model(cx: &mut TestAppContext) 
     assert!(matches!(result, Ok(SpawnAgentToolOutput::Success { .. })));
     assert_eq!(
         environment.subagent_models(),
-        vec![Some("fake-corp/cheap-model".to_string())]
+        vec![Some(AgentModelId::from(
+            "fake-corp/cheap-model".to_string()
+        ))]
     );
 }
 
@@ -8996,7 +8998,7 @@ impl SubagentCompactionTest {
             acp_thread: acp_thread.downgrade(),
         };
         let handle = cx
-            .update(|cx| environment.create_subagent_thread("subagent".to_string(), cx))
+            .update(|cx| environment.create_subagent_thread("subagent".to_string(), None, cx))
             .unwrap();
         let thread = agent.read_with(cx, |agent, _| {
             agent.sessions.get(&handle.id()).unwrap().thread.clone()

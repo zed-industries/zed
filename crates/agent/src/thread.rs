@@ -7,7 +7,7 @@ use crate::{
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     WriteFileTool, decide_permission_from_settings,
 };
-use acp_thread::{ClientUserMessageId, MentionUri};
+use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
@@ -790,7 +790,7 @@ pub trait ThreadEnvironment {
     fn create_subagent(
         &self,
         label: String,
-        model: Option<String>,
+        model: Option<AgentModelId>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>>;
 
@@ -889,6 +889,7 @@ pub struct AvailableAgent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AvailableModel {
     /// Identifier to pass as the `model` field when creating a thread.
+    /// For `spawn_agent`, use a model from the native Zed agent entry.
     pub id: String,
     /// Human-readable name.
     pub name: SharedString,
