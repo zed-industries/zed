@@ -1,3 +1,9 @@
+mod debug_log;
+mod transport;
+
+use debug_log::AcpDebugLog;
+pub use debug_log::{AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection};
+
 use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
     AgentSessionListResponse, ElicitationStore,
@@ -16,21 +22,19 @@ use collections::{HashMap, HashSet};
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
 use futures::future::Shared;
-use futures::io::BufReader;
-use futures::{AsyncBufReadExt as _, Future, FutureExt as _, StreamExt as _};
+use futures::{Future, FutureExt as _, StreamExt as _};
 use project::agent_server_store::{
     AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
 };
 use project::{AgentId, Project};
-use remote::remote_client::Interactive;
 use serde::Deserialize;
 use settings::{AgentConfigOptionValue, SettingsStore};
 use std::path::PathBuf;
-use std::process::{ExitStatus, Stdio};
+use std::process::ExitStatus;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-use std::{any::Any, cell::RefCell, collections::VecDeque};
-use task::{Shell, ShellBuilder, SpawnInTerminal};
+use std::sync::Arc;
+use std::{any::Any, cell::RefCell};
+use task::SpawnInTerminal;
 use thiserror::Error;
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -47,200 +51,6 @@ use crate::{CURSOR_ID, GEMINI_ID};
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const PARAMETERIZED_MODEL_PICKER_META_KEY: &str = "parameterizedModelPicker";
-const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AcpDebugMessageDirection {
-    Incoming,
-    Outgoing,
-    Stderr,
-}
-
-#[derive(Clone)]
-pub enum AcpDebugMessageContent {
-    Request {
-        id: acp::RequestId,
-        method: Arc<str>,
-        params: Option<serde_json::Value>,
-    },
-    Response {
-        id: acp::RequestId,
-        result: Result<Option<serde_json::Value>, acp::Error>,
-    },
-    Notification {
-        method: Arc<str>,
-        params: Option<serde_json::Value>,
-    },
-    Stderr {
-        line: Arc<str>,
-    },
-}
-
-#[derive(Clone)]
-pub struct AcpDebugMessage {
-    pub direction: AcpDebugMessageDirection,
-    pub message: AcpDebugMessageContent,
-}
-
-impl AcpDebugMessage {
-    fn parse_line(direction: AcpDebugMessageDirection, line: &str) -> Vec<Self> {
-        if direction == AcpDebugMessageDirection::Stderr {
-            return vec![Self {
-                direction,
-                message: AcpDebugMessageContent::Stderr {
-                    line: Arc::from(line),
-                },
-            }];
-        }
-
-        let Ok(value) = serde_json::from_str(line) else {
-            return Vec::new();
-        };
-
-        match value {
-            serde_json::Value::Array(entries) => entries
-                .into_iter()
-                .filter_map(|entry| Self::parse_value(direction, entry))
-                .collect(),
-            value => Self::parse_value(direction, value).into_iter().collect(),
-        }
-    }
-
-    fn parse_value(direction: AcpDebugMessageDirection, value: serde_json::Value) -> Option<Self> {
-        let object = value.as_object()?;
-
-        let parsed_id = object
-            .get("id")
-            .map(|raw| serde_json::from_value::<acp::RequestId>(raw.clone()));
-
-        let message = if let Some(method) = object.get("method").and_then(|method| method.as_str())
-        {
-            match parsed_id {
-                Some(Ok(id)) => AcpDebugMessageContent::Request {
-                    id,
-                    method: method.into(),
-                    params: object.get("params").cloned(),
-                },
-                Some(Err(err)) => {
-                    log::warn!("Skipping JSON-RPC message with unparsable id: {err}");
-                    return None;
-                }
-                None => AcpDebugMessageContent::Notification {
-                    method: method.into(),
-                    params: object.get("params").cloned(),
-                },
-            }
-        } else if let Some(parsed_id) = parsed_id {
-            let id = match parsed_id {
-                Ok(id) => id,
-                Err(err) => {
-                    log::warn!("Skipping JSON-RPC response with unparsable id: {err}");
-                    return None;
-                }
-            };
-
-            if let Some(error) = object.get("error") {
-                let acp_error =
-                    serde_json::from_value::<acp::Error>(error.clone()).unwrap_or_else(|err| {
-                        log::warn!("Failed to deserialize ACP error: {err}");
-                        acp::Error::internal_error().data(error.to_string())
-                    });
-
-                AcpDebugMessageContent::Response {
-                    id,
-                    result: Err(acp_error),
-                }
-            } else {
-                AcpDebugMessageContent::Response {
-                    id,
-                    result: Ok(object.get("result").cloned()),
-                }
-            }
-        } else {
-            return None;
-        };
-
-        Some(Self { direction, message })
-    }
-}
-
-#[derive(Default)]
-struct AcpDebugLogState {
-    messages: VecDeque<AcpDebugMessage>,
-    subscribers: Vec<async_channel::Sender<AcpDebugMessage>>,
-}
-
-#[derive(Clone, Default)]
-struct AcpDebugLog {
-    state: Arc<Mutex<AcpDebugLogState>>,
-}
-
-impl AcpDebugLog {
-    fn subscribe(
-        &self,
-    ) -> (
-        Vec<AcpDebugMessage>,
-        async_channel::Receiver<AcpDebugMessage>,
-    ) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let backlog = state.messages.iter().cloned().collect();
-        let (sender, receiver) = async_channel::unbounded();
-        state.subscribers.push(sender);
-        (backlog, receiver)
-    }
-
-    fn record_line(&self, direction: AcpDebugMessageDirection, line: &str) {
-        let messages = AcpDebugMessage::parse_line(direction, line);
-        if messages.is_empty() {
-            return;
-        }
-        self.record_messages(messages);
-    }
-
-    fn record_messages(&self, messages: Vec<AcpDebugMessage>) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-        state.subscribers.retain(|sender| !sender.is_closed());
-        for message in messages {
-            if state.messages.len() == MAX_DEBUG_BACKLOG_MESSAGES {
-                state.messages.pop_front();
-            }
-            state.messages.push_back(message.clone());
-
-            for sender in &state.subscribers {
-                sender.try_send(message.clone()).log_err();
-            }
-        }
-    }
-
-    fn trailing_stderr(&self) -> Option<String> {
-        let state = self.state.lock().ok()?;
-        let mut lines = state
-            .messages
-            .iter()
-            .rev()
-            .take_while(|message| matches!(&message.message, AcpDebugMessageContent::Stderr { .. }))
-            .filter_map(|message| match &message.message {
-                AcpDebugMessageContent::Stderr { line } if !line.is_empty() => Some(line.as_ref()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        if lines.is_empty() {
-            return None;
-        }
-
-        lines.reverse();
-        Some(lines.join("\n"))
-    }
-}
-
 fn exited_load_error_with_stderr(status: ExitStatus, debug_log: &AcpDebugLog) -> LoadError {
     LoadError::Exited {
         status,
@@ -813,61 +623,15 @@ impl AcpConnection {
         default_config_options: HashMap<String, AgentConfigOptionValue>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let root_dir = project.read_with(cx, |project, cx| {
-            project
-                .default_path_list(cx)
-                .ordered_paths()
-                .next()
-                .cloned()
-        });
         let original_command = command.clone();
-        let (path, args, env) = project
-            .read_with(cx, |project, cx| {
-                project.remote_client().and_then(|client| {
-                    let template = client
-                        .read(cx)
-                        .build_command(
-                            Some(command.path.display().to_string()),
-                            &command.args,
-                            &command.env.clone().into_iter().flatten().collect(),
-                            root_dir.as_ref().map(|path| path.display().to_string()),
-                            None,
-                            Interactive::No,
-                        )
-                        .log_err()?;
-                    Some((template.program, template.args, template.env))
-                })
-            })
-            .unwrap_or_else(|| {
-                (
-                    command.path.display().to_string(),
-                    command.args,
-                    command.env.unwrap_or_default(),
-                )
-            });
-
-        let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
-        let mut child = builder.build_std_command(Some(path.clone()), &args);
-        child.envs(env.clone());
-        if let Some(cwd) = project.read_with(cx, |project, _cx| {
-            if project.is_local() {
-                root_dir.as_ref()
-            } else {
-                None
-            }
-        }) {
-            child.current_dir(cwd);
-        }
-        let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
-
-        let stdout = child.stdout.take().context("Failed to take stdout")?;
-        let stdin = child.stdin.take().context("Failed to take stdin")?;
-        let stderr = child.stderr.take().context("Failed to take stderr")?;
-        log::debug!("Spawning external agent server: {:?}, {:?}", path, args);
-        log::trace!("Spawned (pid: {})", child.id());
-
+        let transport::StdioProcess {
+            mut child,
+            incoming,
+            outgoing,
+            stderr,
+            debug_log,
+        } = transport::spawn_stdio(&project, command, cx)?;
         let sessions = Rc::new(RefCell::new(HashMap::default()));
-        let debug_log = AcpDebugLog::default();
 
         let (release_channel, version): (Option<&str>, String) = cx.update(|cx| {
             (
@@ -885,47 +649,8 @@ impl AcpConnection {
         // closures to the !Send foreground thread.
         let (dispatch_tx, dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
 
-        let incoming_lines = futures::io::BufReader::new(stdout).lines();
-        let tapped_incoming = incoming_lines.inspect({
-            let debug_log = debug_log.clone();
-            move |result| match result {
-                Ok(line) => debug_log.record_line(AcpDebugMessageDirection::Incoming, line),
-                Err(err) => {
-                    log::warn!("ACP transport read error: {err}");
-                }
-            }
-        });
-
-        let tapped_outgoing = futures::sink::unfold(
-            (Box::pin(stdin), debug_log.clone()),
-            async move |(mut writer, debug_log), line: String| {
-                use futures::AsyncWriteExt;
-                debug_log.record_line(AcpDebugMessageDirection::Outgoing, &line);
-                let mut bytes = line.into_bytes();
-                bytes.push(b'\n');
-                writer.write_all(&bytes).await?;
-                Ok::<_, std::io::Error>((writer, debug_log))
-            },
-        );
-
-        let transport = Lines::new(tapped_outgoing, tapped_incoming);
-
-        let stderr_task = cx.background_spawn({
-            let debug_log = debug_log.clone();
-            async move {
-                let mut stderr = BufReader::new(stderr);
-                let mut line = String::new();
-                while let Ok(n) = stderr.read_line(&mut line).await
-                    && n > 0
-                {
-                    let trimmed = line.trim_end_matches(['\n', '\r']);
-                    log::warn!("agent stderr: {trimmed}");
-                    debug_log.record_line(AcpDebugMessageDirection::Stderr, trimmed);
-                    line.clear();
-                }
-                Ok(())
-            }
-        });
+        let transport = Lines::new(outgoing, incoming);
+        let stderr_task = cx.background_spawn(stderr);
 
         let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
         let connection_future =
@@ -2040,6 +1765,7 @@ fn map_acp_error(err: acp::Error) -> anyhow::Error {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use acp_thread::{
@@ -2648,6 +2374,7 @@ pub mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -3187,96 +2914,6 @@ mod tests {
             ])
         );
         assert_eq!(task.label, "Login");
-    }
-
-    #[test]
-    fn trailing_stderr_only_uses_final_stderr_block() {
-        let debug_log = AcpDebugLog::default();
-        debug_log.record_line(AcpDebugMessageDirection::Stderr, "stale stderr");
-        debug_log.record_line(
-            AcpDebugMessageDirection::Incoming,
-            r#"{"method":"initialized"}"#,
-        );
-
-        assert_eq!(debug_log.trailing_stderr(), None);
-
-        debug_log.record_line(AcpDebugMessageDirection::Stderr, "recent stderr");
-        assert_eq!(
-            debug_log.trailing_stderr().as_deref(),
-            Some("recent stderr")
-        );
-    }
-
-    #[test]
-    fn debug_log_records_each_json_rpc_batch_entry() {
-        let debug_log = AcpDebugLog::default();
-        debug_log.record_line(
-            AcpDebugMessageDirection::Incoming,
-            r#"{"jsonrpc":"2.0","method":"legacy/update"}"#,
-        );
-        debug_log.record_line(
-            AcpDebugMessageDirection::Incoming,
-            r#"[
-                {"jsonrpc":"2.0","method":"session/update","params":{"value":1}},
-                null,
-                [{"jsonrpc":"2.0","method":"nested/update"}],
-                {"jsonrpc":"2.0","id":1,"method":"session/one","params":{"value":2}},
-                {"jsonrpc":"2.0","id":{"invalid":true},"method":"invalid/id"}
-            ]"#,
-        );
-        debug_log.record_line(
-            AcpDebugMessageDirection::Outgoing,
-            r#"[
-                {"jsonrpc":"2.0","id":1,"result":{"accepted":true}},
-                {"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}
-            ]"#,
-        );
-
-        let (messages, _receiver) = debug_log.subscribe();
-        let mut messages = messages.iter();
-
-        assert!(matches!(
-            messages.next(),
-            Some(AcpDebugMessage {
-                direction: AcpDebugMessageDirection::Incoming,
-                message: AcpDebugMessageContent::Notification { method, .. },
-            }) if method.as_ref() == "legacy/update"
-        ));
-        assert!(matches!(
-            messages.next(),
-            Some(AcpDebugMessage {
-                direction: AcpDebugMessageDirection::Incoming,
-                message: AcpDebugMessageContent::Notification { method, .. },
-            }) if method.as_ref() == "session/update"
-        ));
-        assert!(matches!(
-            messages.next(),
-            Some(AcpDebugMessage {
-                direction: AcpDebugMessageDirection::Incoming,
-                message: AcpDebugMessageContent::Request { id, method, .. },
-            }) if id == &acp::RequestId::Number(1) && method.as_ref() == "session/one"
-        ));
-        assert!(matches!(
-            messages.next(),
-            Some(AcpDebugMessage {
-                direction: AcpDebugMessageDirection::Outgoing,
-                message: AcpDebugMessageContent::Response {
-                    id,
-                    result: Ok(Some(_)),
-                },
-            }) if id == &acp::RequestId::Number(1)
-        ));
-        assert!(matches!(
-            messages.next(),
-            Some(AcpDebugMessage {
-                direction: AcpDebugMessageDirection::Outgoing,
-                message: AcpDebugMessageContent::Response {
-                    id,
-                    result: Err(_),
-                },
-            }) if id == &acp::RequestId::Null
-        ));
-        assert!(messages.next().is_none());
     }
 
     #[test]
