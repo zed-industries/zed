@@ -8505,12 +8505,11 @@ impl ThreadView {
                     // when there's no live `Terminal` entity in `content` —
                     // i.e. when the thread was reloaded from disk and the
                     // saved output was reconstructed as markdown from
-                    // `raw_output`. The live-terminal path is
-                    // `render_terminal_tool_call`. Without an explicit
-                    // disclosure here, the saved output is reachable only by
-                    // expanding the tool call in `entry_view_state`, which
-                    // never happens because no `NewTerminal` view event
-                    // fires for a replayed call (issue #57230).
+                    // `raw_output`. Without an explicit disclosure here, the
+                    // saved output is reachable only by expanding the tool call
+                    // in `entry_view_state`, which never happens because no
+                    // `NewTerminal` view event fires for a replayed call
+                    // (issue #57230).
                     // A nonzero exit code isn't an error result for the
                     // terminal tool; after a reload it only survives as a
                     // sentinel in the saved output text, so recover it from
@@ -8520,8 +8519,18 @@ impl ThreadView {
                         .as_ref()
                         .and_then(|output| output.as_str())
                         .and_then(agent::parse_failed_exit_code);
-                    let has_header =
-                        is_collapsible || failed_or_canceled || saved_exit_code.is_some();
+                    // An external agent's `Execute` call streams content while it
+                    // is still running, so keying the header on content alone
+                    // would caption a live command in the past tense and take the
+                    // "Run Command" preview away from it.
+                    let command_finished = !matches!(
+                        tool_call.status,
+                        ToolCallStatus::Pending
+                            | ToolCallStatus::InProgress
+                            | ToolCallStatus::WaitingForConfirmation { .. }
+                    );
+                    let has_header = command_finished
+                        && (is_collapsible || failed_or_canceled || saved_exit_code.is_some());
                     let command_block = self.render_collapsible_command(
                         card_header_id.clone(),
                         // Keep the "Run Command" preview label only while the
@@ -8536,11 +8545,12 @@ impl ThreadView {
                     if !has_header {
                         return this.child(command_block);
                     }
-                    // A rejected call renders an empty body, so offering a
-                    // disclosure would give the reader a control that expands
-                    // nothing.
-                    let can_expand =
-                        is_collapsible && !matches!(tool_call.status, ToolCallStatus::Rejected);
+                    // A rejected call was denied before it ran: its body is empty,
+                    // so a disclosure would expand nothing, and the past-tense
+                    // label the other statuses get would state the opposite of
+                    // what happened. A canceled one did run before being stopped.
+                    let was_rejected = matches!(tool_call.status, ToolCallStatus::Rejected);
+                    let can_expand = is_collapsible && !was_rejected;
                     // The terminal tool's `cd` input is the closest surviving
                     // analog of the live card's working-dir header label, but the
                     // tool resolves "." and "" alike to the worktree root, so
@@ -8553,7 +8563,13 @@ impl ThreadView {
                         .and_then(|cd| cd.as_str())
                         .filter(|cd| !cd.is_empty() && *cd != ".")
                         .map_or_else(
-                            || SharedString::new_static("Ran command"),
+                            || {
+                                SharedString::new_static(if was_rejected {
+                                    "Run Command"
+                                } else {
+                                    "Ran Command"
+                                })
+                            },
                             SharedString::from,
                         );
                     this.child(
@@ -8748,7 +8764,22 @@ impl ThreadView {
                     )
                 }
             })
-            .children(tool_output_display);
+            // A replayed card's saved output is plain markdown with no height of
+            // its own, so a long one grows the card until the disclosure that
+            // closes it is off screen. The live card bounds its terminal the same
+            // way.
+            .children(tool_output_display.map(|output| {
+                if is_terminal_tool {
+                    div()
+                        .id(("replayed-terminal-output", entry_ix))
+                        .max_h_72()
+                        .overflow_y_scroll()
+                        .child(output)
+                        .into_any_element()
+                } else {
+                    output
+                }
+            }));
 
         v_flex()
             .map(|this| {

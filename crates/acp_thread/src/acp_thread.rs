@@ -10565,14 +10565,12 @@ mod tests {
         });
     }
 
-    /// Regression test for the `update_fields` fallback that the fix for
-    /// issue #57230 relies on: after a thread restart, `Thread::replay`
-    /// emits a `ToolCall` (no content / no `raw_output`) followed by a
-    /// `ToolCallUpdate` containing only the saved `raw_output`. This
-    /// fallback turns that `raw_output` into displayable markdown content
-    /// so `tool_call.content` is non-empty for the UI — which in turn lets
-    /// the agent panel decide the call is collapsible and show a
-    /// disclosure widget for the saved output.
+    /// A tool with no `AgentTool::replay` impl is replayed as a `ToolCall` with
+    /// no content, followed by a `ToolCallUpdate` carrying only the saved
+    /// `raw_output` — an MCP server that is gone after a restart is the usual
+    /// case. `update_fields` turns that `raw_output` into displayable markdown
+    /// so the call has something to show, and so the UI has a reason to offer
+    /// expand and collapse controls for it.
     #[gpui::test]
     async fn test_raw_output_update_populates_content_when_empty(cx: &mut TestAppContext) {
         init_test(cx);
@@ -10632,7 +10630,7 @@ mod tests {
             assert!(
                 !tool_call.content.is_empty(),
                 "raw_output should be converted to displayable content so the tool block has \
-                 expand/collapse controls after replay (issue #57230)"
+                 expand/collapse controls after replay"
             );
 
             let ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) =

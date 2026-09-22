@@ -2658,7 +2658,6 @@ async fn test_terminal_tool_output_replayed_after_restart(cx: &mut TestAppContex
     disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
-    // A terminal whose command exits immediately with a nonzero code.
     let environment = Rc::new(cx.update(|cx| {
         FakeThreadEnvironment::default().with_terminal(
             FakeTerminalHandle::new_with_immediate_exit(cx, 128).with_output(
@@ -2707,8 +2706,8 @@ async fn test_terminal_tool_output_replayed_after_restart(cx: &mut TestAppContex
         .unwrap();
     cx.run_until_parked();
 
-    // After the tool completes, the model continues with a new completion
-    // request that includes the tool result; finish the turn.
+    // The tool result arrives on a fresh completion request, so the stream these
+    // calls drive is not the one the tool call came from.
     fake_model.send_last_completion_stream_text_chunk("The command failed.");
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
