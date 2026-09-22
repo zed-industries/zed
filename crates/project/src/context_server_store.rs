@@ -1137,7 +1137,22 @@ impl ContextServerStore {
         cx: &App,
     ) -> HashMap<Arc<str>, ContextServerSettingsEntry> {
         let mut merged = HashMap::default();
-        for worktree in worktree_store.read(cx).visible_worktrees(cx) {
+        let mut visible_worktrees = worktree_store.read(cx).visible_worktrees(cx).peekable();
+        if visible_worktrees.peek().is_none() {
+            // A project whose worktrees have not loaded yet still has the user's
+            // servers; an ACP session created now must not start without them.
+            for (id, settings) in &ProjectSettings::get(None, cx).context_servers {
+                merged.insert(
+                    id.clone(),
+                    ContextServerSettingsEntry {
+                        worktree_id: None,
+                        settings: settings.clone(),
+                    },
+                );
+            }
+            return merged;
+        }
+        for worktree in visible_worktrees {
             let worktree_id = worktree.read(cx).id();
             let location = settings::SettingsLocation {
                 worktree_id,
