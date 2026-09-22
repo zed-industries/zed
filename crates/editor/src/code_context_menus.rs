@@ -7,7 +7,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::CodeLabel;
-use language::{Buffer, LanguageName, LanguageRegistry};
+use language::{Buffer, CharClassifier, CharScopeContext, LanguageName, LanguageRegistry};
 use lsp::{CompletionItemKind, CompletionItemTag};
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use multi_buffer::Anchor;
@@ -366,10 +366,25 @@ impl CompletionsMenu {
         language: Option<LanguageName>,
         cx: &mut Context<Editor>,
     ) -> Self {
+        let classifier = CharClassifier::new(completions.first().and_then(|completion| {
+            buffer
+                .read(cx)
+                .snapshot()
+                .language_scope_at(completion.replace_range.start)
+        }))
+        .scope_context(Some(CharScopeContext::Completion));
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion.filter_text()))
+            .map(|(id, completion)| {
+                let filter_text = completion.filter_text();
+                let filter_text = if completion.match_start.is_some() {
+                    filter_text
+                } else {
+                    filter_text.trim_start_matches(|character| !classifier.is_word(character))
+                };
+                StringMatchCandidate::new(id, filter_text)
+            })
             .into_group_map_by(|candidate| completions[candidate.id].match_start)
             .into_iter()
             .collect();
