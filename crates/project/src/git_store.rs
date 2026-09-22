@@ -6498,6 +6498,7 @@ impl Repository {
         self.job_sender.close_channel();
         self._worker_task = Task::ready(());
         self.active_jobs.clear();
+        cx.emit(JobsUpdated);
         self.job_debug_queue
             .mark_unfinished_complete(job_debug_queue::CompletedJobStatus::Skipped);
         cx.notify();
@@ -6878,36 +6879,70 @@ impl Repository {
                 id: job_id,
                 key,
                 job: Box::new(move |state, cx: &mut AsyncApp| {
+                    let mut result_tx = result_tx;
                     let job = job(state, cx.clone());
                     cx.spawn(async move |cx| {
+                        if status.is_some() && result_tx.is_canceled() {
+                            this.update(cx, |this, cx| {
+                                this.job_debug_queue.mark_complete(
+                                    job_id,
+                                    job_debug_queue::CompletedJobStatus::Skipped,
+                                );
+                                cx.notify();
+                            })
+                            .ok();
+                            return;
+                        }
+
                         this.update(cx, |this, cx| {
                             this.job_debug_queue.mark_running(job_id);
-                            if let Some(s) = status {
+                            if let Some(s) = status.as_ref() {
                                 this.active_jobs.insert(
                                     job_id,
                                     JobInfo {
                                         start: Instant::now(),
-                                        message: s,
+                                        message: s.clone(),
                                     },
                                 );
+                                cx.emit(JobsUpdated);
                             }
                             cx.notify();
                         })
                         .ok();
 
-                        let result = job.await;
+                        let (result, was_cancelled) = if status.is_some() {
+                            let cancellation = result_tx.cancellation().fuse();
+                            futures::pin_mut!(cancellation);
+                            let job = job.fuse();
+                            futures::pin_mut!(job);
+
+                            futures::select_biased! {
+                                _ = cancellation => (None, true),
+                                result = job => (Some(result), false),
+                            }
+                        } else {
+                            (Some(job.await), false)
+                        };
 
                         this.update(cx, |this, cx| {
                             this.job_debug_queue.mark_complete(
                                 job_id,
-                                job_debug_queue::CompletedJobStatus::Finished,
+                                if was_cancelled {
+                                    job_debug_queue::CompletedJobStatus::Skipped
+                                } else {
+                                    job_debug_queue::CompletedJobStatus::Finished
+                                },
                             );
-                            this.active_jobs.remove(&job_id);
+                            if this.active_jobs.remove(&job_id).is_some() {
+                                cx.emit(JobsUpdated);
+                            }
                             cx.notify();
                         })
                         .ok();
 
-                        result_tx.send(result).ok();
+                        if let Some(result) = result {
+                            result_tx.send(result).ok();
+                        }
                     })
                 }),
             })
@@ -12049,6 +12084,73 @@ mod tests {
             path,
             PathBuf::from("/home/user/dev/worktrees/lsp-tests/nimble-sky/lsp-tests")
         );
+    }
+
+    #[gpui::test]
+    async fn test_send_job_cancellation_clears_active_job(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                "project-a": {
+                    ".git": {},
+                    "x.txt": "a",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/root/project-a")],
+            cx,
+        )
+        .await;
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .git_store()
+                .read(cx)
+                .repositories()
+                .values()
+                .next()
+                .cloned()
+                .unwrap()
+        });
+
+        repository.read_with(cx, |repo, _| {
+            assert!(repo.current_job().is_none());
+        });
+
+        let (started_tx, started_rx) = futures::channel::oneshot::channel();
+
+        let receiver = repository.update(cx, |repo, _| {
+            repo.send_job("test_pull", Some("git pull test".into()), move |_, cx| async move {
+                let _ = started_tx.send(());
+                cx.background_executor().timer(Duration::from_secs(60)).await;
+                Ok::<(), anyhow::Error>(())
+            })
+        });
+
+        started_rx.await.unwrap();
+        cx.run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            let job = repo.current_job().expect("job should be active");
+            assert_eq!(job.message.as_ref(), "git pull test");
+        });
+
+        drop(receiver);
+        cx.run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                repo.current_job().is_none(),
+                "cancelled job must be removed from active_jobs immediately"
+            );
+        });
     }
 
     fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {
