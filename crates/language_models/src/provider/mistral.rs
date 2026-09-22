@@ -319,6 +319,14 @@ impl LanguageModel for MistralLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking()
+    }
+
+    fn supports_disabling_thinking(&self) -> bool {
+        self.model.supports_disabling_thinking()
+    }
+
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }
@@ -367,6 +375,7 @@ pub fn into_mistral(
     model: mistral::Model,
     max_output_tokens: Option<u64>,
 ) -> Result<(mistral::Request, Option<String>)> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request.contains_custom_tool_input() {
         anyhow::bail!("Mistral does not support custom tools");
     }
@@ -582,9 +591,18 @@ pub fn into_mistral(
                     })
                 })
                 .collect::<Result<_>>()?,
-            reasoning_effort: if model.supports_thinking() && request.thinking_allowed {
+            reasoning_effort: if !model.supports_thinking() {
+                None
+            } else if request.thinking_allowed {
                 Some(mistral::ReasoningEffort::High)
+            } else if model.supports_disabling_thinking() {
+                // Explicitly disable thinking rather than relying on the API's
+                // default.
+                Some(mistral::ReasoningEffort::None)
             } else {
+                // Models for which thinking can't be disabled will reject
+                // "none" as the `reasoning_effort` value. Omitting the field is
+                // the only way to request the API's default effort.
                 None
             },
         },
@@ -850,7 +868,7 @@ mod tests {
 
     #[test]
     fn test_into_mistral_basic_conversion() {
-        let request = LanguageModelRequest {
+        let request = |max_output_tokens| LanguageModelRequest {
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::System,
@@ -876,6 +894,7 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thread_id: Some("abcdef".into()),
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -883,16 +902,32 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_output_tokens,
         };
 
-        let (mistral_request, affinity) =
-            into_mistral(request, mistral::Model::MistralSmallLatest, None).unwrap();
-
-        assert_eq!(mistral_request.model, "mistral-small-latest");
-        assert_eq!(mistral_request.temperature, Some(0.5));
-        assert_eq!(mistral_request.messages.len(), 2);
-        assert!(mistral_request.stream);
-        assert_eq!(affinity, Some("abcdef".into()));
+        for (requested, maximum, expected) in [
+            (None, None, None),
+            (None, Some(4096), Some(4096)),
+            (Some(1024), Some(4096), Some(1024)),
+            (Some(8192), Some(4096), Some(4096)),
+            (Some(1024), None, Some(1024)),
+        ] {
+            let (mistral_request, affinity) = into_mistral(
+                request(requested),
+                mistral::Model::MistralSmallLatest,
+                maximum,
+            )
+            .unwrap();
+            assert_eq!(mistral_request.model, "mistral-small-latest");
+            assert_eq!(mistral_request.temperature, Some(0.5));
+            assert_eq!(mistral_request.messages.len(), 2);
+            assert!(mistral_request.stream);
+            assert_eq!(affinity, Some("abcdef".into()));
+            assert_eq!(
+                serde_json::to_value(mistral_request).unwrap()["max_tokens"].as_u64(),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -908,6 +943,7 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -915,22 +951,55 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
-        let (mistral_request, _) =
-            into_mistral(request(true), mistral::Model::MistralMediumLatest, None).unwrap();
-        assert_eq!(
-            mistral_request.reasoning_effort,
-            Some(mistral::ReasoningEffort::High)
-        );
+        let cases = vec![
+            (
+                mistral::Model::MistralSmallLatest,
+                true,
+                Some(mistral::ReasoningEffort::High),
+            ),
+            (
+                mistral::Model::MistralSmallLatest,
+                false,
+                Some(mistral::ReasoningEffort::None),
+            ),
+            (
+                mistral::Model::MistralMediumLatest,
+                true,
+                Some(mistral::ReasoningEffort::High),
+            ),
+            (
+                mistral::Model::MistralMediumLatest,
+                false,
+                Some(mistral::ReasoningEffort::None),
+            ),
+            (
+                mistral::Model::ZaiGlmLatest,
+                true,
+                Some(mistral::ReasoningEffort::High),
+            ),
+            // Z.ai GLM always thinks and rejects "none", so the field is
+            // omitted when the toggle is off instead of sending an explicit
+            // value.
+            (mistral::Model::ZaiGlmLatest, false, None),
+            // Ensure that, for non-thinking models, `reasoning_effort` is
+            // always omitted.
+            (mistral::Model::CodestralLatest, true, None),
+            (mistral::Model::CodestralLatest, false, None),
+        ];
 
-        let (mistral_request, _) =
-            into_mistral(request(false), mistral::Model::MistralMediumLatest, None).unwrap();
-        assert_eq!(mistral_request.reasoning_effort, None);
+        for (model, thinking_allowed, reasoning_effort) in cases {
+            let (mistral_request, _) = into_mistral(request(thinking_allowed), model, None)
+                .expect("should be able to convert request");
 
-        let (mistral_request, _) =
-            into_mistral(request(true), mistral::Model::CodestralLatest, None).unwrap();
-        assert_eq!(mistral_request.reasoning_effort, None);
+            assert_eq!(
+                mistral_request.reasoning_effort, reasoning_effort,
+                "reasoning_effort should match, expected {:?}, got {:?}",
+                reasoning_effort, mistral_request.reasoning_effort
+            )
+        }
     }
 
     #[test]
@@ -951,6 +1020,7 @@ mod tests {
             tool_choice: None,
             temperature: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -958,6 +1028,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let (mistral_request, _) =
