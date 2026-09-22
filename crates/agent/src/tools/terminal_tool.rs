@@ -1251,16 +1251,37 @@ fn wsl_interop_blocked(content: &str) -> bool {
 /// string, so after a thread is reloaded from disk this sentinel is the only
 /// remaining failure signal; the UI uses it to restore the failure indicator
 /// on replayed terminal cards.
-pub fn parse_failed_exit_code(output: &str) -> Option<i32> {
-    let head = match output.find("\n\n") {
-        Some(end) => &output[..end],
-        None => output,
+/// The sentinel is not always the whole of the first paragraph: [`run_terminal_tool`]
+/// prepends a sandbox note when one applies, the command is interpolated verbatim
+/// and may itself contain a blank line, and on Windows an explanatory note follows
+/// the code on the same line.
+pub fn parse_failed_exit_code(output: &str) -> Option<u32> {
+    const OPENING: &str = "Command \"";
+    const NOTE_OPENING: &str = "Note: ";
+    const MARKER: &str = "\" failed with exit code ";
+
+    // Reject on a prefix test before scanning anything. This runs for every
+    // Execute tool call on every frame, and the overwhelmingly common input is a
+    // successful command's fenced output, which begins with neither prefix.
+    let sentinel = match output.strip_prefix(OPENING) {
+        Some(rest) => rest,
+        // `run_terminal_tool` prepends at most one sandbox note, which always
+        // begins "Note: " and is always separated from the sentinel by a blank
+        // line.
+        None if output.starts_with(NOTE_OPENING) => output
+            .split_once("\n\n")
+            .and_then(|(_, rest)| rest.strip_prefix(OPENING))?,
+        None => return None,
     };
-    head.strip_prefix("Command \"")?;
-    let marker = "\" failed with exit code ";
-    // `rfind`, because the command itself may contain the marker text.
-    let code = &head[head.rfind(marker)? + marker.len()..];
-    code.strip_suffix('.')?.parse().ok()
+
+    // Both the command and the captured output can quote the marker, so a match
+    // only counts where the code ends the sentence: end of string, the blank line
+    // before the output, or the space before the Windows interop note.
+    sentinel.match_indices(MARKER).find_map(|(index, _)| {
+        let (code, rest) = sentinel[index + MARKER.len()..].split_once('.')?;
+        let ends_sentence = rest.is_empty() || rest.starts_with('\n') || rest.starts_with(' ');
+        ends_sentence.then(|| code.parse::<u32>().ok())?
+    })
 }
 
 fn process_content(
@@ -2118,6 +2139,47 @@ mod tests {
             None
         );
         assert_eq!(parse_failed_exit_code("arbitrary tool output"), None);
+
+        // `run_terminal_tool` prepends a sandbox note to what `process_content`
+        // returned, so the string reaching the UI is not always the sentinel.
+        let note = "Note: this command ran WITHOUT an OS sandbox because the user allowed \
+                    unsandboxed execution for the rest of this thread.";
+        assert_eq!(
+            parse_failed_exit_code(&format!("{note}\n\n{}", failed("boom", "cargo build", 101))),
+            Some(101)
+        );
+        // A note with no sentinel after it is still a success.
+        assert_eq!(
+            parse_failed_exit_code(&format!("{note}\n\n{}", failed("fine", "true", 0))),
+            None
+        );
+
+        // Exit codes are u32 at the source, so Windows NTSTATUS values must survive.
+        assert_eq!(
+            parse_failed_exit_code(&failed("crash", "app.exe", 3221225477)),
+            Some(3221225477)
+        );
+
+        // The command is interpolated verbatim, so a blank line inside it must not
+        // be mistaken for the one separating the sentinel from the output.
+        assert_eq!(
+            parse_failed_exit_code(&failed("oops", "python3 - <<'EOF'\n\nprint(1)\nEOF", 2)),
+            Some(2)
+        );
+
+        // On Windows the interop note follows the code on the same line.
+        assert_eq!(
+            parse_failed_exit_code(&format!(
+                "Command \"foo.exe\" failed with exit code 1. {WSL_INTEROP_BLOCKED_NOTE}\n\n```\n```"
+            )),
+            Some(1)
+        );
+
+        // A command quoting the marker must not shadow the real code.
+        assert_eq!(
+            parse_failed_exit_code(&failed("oops", "echo '\" failed with exit code 9.'", 4)),
+            Some(4)
+        );
     }
 
     #[test]

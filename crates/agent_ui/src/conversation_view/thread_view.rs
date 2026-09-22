@@ -8200,19 +8200,6 @@ impl ThreadView {
         })
     }
 
-    /// Tooltip for the failure indicator on terminal cards rendered without a
-    /// live terminal (replayed, auto-denied, or from external agents). The
-    /// exit code, when it survived in the persisted output, beats the coarser
-    /// status.
-    fn terminal_failure_tooltip(saved_exit_code: Option<i32>, status: &ToolCallStatus) -> String {
-        match (saved_exit_code, status) {
-            (Some(exit_code), _) => format!("Exited with code {exit_code}"),
-            (None, ToolCallStatus::Canceled) => "Canceled".to_string(),
-            (None, ToolCallStatus::Rejected) => "Rejected".to_string(),
-            (None, _) => "Failed".to_string(),
-        }
-    }
-
     fn render_tool_call(
         &self,
         active_session_id: &acp::SessionId,
@@ -8549,75 +8536,52 @@ impl ThreadView {
                     if !has_header {
                         return this.child(command_block);
                     }
-                    let disclosure = is_collapsible.then(|| {
-                        let id = tool_call.id.clone();
-                        Disclosure::new(("expand-output", entry_ix), is_open)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown)
-                            .visible_on_hover(&card_header_id)
-                            .on_click(cx.listener(
-                                move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                    this.entry_view_state.update(cx, |state, _cx| {
-                                        state.toggle_tool_call_expansion(&id);
-                                    });
-                                    cx.notify();
-                                },
-                            ))
-                    });
-                    let failure_indicator = (failed_or_canceled || saved_exit_code.is_some())
-                        .then(|| {
-                            let tooltip = Self::terminal_failure_tooltip(
-                                saved_exit_code,
-                                &tool_call.status,
-                            );
-                            div()
-                                .id(("terminal-tool-error-code-indicator", entry_ix))
-                                .child(
-                                    Icon::new(IconName::Close)
-                                        .size(IconSize::Small)
-                                        .color(Color::Error),
-                                )
-                                .tooltip(Tooltip::text(tooltip))
-                        });
+                    // A rejected call renders an empty body, so offering a
+                    // disclosure would give the reader a control that expands
+                    // nothing.
+                    let can_expand =
+                        is_collapsible && !matches!(tool_call.status, ToolCallStatus::Rejected);
                     // The terminal tool's `cd` input is the closest surviving
-                    // analog of the live card's working-dir header label. Other
-                    // `Execute` tools (e.g. external ACP agents) have no `cd`.
+                    // analog of the live card's working-dir header label, but the
+                    // tool resolves "." and "" alike to the worktree root, so
+                    // neither is worth showing. Other `Execute` tools (e.g.
+                    // external ACP agents) have no `cd` at all.
                     let working_dir = tool_call
                         .raw_input
                         .as_ref()
                         .and_then(|input| input.get("cd"))
                         .and_then(|cd| cd.as_str())
-                        .filter(|cd| !cd.is_empty())
-                        .map_or_else(|| "Ran command".to_string(), |cd| cd.to_string());
-                    let header = h_flex()
-                        .id(("replayed-terminal-header", entry_ix))
-                        .pt_1()
-                        .pl_1p5()
-                        .pr_1()
-                        .flex_none()
-                        .gap_1()
-                        .justify_between()
-                        .child(
-                            div()
-                                .id(("command-target-path", entry_ix))
-                                .w_full()
-                                .max_w_full()
-                                .overflow_x_scroll()
-                                .child(
-                                    Label::new(working_dir)
-                                        .buffer_font(cx)
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                ),
-                        )
-                        .children(disclosure)
-                        .children(failure_indicator);
+                        .filter(|cd| !cd.is_empty() && *cd != ".")
+                        .map_or_else(
+                            || SharedString::new_static("Ran command"),
+                            SharedString::from,
+                        );
                     this.child(
-                        v_flex()
-                            .group(&card_header_id)
-                            .bg(self.tool_card_header_bg(cx))
-                            .child(header)
-                            .child(command_block),
+                        TerminalToolHeader::new(
+                            format!("replayed-terminal-{entry_ix}"),
+                            format!("replayed-terminal-header-group-{entry_ix}"),
+                            working_dir,
+                            is_open,
+                        )
+                        .when(can_expand, |header| {
+                            header.on_toggle_expand(cx.listener({
+                                let id = tool_call.id.clone();
+                                move |this, _event, window, cx| {
+                                    this.entry_view_state.update(cx, |state, _cx| {
+                                        state.toggle_tool_call_expansion(&id);
+                                    });
+                                    this.refresh_thread_search(window, cx);
+                                    cx.notify();
+                                }
+                            }))
+                        })
+                        .when(failed_or_canceled || saved_exit_code.is_some(), |header| {
+                            header.failed(saved_exit_code)
+                        })
+                        .when(failed_or_canceled && saved_exit_code.is_none(), |header| {
+                            header.failure_tooltip(tool_call.status.to_string())
+                        })
+                        .command_slot(command_block),
                     )
                 } else {
                     this.child(
@@ -12892,40 +12856,20 @@ mod tests {
         }
     }
 
-    /// The failure indicator on terminal cards without a live terminal
-    /// (replayed after restart, auto-denied, or from external ACP agents)
-    /// must always offer a tooltip: the exit code recovered from the
-    /// persisted output when available, else a status-based fallback
-    /// (issue #57230 follow-up: external-agent failures showed no tooltip).
+    /// A replayed terminal card gets its failure indicator from the exit code
+    /// recovered out of the persisted output, so a saved failure has to survive
+    /// the round trip that `TerminalToolHeader::failed` is then handed.
     #[test]
-    fn test_terminal_failure_tooltip() {
-        // Native terminal tool failure, exit code recovered from the
-        // persisted output sentinel by `agent::parse_failed_exit_code`.
+    fn test_replayed_terminal_recovers_saved_exit_code() {
         let saved_output = "Command \"false\" failed with exit code 128.\n\n```\nfatal: oops\n```";
-        let exit_code = agent::parse_failed_exit_code(saved_output);
-        assert_eq!(exit_code, Some(128));
-        assert_eq!(
-            ThreadView::terminal_failure_tooltip(exit_code, &ToolCallStatus::Failed),
-            "Exited with code 128"
-        );
+        assert_eq!(agent::parse_failed_exit_code(saved_output), Some(128));
 
         // Output not produced by the native terminal tool (e.g. Claude Code
-        // reporting "Exit code 2" in its own format): no code recovered,
-        // fall back to the status.
-        let foreign = agent::parse_failed_exit_code("Exit code 2");
-        assert_eq!(foreign, None);
-        assert_eq!(
-            ThreadView::terminal_failure_tooltip(foreign, &ToolCallStatus::Failed),
-            "Failed"
-        );
-        assert_eq!(
-            ThreadView::terminal_failure_tooltip(None, &ToolCallStatus::Canceled),
-            "Canceled"
-        );
-        assert_eq!(
-            ThreadView::terminal_failure_tooltip(None, &ToolCallStatus::Rejected),
-            "Rejected"
-        );
+        // reporting "Exit code 2" in its own format) carries no code, and the
+        // header falls back to the tool call's status instead.
+        assert_eq!(agent::parse_failed_exit_code("Exit code 2"), None);
+        assert_eq!(ToolCallStatus::Canceled.to_string(), "Canceled");
+        assert_eq!(ToolCallStatus::Rejected.to_string(), "Rejected");
     }
 
     fn native_command(name: &str) -> acp::AvailableCommand {
