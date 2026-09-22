@@ -2748,11 +2748,9 @@ pub fn available_native_agent(cx: &App) -> AvailableAgent {
         let provider_id = provider.id();
         for model in provider.provided_models(cx) {
             let id = format!("{}/{}", provider_id.0, model.id().0);
-            let is_default = default
-                .as_ref()
-                .is_some_and(|default| {
-                    default.provider.id() == provider_id && default.model.id() == model.id()
-                });
+            let is_default = default.as_ref().is_some_and(|default| {
+                default.provider.id() == provider_id && default.model.id() == model.id()
+            });
             models.push(AvailableModel {
                 id,
                 name: model.name().0,
