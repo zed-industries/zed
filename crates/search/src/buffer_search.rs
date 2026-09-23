@@ -528,11 +528,13 @@ impl ToolbarItemView for BufferSearchBar {
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_searchable_item_subscriptions.take();
-        self.active_searchable_item.take();
         self.splittable_editor = None;
         self._splittable_editor_subscription = None;
-
         self.pending_search.take();
+
+        if let Some(item) = self.active_searchable_item.take() {
+            item.set_select_search_options(None, cx);
+        }
 
         if let Some(splittable_editor) = item
             .and_then(|item| item.act_as_type(TypeId::of::<SplittableEditor>(), cx))
@@ -608,6 +610,7 @@ impl ToolbarItemView for BufferSearchBar {
 
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
+            self.sync_select_search_options(cx);
             drop(self.update_matches(true, false, window, cx));
             if self.needs_expand_collapse_option(cx) && self.is_dismissed() {
                 return ToolbarItemLocation::PrimaryLeft;
@@ -4296,6 +4299,102 @@ mod tests {
                 editor.search_background_highlights(cx).len(),
                 1,
                 "only the literal 'z.d' should match, not 'zed'"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_active_pane_item_syncs_select_search_options(cx: &mut TestAppContext) {
+        init_globals(cx);
+
+        // Set up 2 editors, with both buffers containing a lowercase and
+        // uppercase version of the same word, so we can confirm whether case
+        // sensitivity is affecting `editor: select next` .
+        let cx = cx.add_empty_window();
+        let buffer_a = cx.new(|cx| Buffer::local("zed\nZED\n", cx));
+        let buffer_b = cx.new(|cx| Buffer::local("zed\nZED\n", cx));
+        let editor_a = cx
+            .new_window_entity(|window, cx| Editor::for_buffer(buffer_a.clone(), None, window, cx));
+        let editor_b = cx
+            .new_window_entity(|window, cx| Editor::for_buffer(buffer_b.clone(), None, window, cx));
+
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor_a), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.set_search_options(SearchOptions::CASE_SENSITIVE, cx)
+        });
+
+        // Editor A should use the search bar's case sensitivity option.
+        editor_a.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("selecting next should succeed, even if selections are not changed");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)]
+            );
+        });
+
+        // Switching the active item should move the search bar's options to
+        // Editor B.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor_b), window, cx)
+        });
+
+        editor_b.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("selecting next should succeed, even if selections are not changed");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)]
+            );
+        });
+
+        // Editor A should now fall back to the default case insensitive search
+        // setting.
+        editor_a.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("selecting next should succeed, even if selections are not changed");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 3)
+                ]
             );
         });
     }

@@ -2306,11 +2306,7 @@ impl Editor {
         Ok(())
     }
 
-    fn build_query<I, P>(
-        &self,
-        patterns: I,
-        case_sensitive: bool,
-    ) -> Result<AhoCorasick, BuildError>
+    fn build_query<I, P>(patterns: I, case_sensitive: bool) -> Result<AhoCorasick, BuildError>
     where
         I: IntoIterator<Item = P>,
         P: AsRef<[u8]>,
@@ -2339,7 +2335,7 @@ impl Editor {
             }
         });
         Ok(SelectNextState {
-            query: self.build_query(patterns, search_options.case_sensitive)?,
+            query: Self::build_query(patterns, search_options.case_sensitive)?,
             wordwise: wordwise.unwrap_or(search_options.whole_word),
             done,
         })
