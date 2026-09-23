@@ -550,7 +550,7 @@ mod tests {
 
     #[test]
     fn chat_completion_reasoning_effort_honors_request_and_configured_effort() {
-        let model = available_model(Some(open_ai::ReasoningEffort::Medium));
+        let mut model = available_model(Some(open_ai::ReasoningEffort::Medium));
         let mut request = LanguageModelRequest {
             thinking_allowed: true,
             ..Default::default()
@@ -576,12 +576,9 @@ mod tests {
         request.thinking_allowed = false;
         assert_eq!(chat_completion_reasoning_effort(&request, &model), None);
 
-        let mut model_with_none_capability = model.clone();
-        model_with_none_capability
-            .capabilities
-            .supports_none_reasoning_effort = true;
+        model.capabilities.supports_none_reasoning_effort = true;
         assert_eq!(
-            chat_completion_reasoning_effort(&request, &model_with_none_capability),
+            chat_completion_reasoning_effort(&request, &model),
             Some(open_ai::ReasoningEffort::None)
         );
     }
