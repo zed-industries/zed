@@ -57,7 +57,7 @@ impl CopyButton {
         id: impl Into<ElementId>,
         action: impl Fn(&mut Window, &mut App) -> bool + 'static,
     ) -> Self {
-        Self::new(id, String::new()).custom_on_click(action)
+        Self::new(id, String::new()).custom_on_click_with_result(action)
     }
 
     pub fn icon_size(mut self, icon_size: IconSize) -> Self {
@@ -81,6 +81,16 @@ impl CopyButton {
     }
 
     pub fn custom_on_click(
+        self,
+        custom_on_click: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.custom_on_click_with_result(move |window, cx| {
+            custom_on_click(window, cx);
+            true
+        })
+    }
+
+    pub fn custom_on_click_with_result(
         mut self,
         custom_on_click: impl Fn(&mut Window, &mut App) -> bool + 'static,
     ) -> Self {

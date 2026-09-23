@@ -6799,6 +6799,9 @@ impl ThreadView {
             return Empty.into_any_element();
         }
 
+        let copy_response_index = copy_response_index.filter(|response_index| {
+            Self::has_agent_message_content(thread.read(cx).entries(), *response_index, cx)
+        });
         let copy_response_button = copy_response_index.map(|response_index| {
             let thread = thread.clone();
             CopyButton::new_with_action(("copy_agent_response", entry_ix), move |_window, cx| {
@@ -7704,6 +7707,35 @@ impl ThreadView {
                 })
             })
             .into_any_element()
+    }
+
+    fn has_agent_message_content(
+        entries: &[AgentThreadEntry],
+        entry_index: usize,
+        cx: &App,
+    ) -> bool {
+        if !matches!(
+            entries.get(entry_index),
+            Some(AgentThreadEntry::AssistantMessage(_))
+        ) {
+            return false;
+        }
+
+        let start_index = (0..entry_index)
+            .rev()
+            .find(|&index| matches!(entries.get(index), Some(AgentThreadEntry::UserMessage(_))))
+            .map(|index| index + 1)
+            .unwrap_or(0);
+
+        entries[start_index..=entry_index].iter().any(|entry| {
+            let AgentThreadEntry::AssistantMessage(message) = entry else {
+                return false;
+            };
+            message.chunks.iter().any(|chunk| match chunk {
+                AssistantMessageChunk::Message { block, .. } => block.visible_content(cx),
+                AssistantMessageChunk::Thought { .. } => false,
+            })
+        })
     }
 
     fn get_agent_message_content(
@@ -12787,10 +12819,13 @@ fn strip_leading_command(text: &str, command_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use acp_thread::MessageContent;
+    use language::LanguageRegistry;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use std::path::Path;
+    use std::{path::Path, sync::Arc};
     use util::path;
+    use util::paths::PathStyle;
     use workspace::MultiWorkspace;
 
     #[test]
@@ -12818,6 +12853,55 @@ mod tests {
                 expected,
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_has_agent_message_content_ignores_thought_chunks(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let thought_content = MessageContent::new(
+                acp::ContentBlock::Text(acp::TextContent::new("private thought")),
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+            let thought_only_entries = vec![AgentThreadEntry::AssistantMessage(AssistantMessage {
+                chunks: vec![AssistantMessageChunk::Thought {
+                    id: None,
+                    block: thought_content,
+                }],
+                indented: false,
+                is_subagent_output: false,
+            })];
+            assert!(!ThreadView::has_agent_message_content(
+                &thought_only_entries,
+                0,
+                cx,
+            ));
+
+            let message_content = MessageContent::new(
+                acp::ContentBlock::Text(acp::TextContent::new("visible response")),
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+            let message_entries = vec![AgentThreadEntry::AssistantMessage(AssistantMessage {
+                chunks: vec![AssistantMessageChunk::Message {
+                    id: None,
+                    block: message_content,
+                }],
+                indented: false,
+                is_subagent_output: false,
+            })];
+            assert!(ThreadView::has_agent_message_content(
+                &message_entries,
+                0,
+                cx
+            ));
+        });
     }
 
     fn native_command(name: &str) -> acp::AvailableCommand {
