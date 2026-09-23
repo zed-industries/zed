@@ -22,7 +22,7 @@ use std::{
 };
 
 #[derive(Default)]
-struct AppState {
+struct IosPlatformState {
     running: bool,
     finish_launching: Option<Box<dyn FnOnce()>>,
     quit: Option<Box<dyn FnMut()>>,
@@ -34,7 +34,7 @@ struct AppState {
 }
 
 thread_local! {
-    static APP_STATE: RefCell<AppState> = RefCell::default();
+    static APP_STATE: RefCell<IosPlatformState> = RefCell::default();
 }
 
 pub(super) fn run(on_finish_launching: Box<dyn FnOnce()>) {
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn launch_callback_runs_once_and_can_register_callbacks() {
-        APP_STATE.with_borrow_mut(|state| *state = AppState::default());
+        APP_STATE.with_borrow_mut(|state| *state = IosPlatformState::default());
         let launches = Rc::new(Cell::new(0));
         APP_STATE.with_borrow_mut(|state| {
             let launches = launches.clone();
@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn lifecycle_callback_replacement_survives_dispatch() {
-        APP_STATE.with_borrow_mut(|state| *state = AppState::default());
+        APP_STATE.with_borrow_mut(|state| *state = IosPlatformState::default());
         let events = Rc::new(RefCell::new(Vec::new()));
         set_app_lifecycle_callback(Box::new({
             let events = events.clone();
@@ -398,7 +398,7 @@ mod tests {
 
     #[test]
     fn memory_warning_callback_is_restored_after_dispatch() {
-        APP_STATE.with_borrow_mut(|state| *state = AppState::default());
+        APP_STATE.with_borrow_mut(|state| *state = IosPlatformState::default());
         let warnings = Rc::new(Cell::new(0));
         set_memory_warning_callback(Box::new({
             let warnings = warnings.clone();

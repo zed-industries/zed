@@ -50,12 +50,11 @@ impl Render for IosExample {
 fn main() {
     gpui_platform::application().run(|cx| {
         gpui_ios::ios::set_status_bar_style(gpui_ios::StatusBarContentStyle::Light);
-        match cx.open_window(WindowOptions::default(), |_, cx| {
+        cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|_| IosExample { tap_count: 0 })
-        }) {
-            Ok(_) => cx.activate(true),
-            Err(error) => log::error!("failed to open GPUI iOS example window: {error:#}"),
-        }
+        })
+        .unwrap();
+        cx.activate(true);
     });
 }
 
