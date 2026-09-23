@@ -151,31 +151,36 @@ Approvals for the rest of the thread are remembered only for that thread. Approv
 
 ## Persistent Sandbox Permissions {#persistent-sandbox-permissions}
 
-If you want to pre-approve common sandbox requests, add persistent permissions to your settings file:
+To pre-approve a write path, open the Settings Editor, go to **AI > Sandbox**, and add it under **Writable Paths**. Use a home-relative path such as `~/.cache/example` to avoid machine-specific absolute paths.
+
+You can also add this to your `settings.json` directly:
 
 ```json [settings]
 {
   "agent": {
     "sandbox_permissions": {
       "network_hosts": ["github.com", "*.npmjs.org"],
-      "write_paths": ["/Users/you/.cache/my-tool"]
+      "write_paths": ["~/.cache/example"]
     }
   }
 }
 ```
 
+`write_paths` defaults to `[]`. Entries can be absolute paths, `~`, or paths beginning with `~/`. Home-relative paths resolve against Zed's home directory before `.` and `..` are normalized. On Windows, `~\` is also supported, and these paths use the Windows home, not the WSL shell's home. Other relative paths, environment variables, and named-user expansion such as `~other` are not supported.
+
+Hand-authored entries are bare path strings. Grants saved by an `always` approval are objects with `requested` and `resolved` paths. These retain the canonical, symlink-resolved target established at approval time rather than expanding or resolving it again.
+
 The available options are:
 
-| Setting              | Description                                                                                                       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `network_hosts`      | Hosts that sandboxed tools may reach without prompting. Entries can be exact hostnames or leading-`*.` wildcards. |
-| `allow_all_hosts`    | Allow sandboxed tools to reach any host without prompting.                                                        |
-| `write_paths`        | Directory subtrees that sandboxed terminal commands may write to without prompting. Paths are absolute.           |
-| `allow_fs_write_all` | Allow sandboxed terminal commands to write anywhere except protected Git metadata without prompting.              |
-| `allow_unsandboxed`  | Turn sandboxing off entirely for Zed Agent terminal commands. The fetch tool will have no restrictions.           |
+| Setting              | Description                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `network_hosts`      | Hosts that sandboxed tools may reach without prompting. Entries can be exact hostnames or leading-`*.` wildcards.  |
+| `allow_all_hosts`    | Allow sandboxed tools to reach any host without prompting.                                                         |
+| `write_paths`        | Directory subtrees that sandboxed terminal commands may write to without prompting, except protected Git metadata. |
+| `allow_fs_write_all` | Allow sandboxed terminal commands to write anywhere except protected Git metadata without prompting.               |
+| `allow_unsandboxed`  | Turn sandboxing off entirely for Zed Agent terminal commands. The fetch tool will have no restrictions.            |
 
-Prefer narrow grants, such as a specific host or write path, over `allow_all_hosts`, `allow_fs_write_all`, or
-`allow_unsandboxed`.
+Prefer narrow grants, such as a specific host or write path, over `allow_all_hosts`, `allow_fs_write_all`, or `allow_unsandboxed`.
 
 ## Git Metadata {#git-metadata}
 

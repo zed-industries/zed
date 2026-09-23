@@ -991,13 +991,35 @@ pub struct SandboxPermissionsContent {
     /// Default: false
     pub allow_unsandboxed: Option<bool>,
 
-    /// Directory subtrees that sandboxed terminal commands may always write
-    /// to without prompting. Each entry is either a bare path string or an
-    /// object `{requested, resolved}`; Zed writes objects (the canonical,
-    /// symlink-resolved target established at approval time), while
-    /// hand-authored entries may be bare path strings. Paths written by Zed
-    /// are absolute.
+    /// Directory subtrees that sandboxed terminal commands may write
+    /// to without prompting, except protected Git metadata.
+    ///
     /// Default: []
+    ///
+    /// Use a home-relative path such as `~/.cache/example` to avoid
+    /// machine-specific absolute paths.
+    ///
+    /// Entries can be absolute paths, `~`, or paths beginning with `~/`.
+    /// Home-relative paths resolve against Zed's home directory before `.` and
+    /// `..` are normalized. On Windows, `~\` is also supported, and these paths
+    /// use the Windows home, not the WSL shell's home. Other relative paths,
+    /// environment variables, and named-user expansion such as `~other` are not
+    /// supported.
+    ///
+    /// ```json
+    /// {
+    ///   "agent": {
+    ///     "sandbox_permissions": {
+    ///       "write_paths": ["~/.cache/example"]
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Hand-authored entries are bare path strings. Grants saved by an `always`
+    /// approval are objects with `requested` and `resolved` paths. These retain
+    /// the canonical, symlink-resolved target established at approval time rather
+    /// than expanding or resolving it again.
     pub write_paths: Option<ExtendingVec<GrantedWritePathContent>>,
 
     /// Whether to warn when a sandbox escalation prompt requests a domain or
