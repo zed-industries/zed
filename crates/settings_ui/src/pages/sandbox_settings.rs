@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, normalize_sandbox_write_path};
 use gpui::{ReadGlobal as _, ScrollHandle, prelude::*};
 use http_proxy::HostPattern;
 use settings::{Settings as _, SettingsStore};
@@ -12,7 +12,7 @@ use crate::components::{SettingsInputField, SettingsSectionHeader};
 
 const DOMAINS_DESCRIPTION: &str = "Each entry is an exact domain (github.com) or a leading-*. subdomain wildcard (*.npmjs.org). IP addresses and local domains are not allowed.";
 
-const WRITE_PATHS_DESCRIPTION: &str = "Each entry must be an absolute path and grants write access to the whole subtree, except protected Git metadata.";
+const WRITE_PATHS_DESCRIPTION: &str = "Absolute or home-relative paths (e.g. ~/.cache/example). Home paths use Zed's home directory, including the Windows home on Windows. Grants cover the whole subtree, except protected Git metadata.";
 
 pub(crate) fn render_sandbox_settings_page(
     settings_window: &SettingsWindow,
@@ -375,7 +375,7 @@ fn render_add_path_input(cx: &mut Context<SettingsWindow>) -> AnyElement {
     let settings_window = cx.entity().downgrade();
 
     SettingsInputField::new("sandbox-path-new")
-        .with_placeholder("Add an absolute path (e.g. /path/to/directory)…")
+        .with_placeholder("Add a path (e.g. ~/.cache/example)…")
         .tab_index(0)
         .with_buffer_font()
         .display_clear_button()
@@ -523,44 +523,55 @@ fn remove_network_host(host: String, cx: &mut App) {
     });
 }
 
-/// Insert a hand-authored write-path entry (no resolved canonical) into the
-/// settings list as a minimal subtree, mirroring `util::paths::insert_subtree`
-/// but over [`settings::GrantedWritePathContent`] keyed on the requested path.
-fn insert_write_path_subtree(paths: &mut Vec<settings::GrantedWritePathContent>, path: PathBuf) {
-    if paths.iter().any(|entry| path.starts_with(&entry.requested)) {
+fn insert_write_path_subtree(
+    paths: &mut Vec<settings::GrantedWritePathContent>,
+    path: PathBuf,
+    normalized_path: PathBuf,
+) {
+    let normalize_entry = |entry: &settings::GrantedWritePathContent| match &entry.resolved {
+        Some(resolved) => util::paths::normalize_lexically(resolved).map_err(anyhow::Error::from),
+        None => normalize_sandbox_write_path(&entry.requested),
+    };
+    if paths.iter().any(|entry| {
+        normalize_entry(entry).is_ok_and(|existing| normalized_path.starts_with(existing))
+    }) {
         return;
     }
-    paths.retain(|entry| !entry.requested.starts_with(&path));
+    paths.retain(|entry| {
+        !normalize_entry(entry).is_ok_and(|existing| existing.starts_with(&normalized_path))
+    });
+    // Keep home-relative spelling portable, and do not turn an ordinary relative
+    // path into a home-relative entry on the next settings load
+    let requested = if path.starts_with("~") || normalized_path.starts_with("~") {
+        path
+    } else {
+        normalized_path
+    };
     paths.push(settings::GrantedWritePathContent {
-        requested: path,
+        requested,
         resolved: None,
         on_windows_fs: false,
     });
 }
 
 fn add_write_path(path: PathBuf, cx: &mut App) {
-    // Normalize away `.`/`..` so the stored entry matches the form the runtime
-    // uses for coverage checks (see `compile_sandbox_permissions`) and the form
-    // persisted by the in-thread "Allow always" grant. A hand-authored entry
-    // records no resolved canonical, so enforcement resolves it fresh (see
-    // `granted_write_path_to_location`).
-    let Ok(path) = util::paths::normalize_lexically(&path) else {
+    let Ok(normalized_path) = normalize_sandbox_write_path(&path) else {
         return;
     };
     update_sandbox_permissions(cx, move |permissions| {
         let paths = &mut permissions.write_paths.get_or_insert_default().0;
-        insert_write_path_subtree(paths, path);
+        insert_write_path_subtree(paths, path, normalized_path);
     });
 }
 
 fn update_write_path(old_path: PathBuf, new_path: PathBuf, cx: &mut App) {
-    let Ok(new_path) = util::paths::normalize_lexically(&new_path) else {
+    let Ok(normalized_path) = normalize_sandbox_write_path(&new_path) else {
         return;
     };
     update_sandbox_permissions(cx, move |permissions| {
         if let Some(paths) = permissions.write_paths.as_mut() {
             paths.0.retain(|entry| entry.requested != old_path);
-            insert_write_path_subtree(&mut paths.0, new_path);
+            insert_write_path_subtree(&mut paths.0, new_path, normalized_path);
         }
     });
 }
@@ -571,4 +582,162 @@ fn remove_write_path(path: PathBuf, cx: &mut App) {
             paths.0.retain(|entry| entry.requested != path);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::{FakeFs, Fs as _};
+    use gpui::TestAppContext;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+
+    async fn setup(write_paths: Value, cx: &mut TestAppContext) -> anyhow::Result<Arc<FakeFs>> {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(
+            paths::settings_file()
+                .parent()
+                .expect("settings has a parent"),
+        )
+        .await?;
+        let text = json!({ "agent": { "sandbox_permissions": { "write_paths": write_paths } } })
+            .to_string();
+        fs.insert_file(paths::settings_file(), text.as_bytes().to_vec())
+            .await;
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store.set_user_settings(&text, cx).result()?;
+            cx.set_global(store);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            anyhow::Ok(())
+        })?;
+        Ok(fs)
+    }
+
+    async fn stored_write_paths(fs: &FakeFs) -> anyhow::Result<Value> {
+        let text = fs.load(paths::settings_file()).await?;
+        let settings: Value = serde_json::from_str(&text)?;
+        Ok(settings["agent"]["sandbox_permissions"]["write_paths"].clone())
+    }
+
+    #[gpui::test]
+    async fn test_home_path_edits_preserve_portable_json(cx: &mut TestAppContext) {
+        let fs = setup(json!([]), cx).await.expect("settings setup succeeds");
+        let path = PathBuf::from("~/../shared");
+        cx.update(|cx| add_write_path(path.clone(), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!(["~/../shared"])
+        );
+        assert_eq!(cx.read(raw_sandbox_lists).1, vec![path.clone()]);
+
+        let edited_path = PathBuf::from("~/.cache/example");
+        cx.update(|cx| update_write_path(path, edited_path.clone(), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!(["~/.cache/example"])
+        );
+        assert_eq!(cx.read(raw_sandbox_lists).1, vec![edited_path.clone()]);
+
+        cx.update(|cx| remove_write_path(edited_path, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!([])
+        );
+        assert!(cx.read(raw_sandbox_lists).1.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_relative_path_edits_do_not_introduce_home_prefix(cx: &mut TestAppContext) {
+        let fs = setup(json!([]), cx).await.expect("settings setup succeeds");
+        let path = PathBuf::from("relative/../~");
+        cx.update(|cx| add_write_path(path.clone(), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!(["relative/../~"])
+        );
+
+        cx.update(|cx| update_write_path(path, PathBuf::from("relative/../~/cache"), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!(["relative/../~/cache"])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_home_path_edits_compare_effective_paths(cx: &mut TestAppContext) {
+        let home = util::paths::home_dir();
+        let fs = setup(json!(["~/cache/child", home.join("other")]), cx)
+            .await
+            .expect("settings setup succeeds");
+        cx.update(|cx| add_write_path(PathBuf::from("~/cache"), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!([home.join("other"), "~/cache"])
+        );
+
+        cx.update(|cx| add_write_path(home.join("cache"), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!([home.join("other"), "~/cache"])
+        );
+
+        cx.update(|cx| update_write_path(home.join("other"), PathBuf::from("~/../shared"), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!(["~/cache", "~/../shared"])
+        );
+
+        cx.update(|cx| remove_write_path(PathBuf::from("~/cache"), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!(["~/../shared"])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_home_path_edits_preserve_approved_grants(cx: &mut TestAppContext) {
+        let home = util::paths::home_dir();
+        let approved = json!({
+            "requested": home.join("link"),
+            "resolved": home.join("cache"),
+            "on_windows_fs": true,
+        });
+        let fs = setup(json!([approved]), cx)
+            .await
+            .expect("settings setup succeeds");
+        cx.update(|cx| add_write_path(PathBuf::from("~/cache"), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!([approved])
+        );
+
+        cx.update(|cx| add_write_path(PathBuf::from("~/other"), cx));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            update_write_path(PathBuf::from("~/other"), PathBuf::from("~/cache/child"), cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!([approved])
+        );
+
+        cx.update(|cx| remove_write_path(home.join("link"), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            stored_write_paths(&fs).await.expect("valid settings"),
+            json!([])
+        );
+    }
 }

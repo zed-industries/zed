@@ -3,7 +3,7 @@ mod user_agents_md;
 
 use std::cmp::Ordering::{Equal, Greater, Less};
 use std::fmt;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use anyhow::Context as _;
@@ -848,6 +848,30 @@ impl Settings for AgentSettings {
     }
 }
 
+/// Expands a hand-authored sandbox write path against Zed's home before
+/// normalizing it for lexical coverage checks. Approved canonical grants must
+/// not pass through this function.
+pub fn normalize_sandbox_write_path(path: &Path) -> anyhow::Result<PathBuf> {
+    normalize_sandbox_write_path_with_home(path, util::paths::home_dir())
+}
+
+fn normalize_sandbox_write_path_with_home(path: &Path, home: &Path) -> anyhow::Result<PathBuf> {
+    let expanded = if let Ok(suffix) = path.strip_prefix("~") {
+        #[cfg(target_os = "windows")]
+        anyhow::ensure!(
+            !suffix.components().any(|component| matches!(
+                Path::new(component.as_os_str()).components().next(),
+                Some(Component::Prefix(_))
+            )),
+            "Home-relative sandbox write paths cannot contain a Windows drive prefix"
+        );
+        home.join(suffix)
+    } else {
+        path.to_path_buf()
+    };
+    Ok(util::paths::normalize_lexically(&expanded)?)
+}
+
 fn compile_sandbox_permissions(
     content: Option<settings::SandboxPermissionsContent>,
 ) -> SandboxPermissions {
@@ -857,20 +881,24 @@ fn compile_sandbox_permissions(
 
     let mut write_paths: Vec<settings::GrantedWritePath> = Vec::new();
     for entry in content.write_paths.map(|paths| paths.0).unwrap_or_default() {
-        // Normalize away `..`/`.` before storing, since coverage checks are
-        // purely lexical; drop entries whose requested (or resolved) path
-        // escapes the filesystem root.
-        let Ok(requested) = util::paths::normalize_lexically(&entry.requested) else {
-            continue;
-        };
+        // Coverage is lexical, but only unresolved entries may expand the home
+        // prefix. Recorded grant identities must still use verifying reopening
         let granted = match entry.resolved {
             Some(resolved) => {
+                let Ok(requested) = util::paths::normalize_lexically(&entry.requested) else {
+                    continue;
+                };
                 let Ok(resolved) = util::paths::normalize_lexically(&resolved) else {
                     continue;
                 };
                 settings::GrantedWritePath::resolved_on_fs(requested, resolved, entry.on_windows_fs)
             }
-            None => settings::GrantedWritePath::from_requested(requested),
+            None => {
+                let Ok(requested) = normalize_sandbox_write_path(&entry.requested) else {
+                    continue;
+                };
+                settings::GrantedWritePath::from_requested(requested)
+            }
         };
         insert_granted_subtree(&mut write_paths, granted);
     }
@@ -904,9 +932,12 @@ fn insert_granted_subtree(
     granted: settings::GrantedWritePath,
 ) {
     if subtrees.iter().any(|existing| {
-        granted
-            .canonical_or_requested()
-            .starts_with(existing.canonical_or_requested())
+        let path = granted.canonical_or_requested();
+        let existing_path = existing.canonical_or_requested();
+        // For equal targets, retain the approved identity rather than replacing
+        // verifying reopening with fresh capture of an unresolved entry
+        path.starts_with(existing_path)
+            && (path != existing_path || existing.resolved.is_some() || granted.resolved.is_none())
     }) {
         return;
     }
@@ -1018,7 +1049,6 @@ mod tests {
     use gpui::{TestAppContext, UpdateGlobal, px};
     use serde_json::json;
     use settings::{ToolPermissionMode, ToolPermissionsContent};
-    use std::path::PathBuf;
 
     #[test]
     fn test_parse_auto_compact_threshold() {
@@ -1414,6 +1444,148 @@ mod tests {
         let permissions = compile_tool_permissions(None);
         assert!(permissions.tools.is_empty());
         assert_eq!(permissions.default, ToolPermissionMode::Confirm);
+    }
+
+    #[test]
+    fn test_sandbox_write_path_home_expansion_and_normalization() -> anyhow::Result<()> {
+        for home in [Path::new("/nested/users/test"), Path::new("/users/test")] {
+            for (input, expected) in [
+                ("~", home.to_path_buf()),
+                ("~/", home.to_path_buf()),
+                (
+                    "~/../shared",
+                    home.parent().expect("home has a parent").join("shared"),
+                ),
+                ("~//cache", home.join("cache")),
+                ("~/cache", home.join("cache")),
+                ("~/cache/../other", home.join("other")),
+            ] {
+                assert_eq!(
+                    normalize_sandbox_write_path_with_home(Path::new(input), home)?,
+                    expected,
+                    "{input}"
+                );
+            }
+            assert!(
+                normalize_sandbox_write_path_with_home(Path::new("~/../../../.."), home).is_err()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_sandbox_write_path_unsupported_expansions() -> anyhow::Result<()> {
+        let home = Path::new("/users/test");
+        for input in [
+            "$HOME/cache",
+            "%USERPROFILE%/cache",
+            "./~/cache",
+            "/tmp/~/cache",
+            "relative/cache",
+            "~someone/cache",
+        ] {
+            let path = Path::new(input);
+            assert_eq!(
+                normalize_sandbox_write_path_with_home(path, home)?,
+                util::paths::normalize_lexically(path)?,
+                "{input}"
+            );
+        }
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            normalize_sandbox_write_path_with_home(Path::new(r"~\cache"), home)?,
+            Path::new(r"~\cache")
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_sandbox_write_path_windows_home() -> anyhow::Result<()> {
+        let home = Path::new(r"C:\Users\test");
+        for input in ["~/cache", r"~\\cache", r"~\cache"] {
+            assert_eq!(
+                normalize_sandbox_write_path_with_home(Path::new(input), home)?,
+                home.join("cache")
+            );
+        }
+        assert_eq!(
+            normalize_sandbox_write_path_with_home(Path::new(r"~\..\shared"), home)?,
+            Path::new(r"C:\Users\shared")
+        );
+        for input in ["~/D:/scratch", r"~\D:\scratch", r"~\cache\D:\scratch"] {
+            assert!(normalize_sandbox_write_path_with_home(Path::new(input), home).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_sandbox_permissions_home_paths_and_subtrees() -> anyhow::Result<()> {
+        let home = util::paths::home_dir();
+        for paths in [
+            json!(["~/cache/child", home.join("cache"), "~/cache"]),
+            json!(["~/cache", home.join("cache/child"), home.join("cache")]),
+        ] {
+            let content = serde_json::from_value(json!({ "write_paths": paths }))?;
+            assert_eq!(
+                compile_sandbox_permissions(Some(content)).write_paths,
+                vec![settings::GrantedWritePath::from_requested(
+                    home.join("cache")
+                )]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_sandbox_permissions_prefers_approved_home_target() -> anyhow::Result<()> {
+        let home = util::paths::home_dir();
+        let approved = json!({
+            "requested": home.join("link"),
+            "resolved": home.join("cache"),
+            "on_windows_fs": true,
+        });
+        for paths in [json!(["~/cache", approved]), json!([approved, "~/cache"])] {
+            let content = serde_json::from_value(json!({ "write_paths": paths }))?;
+            assert_eq!(
+                compile_sandbox_permissions(Some(content)).write_paths,
+                vec![settings::GrantedWritePath::resolved_on_fs(
+                    home.join("link"),
+                    home.join("cache"),
+                    true,
+                )]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_sandbox_permissions_does_not_expand_normalized_relative_paths() -> anyhow::Result<()> {
+        let content = serde_json::from_value(json!({
+            "write_paths": ["relative/../~"]
+        }))?;
+        assert_eq!(
+            compile_sandbox_permissions(Some(content)).write_paths,
+            vec![settings::GrantedWritePath::from_requested(PathBuf::from(
+                "~"
+            ))]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_sandbox_permissions_does_not_expand_approved_paths() -> anyhow::Result<()> {
+        let content = serde_json::from_value(json!({
+            "write_paths": [{ "requested": "~/link", "resolved": "~/canonical" }]
+        }))?;
+        assert_eq!(
+            compile_sandbox_permissions(Some(content)).write_paths,
+            vec![settings::GrantedWritePath::resolved(
+                PathBuf::from("~/link"),
+                PathBuf::from("~/canonical"),
+            )]
+        );
+        Ok(())
     }
 
     #[test]
