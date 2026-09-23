@@ -7575,7 +7575,7 @@ name = "gpui_apple"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "block",
+ "block2 0.6.2",
  "cbindgen",
  "cocoa 0.26.0",
  "core-foundation 0.10.0",
