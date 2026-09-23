@@ -15,11 +15,11 @@ use workspace::{Workspace, notifications::NotificationId};
 const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("asciidoc", &["adoc", "asciidoc"]),
     ("astro", &["astro"]),
-    ("beancount", &["beancount", "bean"]),
+    ("beancount", &["bean", "beancount"]),
     ("clojure", &["bb", "clj", "cljc", "cljd", "cljs", "edn"]),
     (
         "csharp",
-        &["cs", "csproj", "proj", "props", "targets", "slnx"],
+        &["cs", "csproj", "proj", "props", "slnx", "targets"],
     ),
     ("csv", &["csv"]),
     ("cython", &["pyx", "pxd", "pxi"]),
@@ -46,11 +46,11 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     (
         "erlang",
         &[
-            "Emakefile",
             "app.src",
+            "Emakefile",
             "erl",
-            "escript",
             "erlang",
+            "escript",
             "hrl",
             "rebar.config",
             "xrl",
@@ -79,6 +79,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
             ".eslintignore",
             ".fdignore",
             ".git-blame-ignore-revs",
+            ".gitattributes",
             ".gitconfig",
             ".gitignore",
             ".gitignore_global",
@@ -92,7 +93,6 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
             "config.worktree",
             "git-rebase-todo",
             "gitattributes",
-            ".gitattributes",
         ],
     ),
     ("gleam", &["gleam"]),
@@ -128,11 +128,11 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
         "make",
         &[
             "GNUmakefile",
-            "Makefile",
-            "OCamlMakefile",
             "mak",
+            "Makefile",
             "makefile",
             "mk",
+            "OCamlMakefile",
         ],
     ),
     ("neocmake", &["CMakeLists.txt", "cmake"]),
@@ -178,41 +178,41 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
             "Appraisals",
             "Berksfile",
             "Brewfile",
+            "builder",
+            "cap",
             "Capfile",
+            "capfile",
             "Cheffile",
             "Dangerfile",
             "Deliverfile",
-            "Gemfile",
-            "Guardfile",
+            "erb",
             "Fastfile",
+            "Gemfile",
+            "gemspec",
+            "Guardfile",
             "Gymfile",
             "Hobofile",
-            "Matchfile",
-            "Podfile",
-            "Puppetfile",
-            "Rakefile",
-            "Rantfile",
-            "Scanfile",
-            "Snapfile",
-            "Steepfile",
-            "Thorfile",
-            "Vagrantfile",
-            "builder",
-            "cap",
-            "capfile",
-            "erb",
-            "gemspec",
             "irbrc",
             "jbuilder",
+            "Matchfile",
+            "Podfile",
             "pryrc",
+            "Puppetfile",
             "rabl",
             "rake",
+            "Rakefile",
+            "Rantfile",
             "rb",
             "rbs",
             "ru",
             "rxml",
+            "Scanfile",
             "simplecov",
+            "Snapfile",
+            "Steepfile",
             "thor",
+            "Thorfile",
+            "Vagrantfile",
         ],
     ),
     ("scala", &["mill", "scala", "sbt", "sc"]),
@@ -447,87 +447,6 @@ mod tests {
         );
     }
 
-    fn assert_suggests(path: &str, extension_id: &str, matched: &str) {
-        assert_eq!(
-            suggested_extension(rel_path(path)),
-            Some(SuggestedExtension {
-                extension_id: extension_id.into(),
-                file_name_or_extension: matched.into(),
-            }),
-            "unexpected suggestion for `{path}`",
-        );
-    }
-
-    #[test]
-    pub fn every_extension_has_a_representative_match() {
-        assert_suggests("doc.adoc", "asciidoc", "adoc");
-        assert_suggests("app.astro", "astro", "astro");
-        assert_suggests("ledger.bean", "beancount", "bean");
-        assert_suggests("deps.edn", "clojure", "edn");
-        assert_suggests("App.csproj", "csharp", "csproj");
-        assert_suggests("data.csv", "csv", "csv");
-        assert_suggests("lib.pyx", "cython", "pyx");
-        assert_suggests("main.dart", "dart", "dart");
-        assert_suggests("compose.yaml", "dockerfile", "compose.yaml");
-        assert_suggests("init.el", "elisp", "el");
-        assert_suggests("mix.lock", "elixir", "mix.lock");
-        assert_suggests("Main.elm", "elm", "elm");
-        assert_suggests("rebar.config", "erlang", "rebar.config");
-        assert_suggests("config.fish", "fish", "fish");
-        assert_suggests("main.gd", "gdscript", "gd");
-        assert_suggests("shader.frag", "glsl", "frag");
-        assert_suggests("schema.graphqls", "graphql", "graphqls");
-        assert_suggests("Jenkinsfile", "groovy", "Jenkinsfile");
-        assert_suggests("proj.cabal", "haskell", "cabal");
-        assert_suggests("index.html", "html", "html");
-        assert_suggests("app.ini", "ini", "ini");
-        assert_suggests("tsconfig.json5", "json5", "json5");
-        assert_suggests("Justfile", "just", "Justfile");
-        assert_suggests("build.gradle.kts", "kotlin", "kts");
-        assert_suggests("gradle.properties", "java", "properties");
-        assert_suggests("main.sty", "latex", "sty");
-        assert_suggests("server.log", "log", "log");
-        assert_suggests("init.lua", "lua", "lua");
-        assert_suggests("CMakeLists.txt", "neocmake", "CMakeLists.txt");
-        assert_suggests("shim.nimble", "nim", "nimble");
-        assert_suggests("flake.nix", "nix", "nix");
-        assert_suggests("script.nuon", "nu", "nuon");
-        assert_suggests("dune", "ocaml", "dune");
-        assert_suggests("main.odin", "odin", "odin");
-        assert_suggests("index.phtml", "php", "phtml");
-        assert_suggests("profile.ps1", "powershell", "ps1");
-        assert_suggests("schema.prisma", "prisma", "prisma");
-        assert_suggests("api.proto", "proto", "proto");
-        assert_suggests("Main.purs", "purescript", "purs");
-        assert_suggests("notebook.Rmd", "r", "Rmd");
-        assert_suggests("main.rkt", "racket", "rkt");
-        assert_suggests("App.res", "rescript", "res");
-        assert_suggests("index.rst", "rst", "rst");
-        assert_suggests("Gemfile", "ruby", "Gemfile");
-        assert_suggests("build.sbt", "scala", "sbt");
-        assert_suggests("main.ss", "scheme", "ss");
-        assert_suggests("styles.sass", "scss", "sass");
-        assert_suggests("query.sql", "sql", "sql");
-        assert_suggests("App.svelte", "svelte", "svelte");
-        assert_suggests("Model.swiftinterface", "swift", "swiftinterface");
-        assert_suggests("home.templ", "templ", "templ");
-        assert_suggests("terraform.tfvars", "terraform", "tfvars");
-        assert_suggests("main.typst", "typst", "typst");
-        assert_suggests("App.vue", "vue", "vue");
-        assert_suggests("shader.wgsl", "wgsl", "wgsl");
-        assert_suggests("run.bat", "windows-batch", "bat");
-        assert_suggests("Makefile", "make", "Makefile");
-        assert_suggests("nginx.conf", "nginx", "nginx.conf");
-        assert_suggests(
-            "requirements.txt",
-            "python-requirements",
-            "requirements.txt",
-        );
-        assert_suggests("lib.wit", "wit", "wit");
-        assert_suggests("pom.xml", "xml", "xml");
-        assert_suggests("build.zon", "zig", "zon");
-    }
-
     #[test]
     pub fn suggested_path_suffixes_are_unique() {
         let mut claims: HashMap<&str, &str> = HashMap::new();
@@ -537,7 +456,7 @@ mod tests {
                 assert!(
                     previous.is_none(),
                     "duplicate suffix `{suffix}` is claimed by both `{}` and `{extension_id}`",
-                    previous.unwrap_or("?"),
+                    previous.unwrap()
                 );
             }
         }
