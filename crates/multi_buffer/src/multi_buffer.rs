@@ -4958,7 +4958,7 @@ impl MultiBufferSnapshot {
                                     base_text_byte_range.start..base_text_offset,
                                 );
                             position.0.add_text_dim(&position_in_hunk);
-                        } else if at_transform_end {
+                        } else if at_transform_end && base_text_offset > base_text_byte_range.end {
                             // diff_base offset falls outside this hunk's range;
                             // advance to see if the next transform is a better fit.
                             diff_transforms.next();

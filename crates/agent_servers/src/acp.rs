@@ -616,7 +616,9 @@ fn client_capabilities_for_agent(
             .boolean(acp::BooleanConfigOptionCapabilities::new()),
     );
     if beta_features_enabled {
-        session_capabilities = session_capabilities.compaction(acp::CompactionCapabilities::new());
+        session_capabilities = session_capabilities
+            .compaction(acp::CompactionCapabilities::new())
+            .notices(acp::NoticeCapabilities::new());
     }
 
     acp::ClientCapabilities::new()
@@ -2791,8 +2793,8 @@ mod tests {
     }
 
     #[test]
-    fn client_capabilities_only_include_compaction_with_acp_beta() {
-        for (beta_enabled, expected_compaction) in
+    fn client_capabilities_gate_compaction_and_notices_with_acp_beta() {
+        for (beta_enabled, expected_capability) in
             [(false, None), (true, Some(serde_json::json!({})))]
         {
             let capabilities =
@@ -2802,7 +2804,13 @@ mod tests {
             let session = capabilities
                 .get("session")
                 .expect("session capabilities should be advertised");
-            assert_eq!(session.get("compaction"), expected_compaction.as_ref());
+            for capability in ["compaction", "notices"] {
+                assert_eq!(
+                    session.get(capability),
+                    expected_capability.as_ref(),
+                    "{capability} with ACP beta enabled: {beta_enabled}"
+                );
+            }
         }
     }
 
@@ -3884,7 +3892,11 @@ exit 7
             .expect("failed to receive ACP connection handle");
 
         let response = client_conn
-            .send_request(acp::InitializeRequest::new(ProtocolVersion::V1))
+            .send_request(
+                acp::InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
+                    client_capabilities_for_agent(&AgentId::new("fake-agent"), true),
+                ),
+            )
             .block_task()
             .await
             .expect("failed to initialize ACP connection");
@@ -4021,6 +4033,94 @@ exit 7
             !connection.sessions.borrow().contains_key(&session_id),
             "session should be removed after the last handle drops"
         );
+    }
+
+    #[gpui::test]
+    async fn test_session_notices_are_scoped_and_not_restored_on_reload(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (
+            connection,
+            project,
+            _load_count,
+            _close_count,
+            load_session_updates,
+            _load_session_gate,
+            _keep_agent_alive,
+        ) = connect_fake_agent(cx).await;
+
+        let notice_update: acp::SessionUpdate = serde_json::from_value(serde_json::json!({
+            "sessionUpdate": "notice",
+            "severity": "_custom",
+            "title": "A current advisory",
+            "description": null,
+            "_meta": null,
+        }))
+        .expect("unknown notice severity should deserialize");
+        // An agent may emit a fresh notice about a current condition while reconnecting.
+        *load_session_updates
+            .lock()
+            .expect("load_session_updates mutex poisoned") = vec![notice_update];
+
+        let session_id = acp::SessionId::new("session-with-notice");
+        let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    work_dirs.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("session should load");
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            let [(notice_id, notice)] = thread.notices() else {
+                panic!("the live notice should be received before a view is created");
+            };
+            assert_eq!(*notice_id, 0);
+            assert_eq!(notice.title, "A current advisory");
+            assert_eq!(
+                notice.severity,
+                acp::NoticeSeverity::Other("_custom".into())
+            );
+            assert_eq!(notice.description, None);
+            assert_eq!(notice.meta, None);
+            assert!(thread.entries().is_empty());
+            assert!(thread.to_markdown(cx).is_empty());
+            assert!(!thread.had_error());
+        });
+
+        let other_thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    acp::SessionId::new("other-session"),
+                    project.clone(),
+                    work_dirs.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("other session should load");
+        other_thread.read_with(cx, |thread, _| assert!(thread.notices().is_empty()));
+
+        drop(thread);
+        release_dropped_entities(cx);
+        let reloaded_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .load_session(session_id, project, work_dirs, None, cx)
+            })
+            .await
+            .expect("session should reload");
+        cx.run_until_parked();
+        reloaded_thread.read_with(cx, |thread, _| assert!(thread.notices().is_empty()));
     }
 
     // Regression test: per the ACP spec, an agent replays the entire conversation
