@@ -149,6 +149,11 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Returns whether thinking should be enabled for a newly selected model.
+    fn default_thinking_enabled(&self) -> bool {
+        self.supports_thinking()
+    }
+
     /// Returns the list of supported effort levels that can be used when thinking.
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         Vec::new()
