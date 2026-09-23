@@ -6674,6 +6674,16 @@ pub fn path_suffix(path: &Path, detail: usize) -> String {
     components.join("/")
 }
 
+pub fn path_disambiguation_details(paths: &[PathBuf]) -> HashMap<PathBuf, usize> {
+    let mut paths = paths.to_vec();
+    paths.sort_unstable();
+    paths.dedup();
+    let details = util::disambiguate::compute_disambiguation_details(&paths, |path, detail| {
+        path_suffix(path, detail)
+    });
+    paths.into_iter().zip(details).collect()
+}
+
 pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,
