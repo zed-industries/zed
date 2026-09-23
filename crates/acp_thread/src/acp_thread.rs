@@ -422,9 +422,15 @@ pub enum ElicitationStatus {
     Completed,
 }
 
+enum ElicitationChange {
+    Responded,
+    Updated,
+}
+
 #[derive(Clone, Debug)]
 pub enum ElicitationStoreEvent {
     ElicitationRequested(ElicitationEntryId),
+    /// The request left `Pending`; this does not imply delivery to its response waiter.
     ElicitationResponded(ElicitationEntryId),
     ElicitationUpdated(ElicitationEntryId),
 }
@@ -477,23 +483,22 @@ impl ElicitationStore {
         (id, response_rx)
     }
 
-    fn response_task<T>(
-        id: ElicitationEntryId,
+    fn response_task(
         response_rx: oneshot::Receiver<acp::CreateElicitationResponse>,
-        cx: &mut Context<T>,
-        emit_responded: impl FnOnce(&mut T, &mut Context<T>, ElicitationEntryId) + 'static,
-    ) -> Task<acp::CreateElicitationResponse>
-    where
-        T: 'static,
-    {
-        cx.spawn(async move |this, cx| {
-            let response = response_rx.await.unwrap_or_else(|oneshot::Canceled| {
+        cx: &App,
+    ) -> Task<acp::CreateElicitationResponse> {
+        cx.foreground_executor().spawn(async move {
+            response_rx.await.unwrap_or_else(|oneshot::Canceled| {
                 acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)
-            });
-            this.update(cx, |this, cx| emit_responded(this, cx, id))
-                .ok();
-            response
+            })
         })
+    }
+
+    fn emit_change(id: ElicitationEntryId, change: ElicitationChange, cx: &mut Context<Self>) {
+        cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
+        if matches!(change, ElicitationChange::Responded) {
+            cx.emit(ElicitationStoreEvent::ElicitationResponded(id));
+        }
     }
 
     fn respond_to_elicitation_entry(
@@ -509,7 +514,9 @@ impl ElicitationStore {
         ) else {
             return false;
         };
-        respond_tx.send(response).ok();
+        if respond_tx.send(response).is_err() {
+            log::debug!("Elicitation waiter closed before its response was delivered");
+        }
         true
     }
 
@@ -527,28 +534,27 @@ impl ElicitationStore {
         }
     }
 
-    fn cancel_elicitation_entry(
-        elicitation: &mut Elicitation,
-        cancel_accepted_url_elicitations: bool,
-    ) -> bool {
+    fn cancel_elicitation_entry(elicitation: &mut Elicitation) -> Option<ElicitationChange> {
         match mem::replace(&mut elicitation.status, ElicitationStatus::Canceled) {
             ElicitationStatus::Pending { respond_tx } => {
-                respond_tx
+                if respond_tx
                     .send(acp::CreateElicitationResponse::new(
                         acp::ElicitationAction::Cancel,
                     ))
-                    .ok();
-                true
+                    .is_err()
+                {
+                    log::debug!("Elicitation waiter closed before cancellation was delivered");
+                }
+                Some(ElicitationChange::Responded)
             }
             ElicitationStatus::Accepted
-                if cancel_accepted_url_elicitations
-                    && matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
+                if matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
             {
-                true
+                Some(ElicitationChange::Updated)
             }
             previous_status => {
                 elicitation.status = previous_status;
-                false
+                None
             }
         }
     }
@@ -571,15 +577,9 @@ impl ElicitationStore {
         Self::complete_url_elicitation_entry(elicitation)
     }
 
-    fn cancel_elicitation_by_id(
-        &mut self,
-        id: &ElicitationEntryId,
-        cancel_accepted_url_elicitations: bool,
-    ) -> bool {
-        let Some((_, elicitation)) = self.elicitation_mut(id) else {
-            return false;
-        };
-        Self::cancel_elicitation_entry(elicitation, cancel_accepted_url_elicitations)
+    fn cancel_elicitation_by_id(&mut self, id: &ElicitationEntryId) -> Option<ElicitationChange> {
+        let (_, elicitation) = self.elicitation_mut(id)?;
+        Self::cancel_elicitation_entry(elicitation)
     }
 
     pub fn request_elicitation(
@@ -601,11 +601,7 @@ impl ElicitationStore {
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
         cx.notify();
 
-        let task = Self::response_task(id.clone(), response_rx, cx, |_store, cx, id| {
-            cx.emit(ElicitationStoreEvent::ElicitationResponded(id));
-            cx.notify();
-        });
-
+        let task = Self::response_task(response_rx, cx);
         Ok((id, task))
     }
 
@@ -619,7 +615,7 @@ impl ElicitationStore {
             return;
         }
 
-        cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
+        Self::emit_change(id.clone(), ElicitationChange::Responded, cx);
         cx.notify();
     }
 
@@ -640,27 +636,26 @@ impl ElicitationStore {
     }
 
     pub fn cancel_elicitation(&mut self, id: &ElicitationEntryId, cx: &mut Context<Self>) {
-        if !self.cancel_elicitation_by_id(id, true) {
+        let Some(change) = self.cancel_elicitation_by_id(id) else {
             return;
-        }
+        };
 
-        cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
+        Self::emit_change(id.clone(), change, cx);
         cx.notify();
     }
 
     pub fn cancel_all(&mut self, cx: &mut Context<Self>) {
-        let canceled_ids = self.cancel_pending(|_| true);
-        for id in canceled_ids {
-            cx.emit(ElicitationStoreEvent::ElicitationUpdated(id));
+        for (id, change) in self.cancel_pending(|_| true) {
+            Self::emit_change(id, change, cx);
         }
         cx.notify();
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        let canceled_ids = self.cancel_pending(|_| true);
+        let changes = self.cancel_pending(|_| true);
         self.elicitations.clear();
-        for id in canceled_ids {
-            cx.emit(ElicitationStoreEvent::ElicitationUpdated(id));
+        for (id, change) in changes {
+            Self::emit_change(id, change, cx);
         }
         cx.notify();
     }
@@ -690,14 +685,14 @@ impl ElicitationStore {
     }
 
     pub fn cancel_request(&mut self, request_id: &acp::RequestId, cx: &mut Context<Self>) {
-        let canceled_ids = self.cancel_pending(|elicitation| {
+        let changes = self.cancel_pending(|elicitation| {
             matches!(
                 elicitation.request.scope(),
                 acp::ElicitationScope::Request(scope) if &scope.request_id == request_id
             )
         });
-        for id in canceled_ids {
-            cx.emit(ElicitationStoreEvent::ElicitationUpdated(id));
+        for (id, change) in changes {
+            Self::emit_change(id, change, cx);
         }
         cx.notify();
     }
@@ -740,14 +735,16 @@ impl ElicitationStore {
     fn cancel_pending(
         &mut self,
         mut should_cancel: impl FnMut(&Elicitation) -> bool,
-    ) -> Vec<ElicitationEntryId> {
-        let mut canceled_ids = Vec::new();
+    ) -> Vec<(ElicitationEntryId, ElicitationChange)> {
+        let mut changes = Vec::new();
         for elicitation in &mut self.elicitations {
-            if should_cancel(elicitation) && Self::cancel_elicitation_entry(elicitation, true) {
-                canceled_ids.push(elicitation.id.clone());
+            if should_cancel(elicitation)
+                && let Some(change) = Self::cancel_elicitation_entry(elicitation)
+            {
+                changes.push((elicitation.id.clone(), change));
             }
         }
-        canceled_ids
+        changes
     }
 }
 
@@ -2265,6 +2262,9 @@ pub struct AcpThread {
     title: Option<SharedString>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
+    // Notices stay with the live session, but never enter conversation history or exports.
+    notices: Vec<(usize, acp::Notice)>,
+    next_notice_id: usize,
     elicitations: ElicitationStore,
     plan: Plan,
     project: Entity<Project>,
@@ -2338,12 +2338,14 @@ pub enum AcpThreadEvent {
     PromptUpdated,
     NewEntry,
     TitleUpdated,
+    NoticesUpdated,
     TokenUsageUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequested(acp::ToolCallId),
     ToolAuthorizationReceived(acp::ToolCallId),
     ElicitationRequested(ElicitationEntryId),
+    /// The request left `Pending`; this does not imply delivery to its response waiter.
     ElicitationResponded(ElicitationEntryId),
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
@@ -2478,6 +2480,7 @@ impl AcpThread {
                 AcpThreadEvent::PromptUpdated
                 | AcpThreadEvent::NewEntry
                 | AcpThreadEvent::TitleUpdated
+                | AcpThreadEvent::NoticesUpdated
                 | AcpThreadEvent::TokenUsageUpdated
                 | AcpThreadEvent::EntryUpdated(_)
                 | AcpThreadEvent::Retry(_)
@@ -2516,6 +2519,8 @@ impl AcpThread {
             update_last_checkpoint_if_changed_task: None,
             shared_buffers: Default::default(),
             entries: Default::default(),
+            notices: Vec::new(),
+            next_notice_id: 0,
             elicitations: ElicitationStore::default(),
             plan: Default::default(),
             title,
@@ -2606,6 +2611,19 @@ impl AcpThread {
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
+    }
+
+    pub fn notices(&self) -> &[(usize, acp::Notice)] {
+        &self.notices
+    }
+
+    pub fn dismiss_notice(&mut self, notice_id: usize, cx: &mut Context<Self>) {
+        let previous_count = self.notices.len();
+        self.notices.retain(|(id, _)| *id != notice_id);
+        if self.notices.len() != previous_count {
+            cx.emit(AcpThreadEvent::NoticesUpdated);
+            cx.notify();
+        }
     }
 
     pub fn is_compacting(&self) -> bool {
@@ -2829,6 +2847,13 @@ impl AcpThread {
             }
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
+            }
+            acp::SessionUpdate::Notice(notice) => {
+                let notice_id = self.next_notice_id;
+                self.next_notice_id += 1;
+                self.notices.push((notice_id, notice));
+                cx.emit(AcpThreadEvent::NoticesUpdated);
+                cx.notify();
             }
             acp::SessionUpdate::SessionInfoUpdate(info_update) => {
                 if let MaybeUndefined::Value(title) = info_update.title {
@@ -3768,12 +3793,20 @@ impl AcpThread {
         self.push_entry(AgentThreadEntry::Elicitation(id.clone()), cx);
         cx.emit(AcpThreadEvent::ElicitationRequested(id.clone()));
 
-        let task =
-            ElicitationStore::response_task(id.clone(), response_rx, cx, |_thread, cx, id| {
-                cx.emit(AcpThreadEvent::ElicitationResponded(id))
-            });
-
+        let task = ElicitationStore::response_task(response_rx, cx);
         Ok((id, task))
+    }
+
+    fn emit_elicitation_change(
+        entry_index: usize,
+        id: &ElicitationEntryId,
+        change: ElicitationChange,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
+        if matches!(change, ElicitationChange::Responded) {
+            cx.emit(AcpThreadEvent::ElicitationResponded(id.clone()));
+        }
     }
 
     pub fn respond_to_elicitation(
@@ -3789,7 +3822,7 @@ impl AcpThread {
             return;
         }
 
-        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        Self::emit_elicitation_change(ix, id, ElicitationChange::Responded, cx);
     }
 
     pub fn complete_url_elicitation(
@@ -3817,11 +3850,11 @@ impl AcpThread {
         let Some(ix) = self.elicitation_entry_ix(id) else {
             return;
         };
-        if !self.elicitations.cancel_elicitation_by_id(id, true) {
+        let Some(change) = self.elicitations.cancel_elicitation_by_id(id) else {
             return;
-        }
+        };
 
-        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        Self::emit_elicitation_change(ix, id, change, cx);
     }
 
     fn elicitation_entry_ix(&self, id: &ElicitationEntryId) -> Option<usize> {
@@ -4289,11 +4322,8 @@ impl AcpThread {
             let Some(AgentThreadEntry::Elicitation(elicitation_id)) = self.entries.get(ix) else {
                 continue;
             };
-            if self
-                .elicitations
-                .cancel_elicitation_by_id(elicitation_id, true)
-            {
-                cx.emit(AcpThreadEvent::EntryUpdated(ix));
+            if let Some(change) = self.elicitations.cancel_elicitation_by_id(elicitation_id) {
+                Self::emit_elicitation_change(ix, elicitation_id, change, cx);
             }
         }
     }
@@ -9443,6 +9473,15 @@ mod tests {
         init_test(cx);
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let responded_ids = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let responded_ids = responded_ids.clone();
+            cx.subscribe(&store, move |_, event, _| {
+                if let ElicitationStoreEvent::ElicitationResponded(id) = event {
+                    responded_ids.borrow_mut().push(id.clone());
+                }
+            })
+        });
 
         let response_task = store.update(cx, |store, cx| {
             store
@@ -9485,6 +9524,10 @@ mod tests {
         });
 
         assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        assert_eq!(
+            responded_ids.borrow().as_slice(),
+            std::slice::from_ref(&elicitation_id)
+        );
         store.read_with(cx, |store, _| {
             let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
@@ -9729,6 +9772,53 @@ mod tests {
             let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
             };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_request_elicitation_store_emits_response_when_waiter_is_dropped(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let responded_ids = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let responded_ids = responded_ids.clone();
+            cx.subscribe(&store, move |_, event, _| {
+                if let ElicitationStoreEvent::ElicitationResponded(id) = event {
+                    responded_ids.borrow_mut().push(id.clone());
+                }
+            })
+        });
+
+        let request_id = acp::RequestId::Number(1);
+        let (elicitation_id, response_task) = store.update(cx, |store, cx| {
+            store
+                .request_elicitation_with_id(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(request_id.clone()),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .expect("elicitation should succeed")
+        });
+        drop(response_task);
+        cx.run_until_parked();
+
+        store.update(cx, |store, cx| {
+            store.cancel_request(&request_id, cx);
+        });
+        assert_eq!(
+            responded_ids.borrow().as_slice(),
+            std::slice::from_ref(&elicitation_id)
+        );
+        store.read_with(cx, |store, _| {
+            let (_, elicitation) = store.elicitation(&elicitation_id).expect("elicitation");
             assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });
     }
@@ -10016,6 +10106,15 @@ mod tests {
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
         let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let responded_ids = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let responded_ids = responded_ids.clone();
+            cx.subscribe(&store, move |_, event, _| {
+                if let ElicitationStoreEvent::ElicitationResponded(id) = event {
+                    responded_ids.borrow_mut().push(id.clone());
+                }
+            })
+        });
 
         let response_task = store.update(cx, |store, cx| {
             store
@@ -10056,9 +10155,17 @@ mod tests {
             response_task.await.action,
             acp::ElicitationAction::Accept(_)
         ));
+        assert_eq!(
+            responded_ids.borrow().as_slice(),
+            std::slice::from_ref(&entry_id)
+        );
         store.update(cx, |store, cx| {
             store.cancel_all(cx);
         });
+        assert_eq!(
+            responded_ids.borrow().as_slice(),
+            std::slice::from_ref(&entry_id)
+        );
         store.read_with(cx, |store, _| {
             let Some((_, elicitation)) = store.elicitation(&entry_id) else {
                 panic!("missing elicitation entry");
@@ -11503,6 +11610,167 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_session_notices_are_live_and_independently_dismissible(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+
+        let notice_events = Rc::new(RefCell::new(0));
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe_self({
+                let notice_events = notice_events.clone();
+                move |_, event, _| {
+                    assert!(matches!(event, AcpThreadEvent::NoticesUpdated));
+                    *notice_events.borrow_mut() += 1;
+                }
+            })
+        });
+
+        let warning = acp::Notice::new(acp::NoticeSeverity::Warning, "MCP server unavailable")
+            .description("Continuing without it.");
+        let notices = vec![
+            acp::Notice::new(acp::NoticeSeverity::Info, "Using default configuration"),
+            warning.clone(),
+            warning.clone(),
+            acp::Notice::new(acp::NoticeSeverity::Error, "Optional integration failed"),
+            acp::Notice::new(
+                acp::NoticeSeverity::Other("critical".into()),
+                "Future severity",
+            ),
+            acp::Notice::new(
+                acp::NoticeSeverity::Other("_custom".into()),
+                "**Plain text**, not Markdown",
+            )
+            .meta(acp::Meta::from_iter([("source".into(), "test".into())])),
+        ];
+
+        thread.update(cx, |thread, cx| {
+            for notice in &notices {
+                thread
+                    .handle_session_update(acp::SessionUpdate::Notice(notice.clone()), cx)
+                    .expect("notice should be accepted");
+            }
+            assert_eq!(
+                thread.notices(),
+                notices.iter().cloned().enumerate().collect::<Vec<_>>()
+            );
+            assert!(thread.entries().is_empty());
+            assert!(thread.to_markdown(cx).is_empty());
+            assert!(thread.is_draft_thread());
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+            assert!(!thread.had_error());
+            assert!(!thread.is_waiting_for_confirmation());
+            assert!(thread.title().is_none());
+        });
+        assert_eq!(*notice_events.borrow(), notices.len());
+
+        thread.update(cx, |thread, cx| thread.dismiss_notice(1, cx));
+        assert_eq!(*notice_events.borrow(), notices.len() + 1);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.notices(),
+                notices
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .filter(|(id, _)| *id != 1)
+                    .collect::<Vec<_>>()
+            );
+        });
+
+        thread.update(cx, |thread, cx| thread.dismiss_notice(1, cx));
+        assert_eq!(*notice_events.borrow(), notices.len() + 1);
+
+        thread.update(cx, |thread, cx| {
+            for notice_id in 0..notices.len() {
+                thread.dismiss_notice(notice_id, cx);
+            }
+            assert!(thread.notices().is_empty());
+            thread
+                .handle_session_update(acp::SessionUpdate::Notice(warning.clone()), cx)
+                .expect("a repeated notice is a new live event");
+            thread.dismiss_notice(1, cx);
+            assert_eq!(thread.notices(), &[(notices.len(), warning)]);
+            assert!(thread.entries().is_empty());
+            assert!(thread.to_markdown(cx).is_empty());
+        });
+        assert_eq!(*notice_events.borrow(), notices.len() * 2 + 1);
+    }
+
+    #[gpui::test]
+    async fn test_session_notice_error_does_not_interrupt_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |_, thread, mut cx| {
+                async move {
+                    thread.update(&mut cx, |thread, cx| {
+                        assert_eq!(thread.status(), ThreadStatus::Generating);
+                        let history_before_notice = thread.to_markdown(cx);
+                        let entry_count = thread.entries().len();
+                        thread.handle_session_update(
+                            acp::SessionUpdate::Notice(
+                                acp::Notice::new(
+                                    acp::NoticeSeverity::Error,
+                                    "Optional integration failed",
+                                )
+                                .description("Work will continue without the integration."),
+                            ),
+                            cx,
+                        )?;
+                        assert_eq!(thread.status(), ThreadStatus::Generating);
+                        assert!(!thread.had_error());
+                        assert_eq!(thread.entries().len(), entry_count);
+                        assert_eq!(thread.to_markdown(cx), history_before_notice);
+                        thread.handle_session_update(
+                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                                "The response continues.".into(),
+                            )),
+                            cx,
+                        )
+                    })??;
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            },
+        ));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("hello", cx))
+            .await
+            .expect("advisory errors must not fail prompts");
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+            assert!(!thread.had_error());
+            assert_eq!(thread.notices().len(), 1);
+            assert_eq!(thread.entries().len(), 2);
+            assert!(thread.to_markdown(cx).contains("The response continues."));
+            assert!(
+                !thread
+                    .to_markdown(cx)
+                    .contains("Optional integration failed")
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_usage_update_populates_token_usage_and_cost(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -12443,6 +12711,45 @@ mod tests {
         cx.executor().advance_clock(Duration::from_secs(1));
         cx.run_until_parked();
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_cancel_elicitation_after_waiter_drops_resumes_idle_sleep_prevention(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        let (elicitation_id, response) = request_test_form_elicitation(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        drop(response);
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel_elicitation(&elicitation_id, cx)
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            let (_, elicitation) = thread.elicitation(&elicitation_id).expect("elicitation");
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+            assert!(!thread.is_waiting_for_confirmation());
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+        });
+        assert_eq!(
+            cx.active_idle_sleep_preventions(),
+            1,
+            "cancelling the request must refresh generation state even without a response waiter"
+        );
 
         complete
             .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
