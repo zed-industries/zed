@@ -293,17 +293,26 @@ pub(crate) struct Conversation {
 
 impl Conversation {
     pub fn register_thread(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
-        let session_id = thread.read(cx).session_id().clone();
+        let thread_state = thread.read(cx);
+        let session_id = thread_state.session_id().clone();
+        for entry in thread_state.entries() {
+            if let AgentThreadEntry::ToolCall(tool_call) = entry
+                && matches!(
+                    tool_call.status,
+                    ToolCallStatus::WaitingForConfirmation { .. }
+                )
+            {
+                self.add_permission_request(&session_id, &tool_call.id);
+            }
+        }
+
         let subscription = cx.subscribe(&thread, {
             let session_id = session_id.clone();
             move |this, _thread, event, _cx| {
                 this.updated_at = Some(Instant::now());
                 match event {
                     AcpThreadEvent::ToolAuthorizationRequested(id) => {
-                        this.permission_requests
-                            .entry(session_id.clone())
-                            .or_default()
-                            .push(id.clone());
+                        this.add_permission_request(&session_id, id);
                     }
                     AcpThreadEvent::ToolAuthorizationReceived(id) => {
                         if let Some(tool_calls) = this.permission_requests.get_mut(&session_id) {
@@ -350,6 +359,20 @@ impl Conversation {
         });
         self.subscriptions.push(subscription);
         self.threads.insert(session_id, thread);
+    }
+
+    fn add_permission_request(
+        &mut self,
+        session_id: &acp::SessionId,
+        tool_call_id: &acp::ToolCallId,
+    ) {
+        let requests = self
+            .permission_requests
+            .entry(session_id.clone())
+            .or_default();
+        if !requests.contains(tool_call_id) {
+            requests.push(tool_call_id.clone());
+        }
     }
 
     pub fn permission_options_for_tool_call<'a>(
@@ -11034,6 +11057,114 @@ pub(crate) mod tests {
                 .expect("Expected a pending tool call from parent query");
             assert_eq!(returned_session_id, parent_session_id);
             assert_eq!(tool_call_id, acp::ToolCallId::new("parent-tc"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_conversation_discovers_permission_pending_before_subagent_registration(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+        let parent_session_id = acp::SessionId::new("parent");
+        let subagent_session_id = acp::SessionId::new("subagent");
+        let (subagent_thread, conversation) = cx.update(|cx| {
+            let parent_thread =
+                create_test_acp_thread(None, "parent", connection.clone(), project.clone(), cx);
+            let subagent_thread = create_test_acp_thread(
+                Some(parent_session_id.clone()),
+                "subagent",
+                connection,
+                project,
+                cx,
+            );
+            let conversation = cx.new(|cx| {
+                let mut conversation = Conversation::default();
+                conversation.register_thread(parent_thread, cx);
+                conversation
+            });
+            (subagent_thread, conversation)
+        });
+
+        let _resolved_response =
+            request_test_tool_authorization(&subagent_thread, "resolved-tool", "allow-child", cx);
+        subagent_thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                acp::ToolCallId::new("resolved-tool"),
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow-child"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+        let _response =
+            request_test_tool_authorization(&subagent_thread, "child-tool", "allow-child", cx);
+        cx.run_until_parked();
+        assert!(subagent_thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+        let _queued_response = cx.update(|cx| {
+            let response = subagent_thread.update(cx, |thread, cx| {
+                thread
+                    .request_tool_call_authorization(
+                        acp::ToolCall::new("queued-tool", "Queued permission").into(),
+                        PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                            "allow-child",
+                            "Allow",
+                            acp::PermissionOptionKind::AllowOnce,
+                        )]),
+                        acp_thread::AuthorizationKind::PermissionGrant,
+                        cx,
+                    )
+                    .expect("queued permission request should succeed")
+            });
+            // Its request event is still queued when the initial state is read.
+            conversation.update(cx, |conversation, cx| {
+                conversation.register_thread(subagent_thread.clone(), cx);
+            });
+            response
+        });
+        let _later_response =
+            request_test_tool_authorization(&subagent_thread, "later-tool", "allow-child", cx);
+
+        for (tool_id, pending_count) in [("child-tool", 3), ("queued-tool", 2), ("later-tool", 1)] {
+            let tool_id = acp::ToolCallId::new(tool_id);
+            conversation.read_with(cx, |conversation, cx| {
+                assert_eq!(
+                    conversation.pending_tool_call_for_session(&subagent_session_id, cx),
+                    Some(tool_id.clone())
+                );
+                let (session_id, pending_tool_id, _) = conversation
+                    .pending_tool_call(&parent_session_id, cx)
+                    .expect("the root should discover the child's pending request");
+                assert_eq!(session_id, subagent_session_id);
+                assert_eq!(pending_tool_id, tool_id);
+                assert_eq!(
+                    conversation.subagents_awaiting_permission(cx),
+                    vec![(subagent_session_id.clone(), pending_count)]
+                );
+            });
+            conversation.update(cx, |conversation, cx| {
+                conversation.authorize_tool_call(
+                    subagent_session_id.clone(),
+                    tool_id,
+                    SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new("allow-child"),
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+        }
+        conversation.read_with(cx, |conversation, cx| {
+            assert!(
+                conversation
+                    .pending_tool_call(&parent_session_id, cx)
+                    .is_none()
+            );
+            assert!(conversation.subagents_awaiting_permission(cx).is_empty());
         });
     }
 
