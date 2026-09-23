@@ -1596,11 +1596,12 @@ impl Window {
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
-        // Skip if the platform already applied this appearance during window
-        // creation. On Windows, re-applying the accent policy to an already
-        // visible window makes DWM briefly drop and re-enable the backdrop,
-        // causing a visible flash.
-        if cfg!(windows) && platform_window.background_appearance() != window_background {
+        // On Windows the appearance was already applied when the platform window
+        // was created from `WindowParams`, and re-applying the accent policy to an
+        // already visible window makes DWM briefly drop and re-enable the backdrop,
+        // causing a visible flash. Every other platform only applies the appearance
+        // here, so it must keep calling this unconditionally.
+        if !cfg!(windows) || platform_window.background_appearance() != window_background {
             platform_window.set_background_appearance(window_background);
         }
 
