@@ -21,8 +21,9 @@ pub use settings::OpenCodeApiProtocol;
 pub use settings::OpenCodeAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use ui::{
     Banner, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, Severity, Switch,
@@ -79,6 +80,8 @@ const OPENCODE_SESSION_HEADER_NAME: &str = "x-opencode-session";
 const RICH_MODEL_CATALOG_URL: &str = "https://models.opencode.ai/api.json";
 const MODEL_CATALOG_RESPONSE_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
 const MODEL_CATALOG_FETCH_TIMEOUT: Duration = Duration::from_secs(15);
+const MODEL_CATALOG_DISK_FRESHNESS: Duration = Duration::from_secs(5 * 60);
+const MODEL_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
 pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &[OPENCODE_SESSION_HEADER_NAME];
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -102,6 +105,9 @@ pub struct State {
     discovered_models: HashMap<OpenCodeSubscription, Vec<DiscoveredModel>>,
     fetch_models_errors: HashMap<OpenCodeSubscription, SharedString>,
     fetch_models_task: Option<Task<()>>,
+    refresh_models_task: Option<Task<()>>,
+    cache_path: PathBuf,
+    fs: Arc<dyn Fs>,
 }
 
 #[derive(Clone)]
@@ -120,6 +126,7 @@ impl State {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenCodeLanguageModelProvider::api_url(cx);
         self.fetch_models_task = None;
+        self.refresh_models_task = None;
         self.discovered_models.clear();
         self.fetch_models_errors.clear();
         let task = self.api_key_state.store(
@@ -161,6 +168,7 @@ impl State {
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
         self.fetch_models_task = None;
+        self.refresh_models_task = None;
         let api_url = OpenCodeLanguageModelProvider::api_url(cx);
         if self.api_key_state.key(&api_url).is_none() {
             self.fetch_models_task = None;
@@ -168,23 +176,43 @@ impl State {
             return;
         }
         let http_client = self.http_client.clone();
+        let fs = self.fs.clone();
+        let cache_path = self.cache_path.clone();
         let executor = cx.background_executor().clone();
         self.fetch_models_task = Some(cx.spawn(async move |this, cx| {
+            let cached_catalog = load_cached_catalog(fs.as_ref(), &cache_path).await;
+            if let Ok(Some((catalog, _))) = &cached_catalog {
+                let results = catalog_results(Ok(catalog));
+                this.update(cx, |this, cx| {
+                    apply_discovery_results(
+                        &mut this.discovered_models,
+                        &mut this.fetch_models_errors,
+                        results,
+                    );
+                    cx.notify();
+                })
+                .ok();
+            }
+
+            if cached_catalog
+                .as_ref()
+                .ok()
+                .and_then(|catalog| catalog.as_ref())
+                .is_some_and(|(_, is_fresh)| *is_fresh)
+            {
+                this.update(cx, |this, _| this.fetch_models_task = None)
+                    .ok();
+                return;
+            }
+
             let catalog = fetch_model_catalog(http_client, executor).await;
-            let results =
-                [OpenCodeSubscription::Zen, OpenCodeSubscription::Go].map(|subscription| {
-                    let result = catalog
-                        .as_ref()
-                        .map_err(|error| anyhow!("{error:#}"))
-                        .and_then(|catalog| parse_discovered_models(catalog, subscription));
-                    if let Err(error) = &result {
-                        log::warn!(
-                            "Failed to fetch OpenCode {} models: {error:#}",
-                            subscription.display_name()
-                        );
-                    }
-                    (subscription, result)
-                });
+            let results = catalog_results(catalog.as_ref().map(String::as_str));
+            if results.iter().all(|(_, result)| result.is_ok())
+                && let Ok(catalog) = catalog
+                && let Err(error) = store_cached_catalog(fs.as_ref(), cache_path, catalog).await
+            {
+                log::warn!("Failed to cache OpenCode model catalog: {error:#}");
+            }
             this.update(cx, |this, cx| {
                 apply_discovery_results(
                     &mut this.discovered_models,
@@ -196,7 +224,80 @@ impl State {
             })
             .ok();
         }));
+
+        let http_client = self.http_client.clone();
+        let fs = self.fs.clone();
+        let cache_path = self.cache_path.clone();
+        let executor = cx.background_executor().clone();
+        self.refresh_models_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                executor.timer(MODEL_CATALOG_REFRESH_INTERVAL).await;
+                let catalog = fetch_model_catalog(http_client.clone(), executor.clone()).await;
+                let results = catalog_results(catalog.as_ref().map(String::as_str));
+                if results.iter().all(|(_, result)| result.is_ok())
+                    && let Ok(catalog) = catalog
+                    && let Err(error) =
+                        store_cached_catalog(fs.as_ref(), cache_path.clone(), catalog).await
+                {
+                    log::warn!("Failed to cache OpenCode model catalog: {error:#}");
+                }
+                if this
+                    .update(cx, |this, cx| {
+                        apply_discovery_results(
+                            &mut this.discovered_models,
+                            &mut this.fetch_models_errors,
+                            results,
+                        );
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
     }
+}
+
+fn catalog_results(
+    catalog: Result<&str, &anyhow::Error>,
+) -> [(OpenCodeSubscription, Result<Vec<DiscoveredModel>>); 2] {
+    [OpenCodeSubscription::Zen, OpenCodeSubscription::Go].map(|subscription| {
+        let result = catalog
+            .map_err(|error| anyhow!("{error:#}"))
+            .and_then(|catalog| parse_discovered_models(catalog, subscription));
+        if let Err(error) = &result {
+            log::warn!(
+                "Failed to fetch OpenCode {} models: {error:#}",
+                subscription.display_name()
+            );
+        }
+        (subscription, result)
+    })
+}
+
+async fn load_cached_catalog(fs: &dyn Fs, path: &Path) -> Result<Option<(String, bool)>> {
+    let Some(metadata) = fs.metadata(path).await? else {
+        return Ok(None);
+    };
+    let catalog = fs.load(path).await?;
+    for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
+        parse_discovered_models(&catalog, subscription)?;
+    }
+    let is_fresh = SystemTime::now()
+        .duration_since(metadata.mtime.timestamp_for_user())
+        .is_ok_and(|age| age < MODEL_CATALOG_DISK_FRESHNESS);
+    Ok(Some((catalog, is_fresh)))
+}
+
+async fn store_cached_catalog(fs: &dyn Fs, path: PathBuf, catalog: String) -> Result<()> {
+    let mut catalog = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&catalog)?;
+    catalog.retain(|provider, _| matches!(provider.as_str(), "opencode" | "opencode-go"));
+    if let Some(parent) = path.parent() {
+        fs.create_dir(parent).await?;
+    }
+    fs.atomic_write(path, serde_json::to_string(&catalog)?)
+        .await
 }
 
 fn apply_discovery_results(
@@ -223,6 +324,22 @@ impl OpenCodeLanguageModelProvider {
         credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut App,
     ) -> Self {
+        Self::new_with_cache(
+            http_client,
+            credentials_provider,
+            <dyn Fs>::global(cx),
+            paths::temp_dir().join("opencode").join("models.json"),
+            cx,
+        )
+    }
+
+    fn new_with_cache(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        fs: Arc<dyn Fs>,
+        cache_path: PathBuf,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>({
                 let mut last_api_url = Self::api_url(cx);
@@ -233,6 +350,7 @@ impl OpenCodeLanguageModelProvider {
                         this.discovered_models.clear();
                         this.fetch_models_errors.clear();
                         this.fetch_models_task = None;
+                        this.refresh_models_task = None;
                         this.authenticate(cx).detach();
                     }
                     cx.notify();
@@ -246,6 +364,9 @@ impl OpenCodeLanguageModelProvider {
                 discovered_models: HashMap::default(),
                 fetch_models_errors: HashMap::default(),
                 fetch_models_task: None,
+                refresh_models_task: None,
+                cache_path,
+                fs,
             }
         });
 
@@ -1305,82 +1426,168 @@ impl Render for ConfigurationView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::FakeFs;
     use http_client::{FakeHttpClient, Response};
     use language_model::{LanguageModelRequestMessage, MessageContent, Role};
     use parking_lot::Mutex;
 
-    #[gpui::test]
-    async fn test_catalog_fetch_times_out(executor: BackgroundExecutor) {
-        let client = FakeHttpClient::create(|_| async { futures::future::pending().await });
-        let error = fetch_model_catalog(client, executor)
-            .await
-            .expect_err("a stalled catalog request should time out");
-        assert_eq!(
-            error.to_string(),
-            "OpenCode model catalog request timed out"
-        );
+    fn test_catalog() -> &'static str {
+        r#"{
+            "opencode": {
+                "npm": "@ai-sdk/anthropic",
+                "models": {
+                    "zen-model": {
+                        "id": "zen-model",
+                        "name": "Zen Model",
+                        "tool_call": true,
+                        "modalities": {"input":["text"],"output":["text"]},
+                        "limit": {"context": 12345}
+                    }
+                }
+            },
+            "opencode-go": {
+                "npm": "@ai-sdk/openai-compatible",
+                "models": {
+                    "go-model": {
+                        "id": "go-model",
+                        "name": "Go Model",
+                        "tool_call": true,
+                        "modalities": {"input":["text"],"output":["text"]},
+                        "limit": {"context": 12345}
+                    }
+                }
+            }
+        }"#
     }
 
     #[gpui::test]
-    async fn test_one_public_fetch_serves_both_catalogs(cx: &mut gpui::TestAppContext) {
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let http_client = FakeHttpClient::create({
-            let requests = requests.clone();
-            move |request| {
-                let requests = requests.clone();
-                async move {
-                    let uri = request.uri().to_string();
-                    requests
-                        .lock()
-                        .push((uri.clone(), request.headers().clone()));
-                    let body = r#"{
-                            "opencode": {
-                                "npm": "@ai-sdk/anthropic",
-                                "models": {
-                                    "zen-model": {
-                                        "id": "zen-model",
-                                        "name": "Zen Model",
-                                        "tool_call": true,
-                                        "modalities": {"input":["text"],"output":["text"]},
-                                        "limit": {"context": 12345}
-                                    }
-                                }
-                            },
-                            "opencode-go": {
-                                "npm": "@ai-sdk/openai-compatible",
-                                "models": {
-                                    "go-model": {
-                                        "id": "go-model",
-                                        "name": "Go Model",
-                                        "tool_call": true,
-                                        "modalities": {"input":["text"],"output":["text"]},
-                                        "limit": {"context": 12345}
-                                    }
-                                }
-                            }
-                        }"#;
-                    Ok(Response::builder()
-                        .status(200)
-                        .body(AsyncBody::from(body))?)
-                }
+    async fn test_disk_cache_and_hourly_refresh(cx: &mut gpui::TestAppContext) {
+        for (cached, stale, fail, initial_requests) in [
+            (Some(test_catalog()), false, false, 0),
+            (Some("not json"), false, false, 1),
+            (Some(test_catalog()), true, true, 1),
+            (None, false, false, 1),
+        ] {
+            let fs = FakeFs::new(cx.background_executor.clone());
+            let cache_path = PathBuf::from("/cache/opencode/models.json");
+            if let Some(cached) = cached {
+                fs.create_dir(Path::new("/cache/opencode")).await.unwrap();
+                fs.set_next_mtime(if stale {
+                    SystemTime::now() - MODEL_CATALOG_REFRESH_INTERVAL
+                } else {
+                    SystemTime::now() - Duration::from_secs(1)
+                });
+                fs.atomic_write(cache_path.clone(), cached.to_string())
+                    .await
+                    .unwrap();
             }
-        });
-        let catalog = fetch_model_catalog(http_client, cx.background_executor.clone())
+            let requests = Arc::new(Mutex::new(0));
+            let fail_request = Arc::new(Mutex::new(fail));
+            let client = FakeHttpClient::create({
+                let requests = requests.clone();
+                let fail_request = fail_request.clone();
+                move |_| {
+                    *requests.lock() += 1;
+                    let status = if *fail_request.lock() { 503 } else { 200 };
+                    async move {
+                        Ok(Response::builder().status(status).body(AsyncBody::from(
+                            test_catalog().replace("zen-model", "updated-model"),
+                        ))?)
+                    }
+                }
+            });
+            let provider = cx.update(|cx| {
+                let settings_store = SettingsStore::test(cx);
+                cx.set_global(settings_store);
+                OpenCodeLanguageModelProvider::new_with_cache(
+                    client,
+                    Arc::new(TestCredentialsProvider),
+                    fs.clone(),
+                    cache_path.clone(),
+                    cx,
+                )
+            });
+            provider
+                .state
+                .update(cx, |state, cx| {
+                    state.set_api_key(Some("secret".to_string()), cx)
+                })
+                .await
+                .unwrap();
+            cx.run_until_parked();
+            assert_eq!(*requests.lock(), initial_requests);
+            let expected = if initial_requests == 0 || fail {
+                "zen-model"
+            } else {
+                "updated-model"
+            };
+            provider.state.read_with(cx, |state, _cx| {
+                assert_eq!(
+                    state.discovered_models[&OpenCodeSubscription::Zen][0]
+                        .model
+                        .id(),
+                    expected,
+                );
+            });
+            if fail {
+                assert_eq!(fs.load(&cache_path).await.unwrap(), test_catalog());
+            }
+
+            *fail_request.lock() = false;
+            cx.background_executor
+                .advance_clock(MODEL_CATALOG_REFRESH_INTERVAL);
+            cx.run_until_parked();
+            assert_eq!(*requests.lock(), initial_requests + 1);
+            provider.state.read_with(cx, |state, _cx| {
+                assert_eq!(
+                    state.discovered_models[&OpenCodeSubscription::Zen][0]
+                        .model
+                        .id(),
+                    "updated-model",
+                );
+                assert!(state.fetch_models_errors.is_empty());
+            });
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&fs.load(&cache_path).await.unwrap())
+                    .unwrap(),
+                serde_json::from_str::<serde_json::Value>(
+                    &test_catalog().replace("zen-model", "updated-model")
+                )
+                .unwrap(),
+            );
+            drop(provider);
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_fresh_disk_catalog_is_usable(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let cache_path = PathBuf::from("/cache/models.json");
+        fs.set_next_mtime(SystemTime::now());
+        fs.atomic_write(cache_path.clone(), test_catalog().to_string())
             .await
             .unwrap();
-        for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
-            let models = parse_discovered_models(&catalog, subscription).unwrap();
-            assert_eq!(models.len(), 1);
-        }
-        let requests = requests.lock();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].0, RICH_MODEL_CATALOG_URL);
-        for (url, headers) in requests.iter() {
-            assert!(
-                headers.is_empty(),
-                "unexpected catalog headers for {url}: {headers:?}"
-            );
-        }
+
+        let (catalog, is_fresh) = load_cached_catalog(fs.as_ref(), &cache_path)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(is_fresh);
+        assert_eq!(catalog, test_catalog());
+    }
+
+    #[gpui::test]
+    async fn test_invalid_disk_catalog_falls_back_to_network(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let cache_path = PathBuf::from("/cache/models.json");
+        fs.atomic_write(cache_path.clone(), "not json".to_string())
+            .await
+            .unwrap();
+
+        assert!(load_cached_catalog(fs.as_ref(), &cache_path).await.is_err());
+        assert_eq!(fs.load(&cache_path).await.unwrap(), "not json");
     }
 
     #[gpui::test]
@@ -1390,9 +1597,11 @@ mod tests {
         let provider = cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            OpenCodeLanguageModelProvider::new(
+            OpenCodeLanguageModelProvider::new_with_cache(
                 FakeHttpClient::with_404_response(),
                 Arc::new(TestCredentialsProvider),
+                FakeFs::new(cx.background_executor().clone()),
+                PathBuf::from("/cache/models.json"),
                 cx,
             )
         });
@@ -1674,7 +1883,13 @@ mod tests {
         let provider = cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            OpenCodeLanguageModelProvider::new(http_client, Arc::new(TestCredentialsProvider), cx)
+            OpenCodeLanguageModelProvider::new_with_cache(
+                http_client,
+                Arc::new(TestCredentialsProvider),
+                FakeFs::new(cx.background_executor().clone()),
+                PathBuf::from("/cache/models.json"),
+                cx,
+            )
         });
         let store_key = provider.state.update(cx, |state, cx| {
             state.set_api_key(Some("test-key".to_string()), cx)
