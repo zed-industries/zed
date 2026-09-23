@@ -1395,7 +1395,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .run_npm_subcommand(
                     Some(&install_dir),
                     "install",
-                    &[package_spec.as_str(), "--save-exact"],
+                    &npm_install_args(&package_spec),
                 )
                 .await?;
             let executable = node_runtime::read_package_executable(
@@ -1433,19 +1433,10 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     }
 }
 
-/// People are using min-release-age more frequently. Which means a fresh registry will likely have
-/// new package versions than the user can install.
-/// We set the version to now be a ceiling and not an exact pin instead. This allows npm to resolve
-/// the latest version it can find that satisfies the constraint. npm seems to check regularly enough
-/// that new versions are available. This does have a few downsides:
-/// - The user might have an older cached version of the package that satisfies the constraint, until
-///   npm checks for updates again.
-/// - The registry args/env may not be valid for the resolved version.
-///
-/// This is a best-effort attempt to install a version that works without overriding the user's
-/// security settings, as the args don't change often. The registry will need to support this better
-/// at some point, but until then, this is a best-effort workaround that hopefully solves the issue
-/// for most users.
+/// `min-release-age` can make the newest registry version unavailable temporarily, so the registry
+/// version is a ceiling rather than an exact pin. `--prefer-online` forces npm to check for newer
+/// package metadata while still respecting the user's release-age policy. Registry args and env
+/// may not be valid for an older eligible version, but they rarely change.
 ///
 /// We use npm's hyphen-range syntax (`0.0.0 - <version>`, equivalent to `<=<version>`) instead of
 /// the more compact `<=<version>` form because on Windows, `npm` is `npm.cmd` (a batch file run by
@@ -1465,6 +1456,10 @@ fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
     }
 
     (package_name, format!("{package_name}@0.0.0 - {version}"))
+}
+
+fn npm_install_args(package_spec: &str) -> [&str; 3] {
+    [package_spec, "--save-exact", "--prefer-online"]
 }
 
 struct LocalCustomAgent {
@@ -1855,6 +1850,18 @@ mod tests {
         assert_eq!(
             bounded_npm_package_spec("agent-package@latest"),
             ("agent-package", "agent-package@latest".to_string())
+        );
+    }
+
+    #[test]
+    fn prefers_online_npm_metadata_when_installing_registry_agents() {
+        assert_eq!(
+            npm_install_args("agent-package@0.0.0 - 1.2.3"),
+            [
+                "agent-package@0.0.0 - 1.2.3",
+                "--save-exact",
+                "--prefer-online"
+            ]
         );
     }
 
