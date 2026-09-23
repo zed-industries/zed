@@ -3901,17 +3901,26 @@ impl InlayHints {
             _ => None,
         });
 
-        let position = buffer_handle.read_with(cx, |buffer, _| {
-            let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
-            if kind == Some(InlayHintKind::Parameter) {
-                buffer.anchor_before(position)
-            } else {
-                buffer.anchor_after(position)
-            }
-        });
-        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id)
-            .await
-            .context("lsp to project inlay hint conversion")?;
+        let unclipped = point_from_lsp(lsp_hint.position);
+        let position = buffer_handle
+            .read_with(cx, |buffer, _| {
+                let max_point = buffer.max_point_utf16();
+                if unclipped.0.row > max_point.row
+                    || (unclipped.0.row == max_point.row && unclipped.0.column > max_point.column)
+                {
+                    return None;
+                }
+                let position = buffer.clip_point_utf16(unclipped, Bias::Left);
+
+                Some(if kind == Some(InlayHintKind::Parameter) {
+                    buffer.anchor_before(position)
+                } else {
+                    buffer.anchor_after(position)
+                })
+            })
+            .context("inlay hint position overflow")?;
+
+        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id).await;
         let padding_left = if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
             false
         } else {
@@ -3943,7 +3952,7 @@ impl InlayHints {
     async fn lsp_inlay_label_to_project(
         lsp_label: lsp::InlayHintLabel,
         server_id: LanguageServerId,
-    ) -> anyhow::Result<InlayHintLabel> {
+    ) -> InlayHintLabel {
         let label = match lsp_label {
             lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
             lsp::InlayHintLabel::LabelParts(lsp_parts) => {
@@ -3973,7 +3982,7 @@ impl InlayHints {
             }
         };
 
-        Ok(label)
+        label
     }
 
     pub fn project_to_proto_hint(response_hint: InlayHint) -> proto::InlayHint {
@@ -4371,11 +4380,12 @@ impl LspCommand for InlayHints {
                 .await
             })
         });
-        future::join_all(hints)
+
+        Ok(future::join_all(hints)
             .await
             .into_iter()
-            .collect::<anyhow::Result<_>>()
-            .context("lsp to project inlay hints conversion")
+            .flatten()
+            .collect())
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {
