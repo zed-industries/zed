@@ -1021,7 +1021,6 @@ fn parse_discovered_models(
             })
         })
         .collect::<Vec<_>>();
-    dbg!(available_model_count);
     if available_model_count > 0 && models.is_empty() {
         bail!("OpenCode model metadata did not contain any compatible models");
     }
