@@ -110,12 +110,16 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                   | OpenAI    | Cached Input        | $0.005                       | $0.0055                 |
 | Gemini 3.1 Pro    | Google    | Input               | $2.00                        | $2.20                   |
 |                   | Google    | Output              | $12.00                       | $13.20                  |
+| Gemini 3.8 Flash  | Google    | Input               | $0.75                        | $0.825                  |
+|                   | Google    | Output              | $3.75                        | $4.125                  |
 | Gemini 3.5 Flash  | Google    | Input               | $1.50                        | $1.65                   |
 |                   | Google    | Output              | $9.00                        | $9.90                   |
 | Gemini 3 Flash    | Google    | Input               | $0.50                        | $0.55                   |
 |                   | Google    | Output              | $3.00                        | $3.30                   |
 
 > **Warn:** Anthropic retains prompts and outputs sent to Claude Fable 5.1 and Claude Fable 5 for at least 30 days for trust and safety purposes. The no-training commitment still applies, and Zed does not retain your prompts or outputs. See [Provider Safety Retention for Designated Models](../ai/privacy-and-security.md#provider-safety-retention).
+
+The Gemini 3.8 Flash prices shown above use Google's introductory pricing through December 31, 2026.
 
 ## Recent Model Retirements {#recent-model-retirements}
 
@@ -172,6 +176,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | GPT-5 mini        | OpenAI    | 272k input / 400k total   |
 | GPT-5 nano        | OpenAI    | 272k input / 400k total   |
 | Gemini 3.1 Pro    | Google    | 200k                      |
+| Gemini 3.8 Flash  | Google    | 1M                        |
 | Gemini 3.5 Flash  | Google    | 1M                        |
 | Gemini 3 Flash    | Google    | 1M                        |
 
