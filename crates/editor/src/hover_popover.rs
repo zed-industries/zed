@@ -34,10 +34,11 @@ use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme_settings::ThemeSettings;
 use ui::{
-    CopyButton, Disclosure, Scrollbars, Tooltip, WithScrollbar, prelude::*, theme_is_transparent,
+    ContextMenu, CopyButton, Disclosure, Scrollbars, Tooltip, WithScrollbar, prelude::*,
+    theme_is_transparent,
 };
 use url::Url;
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -62,6 +63,10 @@ pub fn hover_at(
     cx: &mut Context<Editor>,
 ) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
+        if editor.hover_state.debugger_menu_open(cx) {
+            editor.hover_state.hiding_delay_task = None;
+            return;
+        }
         if show_keyboard_hover(editor, window, cx) {
             return;
         }
@@ -94,7 +99,9 @@ pub fn hover_at(
             let task = cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(delay).await;
                 this.update(cx, |editor, cx| {
-                    hide_hover(editor, cx);
+                    if !editor.hover_state.debugger_menu_open(cx) {
+                        hide_hover(editor, cx);
+                    }
                 })
                 .ok();
             });
@@ -520,12 +527,15 @@ fn show_hover(
                 })
             }
 
-            let doc_link_task = this
-                .update(cx, |editor, cx| {
+            let doc_link_task = if show_debugger_hover_only {
+                None
+            } else {
+                this.update(cx, |editor, cx| {
                     editor.document_links_at(buffer.clone(), buffer_position, cx)
                 })
                 .ok()
-                .flatten();
+                .flatten()
+            };
             let doc_link_tooltips = match doc_link_task {
                 Some(task) => task
                     .await
@@ -949,8 +959,14 @@ fn build_debugger_hover_view(
 ) -> Option<Entity<DebuggerHoverView>> {
     let debugger_value = debugger_value?;
 
-    cx.new_window_entity(|_window, _cx| DebuggerHoverView::new(debugger_value, project))
-        .ok()
+    cx.new_window_entity(|_window, cx| {
+        let mut view = DebuggerHoverView::new(debugger_value, project);
+        if view.root.has_children() {
+            view.toggle_node(Vec::new(), cx);
+        }
+        view
+    })
+    .ok()
 }
 
 enum DebuggerHoverChildren {
@@ -995,6 +1011,10 @@ struct DebuggerHoverView {
     root: DebuggerHoverNode,
     selected_path: Vec<usize>,
     row_bounds: Rc<RefCell<HashMap<Vec<usize>, Bounds<Pixels>>>>,
+    context_menu: Option<Entity<ContextMenu>>,
+    menu_position: gpui::Point<Pixels>,
+    menu_subscription: Option<Subscription>,
+    operation_error: Option<String>,
 }
 
 struct DebuggerHoverVariableColors {
@@ -1003,10 +1023,7 @@ struct DebuggerHoverVariableColors {
     type_name: Option<Hsla>,
 }
 
-const DEBUGGER_HOVER_NAME_FLEX_BASIS: f32 = 0.36;
 const DEBUGGER_HOVER_MIN_WIDTH: Pixels = px(320.0);
-const DEBUGGER_HOVER_VALUE_MIN_WIDTH: Pixels = px(48.0);
-const DEBUGGER_HOVER_ROOT_TYPE_MAX_WIDTH: Pixels = px(120.0);
 
 impl DebuggerHoverView {
     fn new(debugger_value: DebuggerHoverData, project: Option<WeakEntity<Project>>) -> Self {
@@ -1016,6 +1033,10 @@ impl DebuggerHoverView {
             root: DebuggerHoverNode::new(debugger_value.root),
             selected_path: Vec::new(),
             row_bounds: Rc::new(RefCell::new(HashMap::default())),
+            context_menu: None,
+            menu_position: Default::default(),
+            menu_subscription: None,
+            operation_error: None,
         }
     }
 
@@ -1122,6 +1143,89 @@ impl DebuggerHoverView {
         let mut out = Vec::new();
         collect(&self.root, &mut Vec::new(), &mut out);
         out
+    }
+
+    fn variable_menu(
+        &mut self,
+        variable: DebuggerHoverVariable,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let view = cx.entity().downgrade();
+        let menu = ContextMenu::build(window, cx, |menu, _, _| {
+            menu.key_context("menu DebuggerHoverMenu")
+                .entry("Copy Value", None, move |_, cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(variable.value.clone()));
+                })
+                .when_some(variable.evaluate_name, |menu, expression| {
+                    let watch_expression = expression.clone();
+                    menu.entry("Copy as Expression", None, move |_, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(expression.clone()));
+                    })
+                    .entry("Add to Watch", None, move |_, cx| {
+                        view.update(cx, |view, cx| view.add_watch(watch_expression.clone(), cx))
+                            .log_err();
+                    })
+                })
+        });
+        menu.update(cx, |menu, cx| menu.select_toggled_or_first(window, cx));
+        let previous_focus = window.focused(cx);
+        self.menu_subscription = Some(cx.subscribe_in(
+            &menu,
+            window,
+            move |view, menu, _: &gpui::DismissEvent, window, cx| {
+                if menu.focus_handle(cx).contains_focused(window, cx)
+                    && let Some(focus) = &previous_focus
+                {
+                    window.focus(focus, cx);
+                }
+                view.context_menu = None;
+                cx.notify();
+            },
+        ));
+        self.context_menu = Some(menu.clone());
+        self.menu_position = window.mouse_position();
+        let focus = menu.focus_handle(cx);
+        window.on_next_frame(move |window, _| {
+            window.on_next_frame(move |window, cx| window.focus(&focus, cx));
+        });
+        cx.notify();
+        menu
+    }
+
+    fn add_watch(&mut self, expression: String, cx: &mut Context<Self>) {
+        let session_id = self.session_id;
+        let task = self.project.as_ref().and_then(|project| {
+            project
+                .update(cx, |project, cx| {
+                    let (session, frame) = project.active_debug_session(cx)?;
+                    if session.read(cx).session_id() != session_id {
+                        return None;
+                    }
+                    Some(session.update(cx, |session, cx| {
+                        session.add_watcher(expression.into(), frame.stack_frame_id, cx)
+                    }))
+                })
+                .ok()
+                .flatten()
+        });
+        let Some(task) = task else {
+            self.operation_error = Some("The debug session is no longer paused here".into());
+            cx.notify();
+            return;
+        };
+        self.operation_error = None;
+        cx.spawn(async move |view, cx| {
+            let result = task.await;
+            view.update(cx, |view, cx| {
+                view.operation_error = result
+                    .err()
+                    .map(|error| format!("Could not add watch: {error}"));
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
     }
 
     fn select_path(&mut self, path: Vec<usize>, cx: &mut Context<Self>) {
@@ -1278,9 +1382,37 @@ impl DebuggerHoverView {
         let variable_colors = debugger_hover_variable_colors(cx);
         let row_bounds = self.row_bounds.clone();
         let row_bounds_path = path.clone();
+        let variable = node.variable.clone();
 
-        div()
-            .w_full()
+        if depth == 0 && !is_expandable {
+            let scalar = div()
+                .debug_selector(|| row_selector.clone())
+                .w_full()
+                .min_w_0()
+                .text_ui_sm(cx)
+                .font_buffer(cx)
+                .whitespace_normal()
+                .child(
+                    div()
+                        .debug_selector(move || value_container_selector.clone())
+                        .w_full()
+                        .child(variable.value.clone()),
+                );
+            return scalar
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |view, _, window, cx| {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        view.variable_menu(variable.clone(), window, cx);
+                    }),
+                )
+                .into_any_element();
+        }
+
+        let row = div()
+            .min_w(gpui::relative(1.))
+            .flex_none()
             .debug_selector(|| row_selector.clone())
             .rounded_sm()
             .child(
@@ -1321,7 +1453,7 @@ impl DebuggerHoverView {
             })
             .child(
                 h_flex()
-                    .w_full()
+                    .min_w(gpui::relative(1.))
                     .min_h_5()
                     .items_center()
                     .gap_1()
@@ -1352,24 +1484,18 @@ impl DebuggerHoverView {
                     })
                     .child(
                         h_flex()
-                            .w_full()
-                            .min_w_0()
+                            .flex_none()
                             .gap_0p5()
                             .text_ui_sm(cx)
                             .font_buffer(cx)
                             .child(
                                 div()
                                     .id(format!("{row_selector}-name"))
-                                    .min_w_0()
-                                    .flex_grow_1()
-                                    .flex_shrink_1()
-                                    .flex_basis(gpui::relative(DEBUGGER_HOVER_NAME_FLEX_BASIS))
-                                    .overflow_hidden()
+                                    .flex_none()
                                     .tooltip(Tooltip::text(node.variable.name.clone()))
                                     .child(
                                         Label::new(node.variable.name.clone())
                                             .single_line()
-                                            .truncate()
                                             .when_some(variable_colors.name, |this, color| {
                                                 this.color(Color::from(color))
                                             }),
@@ -1378,21 +1504,17 @@ impl DebuggerHoverView {
                             .child(
                                 h_flex()
                                     .debug_selector(move || value_container_selector.clone())
-                                    .min_w(DEBUGGER_HOVER_VALUE_MIN_WIDTH)
-                                    .flex_shrink_1()
-                                    .overflow_hidden()
+                                    .flex_none()
                                     .gap_0p5()
                                     .child(Label::new("=").single_line().color(Color::Muted))
                                     .child(
                                         div()
                                             .id(format!("{row_selector}-value"))
-                                            .min_w_0()
-                                            .overflow_hidden()
+                                            .flex_none()
                                             .tooltip(Tooltip::text(node.variable.value.clone()))
                                             .child(
                                                 Label::new(node.variable.value.clone())
                                                     .single_line()
-                                                    .truncate()
                                                     .color(Color::Muted)
                                                     .when_some(
                                                         variable_colors.value,
@@ -1409,26 +1531,28 @@ impl DebuggerHoverView {
                                     node.variable.type_name.as_deref(),
                                 )
                                 .map(|type_name| {
-                                    div()
-                                        .min_w_0()
-                                        .max_w(DEBUGGER_HOVER_ROOT_TYPE_MAX_WIDTH)
-                                        .flex_shrink_1()
-                                        .overflow_hidden()
-                                        .child(
-                                            Label::new(type_name)
-                                                .single_line()
-                                                .truncate_start()
-                                                .color(Color::Muted)
-                                                .when_some(
-                                                    variable_colors.type_name,
-                                                    |this, color| this.color(Color::from(color)),
-                                                ),
-                                        )
+                                    div().flex_none().child(
+                                        Label::new(type_name)
+                                            .single_line()
+                                            .color(Color::Muted)
+                                            .when_some(variable_colors.type_name, |this, color| {
+                                                this.color(Color::from(color))
+                                            }),
+                                    )
                                 }),
                             ),
                     ),
             )
-            .into_any_element()
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |view, _, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    view.variable_menu(variable.clone(), window, cx);
+                }),
+            )
+            .into_any_element();
+        row
     }
 }
 
@@ -1454,6 +1578,44 @@ fn debugger_hover_type_suffix(depth: usize, type_name: Option<&str>) -> Option<S
         .map(|type_name| format!(": {type_name}"))
 }
 
+impl DebuggerHoverView {
+    fn content_width(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        self.root.has_children().then(|| {
+            let mut width = Pixels::ZERO;
+            let mut nodes = vec![(&self.root, 0)];
+            let font = ThemeSettings::get_global(cx).buffer_font.clone();
+            let font_size = ui::TextSize::Small.rems(cx).to_pixels(window.rem_size());
+            while let Some((node, depth)) = nodes.pop() {
+                let text = ui::utils::replace_control_characters(&format!(
+                    "{} = {}{}",
+                    node.variable.name,
+                    node.variable.value,
+                    debugger_hover_type_suffix(depth, node.variable.type_name.as_deref())
+                        .unwrap_or_default(),
+                ))
+                .into_owned();
+                let line = window.text_system().shape_line(
+                    text.clone().into(),
+                    font_size,
+                    &[gpui::TextRun {
+                        len: text.len(),
+                        font: font.clone(),
+                        ..Default::default()
+                    }],
+                    None,
+                );
+                width = width.max(line.width + px(depth as f32 * 14.) + window.rem_size() * 3.);
+                if node.is_expanded
+                    && let DebuggerHoverChildren::Loaded(children) = &node.children
+                {
+                    nodes.extend(children.iter().map(|child| (child, depth + 1)));
+                }
+            }
+            width
+        })
+    }
+}
+
 impl Render for DebuggerHoverView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.row_bounds.borrow_mut().clear();
@@ -1461,8 +1623,22 @@ impl Render for DebuggerHoverView {
         v_flex()
             .id("debugger-hover-view")
             .w_full()
+            .flex_none()
             .gap_0()
             .children(rows)
+            .children(self.context_menu.as_ref().map(|menu| {
+                gpui::deferred(
+                    gpui::anchored()
+                        .position(self.menu_position)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(menu.clone()),
+                )
+                // The editor draws hover popovers at priority 2.
+                .with_priority(3)
+            }))
+            .when_some(self.operation_error.as_ref(), |this, error| {
+                this.child(self.render_status_row(error, 0, cx))
+            })
     }
 }
 
@@ -1692,6 +1868,14 @@ pub struct HoverState {
 }
 
 impl HoverState {
+    fn debugger_menu_open(&self, cx: &App) -> bool {
+        self.info_popovers.iter().any(|popover| {
+            popover
+                .debugger_hover
+                .as_ref()
+                .is_some_and(|view| view.read(cx).context_menu.is_some())
+        })
+    }
     pub fn visible(&self) -> bool {
         !self.info_popovers.is_empty() || self.diagnostic_popover.is_some()
     }
@@ -1856,6 +2040,12 @@ impl HoverState {
     pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
+            if let Some(view) = &info_popover.debugger_hover
+                && let Some(menu) = &view.read(cx).context_menu
+                && menu.focus_handle(cx).contains_focused(window, cx)
+            {
+                hover_popover_is_focused = true;
+            }
             if let Some(markdown_view) = &info_popover.parsed_content
                 && markdown_view.focus_handle(cx).is_focused(window)
             {
@@ -1987,6 +2177,9 @@ impl InfoPopover {
         let parsed_content = self.parsed_content.clone();
         let debugger_hover = self.debugger_hover.clone();
         let debugger_hover_only = debugger_hover.is_some() && parsed_content.is_none();
+        let debugger_content_width = debugger_hover
+            .as_ref()
+            .and_then(|view| view.read(cx).content_width(window, cx));
         div()
             .id("info_popover")
             .occlude()
@@ -2027,6 +2220,7 @@ impl InfoPopover {
                         div()
                             .id("info-content-container")
                             .overflow_y_scroll()
+                            .when(debugger_hover_only, |this| this.overflow_x_scroll())
                             .max_w(max_size.width)
                             .max_h(max_size.height)
                             .when(debugger_hover_only, |this| {
@@ -2035,7 +2229,9 @@ impl InfoPopover {
                             .track_scroll(&self.scroll_handle)
                             .child(
                                 v_flex()
-                                    .w_full()
+                                    .when(!debugger_hover_only, |this| this.w_full())
+                                    .when_some(debugger_content_width, |this, width| this.w(width))
+                                    .flex_none()
                                     .when(debugger_hover_only, |this| this.gap_0().p_1())
                                     .when(!debugger_hover_only, |this| this.gap_2().p_2())
                                     .when_some(debugger_hover, |this, debugger_hover| {
@@ -2073,14 +2269,12 @@ impl InfoPopover {
                                         )
                                     }),
                             )
-                            .when(!debugger_hover_only, |this| {
-                                this.custom_scrollbars(
-                                    Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
-                                        .tracked_scroll_handle(&self.scroll_handle),
-                                    window,
-                                    cx,
-                                )
-                            }),
+                            .custom_scrollbars(
+                                Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
+                                    .tracked_scroll_handle(&self.scroll_handle),
+                                window,
+                                cx,
+                            ),
                     )
                 },
             )
@@ -2634,6 +2828,7 @@ mod tests {
                             session_id: SessionId(1),
                             root: DebuggerHoverVariable {
                                 name: "point".to_string(),
+                                evaluate_name: Some("point".to_string()),
                                 value: "Point { x: 42 }".to_string(),
                                 type_name: Some("Point".to_string()),
                                 variables_reference: 0,
@@ -2682,12 +2877,6 @@ mod tests {
         assert!(colors.name.is_some());
         assert!(colors.value.is_some());
         assert!(colors.type_name.is_some());
-    }
-
-    #[test]
-    fn test_debugger_hover_name_basis_stays_compact() {
-        assert!(DEBUGGER_HOVER_NAME_FLEX_BASIS > 0.25);
-        assert!(DEBUGGER_HOVER_NAME_FLEX_BASIS < 0.5);
     }
 
     #[gpui::test]

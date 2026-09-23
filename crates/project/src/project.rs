@@ -941,6 +941,7 @@ pub enum HoverBlockKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DebuggerHoverVariable {
     pub name: String,
+    pub evaluate_name: Option<String>,
     pub value: String,
     pub type_name: Option<String>,
     pub variables_reference: VariableReference,
@@ -949,6 +950,7 @@ pub struct DebuggerHoverVariable {
 impl DebuggerHoverVariable {
     fn from_evaluate_response(expression: String, response: &dap::EvaluateResponse) -> Self {
         Self {
+            evaluate_name: Some(expression.clone()),
             name: expression,
             value: response.result.clone(),
             type_name: response
@@ -961,6 +963,7 @@ impl DebuggerHoverVariable {
 
     fn from_dap_variable(variable: dap::Variable) -> Self {
         Self {
+            evaluate_name: variable.evaluate_name.filter(|name| !name.is_empty()),
             name: variable.name,
             value: variable.value,
             type_name: variable.type_.filter(|type_name| !type_name.is_empty()),
@@ -4714,27 +4717,21 @@ impl Project {
 
         match debug_hover {
             Some((evaluate, range, session_id, expression)) => cx.background_spawn(async move {
-                let mut hovers = lsp_hover.await.unwrap_or_default();
                 if let Some(response) = evaluate.await {
                     let debugger_value = DebuggerHoverData {
                         session_id,
                         root: DebuggerHoverVariable::from_evaluate_response(expression, &response),
                     };
 
-                    if let Some(existing_hover) = hovers.first_mut() {
-                        existing_hover.debugger_value = Some(debugger_value);
-                        existing_hover.range.get_or_insert(range);
-                    } else {
-                        hovers.push(Hover {
-                            contents: Vec::new(),
-                            range: Some(range),
-                            language: None,
-                            debugger_value: Some(debugger_value),
-                        });
-                    }
+                    return Some(vec![Hover {
+                        contents: Vec::new(),
+                        range: Some(range),
+                        language: None,
+                        debugger_value: Some(debugger_value),
+                    }]);
                 }
 
-                Some(hovers)
+                lsp_hover.await
             }),
             None => lsp_hover,
         }

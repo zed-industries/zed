@@ -4540,7 +4540,7 @@ impl EditorElement {
             horizontal_offset: Pixels,
         }
 
-        let max_size = size(
+        let mut max_size = size(
             (120. * em_width) // Default size
                 .min(hitbox.size.width / 2.) // Shrink to half of the editor width
                 .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
@@ -4548,6 +4548,31 @@ impl EditorElement {
                 .min(hitbox.size.height / 2.) // Shrink to half of the editor height
                 .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
         );
+
+        let (is_single_debugger_hover, stable_debugger_hover_origin) = {
+            let editor = self.editor.read(cx);
+            (
+                editor.hover_state.is_single_debugger_hover(),
+                editor.hover_state.stable_debugger_hover_origin(),
+            )
+        };
+        if is_single_debugger_hover {
+            let available_height = stable_debugger_hover_origin
+                .map(|origin| {
+                    // Prefer scrolling below the existing origin to moving a row under the mouse.
+                    // After a resize, leave enough room for at least one row and its padding.
+                    (hitbox.bottom() - origin.y).max(line_height + px(10.))
+                })
+                .unwrap_or(hitbox.size.height)
+                .min(hitbox.size.height);
+            // The content container's limits exclude the popover's one-pixel border.
+            max_size.width = max_size
+                .width
+                .min((hitbox.size.width - px(2.)).max(Pixels::ZERO));
+            max_size.height = max_size
+                .height
+                .min((available_height - px(2.)).max(Pixels::ZERO));
+        }
 
         // Don't show hover popovers when context menu is open to avoid overlap
         let has_context_menu = self.editor.read(cx).mouse_context_menu.is_some();
@@ -4608,14 +4633,6 @@ impl EditorElement {
                 }
             })
             .collect::<Vec<_>>();
-
-        let (is_single_debugger_hover, stable_debugger_hover_origin) = {
-            let editor = self.editor.read(cx);
-            (
-                editor.hover_state.is_single_debugger_hover(),
-                editor.hover_state.stable_debugger_hover_origin(),
-            )
-        };
 
         fn draw_occluder(
             width: Pixels,
@@ -4713,7 +4730,7 @@ impl EditorElement {
             && measured_hover_popovers.len() == 1
             && let Some(popover) = measured_hover_popovers.pop()
         {
-            let popover_origin = stable_debugger_hover_origin.unwrap_or_else(|| {
+            let mut popover_origin = stable_debugger_hover_origin.unwrap_or_else(|| {
                 if can_place_below {
                     point(
                         hovered_point.x + popover.horizontal_offset,
@@ -4726,6 +4743,16 @@ impl EditorElement {
                     )
                 }
             });
+
+            // Preserve the origin while it fits, but keep expanded or resized hovers reachable.
+            popover_origin.x = popover_origin.x.clamp(
+                hitbox.left(),
+                (hitbox.right() - popover.size.width).max(hitbox.left()),
+            );
+            popover_origin.y = popover_origin.y.clamp(
+                hitbox.top(),
+                (hitbox.bottom() - popover.size.height).max(hitbox.top()),
+            );
 
             window.defer_draw(popover.element, popover_origin, 2, None);
             self.editor.update(cx, |editor, _| {

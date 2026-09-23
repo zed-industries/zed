@@ -416,12 +416,13 @@ mod hover {
     }
 
     #[gpui::test]
-    async fn test_hover_merges_debug_value_before_lsp_hover(
+    async fn test_hover_debug_value_does_not_wait_for_lsp(
         executor: BackgroundExecutor,
         cx: &mut TestAppContext,
     ) {
         let project = init_project(executor, cx).await;
         let evaluation_contexts = Arc::new(Mutex::new(Vec::new()));
+        let evaluation_succeeds = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let mut fake_servers = languages.register_fake_lsp(
             "Rust",
@@ -437,8 +438,10 @@ mod hover {
             &project,
             {
                 let evaluation_contexts = evaluation_contexts.clone();
+                let evaluation_succeeds = evaluation_succeeds.clone();
                 move |client| {
                     let evaluation_contexts = evaluation_contexts.clone();
+                    let evaluation_succeeds = evaluation_succeeds.clone();
                     client.on_request::<Evaluate, _>(move |_, args| {
                         let context = args.context.clone();
                         evaluation_contexts
@@ -458,6 +461,9 @@ mod hover {
                                 }),
                             }),
                             Some(EvaluateArgumentsContext::Variables) => {
+                                if !evaluation_succeeds.load(Ordering::SeqCst) {
+                                    return Err(dap::ErrorResponse { error: None });
+                                }
                                 Ok(dap::EvaluateResponse {
                                     result: "42".into(),
                                     type_: Some("i32".into()),
@@ -485,40 +491,41 @@ mod hover {
             .await
             .unwrap();
         cx.run_until_parked();
+        let (release_lsp, wait_for_release) = async_channel::unbounded::<()>();
         fake_servers
             .next()
             .await
             .expect("failed to get language server")
-            .set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
-                Ok(Some(lsp::Hover {
-                    contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
-                        "lsp hover".to_string(),
-                    )),
-                    range: None,
-                }))
+            .set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _| {
+                let wait_for_release = wait_for_release.clone();
+                async move {
+                    wait_for_release.recv().await.unwrap();
+                    Ok(Some(lsp::Hover {
+                        contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
+                            "lsp hover".to_string(),
+                        )),
+                        range: None,
+                    }))
+                }
             });
 
         set_active_stack_frame(&project, &session, &buffer, cx);
         let hover_offset = SOURCE.find("value + 1").unwrap();
         let hover_position = buffer.read_with(cx, |buffer, _| hover_offset.to_point_utf16(buffer));
-        let hover = project
-            .update(cx, |project, cx| project.hover(&buffer, hover_position, cx))
-            .await
+        let hover = project.update(cx, |project, cx| project.hover(&buffer, hover_position, cx));
+        cx.run_until_parked();
+        let hover = futures::FutureExt::now_or_never(hover)
+            .expect("debug hover must complete while the LSP request is blocked")
             .and_then(|mut hovers| hovers.pop())
             .expect("expected merged hover");
         let debugger_value = hover
             .debugger_value
             .expect("expected debugger hover payload");
 
-        assert_eq!(
-            hover
-                .contents
-                .into_iter()
-                .map(|block| block.text)
-                .collect::<Vec<_>>(),
-            vec!["lsp hover".to_string()]
-        );
+        assert!(hover.contents.is_empty());
+        release_lsp.send(()).await.unwrap();
         assert_eq!(debugger_value.root.name, "value");
+        assert_eq!(debugger_value.root.evaluate_name.as_deref(), Some("value"));
         assert_eq!(debugger_value.root.value, "42");
         assert_eq!(debugger_value.root.type_name.as_deref(), Some("i32"));
         assert_eq!(debugger_value.root.variables_reference, 0);
@@ -532,6 +539,15 @@ mod hover {
                 ),
             ]
         );
+        evaluation_succeeds.store(false, Ordering::SeqCst);
+        release_lsp.send(()).await.unwrap();
+        let fallback = project
+            .update(cx, |project, cx| project.hover(&buffer, hover_position, cx))
+            .await
+            .and_then(|mut hovers| hovers.pop())
+            .expect("failed debug evaluation should fall back to language hover");
+        assert!(fallback.debugger_value.is_none());
+        assert_eq!(fallback.contents[0].text, "lsp hover");
     }
 
     #[gpui::test]
@@ -571,7 +587,7 @@ mod hover {
                                 value: "42".into(),
                                 type_: Some("i32".into()),
                                 presentation_hint: None,
-                                evaluate_name: None,
+                                evaluate_name: Some("value.x".into()),
                                 variables_reference: 0,
                                 named_variables: None,
                                 indexed_variables: None,
@@ -618,6 +634,7 @@ mod hover {
         assert_eq!(variables_request_count.load(Ordering::SeqCst), 1);
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].name, "x");
+        assert_eq!(children[0].evaluate_name.as_deref(), Some("value.x"));
         assert_eq!(children[0].value, "42");
         assert_eq!(children[0].type_name.as_deref(), Some("i32"));
         assert_eq!(children[0].variables_reference, 0);
