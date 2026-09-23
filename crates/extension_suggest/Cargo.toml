@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/extension_suggest.rs"
+doctest = false
 
 [dependencies]
 path.workspace = true
