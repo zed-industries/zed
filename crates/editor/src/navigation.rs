@@ -2397,22 +2397,7 @@ impl Editor {
         let Some((buffer, head)) = buffer.text_anchor_for_position(head, cx) else {
             return Task::ready(Ok(Navigated::No));
         };
-        if buffer
-            .read(cx)
-            .file()
-            .is_some_and(|file| matches!(file.disk_state(), language::DiskState::Historic { .. }))
-        {
-            if let Some(workspace) = self.workspace() {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.show_toast(
-                        Toast::new(
-                            NotificationId::unique::<GoToDefinition>(),
-                            "Semantic navigation is unavailable in historical revisions. Open the working-tree file to navigate definitions.",
-                        ),
-                        cx,
-                    );
-                });
-            }
+        if self.show_historical_navigation_unavailable(&buffer, cx) {
             return Task::ready(Ok(Navigated::No));
         }
         let Some(provider) = self.semantics_provider.clone() else {
@@ -2448,6 +2433,33 @@ impl Editor {
                 .await?;
             anyhow::Ok(navigated)
         })
+    }
+
+    pub(crate) fn show_historical_navigation_unavailable(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !buffer
+            .read(cx)
+            .file()
+            .is_some_and(|file| matches!(file.disk_state(), language::DiskState::Historic { .. }))
+        {
+            return false;
+        }
+
+        if let Some(workspace) = self.workspace() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<GoToDefinition>(),
+                        "Semantic navigation is unavailable in historical revisions. Open the working-tree file to navigate definitions.",
+                    ),
+                    cx,
+                );
+            });
+        }
+        true
     }
 
     fn compute_target_location(

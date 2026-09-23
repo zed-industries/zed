@@ -275,7 +275,9 @@ impl Editor {
             HoverLink::Text(link) => exclude_link_to_position(&buffer, &anchor, link, cx),
             _ => true,
         });
-        let definitions = (refresh && self.lsp_data_enabled() && point.as_valid().is_some())
+        let attempted_semantic_navigation =
+            refresh && self.lsp_data_enabled() && point.as_valid().is_some();
+        let definitions = attempted_semantic_navigation
             .then(|| {
                 self.semantics_provider
                     .as_ref()?
@@ -307,6 +309,11 @@ impl Editor {
                                 matches!(link, HoverLink::Url(_) | HoverLink::File(_))
                             });
                         }
+                        if links.is_empty()
+                            && editor.show_historical_navigation_unavailable(&buffer, cx)
+                        {
+                            return;
+                        }
                         editor
                             .reveal_clicked_links(kind, links, position, origin, split, window, cx);
                     })
@@ -314,6 +321,12 @@ impl Editor {
             })
             .detach();
         } else {
+            if attempted_semantic_navigation
+                && links.is_empty()
+                && self.show_historical_navigation_unavailable(&buffer, cx)
+            {
+                return;
+            }
             self.reveal_clicked_links(kind, links, position, origin, split, window, cx);
         }
     }

@@ -1539,19 +1539,28 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
-    use workspace::{MultiWorkspace, notifications::NotificationId};
+    use workspace::{MultiWorkspace, item::Item, notifications::NotificationId};
 
     #[gpui::test]
     async fn test_go_to_definition_in_git_blob_singleton(cx: &mut TestAppContext) {
-        assert_historical_definition_toast(true, cx).await;
+        assert_historical_navigation_toast(true, false, cx).await;
     }
 
     #[gpui::test]
     async fn test_go_to_definition_in_git_blob_multibuffer(cx: &mut TestAppContext) {
-        assert_historical_definition_toast(false, cx).await;
+        assert_historical_navigation_toast(false, false, cx).await;
     }
 
-    async fn assert_historical_definition_toast(singleton: bool, cx: &mut TestAppContext) {
+    #[gpui::test]
+    async fn test_cmd_click_in_git_blob_shows_historical_navigation_toast(cx: &mut TestAppContext) {
+        assert_historical_navigation_toast(true, true, cx).await;
+    }
+
+    async fn assert_historical_navigation_toast(
+        singleton: bool,
+        cmd_click: bool,
+        cx: &mut TestAppContext,
+    ) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
@@ -1607,7 +1616,6 @@ mod tests {
                     MultiBuffer::singleton(buffer.clone(), cx)
                 } else {
                     let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
-                    multibuffer.set_all_diff_hunks_expanded(cx);
                     multibuffer.set_excerpts_for_buffer(
                         buffer.clone(),
                         [Default::default()..buffer.read(cx).max_point()],
@@ -1627,19 +1635,27 @@ mod tests {
 
         let notification_id = NotificationId::unique::<GoToDefinition>();
         workspace.read_with(cx, |workspace, _| {
-            assert!(!workspace.notification_ids().contains(&notification_id));
+            assert!(!workspace.has_notification(&notification_id));
         });
-        let navigation = editor.update_in(cx, |editor, window, cx| {
-            // Historical navigation must explain the limitation even without a semantics provider.
-            editor.set_semantics_provider(None);
-            editor.go_to_definition(&GoToDefinition::default(), window, cx)
-        });
-        assert_eq!(
-            navigation.await.expect("navigation should not error"),
-            Navigated::No
-        );
+        if cmd_click {
+            let click_position = editor
+                .read_with(cx, |editor, cx| editor.pixel_position_of_cursor(cx))
+                .expect("historical editor should have a cursor position");
+            cx.simulate_click(click_position, gpui::Modifiers::secondary_key());
+            cx.run_until_parked();
+        } else {
+            let navigation = editor.update_in(cx, |editor, window, cx| {
+                // Historical navigation must explain the limitation even without a semantics provider.
+                editor.set_semantics_provider(None);
+                editor.go_to_definition(&GoToDefinition::default(), window, cx)
+            });
+            assert_eq!(
+                navigation.await.expect("navigation should not error"),
+                Navigated::No
+            );
+        }
         workspace.read_with(cx, |workspace, _| {
-            assert!(workspace.notification_ids().contains(&notification_id));
+            assert!(workspace.has_notification(&notification_id));
         });
     }
 }
