@@ -275,7 +275,9 @@ impl Render for PendingKeystrokesIndicator {
 
         let popover = self.popover.visible.then(|| {
             let popover_render_state = render_state.clone();
-            let max_content_height = px(f32::from(window.viewport_size().height) * 0.4);
+            let viewport_size = window.viewport_size();
+            let max_panel_width = px((f32::from(viewport_size.width) * 0.5).min(480.0));
+            let max_content_height = px(f32::from(viewport_size.height) * 0.4);
             let anchored_popover = deferred(
                 anchored()
                     .anchor(Anchor::BottomRight)
@@ -291,13 +293,15 @@ impl Render for PendingKeystrokesIndicator {
                             }))
                             .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
                             .child(tooltip_container(cx, |el, _| {
-                                el.p_0().overflow_hidden().child(PendingBindings::new(
-                                    "pending-keystrokes-popover-content",
-                                    popover_render_state.keystrokes.clone(),
-                                    popover_render_state.bindings.clone(),
-                                    self.popover_scroll_handle.clone(),
-                                    max_content_height,
-                                ))
+                                el.p_0().max_w(max_panel_width).overflow_hidden().child(
+                                    PendingBindings::new(
+                                        "pending-keystrokes-popover-content",
+                                        popover_render_state.keystrokes.clone(),
+                                        popover_render_state.bindings.clone(),
+                                        self.popover_scroll_handle.clone(),
+                                        max_content_height,
+                                    ),
+                                )
                             })),
                     ),
             )
