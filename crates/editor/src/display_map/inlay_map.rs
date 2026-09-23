@@ -514,6 +514,10 @@ impl InlayMap {
         )
     }
 
+    pub(super) fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+        &self.snapshot.buffer
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn sync(
         &mut self,
@@ -1149,17 +1153,29 @@ impl InlaySnapshot {
         summary
     }
 
-    pub fn has_rendered_inlays(&self, range: Range<InlayPoint>) -> bool {
+    pub fn has_inlays_matching(
+        &self,
+        range: Range<InlayPoint>,
+        mut predicate: impl FnMut(&Inlay, Range<usize>) -> bool,
+    ) -> bool {
         let mut cursor = self.transforms.cursor::<InlayPoint>(());
         cursor.seek(&range.start, Bias::Right);
         while let Some(transform) = cursor.item() {
-            if *cursor.start() >= range.end {
+            let transform_start = *cursor.start();
+            if transform_start >= range.end {
                 break;
             }
-            if let Transform::Inlay(inlay) = transform
-                && inlay_chunk_renderer(inlay).is_some()
-            {
-                return true;
+            if let Transform::Inlay(inlay) = transform {
+                let transform_end = cursor.end();
+                let start = range.start.max(transform_start).0 - transform_start.0;
+                let end = range.end.min(transform_end).0 - transform_start.0;
+                let text = inlay.text();
+                if predicate(
+                    inlay,
+                    text.point_to_offset(start)..text.point_to_offset(end),
+                ) {
+                    return true;
+                }
             }
             cursor.next();
         }
@@ -1391,7 +1407,7 @@ impl BufferOffsetToInlayPointCursor<'_> {
     }
 }
 
-fn inlay_chunk_renderer(inlay: &Inlay) -> Option<ChunkRenderer> {
+pub(super) fn inlay_chunk_renderer(inlay: &Inlay) -> Option<ChunkRenderer> {
     match inlay.id {
         InlayId::ReplResult(_) => {
             let text = inlay.text().to_string();

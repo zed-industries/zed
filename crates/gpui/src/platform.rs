@@ -38,11 +38,11 @@ pub(crate) type PlatformScreenCaptureFrame =
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
-    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
-    hash, point, px, size,
+    FontFeatures, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla,
+    ImageSource, Keymap, LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput,
+    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -1209,6 +1209,11 @@ pub trait PlatformTextSystem: Send + Sync {
     fn glyph_dilation_for_color(&self, _color: Hsla) -> u8 {
         0
     }
+    /// Returns whether shaping printable ASCII in the given font can only produce runs whose
+    /// advances equal the sum of the characters' own advances.
+    fn ascii_shaping_preserves_advances(&self, _font_id: FontId, _features: &FontFeatures) -> bool {
+        false
+    }
 }
 
 #[expect(missing_docs)]
@@ -1229,6 +1234,10 @@ impl PlatformTextSystem for NoopTextSystem {
 
     fn all_font_names(&self) -> Vec<String> {
         Vec::new()
+    }
+
+    fn ascii_shaping_preserves_advances(&self, _font_id: FontId, _features: &FontFeatures) -> bool {
+        true
     }
 
     fn font_id(&self, _descriptor: &Font) -> Result<FontId> {

@@ -4070,6 +4070,50 @@ async fn test_autoscroll_horizontally_long_selection_tracks_cursor(cx: &mut Test
 }
 
 #[gpui::test]
+async fn test_autoscroll_horizontally_survives_first_inlay_measurement(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(300.), px(300.)));
+
+    let long_line = "x".repeat(250);
+    cx.set_state(&format!("ˇ{long_line}"));
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _, cx| {
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        editor.display_map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[],
+                vec![Inlay::repl_result(
+                    1,
+                    buffer_snapshot.anchor_after(MultiBufferOffset(1)),
+                    "result",
+                )],
+                cx,
+            );
+        });
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 250)..Point::new(0, 250)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        assert!(
+            scroll_x + visible_columns > 249.,
+            "cursor column must be visible, but the viewport shows {scroll_x}..{}",
+            scroll_x + visible_columns
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_autoscroll_horizontally_padded_span_boundary_still_scrolls(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;

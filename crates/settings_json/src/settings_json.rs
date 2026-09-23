@@ -38,10 +38,15 @@ pub fn update_value_in_json_text<'a>(
                 );
             } else {
                 // Key was removed from new object, remove the entire key-value pair
-                let (range, replacement) =
-                    replace_value_in_json_text(text, key_path, 0, None, None);
-                text.replace_range(range.clone(), &replacement);
-                edits.push((range, replacement));
+                loop {
+                    let (range, replacement) =
+                        replace_value_in_json_text(text, key_path, 0, None, None);
+                    if !replacement.is_empty() || range.is_empty() {
+                        break;
+                    }
+                    text.replace_range(range.clone(), &replacement);
+                    edits.push((range, replacement));
+                }
             }
             key_path.pop();
         }
@@ -94,71 +99,77 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
         .unwrap();
     let syntax_tree = parser.parse(text, None).unwrap();
 
-    let mut cursor = tree_sitter::QueryCursor::new();
-
     let mut depth = 0;
-    let mut last_value_range = 0..0;
     let mut first_key_start = None;
     let mut matched_key_start = None;
     let mut existing_value_range = 0..text.len();
 
-    let mut matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
-    while let Some(mat) = matches.next() {
-        if mat.captures.len() != 2 {
-            continue;
+    while depth < key_path.len() {
+        let mut cursor = tree_sitter::QueryCursor::new();
+        cursor.set_byte_range(existing_value_range.clone());
+        let mut matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
+        let mut last_value_range = existing_value_range.start..existing_value_range.start;
+        let mut found = None;
+        first_key_start = None;
+        while let Some(mat) = matches.next() {
+            if mat.captures.len() != 2 {
+                continue;
+            }
+
+            let key_range = mat.captures[0].node.byte_range();
+            let value_range = mat.captures[1].node.byte_range();
+
+            if value_range == existing_value_range
+                || !existing_value_range.contains_inclusive(&value_range)
+            {
+                continue;
+            }
+
+            // Don't enter sub objects until we find an exact
+            // match for the current keypath
+            if last_value_range.contains_inclusive(&value_range) {
+                continue;
+            }
+
+            last_value_range = value_range.clone();
+            first_key_start.get_or_insert(key_range.start);
+
+            let found_key = text
+                .get(key_range.clone())
+                .zip(key_path.get(depth))
+                .and_then(|(key_text, key_path_value)| {
+                    serde_json::from_str::<String>(key_text)
+                        .ok()
+                        .map(|decoded_key| decoded_key == key_path_value.as_ref())
+                })
+                .unwrap_or(false);
+
+            if found_key {
+                found = Some((mat.captures[0].node, mat.captures[1].node));
+            }
         }
 
-        let key_range = mat.captures[0].node.byte_range();
-        let value_range = mat.captures[1].node.byte_range();
+        let Some((key_node, value_node)) = found else {
+            break;
+        };
+        matched_key_start = Some(key_node.start_byte());
+        existing_value_range = value_node.byte_range();
+        depth += 1;
 
-        // Don't enter sub objects until we find an exact
-        // match for the current keypath
-        if last_value_range.contains_inclusive(&value_range) {
-            continue;
-        }
-
-        last_value_range = value_range.clone();
-
-        if key_range.start > existing_value_range.end {
+        if depth == key_path.len() {
             break;
         }
 
-        first_key_start.get_or_insert(key_range.start);
-
-        let found_key = text
-            .get(key_range.clone())
-            .zip(key_path.get(depth))
-            .and_then(|(key_text, key_path_value)| {
-                serde_json::from_str::<String>(key_text)
-                    .ok()
-                    .map(|decoded_key| decoded_key == key_path_value.as_ref())
-            })
-            .unwrap_or(false);
-
-        if found_key {
-            matched_key_start = Some(key_range.start);
-            existing_value_range = value_range;
-            // Reset last value range when increasing in depth
-            last_value_range = existing_value_range.start..existing_value_range.start;
-            depth += 1;
-
-            if depth == key_path.len() {
-                break;
-            }
-
-            if let Some(array_replacement) = handle_possible_array_value(
-                &mat.captures[0].node,
-                &mat.captures[1].node,
-                text,
-                &key_path[depth..],
-                new_value,
-                replace_key,
-                tab_size,
-            ) {
-                return array_replacement;
-            }
-
-            first_key_start = None;
+        if let Some(array_replacement) = handle_possible_array_value(
+            &key_node,
+            &value_node,
+            text,
+            &key_path[depth..],
+            new_value,
+            replace_key,
+            tab_size,
+        ) {
+            return array_replacement;
         }
     }
 
@@ -321,6 +332,9 @@ fn handle_possible_array_value(
     }
     let key_path = remaining_key_path;
     let index = parse_index_key(key_path[0].as_ref())?;
+    if value_node.kind() == TS_OBJECT_KIND {
+        return None;
+    }
 
     let value_is_array = value_node.kind() == TS_ARRAY_KIND;
 
@@ -378,6 +392,8 @@ fn handle_possible_array_value(
 const TS_DOCUMENT_KIND: &str = "document";
 #[cfg(feature = "editing")]
 const TS_ARRAY_KIND: &str = "array";
+#[cfg(feature = "editing")]
+const TS_OBJECT_KIND: &str = "object";
 #[cfg(feature = "editing")]
 const TS_COMMENT_KIND: &str = "comment";
 
@@ -790,6 +806,24 @@ mod tests {
                 "b": 3
             }"#
             .unindent(),
+        );
+        check_object_replace(
+            r##"{"profiles":{"#0":{"settings":{"soft_wrap":"prefer_line","tab_size":8}},"work":{"settings":{"tab_size":4}}}}"##.to_string(),
+            &["profiles", "#0", "settings", "soft_wrap"],
+            Some(json!("none")),
+            r##"{"profiles":{"#0":{"settings":{"soft_wrap":"none","tab_size":8}},"work":{"settings":{"tab_size":4}}}}"##.to_string(),
+        );
+        check_object_replace(
+            r#"{"relative_line_n\u0075mbers":false,"relative_line_numbers":true}"#.to_string(),
+            &["relative_line_numbers"],
+            Some(json!("enabled")),
+            r#"{"relative_line_n\u0075mbers":false,"relative_line_numbers":"enabled"}"#.to_string(),
+        );
+        check_object_replace(
+            r#"{"languages":{"Go":{"soft_wrap":"prefer_line"}},"languages":{"Go":{"soft_wrap":"prefer_line"},"Go":{"soft_wrap":"prefer_line"}}}"#.to_string(),
+            &["languages", "Go", "soft_wrap"],
+            Some(json!("none")),
+            r#"{"languages":{"Go":{"soft_wrap":"prefer_line"}},"languages":{"Go":{"soft_wrap":"prefer_line"},"Go":{"soft_wrap":"none"}}}"#.to_string(),
         );
         check_object_replace(
             r#"{
@@ -1836,10 +1870,22 @@ mod tests {
             .unindent(),
         );
 
-        // Creates array if has numbered key
         check_object_replace_array(
             r#"{
                 "array": {"foo": "bar"}
+            }"#
+            .unindent(),
+            &["array", "#3"],
+            Some(json!(4)),
+            r##"{
+                "array": {"#3": 4,
+                          "foo": "bar"}
+            }"##
+            .unindent(),
+        );
+        check_object_replace_array(
+            r#"{
+                "array": 1
             }"#
             .unindent(),
             &["array", "#3"],

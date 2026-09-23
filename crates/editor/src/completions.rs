@@ -19,6 +19,8 @@ impl Editor {
             visible_columns: self.visible_column_count(),
             vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
             grid_cell: OnceCell::new(),
+            highlight_styles: self.display_map.read(cx).highlight_styles().collect(),
+            semantic_tokens_enabled: self.semantic_token_state.enabled(),
         }
     }
 

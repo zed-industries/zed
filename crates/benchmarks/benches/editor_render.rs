@@ -507,6 +507,7 @@ fn editor_edit_huge_unwrapped_line(operation: &&str, cx: &mut BenchAppContext) {
             let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
             editor.set_style(editor::EditorStyle::default(), window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+            editor.set_use_selection_highlight(false);
             editor.move_to_end_of_line(&Default::default(), window, cx);
             editor
         });
@@ -546,9 +547,21 @@ fn editor_edit_huge_unwrapped_line(operation: &&str, cx: &mut BenchAppContext) {
                 scroll_columns = (scroll_columns + 3.) % 3_000.;
                 editor.set_scroll_position(gpui::point(scroll_columns, 0.), window, cx);
             }
-            "type" => editor.handle_input("x", window, cx),
-            "type_cjk" => editor.handle_input("漢", window, cx),
-            "backspace" => editor.backspace(&Default::default(), window, cx),
+            "type" | "type_cjk" => {
+                if toggle {
+                    let inserted = if operation == "type" { "x" } else { "漢" };
+                    editor.handle_input(inserted, window, cx);
+                } else {
+                    editor.backspace(&Default::default(), window, cx);
+                }
+            }
+            "backspace" => {
+                if toggle {
+                    editor.backspace(&Default::default(), window, cx);
+                } else {
+                    editor.handle_input(" ", window, cx);
+                }
+            }
             "left_right" => {
                 if toggle {
                     editor.move_left(&Default::default(), window, cx);

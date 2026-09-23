@@ -4355,6 +4355,17 @@ mod tests {
     }
 
     #[test]
+    fn test_rename_web_search_to_search_web_removes_every_duplicate_key() {
+        assert_migrate_settings(
+            r#"{"agent":{"profiles":{"write":{"name":"Write","tools":{"web_search":true,"web_search":false}}}}}"#,
+            Some(indoc! {r#"
+                {"agent":{"profiles":{"write":{"name":"Write","tools":{
+                          "search_web": false
+                        }}}}}"#}),
+        );
+    }
+
+    #[test]
     fn test_rename_web_search_to_search_web_no_change_when_already_migrated() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
@@ -5438,6 +5449,20 @@ mod tests {
         assert_migrate_settings(
             r#"{"profiles":{"\u5de5\u4f5c":{"settings":{"soft_wrap":"prefer_line"}}}}"#,
             Some(r#"{"profiles":{"\u5de5\u4f5c":{"settings":{"soft_wrap":"none"}}}}"#),
+        );
+        assert_migrate_settings(
+            r##"{"profiles":{"#0":{"settings":{"soft_wrap":"prefer_line","tab_size":8}},"work":{"settings":{"tab_size":4}}}}"##,
+            Some(
+                r##"{"profiles":{"#0":{"settings":{"soft_wrap":"none","tab_size":8}},"work":{"settings":{"tab_size":4}}}}"##,
+            ),
+        );
+        assert_migrate_settings(
+            r#"{"soft_wrap":"prefer_line","soft_wrap":"prefer_line","soft_wr\u0061p":"editor_width"}"#,
+            None,
+        );
+        assert_migrate_settings(
+            r#"{"soft_wrap":"editor_width","soft_wr\u0061p":"prefer_line"}"#,
+            Some(r#"{"soft_wrap":"editor_width","soft_wr\u0061p":"none"}"#),
         );
     }
 }

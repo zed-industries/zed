@@ -121,7 +121,7 @@ pub use syntax_map::{
     OwnedSyntaxLayer, SyntaxLayer, SyntaxMapMatches, ToTreeSitterPoint, TreeSitterOptions,
 };
 pub use text::{AnchorRangeExt, LineEnding};
-pub use tree_sitter::{Node, Parser, QueryCapture, Tree, TreeCursor};
+pub use tree_sitter::{Node, Parser, Query, QueryCapture, Tree, TreeCursor};
 
 pub(crate) fn to_settings_soft_wrap(value: language_core::SoftWrap) -> settings::SoftWrap {
     match value {

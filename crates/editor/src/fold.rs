@@ -710,10 +710,12 @@ impl Editor {
     pub fn update_renderer_widths(
         &mut self,
         widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
+        renderer_metrics_key: u64,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.display_map
-            .update(cx, |map, cx| map.update_fold_widths(widths, cx))
+        self.display_map.update(cx, |map, cx| {
+            map.update_fold_widths(widths, renderer_metrics_key, cx)
+        })
     }
 
     pub fn default_fold_placeholder(&self, cx: &App) -> FoldPlaceholder {

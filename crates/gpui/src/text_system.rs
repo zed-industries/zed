@@ -3,6 +3,7 @@ mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
+mod shaping_invariance;
 
 pub use font_fallbacks::*;
 pub use font_features::*;
@@ -11,6 +12,7 @@ pub use line_layout::*;
 pub use line_wrapper::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+pub use shaping_invariance::*;
 
 use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
@@ -401,6 +403,14 @@ impl TextSystem {
             }
         }
         self.platform_text_system.prewarm_fonts(&font_ids);
+    }
+
+    /// Returns whether shaping printable ASCII in the given font can only produce runs whose
+    /// advances equal the sum of the characters' own advances.
+    pub fn ascii_shaping_preserves_advances(&self, font: &Font) -> bool {
+        let font_id = self.resolve_font(font);
+        self.platform_text_system
+            .ascii_shaping_preserves_advances(font_id, &font.features)
     }
 
     /// Get the bounding box for the given font and font size.

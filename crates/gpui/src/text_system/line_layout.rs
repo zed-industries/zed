@@ -104,6 +104,17 @@ impl LineLayout {
         self.len
     }
 
+    /// Returns whether a glyph starts exactly at the given utf-8 index, so that no glyph spans it.
+    pub fn is_glyph_boundary(&self, index: usize) -> bool {
+        index == 0
+            || index >= self.len
+            || self
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .any(|glyph| glyph.index == index)
+    }
+
     /// The x position of the character at the given index
     pub fn x_for_index(&self, index: usize) -> Pixels {
         for run in &self.runs {

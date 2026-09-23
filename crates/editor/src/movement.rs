@@ -7,8 +7,8 @@ use crate::{
     display_map::{GridCell, HighlightedChunk, HorizontalViewport, RulerShaper},
     scroll::{ScrollOffset, SharedScrollAnchor},
 };
-use gpui::{LineLayout, Pixels, TextAlign, WindowTextSystem};
-use language::{CharClassifier, Point};
+use gpui::{HighlightStyle, LineLayout, Pixels, TextAlign, WindowTextSystem};
+use language::{CharClassifier, LanguageAwareStyling, Point};
 use multi_buffer::{MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 use workspace::searchable::Direction;
@@ -35,6 +35,8 @@ pub struct TextLayoutDetails {
     pub visible_columns: Option<f64>,
     pub vertical_scroll_margin: ScrollOffset,
     pub(crate) grid_cell: OnceCell<GridCell>,
+    pub(crate) highlight_styles: Vec<HighlightStyle>,
+    pub(crate) semantic_tokens_enabled: bool,
 }
 
 impl TextLayoutDetails {
@@ -46,17 +48,38 @@ impl TextLayoutDetails {
         *self.grid_cell.get_or_init(|| {
             GridCell::measure(
                 &self.text_system,
-                &self.editor_style.text.font(),
+                &self.editor_style,
+                self.highlight_styles.iter().copied(),
                 self.font_size(),
             )
         })
     }
 
-    pub(crate) fn ruler_shaper(&self) -> RulerShaper {
+    pub(crate) fn language_aware(
+        &self,
+        snapshot: &DisplaySnapshot,
+        row: DisplayRow,
+    ) -> LanguageAwareStyling {
+        let tree_sitter = !self.semantic_tokens_enabled
+            || snapshot
+                .point_to_buffer_point(DisplayPoint::new(row, 0).to_point(snapshot))
+                .is_some_and(|(buffer, ..)| {
+                    buffer
+                        .resolved_settings()
+                        .is_none_or(|settings| settings.semantic_tokens.use_tree_sitter())
+                });
+        LanguageAwareStyling {
+            tree_sitter,
+            diagnostics: true,
+        }
+    }
+
+    pub(crate) fn ruler_shaper(&self, snapshot: &DisplaySnapshot, row: DisplayRow) -> RulerShaper {
         RulerShaper {
             text_system: self.text_system.clone(),
             style: self.editor_style.clone(),
             font_size: self.font_size(),
+            language_aware: self.language_aware(snapshot, row),
         }
     }
 

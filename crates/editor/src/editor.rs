@@ -3882,7 +3882,6 @@ impl Editor {
         // If the selection spans multiple rows OR it is empty
         if selection.start.row != selection.end.row
             || selection.start.column == selection.end.column
-            || (selection.end.column - selection.start.column) as usize > MAX_LINE_LEN
         {
             return None;
         }

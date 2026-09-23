@@ -5,6 +5,7 @@ use core_foundation::{
     array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
     base::{CFRange, CFType, TCFType},
+    data::CFData,
     number::CFNumber,
     string::CFString,
 };
@@ -226,6 +227,53 @@ impl PlatformTextSystem for MacTextSystem {
         let luminance = 0.2126 * rgba.r + 0.7152 * rgba.g + 0.0722 * rgba.b;
         let level = ((4.0 * luminance) + 0.5).floor() as i32;
         level.clamp(0, 4) as u8
+    }
+
+    fn ascii_shaping_preserves_advances(&self, font_id: FontId, features: &FontFeatures) -> bool {
+        let lock = self.0.read();
+        let Some(font) = lock.fonts.get(font_id.0) else {
+            return false;
+        };
+        let native = font.native_font();
+        let table = |tag: &[u8; 4]| native.get_font_table(u32::from_be_bytes(*tag));
+        let (Some(head), Some(hhea), Some(maxp)) = (table(b"head"), table(b"hhea"), table(b"maxp"))
+        else {
+            return false;
+        };
+        let (hmtx, gsub, gpos, morx, kern, kerx) = (
+            table(b"hmtx"),
+            table(b"GSUB"),
+            table(b"GPOS"),
+            table(b"morx"),
+            table(b"kern"),
+            table(b"kerx"),
+        );
+        let Some(ascii_glyphs) = (0x20u8..=0x7E)
+            .map(|byte| font.glyph_for_char(byte as char).map(|glyph| glyph as u16))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        gpui::ascii_shaping_preserves_advances(
+            gpui::ShapingTables {
+                head: head.bytes(),
+                hhea: hhea.bytes(),
+                maxp: maxp.bytes(),
+                hmtx: hmtx.as_ref().map(CFData::bytes),
+                gsub: gsub.as_ref().map(CFData::bytes),
+                gpos: gpos.as_ref().map(CFData::bytes),
+                morx: morx.as_ref().map(CFData::bytes),
+                kern: kern.as_ref().map(CFData::bytes),
+                kerx: kerx.as_ref().map(CFData::bytes),
+            },
+            &ascii_glyphs,
+            features.tag_value_list(),
+            |glyph| {
+                font.advance(u32::from(glyph))
+                    .ok()
+                    .map(|advance| advance.x())
+            },
+        )
     }
 }
 
@@ -767,7 +815,8 @@ mod lenient_font_attributes {
 #[cfg(test)]
 mod tests {
     use crate::MacTextSystem;
-    use gpui::{Font, FontRun, FontWeight, GlyphId, PlatformTextSystem, font, px};
+    use gpui::{Font, FontFeatures, FontRun, FontWeight, GlyphId, PlatformTextSystem, font, px};
+    use std::sync::Arc;
 
     #[test]
     fn test_monospace_advances_are_style_independent_and_cell_aligned() {
@@ -811,6 +860,260 @@ mod tests {
         assert!(
             (cjk_cells - cjk_cells.round()).abs() > 0.1,
             "CJK fallback glyphs span {cjk_cells} cells; the grid path must keep excluding them"
+        );
+    }
+
+    #[test]
+    fn test_context_shaped_chunk_widths_are_boundary_independent() {
+        let fonts = MacTextSystem::new();
+        let font_id = fonts.font_id(&font("Times")).unwrap();
+        let layout = |text: &str| {
+            fonts.layout_line(
+                text,
+                px(14.),
+                &[FontRun {
+                    font_id,
+                    len: text.len(),
+                }],
+            )
+        };
+        let text = format!("a{}", "fi".repeat(4_096));
+        let full_width = layout(&text).width;
+        let context = 64;
+        let chunk_len = 2_048;
+        let mut standalone_sums = Vec::new();
+        for first_boundary in [chunk_len, chunk_len + 1] {
+            let mut context_sum = px(0.);
+            let mut standalone_sum = px(0.);
+            let mut start = 0;
+            let mut boundary = first_boundary;
+            while start < text.len() {
+                let end = boundary.min(text.len());
+                let context_start = start.saturating_sub(context);
+                let context_end = (end + context).min(text.len());
+                let shaped = layout(&text[context_start..context_end]);
+                context_sum += shaped.x_for_index(end - context_start)
+                    - shaped.x_for_index(start - context_start);
+                standalone_sum += layout(&text[start..end]).width;
+                start = end;
+                boundary += chunk_len;
+            }
+            assert!(
+                (context_sum - full_width).abs() < px(0.01),
+                "chunks from {first_boundary}: {context_sum:?} vs {full_width:?}"
+            );
+            standalone_sums.push(standalone_sum);
+        }
+        assert!(
+            (standalone_sums[0] - standalone_sums[1]).abs() > px(1.),
+            "standalone chunks must expose the broken ligatures this test guards against: {standalone_sums:?}"
+        );
+    }
+
+    #[test]
+    fn test_grid_exactness_needs_every_printable_ascii_glyph() {
+        let fonts = MacTextSystem::new();
+        let width = |font_id, text: &str| {
+            fonts
+                .layout_line(
+                    text,
+                    px(14.),
+                    &[FontRun {
+                        font_id,
+                        len: text.len(),
+                    }],
+                )
+                .width
+        };
+        let ayuthaya = fonts.font_id(&font("Ayuthaya")).unwrap();
+        let cell = width(ayuthaya, "m");
+        assert_eq!(width(ayuthaya, "i"), cell);
+        assert_eq!(width(ayuthaya, "W"), cell);
+        assert_ne!(
+            width(ayuthaya, " "),
+            cell,
+            "Ayuthaya's space must differ from its letter cell for this test to be meaningful"
+        );
+        let spaces = " ".repeat(2_048);
+        assert!((width(ayuthaya, &spaces) - cell * 2_048.).abs() > px(100.));
+        for family in ["Menlo"] {
+            for weight in [FontWeight::NORMAL, FontWeight::BOLD] {
+                let font_id = fonts
+                    .font_id(&Font {
+                        weight,
+                        ..font(family)
+                    })
+                    .unwrap();
+                let cell = width(font_id, "m");
+                for byte in 0x20u8..=0x7E {
+                    let glyph = (byte as char).to_string();
+                    assert_eq!(
+                        width(font_id, &glyph),
+                        cell,
+                        "{family} {weight:?} {glyph:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_chunks_cut_beside_isolated_chars_telescope_across_ligature_chains() {
+        let fonts = MacTextSystem::new();
+        let layout = |font_id, text: &str| {
+            fonts.layout_line(
+                text,
+                px(14.),
+                &[FontRun {
+                    font_id,
+                    len: text.len(),
+                }],
+            )
+        };
+        let context = 64;
+        let chunk_len = 2_048;
+        let cases = [
+            (
+                "Hoefler Text",
+                format!("a{}", "ffi fl ff ".repeat(1_000)),
+                true,
+            ),
+            ("Hoefler Text", format!("a{}", "f".repeat(8_192)), false),
+            ("Helvetica", "\u{628}\u{644}\u{62f} ".repeat(1_100), true),
+        ];
+        for (family, text, expect_exact) in cases {
+            let font_id = fonts.font_id(&font(family)).unwrap();
+            let full_width = layout(font_id, &text).width;
+            let rtl = text.starts_with('\u{628}');
+            let mut start = 0;
+            let mut sum = px(0.);
+            let mut cuts = 0;
+            while start < text.len() {
+                let mut end = (start + chunk_len).min(text.len());
+                while end < text.len()
+                    && !(text.is_char_boundary(end)
+                        && (text[..end].ends_with(' ') || text[end..].starts_with(' ')))
+                {
+                    end += 1;
+                }
+                if end < text.len() {
+                    cuts += 1;
+                }
+                if rtl {
+                    sum += layout(font_id, &text[start..end]).width;
+                } else {
+                    let context_start = start.saturating_sub(context);
+                    let context_end = (end + context).min(text.len());
+                    let shaped = layout(font_id, &text[context_start..context_end]);
+                    sum += shaped.x_for_index(end - context_start)
+                        - shaped.x_for_index(start - context_start);
+                }
+                start = end;
+            }
+            assert_eq!(cuts > 0, expect_exact, "{family}: {cuts} cuts");
+            assert!(
+                (sum - full_width).abs() < px(0.05),
+                "{family}: chunk sum {sum:?} vs full width {full_width:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sliced_pieces_cut_without_context_never_duplicate_glyphs() {
+        let text_system = Arc::new(gpui::TextSystem::new(Arc::new(MacTextSystem::new())));
+        let window_text_system = gpui::WindowTextSystem::new(text_system);
+        let text = format!("a{}", "f".repeat(12_000));
+        let font = font("Hoefler Text");
+        let run = |len: usize| gpui::TextRun {
+            len,
+            font: font.clone(),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let cut = 6_144usize;
+        let shape_piece = |shaped_range: std::ops::Range<usize>, kept: std::ops::Range<usize>| {
+            let piece = &text[shaped_range.clone()];
+            window_text_system
+                .shape_line(piece.to_string().into(), px(14.), &[run(piece.len())], None)
+                .slice(
+                    kept.start - shaped_range.start..kept.end - shaped_range.start,
+                    None,
+                )
+        };
+        let glyph_indices = |line: &gpui::ShapedLine, base: usize| {
+            line.runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(move |glyph| glyph.index + base))
+                .collect::<Vec<_>>()
+        };
+
+        let first = shape_piece(0..cut, 0..cut);
+        let second = shape_piece(cut..text.len(), cut..text.len());
+        let mut indices = glyph_indices(&first, 0);
+        indices.extend(glyph_indices(&second, cut));
+        assert!(indices.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(glyph_indices(&second, cut).first(), Some(&cut));
+        assert!(
+            glyph_indices(&first, 0)
+                .last()
+                .is_some_and(|index| *index < cut)
+        );
+        assert!(
+            (first.width() + second.width()
+                - window_text_system
+                    .shape_line(text.clone().into(), px(14.), &[run(text.len())], None)
+                    .width())
+            .abs()
+                > px(1.),
+            "a 12,001-byte line exceeds CoreText's shaping limit, so whole-line width is not the reference"
+        );
+
+        let last_glyph_id = |line: &gpui::ShapedLine| {
+            line.runs
+                .last()
+                .and_then(|run| run.glyphs.last())
+                .map(|glyph| glyph.id)
+        };
+        let single_f = window_text_system.shape_line("f".into(), px(14.), &[run(1)], None);
+        assert_eq!(last_glyph_id(&first), last_glyph_id(&single_f));
+
+        let context = 64;
+        let first_with_context = shape_piece(0..cut + context, 0..cut);
+        let second_with_context = shape_piece(cut - context..text.len(), cut..text.len());
+        assert_ne!(last_glyph_id(&first_with_context), last_glyph_id(&single_f));
+        assert_eq!(glyph_indices(&second_with_context, cut).first(), Some(&cut));
+    }
+
+    #[test]
+    fn test_coretext_shapes_ligatures_and_kerning_up_to_10240_code_units() {
+        let fonts = MacTextSystem::new();
+        let font_id = fonts.font_id(&font("Times")).unwrap();
+        let layout = |text: &str| {
+            fonts.layout_line(
+                text,
+                px(14.),
+                &[FontRun {
+                    font_id,
+                    len: text.len(),
+                }],
+            )
+        };
+        let glyph_count = |text: &str| {
+            layout(text)
+                .runs
+                .iter()
+                .map(|run| run.glyphs.len())
+                .sum::<usize>()
+        };
+        assert_eq!(glyph_count(&"fi".repeat(5_120)), 5_120);
+        assert_eq!(glyph_count(&"fi".repeat(5_121)), 10_242);
+        let kerned_pair = layout(&"AV".repeat(5_120)).width / 5_120.;
+        let unkerned_pair = layout(&"AV".repeat(5_121)).width / 5_121.;
+        assert!(
+            unkerned_pair - kerned_pair > px(1.),
+            "kerning must stop past 10240 code units: {kerned_pair:?} vs {unkerned_pair:?}"
         );
     }
 
@@ -945,5 +1248,329 @@ mod tests {
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, 0);
         assert!(layout.runs.is_empty());
+    }
+
+    #[test]
+    fn test_code_ligature_ink_survives_cuts_beside_whitespace_and_hard_breaks_only() {
+        let fonts = MacTextSystem::new();
+        fonts
+            .add_fonts(vec![
+                include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf")
+                    .as_slice()
+                    .into(),
+            ])
+            .unwrap();
+        let font_id = fonts.font_id(&font("Lilex")).unwrap();
+        let font_size = px(14.);
+        let scale = f32::from(font_size) / fonts.font_metrics(font_id).units_per_em as f32;
+        let layout = |text: &str| {
+            fonts.layout_line(
+                text,
+                font_size,
+                &[FontRun {
+                    font_id,
+                    len: text.len(),
+                }],
+            )
+        };
+        let cell = layout("x").width;
+        let glyphs = |layout: &gpui::LineLayout| {
+            layout
+                .runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().cloned())
+                .collect::<Vec<_>>()
+        };
+        let inked_cells = |glyphs: &[gpui::ShapedGlyph]| {
+            let mut cells = std::collections::BTreeSet::new();
+            for glyph in glyphs {
+                let bounds = fonts.typographic_bounds(font_id, glyph.id).unwrap();
+                if bounds.size.width <= 0. {
+                    continue;
+                }
+                let start = f32::from(glyph.position.x) + bounds.origin.x * scale;
+                let end = start + bounds.size.width * scale;
+                let first = ((start + 0.01) / f32::from(cell)).floor() as usize;
+                let last = ((end - 0.01) / f32::from(cell)).ceil() as usize;
+                cells.extend(first..last);
+            }
+            cells
+        };
+        let ids = |glyphs: &[gpui::ShapedGlyph]| {
+            glyphs
+                .iter()
+                .map(|glyph| (glyph.index, glyph.id))
+                .collect::<Vec<_>>()
+        };
+        let compose = |text: &str, cut: usize, context: usize| {
+            let mut composed = Vec::new();
+            for (piece, shaped) in [
+                (0..cut, 0..(cut + context).min(text.len())),
+                (cut..text.len(), cut.saturating_sub(context)..text.len()),
+            ] {
+                let shaped_layout = layout(&text[shaped.clone()]);
+                let origin = shaped_layout.x_for_index(piece.start - shaped.start);
+                let piece_x = cell * piece.start as f32;
+                composed.extend(
+                    glyphs(&shaped_layout)
+                        .into_iter()
+                        .filter(|glyph| piece.contains(&(glyph.index + shaped.start)))
+                        .map(|glyph| gpui::ShapedGlyph {
+                            index: glyph.index + shaped.start,
+                            position: gpui::point(
+                                glyph.position.x - origin + piece_x,
+                                glyph.position.y,
+                            ),
+                            ..glyph
+                        }),
+                );
+            }
+            composed
+        };
+
+        let spaced = format!("{} {}", "!=".repeat(1_000), "!=".repeat(1_000));
+        let whole = glyphs(&layout(&spaced));
+        assert_eq!(inked_cells(&whole).len(), spaced.len() - 1);
+        for cut in [2_000, 2_001] {
+            let composed = compose(&spaced, cut, 64);
+            assert_eq!(ids(&composed), ids(&whole), "cut at {cut}");
+            assert_eq!(inked_cells(&composed), inked_cells(&whole), "cut at {cut}");
+        }
+
+        let unspaced = format!("a{}", "!=".repeat(1_050));
+        let whole = glyphs(&layout(&unspaced));
+        let all_cells = (0..unspaced.len()).collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(inked_cells(&whole), all_cells);
+        let cut = 2_048;
+        assert_eq!(&unspaced[cut - 1..=cut], "!=");
+        let with_context = compose(&unspaced, cut, 64);
+        let missing = all_cells
+            .difference(&inked_cells(&with_context))
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(missing, vec![cut - 2, cut - 1]);
+
+        let hard_break = compose(&unspaced, cut, 0);
+        assert_eq!(inked_cells(&hard_break), all_cells);
+        assert_ne!(ids(&hard_break), ids(&whole));
+        let positions = |glyphs: &[gpui::ShapedGlyph]| {
+            glyphs
+                .iter()
+                .map(|glyph| (glyph.index, glyph.position.x))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(positions(&hard_break), positions(&whole));
+    }
+
+    #[test]
+    fn test_bidi_chunks_cut_before_whitespace_runs_compose_in_visual_order() {
+        let fonts = MacTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let layout = |text: &str| {
+            fonts.layout_line(
+                text,
+                px(14.),
+                &[FontRun {
+                    font_id,
+                    len: text.len(),
+                }],
+            )
+        };
+        let positions = |layout: &gpui::LineLayout, base: usize, x: f32| {
+            layout
+                .runs
+                .iter()
+                .flat_map(|run| {
+                    run.glyphs
+                        .iter()
+                        .map(move |glyph| (glyph.index + base, f32::from(glyph.position.x) + x))
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let compose = |text: &str, cuts: &[usize], rtl: bool| {
+            let mut bounds = vec![0];
+            bounds.extend_from_slice(cuts);
+            bounds.push(text.len());
+            let chunks = bounds
+                .windows(2)
+                .map(|pair| (pair[0], layout(&text[pair[0]..pair[1]])))
+                .collect::<Vec<_>>();
+            let total = chunks
+                .iter()
+                .map(|(_, chunk)| f32::from(chunk.width))
+                .sum::<f32>();
+            let mut composed = std::collections::BTreeMap::new();
+            let mut cumulative = 0.;
+            for (start, chunk) in &chunks {
+                let width = f32::from(chunk.width);
+                let x = if rtl {
+                    total - cumulative - width
+                } else {
+                    cumulative
+                };
+                composed.extend(positions(chunk, *start, x));
+                cumulative += width;
+            }
+            composed
+        };
+        let mismatches = |text: &str, cuts: &[usize], rtl: bool| {
+            let reference = positions(&layout(text), 0, 0.);
+            let composed = compose(text, cuts, rtl);
+            assert_eq!(composed.len(), reference.len());
+            reference
+                .iter()
+                .filter(|(index, x)| (composed[index] - **x).abs() > 0.05)
+                .count()
+        };
+
+        let hebrew = format!(
+            "{} {} {}",
+            "\u{5d0}".repeat(300),
+            "\u{5d1}".repeat(100),
+            "\u{5d2}".repeat(100)
+        );
+        assert_eq!(mismatches(&hebrew, &[600, 801], true), 0);
+        assert_ne!(mismatches(&hebrew, &[601, 802], true), 0);
+        assert_ne!(mismatches(&hebrew, &[600, 801], false), 0);
+
+        let double_space = format!("{}  {}", "\u{5d0}".repeat(300), "\u{5d1}".repeat(100));
+        assert_eq!(mismatches(&double_space, &[600], true), 0);
+        assert_ne!(mismatches(&double_space, &[601], true), 0);
+
+        let mixed = "\u{5d0}\u{5d1}\u{5d2} abc 123 \u{5d3}\u{5d4}\u{5d5} (x) \u{5d6}\u{5d7}\u{5d8} 45,6 \u{5d0}\u{5d1} end \u{5d2}\u{5d3}";
+        let before_hebrew_words = [14, 25, 37, 46];
+        for cut in before_hebrew_words {
+            assert_eq!(&mixed[cut..cut + 1], " ");
+            assert_eq!(mismatches(mixed, &[cut], true), 0, "cut at {cut}");
+        }
+        assert_eq!(mismatches(mixed, &before_hebrew_words, true), 0);
+        for (cut, following) in [(6, " abc"), (10, " 123"), (21, " (x)"), (42, " end")] {
+            assert!(mixed[cut..].starts_with(following));
+            assert_ne!(
+                mismatches(mixed, &[cut], true),
+                0,
+                "cut before {following:?}"
+            );
+        }
+
+        let embedded = "abc \u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4} def ghi \u{5d5}\u{5d6} jkl";
+        let before_latin_words = ["def", "ghi", "jkl"]
+            .map(|word| embedded.find(word).unwrap() - 1)
+            .to_vec();
+        assert_eq!(mismatches(embedded, &before_latin_words, false), 0);
+        assert_ne!(
+            mismatches(embedded, &[embedded.find("\u{5d3}").unwrap() - 1], false),
+            0
+        );
+
+        let numbers_first = "123 456 \u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}";
+        assert_ne!(mismatches(numbers_first, &[7], true), 0);
+        assert_eq!(mismatches(numbers_first, &[14], true), 0);
+
+        let arabic = format!(
+            "{} {} {}",
+            "\u{628}".repeat(200),
+            "\u{644}".repeat(100),
+            "\u{62f}".repeat(100)
+        );
+        assert_eq!(mismatches(&arabic, &[400, 601], true), 0);
+    }
+
+    #[test]
+    fn test_ascii_shaping_invariance_analysis_matches_native_shaping() {
+        let fonts = MacTextSystem::new();
+        fonts
+            .add_fonts(vec![
+                include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf")
+                    .as_slice()
+                    .into(),
+            ])
+            .unwrap();
+        let with_features = |family: &str, features: &[(&str, u32)]| Font {
+            features: FontFeatures(Arc::new(
+                features
+                    .iter()
+                    .map(|(tag, value)| (tag.to_string(), *value))
+                    .collect(),
+            )),
+            ..font(family)
+        };
+        let probes = [
+            "1/2 ".repeat(512),
+            "fi ".repeat(512),
+            "ffi fl ff ".repeat(200),
+            "!= -> === <= >= :: <!-- --> www ".repeat(64),
+            (0x20u8..=0x7E).map(|byte| byte as char).collect::<String>(),
+        ];
+        let cases = [
+            ("Lilex", &[][..], true),
+            ("Lilex", &[("frac", 1)][..], false),
+            ("Lilex", &[("calt", 0)][..], true),
+            ("Zed Plex Mono", &[][..], true),
+            ("Zed Plex Mono", &[("frac", 1)][..], false),
+            ("Menlo", &[][..], true),
+            ("Menlo", &[("liga", 1)][..], false),
+            ("Menlo", &[("liga", 0)][..], true),
+            ("Monaco", &[][..], true),
+        ];
+        for (family, features, expected) in cases {
+            let font = with_features(family, features);
+            let font_id = fonts.font_id(&font).unwrap();
+            let analysis = fonts.ascii_shaping_preserves_advances(font_id, &font.features);
+            assert_eq!(analysis, expected, "{family} {features:?}");
+            let layout = |text: &str| {
+                fonts.layout_line(
+                    text,
+                    px(14.),
+                    &[FontRun {
+                        font_id,
+                        len: text.len(),
+                    }],
+                )
+            };
+            let cell = layout("x").width;
+            let grid_exact = probes
+                .iter()
+                .all(|probe| (layout(probe).width - cell * probe.len() as f32).abs() < px(0.01));
+            if analysis {
+                assert!(
+                    grid_exact,
+                    "{family} {features:?}: analysis passed but shaping drifts"
+                );
+            } else {
+                assert!(
+                    !grid_exact || features.is_empty(),
+                    "{family} {features:?}: analysis rejected a font that shaped on the grid"
+                );
+            }
+        }
+        let times = fonts.font_id(&font("Times")).unwrap();
+        assert!(!fonts.ascii_shaping_preserves_advances(times, &FontFeatures::default()));
+    }
+
+    #[test]
+    fn test_glyph_boundaries_exclude_positions_inside_ligatures() {
+        let fonts = MacTextSystem::new();
+        let font_id = fonts.font_id(&font("Times")).unwrap();
+        let text = format!("{}fi{}", "x".repeat(100), "x".repeat(100));
+        let layout = fonts.layout_line(
+            &text,
+            px(14.),
+            &[FontRun {
+                font_id,
+                len: text.len(),
+            }],
+        );
+        assert!(layout.is_glyph_boundary(100));
+        assert!(!layout.is_glyph_boundary(101));
+        assert!(layout.is_glyph_boundary(102));
+        assert!(layout.is_glyph_boundary(0));
+        assert!(layout.is_glyph_boundary(text.len()));
+        let glyph_count = layout
+            .runs
+            .iter()
+            .map(|run| run.glyphs.len())
+            .sum::<usize>();
+        assert_eq!(glyph_count, text.len() - 1);
     }
 }

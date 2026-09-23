@@ -121,10 +121,7 @@ impl Editor {
         if !self.lsp_data_enabled() || !self.semantic_token_state.enabled() {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
-                match Arc::get_mut(&mut display_map.semantic_token_highlights) {
-                    Some(highlights) => highlights.clear(),
-                    None => display_map.semantic_token_highlights = Arc::new(Default::default()),
-                };
+                display_map.clear_semantic_highlights();
             });
             self.semantic_token_state.update_task = Task::ready(());
             cx.notify();
@@ -327,9 +324,10 @@ impl Editor {
                                         .cmp(&b.range.start, &multi_buffer_snapshot)
                                         .then_with(|| a.precedence.cmp(&b.precedence))
                                 });
-                                Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
+                                display_map.set_semantic_highlights(
                                     buffer_id,
-                                    (Arc::from(token_highlights), Arc::new(interner)),
+                                    Arc::from(token_highlights),
+                                    Arc::new(interner),
                                 );
                             });
                         });
