@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/opencode.rs"
 test = false
+doctest = false
 
 [features]
 default = []

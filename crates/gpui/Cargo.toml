@@ -44,7 +44,6 @@ stacker = ["dep:stacksafe"]
 
 [lib]
 path = "src/gpui.rs"
-doctest = false
 
 [dependencies]
 accesskit.workspace = true

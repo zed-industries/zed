@@ -17,7 +17,7 @@ use crate::{
     SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
-    cursor_animation::{CursorViewport, LogicalCursorPosition},
+    cursor_animation::{CursorViewport, LogicalCursorPosition, animated_corners_overlap_target},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
         HighlightKey, HighlightedChunk, ToDisplayPoint,
@@ -11092,6 +11092,8 @@ impl CursorLayout {
     }
 
     pub fn paint(&mut self, origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
+        let bounds = window.pixel_snap_bounds(self.bounds(origin));
+
         if let Some(corners) = self.animated_corners {
             let mut builder = gpui::PathBuilder::fill();
             builder.add_polygon(&corners, true);
@@ -11100,24 +11102,25 @@ impl CursorLayout {
                     name.paint(window, cx);
                 }
                 window.paint_path(path, self.color);
-                return;
+
+                if !animated_corners_overlap_target(bounds, &corners) {
+                    return;
+                }
             }
-        }
-
-        let bounds = window.pixel_snap_bounds(self.bounds(origin));
-
-        //Draw background or border quad
-        let cursor = if matches!(self.shape, CursorShape::Hollow) {
-            outline(bounds, self.color, BorderStyle::Solid)
         } else {
-            fill(bounds, self.color)
-        };
+            //Draw background or border quad
+            let cursor = if matches!(self.shape, CursorShape::Hollow) {
+                outline(bounds, self.color, BorderStyle::Solid)
+            } else {
+                fill(bounds, self.color)
+            };
 
-        if let Some(name) = &mut self.cursor_name {
-            name.paint(window, cx);
+            if let Some(name) = &mut self.cursor_name {
+                name.paint(window, cx);
+            }
+
+            window.paint_quad(cursor);
         }
-
-        window.paint_quad(cursor);
 
         if let Some(block_text) = &self.block_text {
             block_text
