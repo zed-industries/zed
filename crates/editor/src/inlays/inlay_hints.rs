@@ -1120,8 +1120,7 @@ pub mod tests {
     use collections::HashSet;
     use futures::channel::oneshot;
     use futures::{StreamExt, future};
-    use gpui::UpdateGlobal;
-    use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
+    use gpui::{AppContext as _, Context, TestAppContext, UpdateGlobal, WindowHandle};
     use itertools::Itertools as _;
     use language::language_settings::{InlayHintKind, InlayHintSettings};
     use language::{Capability, FakeLspAdapter};
