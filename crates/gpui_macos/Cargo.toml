@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/gpui_macos.rs"
+doctest = false
 
 [features]
 default = ["gpui/default"]
@@ -26,7 +27,6 @@ gpui.workspace = true
 accesskit.workspace = true
 accesskit_macos.workspace = true
 anyhow.workspace = true
-block.workspace = true
 block2.workspace = true
 cocoa.workspace = true
 collections.workspace = true
@@ -46,11 +46,11 @@ image.workspace = true
 itertools.workspace = true
 libc.workspace = true
 log.workspace = true
-media.workspace = true
-metal.workspace = true
 objc.workspace = true
 objc2.workspace = true
 objc2-app-kit.workspace = true
+objc2-core-graphics.workspace = true
+objc2-core-media.workspace = true
 objc2-foundation.workspace = true
 objc2-screen-capture-kit.workspace = true
 objc2-user-notifications.workspace = true

@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/gpui_apple.rs"
+doctest = false
 
 [features]
 default = []
@@ -24,7 +25,6 @@ gpui.workspace = true
 anyhow.workspace = true
 async-task.workspace = true
 block.workspace = true
-collections.workspace = true
 core-foundation.workspace = true
 core-graphics.workspace = true
 core-video.workspace = true

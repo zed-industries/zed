@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -30,35 +30,78 @@ pub struct ProjectTerminalSettingsContent {
     pub detect_venv: Option<VenvSettings>,
     /// Regexes used to identify paths for hyperlink navigation.
     ///
-    /// Default: [
-    ///   // Python-style diagnostics
-    ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
-    ///   // Common path syntax with optional line, column, description, trailing punctuation, or
-    ///   // surrounding symbols or quotes
-    ///   [
-    ///     "(?x)",
-    ///     "# optionally starts with 0-2 opening prefix symbols",
-    ///     "[({\\[<]{0,2}",
-    ///     "# which may be followed by an opening quote",
-    ///     "(?<quote>[\"'`])?",
-    ///     "# `path` is the shortest sequence of any non-space character",
-    ///     "(?<link>(?<path>[^ ]+?",
-    ///     "    # which may end with a line and optionally a column,",
-    ///     "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
-    ///     "))",
-    ///     "# which must be followed by a matching quote",
-    ///     "(?(<quote>)\\k<quote>)",
-    ///     "# and optionally a single closing symbol",
-    ///     "[)}\\]>]?",
-    ///     "# if line/column matched, may be followed by a description",
-    ///     "(?(<line_column>):[^ 0-9][^ ]*)?",
-    ///     "# which may be followed by trailing punctuation",
-    ///     "[.,:)}\\]>]*",
-    ///     "# and always includes trailing whitespace or end of line",
-    ///     "([ ]+|$)"
-    ///   ]
-    /// ]
-    pub path_hyperlink_regexes: Option<Vec<PathHyperlinkRegex>>,
+    /// Default:
+    ///
+    /// ```json
+    /// {
+    ///   "terminal": {
+    ///     "path_hyperlink_regexes": [
+    ///       // Python-style diagnostics
+    ///       "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+    ///       // Common path syntax with optional line, column, description, trailing punctuation, or
+    ///       // surrounding symbols or quotes
+    ///       [
+    ///         "(?x)",
+    ///         "(?<path>",
+    ///         "    (",
+    ///         "        # multi-char path: first char (not opening delimiter, space, or box drawing char)",
+    ///         "        [^({\\[<\"'`\\ \\u2500-\\u257F]",
+    ///         "        # middle chars: non-space, and colon/paren only if not followed by digit/paren/space",
+    ///         "        ([^\\ :(]|[:(][^0-9()\\ ])*",
+    ///         "        # last char: not closing delimiter or colon",
+    ///         "        [^()}\\]>\"'`.,;:\\ ]",
+    ///         "    |",
+    ///         "        # single-char path: not delimiter, punctuation, space, or box drawing char",
+    ///         "        [^(){}\\[\\]<>\"'`.,;:\\ \\u2500-\\u257F]",
+    ///         "    )",
+    ///         "    # optional line/column suffix (included in path for PathWithPosition::parse_str)",
+    ///         "    (:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:]?[0-9]+)?\\))?",
+    ///         ")"
+    ///       ]
+    ///     ]
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add regexes without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list. Set `[]` to clear it. Omitting this
+    /// setting keeps the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "terminal": {
+    ///     "path_hyperlink_regexes": [
+    ///       "\\s+(-->|:::|at) (?<link>(?<path>.+?))(:$|$)",
+    ///       "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<link>(?<path>.+))\\)",
+    ///       "..."
+    ///     ]
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Inherited regexes are inserted at `"..."`, and duplicates keep their first
+    /// occurrence. Regexes are duplicates when their text is identical after
+    /// joining multiline entries with newlines.
+    ///
+    /// Each regex can be a single string or an array of strings joined with
+    /// newlines. The marker is recognized only as a top-level string. To use
+    /// `...` as a regex matching three characters, write `["..."]` as an entry.
+    /// A `"..."` line inside a multiline entry is always regex text.
+    ///
+    /// The optional named capture `path` selects the hyperlink target. Without
+    /// it, the entire match is the target. With `path`, `line` and `column`
+    /// specify the position. Without a captured `line`, built-in suffix
+    /// processing parses `line:column` and `(line,column)` variants. The optional
+    /// `link` capture selects the clickable text, otherwise the entire match is
+    /// clickable.
+    ///
+    /// Processing stops at the first regex that matches the terminal line, even
+    /// if the cursor is outside its clickable text. Put more specific regexes
+    /// before broader ones. Regexes use Rust's `regex` syntax. Invalid regexes
+    /// are logged and ignored. The `path_hyperlink_timeout_ms` setting controls
+    /// the discovery timeout. Setting it to `0` disables path hyperlinks.
+    pub path_hyperlink_regexes: Option<PathHyperlinkRegexes>,
     /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
     ///
     /// Default: 1
@@ -504,11 +547,49 @@ impl VenvSettings {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(transparent)]
+pub struct PathHyperlinkRegexes(pub Vec<PathHyperlinkRegex>);
+
+impl crate::merge_from::MergeFrom for PathHyperlinkRegexes {
+    fn merge_from(&mut self, other: &Self) {
+        let inherited = std::mem::take(&mut self.0);
+        let mut seen = HashSet::default();
+        self.0 = other
+            .0
+            .iter()
+            .flat_map(|entry| {
+                if entry.is_rest() {
+                    inherited.as_slice()
+                } else {
+                    std::slice::from_ref(entry)
+                }
+            })
+            .filter(|entry| {
+                let regex = match entry {
+                    PathHyperlinkRegex::SingleLine(regex) => regex.clone(),
+                    PathHyperlinkRegex::MultiLine(lines) => lines.join("\n"),
+                };
+                // Project layers can still contain an unresolved marker, which must
+                // not collapse with the literal regex written as ["..."]
+                seen.insert((entry.is_rest(), regex))
+            })
+            .cloned()
+            .collect();
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
 pub enum PathHyperlinkRegex {
     SingleLine(String),
     MultiLine(Vec<String>),
+}
+
+impl PathHyperlinkRegex {
+    fn is_rest(&self) -> bool {
+        matches!(self, Self::SingleLine(regex) if regex == crate::SplicingVec::REST)
+    }
 }
 
 #[derive(
@@ -547,7 +628,47 @@ pub enum ActivateScript {
 mod test {
     use serde_json::json;
 
-    use crate::{ProjectSettingsContent, Shell};
+    use crate::{PathHyperlinkRegexes, ProjectSettingsContent, Shell, merge_from::MergeFrom};
+
+    #[test]
+    fn test_path_hyperlink_regexes_preserve_entry_forms() -> anyhow::Result<()> {
+        let entries = json!([
+            "...",
+            ["..."],
+            ["(?x)", "# comment", "...", "(?<path>file)"],
+            "first\nsecond",
+            ["first", "second"]
+        ]);
+        let regexes: PathHyperlinkRegexes = serde_json::from_value(entries.clone())?;
+        assert_eq!(serde_json::to_value(regexes)?, entries);
+        Ok(())
+    }
+
+    #[test]
+    fn test_path_hyperlink_regexes_merge_preserves_first_representation() -> anyhow::Result<()> {
+        let mut regexes: PathHyperlinkRegexes = serde_json::from_value(json!([
+            "...",
+            ["..."],
+            "first\nsecond",
+            ["(?x)", "# comment", "(?<path>file)"]
+        ]))?;
+        regexes.merge_from(&serde_json::from_value(json!([
+            ["first", "second"],
+            "...",
+            "(?x)\n# comment\n(?<path>file)",
+            "..."
+        ]))?);
+        assert_eq!(
+            serde_json::to_value(regexes)?,
+            json!([
+                ["first", "second"],
+                "...",
+                ["..."],
+                ["(?x)", "# comment", "(?<path>file)"]
+            ])
+        );
+        Ok(())
+    }
 
     #[test]
     #[ignore]

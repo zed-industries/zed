@@ -1,11 +1,11 @@
 use crate::{
     App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
     SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
-    WrappedLineLayout, black, fill, point, px, size,
+    WrappedLineLayout, black, fill, point, px, size, underline_y_offset,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 /// Pre-computed glyph data for efficient painting without per-glyph cache lookups.
 ///
@@ -50,6 +50,31 @@ pub struct ShapedLine {
 }
 
 impl ShapedLine {
+    /// Returns a forward-only cursor for this shaped line.
+    pub fn cursor(&self) -> ShapedLineCursor<'_> {
+        assert_eq!(
+            self.len(),
+            self.text.len(),
+            "cannot split a shaped line with an adjusted length"
+        );
+        let byte_ordered = self
+            .layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
+            .is_sorted();
+        ShapedLineCursor {
+            line: self,
+            unordered_remainder: (!byte_ordered).then(|| self.clone()),
+            byte_index: 0,
+            run_index: 0,
+            glyph_index: 0,
+            decoration_index: 0,
+            decoration_offset: 0,
+            x_offset: px(0.),
+        }
+    }
+
     /// The length of the line in utf-8 bytes.
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
@@ -89,6 +114,34 @@ impl ShapedLine {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
+        self.paint_with_underline_handler(
+            origin,
+            line_height,
+            align,
+            align_width,
+            window,
+            cx,
+            |_, origin, width, style, window| window.paint_underline(origin, width, style),
+        )
+    }
+
+    /// Paint the line with a handler for each underline.
+    pub fn paint_with_underline_handler(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+        mut paint_underline: impl FnMut(
+            Range<usize>,
+            Point<Pixels>,
+            Pixels,
+            &UnderlineStyle,
+            &mut Window,
+        ),
+    ) -> Result<()> {
         paint_line(
             origin,
             &self.layout,
@@ -99,9 +152,8 @@ impl ShapedLine {
             &[],
             window,
             cx,
-        )?;
-
-        Ok(())
+            &mut paint_underline,
+        )
     }
 
     /// Paint the background of the line to the window.
@@ -204,6 +256,129 @@ impl ShapedLine {
     }
 }
 
+/// Incrementally splits a [`ShapedLine`] at increasing UTF-8 byte boundaries.
+///
+/// Each piece preserves the original glyphs and decorations, rebased as in
+/// [`ShapedLine::split_at`]. Byte-ordered glyphs are advanced in linear time,
+/// copying each glyph and byte at most once; visually reordered glyphs fall
+/// back to the existing split operation.
+pub struct ShapedLineCursor<'a> {
+    line: &'a ShapedLine,
+    /// Bidirectional shaping can put glyphs out of byte order.
+    unordered_remainder: Option<ShapedLine>,
+    byte_index: usize,
+    run_index: usize,
+    glyph_index: usize,
+    decoration_index: usize,
+    decoration_offset: u32,
+    x_offset: Pixels,
+}
+
+impl<'a> ShapedLineCursor<'a> {
+    /// Takes the bytes since the previous boundary.
+    ///
+    /// Panics if the boundary precedes the previous one, exceeds the line's
+    /// length, or falls inside a UTF-8 character.
+    pub fn take_until(&mut self, byte_index: usize) -> ShapedLine {
+        assert!(
+            byte_index >= self.byte_index,
+            "split boundary moved backwards"
+        );
+        assert!(
+            byte_index <= self.line.len(),
+            "split boundary exceeds line length"
+        );
+        assert!(
+            self.line.text.is_char_boundary(byte_index),
+            "split boundary is not a UTF-8 character boundary"
+        );
+        let previous_index = self.byte_index;
+        let previous_x = self.x_offset;
+        if let Some(remainder) = &mut self.unordered_remainder {
+            let (piece, rest) = remainder.split_at(byte_index - previous_index);
+            *remainder = rest;
+            self.byte_index = byte_index;
+            self.x_offset = self.line.layout.x_for_index(byte_index);
+            return piece;
+        }
+        let mut runs = Vec::new();
+        let mut next_x = self.line.layout.width;
+        while let Some(run) = self.line.layout.runs.get(self.run_index) {
+            let start = self.glyph_index;
+            while let Some(glyph) = run.glyphs.get(self.glyph_index) {
+                if glyph.index >= byte_index {
+                    break;
+                }
+                self.glyph_index += 1;
+            }
+            let end = self.glyph_index;
+            if start < end {
+                runs.push(crate::ShapedRun {
+                    font_id: run.font_id,
+                    glyphs: run.glyphs[start..end]
+                        .iter()
+                        .map(|glyph| crate::ShapedGlyph {
+                            id: glyph.id,
+                            position: point(glyph.position.x - previous_x, glyph.position.y),
+                            index: glyph.index - previous_index,
+                            is_emoji: glyph.is_emoji,
+                        })
+                        .collect(),
+                });
+            }
+            if let Some(glyph) = run.glyphs.get(self.glyph_index) {
+                next_x = glyph.position.x;
+                break;
+            }
+            self.run_index += 1;
+            self.glyph_index = 0;
+        }
+        let mut decorations = SmallVec::new();
+        while let Some(decoration) = self.line.decoration_runs.get(self.decoration_index)
+            && (self.decoration_offset < byte_index as u32
+                || (decoration.len == 0 && self.decoration_offset == byte_index as u32))
+        {
+            let end = self.decoration_offset + decoration.len;
+            let start = self.decoration_offset.max(previous_index as u32);
+            let len = end.min(byte_index as u32) - start;
+            if len > 0 || decoration.len == 0 {
+                decorations.push(DecorationRun {
+                    len,
+                    color: decoration.color,
+                    background_color: decoration.background_color,
+                    underline: decoration.underline,
+                    strikethrough: decoration.strikethrough,
+                });
+            }
+            if end <= byte_index as u32 {
+                self.decoration_index += 1;
+                self.decoration_offset = end;
+            } else {
+                break;
+            }
+        }
+        self.byte_index = byte_index;
+        self.x_offset = next_x;
+        ShapedLine {
+            layout: Arc::new(LineLayout {
+                font_size: self.line.layout.font_size,
+                width: next_x - previous_x,
+                ascent: self.line.layout.ascent,
+                descent: self.line.layout.descent,
+                runs,
+                len: byte_index - previous_index,
+            }),
+            text: SharedString::new(&self.line.text[previous_index..byte_index]),
+            decoration_runs: decorations,
+        }
+    }
+
+    /// Returns the original line's x position at the current boundary.
+    pub fn x_offset(&self) -> Pixels {
+        self.x_offset
+    }
+}
+
 impl LineLayout {
     /// Paint this layout to the window, using the given decoration runs to color
     /// glyphs and draw underlines and strikethroughs.
@@ -230,6 +405,7 @@ impl LineLayout {
             &[],
             window,
             cx,
+            &mut |_, origin, width, style, window| window.paint_underline(origin, width, style),
         )
     }
 
@@ -305,6 +481,7 @@ impl WrappedLine {
             &self.wrap_boundaries,
             window,
             cx,
+            &mut |_, origin, width, style, window| window.paint_underline(origin, width, style),
         )?;
 
         Ok(())
@@ -351,6 +528,13 @@ fn paint_line(
     wrap_boundaries: &[WrapBoundary],
     window: &mut Window,
     cx: &mut App,
+    paint_underline: &mut dyn FnMut(
+        Range<usize>,
+        Point<Pixels>,
+        Pixels,
+        &UnderlineStyle,
+        &mut Window,
+    ),
 ) -> Result<()> {
     let line_bounds = Bounds::new(
         origin,
@@ -362,11 +546,12 @@ fn paint_line(
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
+        let underline_y_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
         let mut color = black();
-        let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
+        let mut current_underline: Option<(Point<Pixels>, UnderlineStyle, Range<usize>)> = None;
         let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
         let text_system = cx.text_system().clone();
         let mut glyph_origin = point(
@@ -394,14 +579,18 @@ fn paint_line(
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
-                    if let Some((underline_origin, underline_style)) = current_underline.as_mut() {
+                    if let Some((underline_origin, underline_style, underline_range)) =
+                        current_underline.as_mut()
+                    {
                         if glyph_origin.x == underline_origin.x {
                             underline_origin.x -= max_glyph_size.width.half();
                         };
-                        window.paint_underline(
+                        paint_underline(
+                            underline_range.clone(),
                             *underline_origin,
                             glyph_origin.x - underline_origin.x,
                             underline_style,
+                            window,
                         );
                         if glyph.index < run_end {
                             underline_origin.x = origin.x;
@@ -441,7 +630,8 @@ fn paint_line(
                 }
                 prev_glyph_position = glyph.position;
 
-                let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
+                let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle, Range<usize>)> =
+                    None;
                 let mut finished_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
                 if glyph.index >= run_end {
                     let mut style_run = decoration_runs.next();
@@ -456,22 +646,24 @@ fn paint_line(
                     }
 
                     if let Some(style_run) = style_run {
-                        if let Some((_, underline_style)) = &mut current_underline
-                            && style_run.underline.as_ref() != Some(underline_style)
+                        let style_run_start = run_end;
+                        if let Some((_, underline_style, underline_range)) = &mut current_underline
                         {
-                            finished_underline = current_underline.take();
+                            if style_run.underline.as_ref() != Some(underline_style) {
+                                finished_underline = current_underline.take();
+                            } else {
+                                underline_range.end = style_run_start + style_run.len as usize;
+                            }
                         }
                         if let Some(run_underline) = style_run.underline.as_ref() {
                             current_underline.get_or_insert((
-                                point(
-                                    glyph_origin.x,
-                                    glyph_origin.y + baseline_offset.y + (layout.descent * 0.618),
-                                ),
+                                point(glyph_origin.x, glyph_origin.y + underline_y_offset),
                                 UnderlineStyle {
                                     color: Some(run_underline.color.unwrap_or(style_run.color)),
                                     thickness: run_underline.thickness,
                                     wavy: run_underline.wavy,
                                 },
+                                style_run_start..style_run_start + style_run.len as usize,
                             ));
                         }
                         if let Some((_, strikethrough_style)) = &mut current_strikethrough
@@ -502,14 +694,18 @@ fn paint_line(
                     }
                 }
 
-                if let Some((mut underline_origin, underline_style)) = finished_underline {
+                if let Some((mut underline_origin, underline_style, underline_range)) =
+                    finished_underline
+                {
                     if underline_origin.x == glyph_origin.x {
                         underline_origin.x -= max_glyph_size.width.half();
                     };
-                    window.paint_underline(
+                    paint_underline(
+                        underline_range,
                         underline_origin,
                         glyph_origin.x - underline_origin.x,
                         &underline_style,
+                        window,
                     );
                 }
 
@@ -561,14 +757,18 @@ fn paint_line(
             last_line_end_x -= glyph.position.x;
         }
 
-        if let Some((mut underline_start, underline_style)) = current_underline.take() {
+        if let Some((mut underline_start, underline_style, underline_range)) =
+            current_underline.take()
+        {
             if last_line_end_x == underline_start.x {
                 underline_start.x -= max_glyph_size.width.half()
             };
-            window.paint_underline(
+            paint_underline(
+                underline_range,
                 underline_start,
                 last_line_end_x - underline_start.x,
                 &underline_style,
+                window,
             );
         }
 
@@ -762,7 +962,11 @@ fn aligned_origin_x(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FontId, GlyphId, ShapedGlyph, ShapedRun};
+    use crate::{
+        AppContext as _, Context, FontId, GlyphId, IntoElement, Render, ShapedGlyph, ShapedRun,
+        Styled, TestAppContext, TextRun, Underline, canvas, font, hsla,
+    };
+    use std::rc::Rc;
 
     /// Helper: build a ShapedLine from glyph descriptors without the platform text system.
     /// Each glyph is described as (byte_index, x_position).
@@ -797,6 +1001,316 @@ mod tests {
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
         }
+    }
+
+    #[gpui::test]
+    fn test_underline_handler_matches_default_paint(cx: &mut TestAppContext) {
+        test_underline_handler_at_scales(cx, |window, cx| {
+            let first_style = UnderlineStyle {
+                thickness: px(1.),
+                color: Some(hsla(0., 1., 0.5, 1.)),
+                wavy: true,
+            };
+            let last_style = UnderlineStyle {
+                color: Some(hsla(0.5, 1., 0.5, 1.)),
+                wavy: false,
+                ..first_style
+            };
+            let fallback_style = UnderlineStyle {
+                color: Some(black()),
+                ..first_style
+            };
+            let decoration = DecorationRun {
+                len: 1,
+                color: black(),
+                background_color: None,
+                underline: Some(first_style),
+                strikethrough: None,
+            };
+            let line = underline_test_line(
+                "aébcde",
+                &[
+                    decoration.clone(),
+                    DecorationRun {
+                        len: 2,
+                        ..decoration.clone()
+                    },
+                    DecorationRun {
+                        underline: None,
+                        ..decoration.clone()
+                    },
+                    DecorationRun {
+                        underline: Some(UnderlineStyle {
+                            color: None,
+                            ..first_style
+                        }),
+                        ..decoration.clone()
+                    },
+                    DecorationRun {
+                        underline: Some(last_style),
+                        ..decoration.clone()
+                    },
+                    DecorationRun {
+                        underline: Some(last_style),
+                        ..decoration
+                    },
+                ],
+                false,
+                window,
+            );
+            assert_eq!(line.width(), px(48.));
+            for origin_x in [-3.25, 0., 4.25] {
+                for (align, align_width, offset) in [
+                    (TextAlign::Left, None, 0.),
+                    (TextAlign::Center, None, 0.),
+                    (TextAlign::Right, None, 0.),
+                    (TextAlign::Left, Some(px(96.)), 0.),
+                    (TextAlign::Center, Some(px(96.)), 24.),
+                    (TextAlign::Right, Some(px(96.)), 48.),
+                ] {
+                    let origin = point(px(origin_x), px(12.25));
+                    let line_height = px(20.);
+                    window.next_frame.scene.clear();
+                    line.paint(origin, line_height, align, align_width, window, cx)
+                        .unwrap();
+                    let original = window.next_frame.scene.underlines.clone();
+                    window.next_frame.scene.clear();
+                    line.layout
+                        .paint(
+                            origin,
+                            line_height,
+                            align,
+                            align_width,
+                            &line.decoration_runs,
+                            window,
+                            cx,
+                        )
+                        .unwrap();
+                    assert_underline_primitives_eq(&window.next_frame.scene.underlines, &original);
+
+                    window.next_frame.scene.clear();
+                    let mut strokes = Vec::new();
+                    line.paint_with_underline_handler(
+                        origin,
+                        line_height,
+                        align,
+                        align_width,
+                        window,
+                        cx,
+                        |range, origin, width, style, window| {
+                            strokes.push((range, origin, width, *style));
+                            window.paint_underline(origin, width, style);
+                        },
+                    )
+                    .unwrap();
+                    let start = px(origin_x + offset);
+                    let y = origin.y + underline_y_offset(line_height, line.ascent, line.descent);
+                    assert_eq!(
+                        strokes,
+                        [
+                            (0..3, point(start, y), px(16.), first_style),
+                            (4..5, point(start + px(24.), y), px(8.), fallback_style),
+                            (5..7, point(start + px(32.), y), px(16.), last_style),
+                        ]
+                    );
+                    assert_underline_primitives_eq(&window.next_frame.scene.underlines, &original);
+
+                    window.next_frame.scene.clear();
+                    let mut captured = Vec::new();
+                    line.paint_with_underline_handler(
+                        origin,
+                        line_height,
+                        align,
+                        align_width,
+                        window,
+                        cx,
+                        |range, origin, width, style, _| {
+                            captured.push((range, origin, width, *style))
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(captured, strokes);
+                    assert_eq!(window.next_frame.scene.underlines.len(), 0);
+                }
+            }
+            for text in ["", "abc"] {
+                let line = underline_test_line(text, &[], false, window);
+                let mut calls = 0;
+                line.paint_with_underline_handler(
+                    point(px(4.), px(10.)),
+                    px(20.),
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                    |_, _, _, _, _| calls += 1,
+                )
+                .unwrap();
+                assert_eq!(calls, 0);
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_underline_handler_reports_zero_advance_geometry(cx: &mut TestAppContext) {
+        test_underline_handler_at_scales(cx, |window, cx| {
+            let first_style = UnderlineStyle {
+                thickness: px(1.),
+                color: Some(black()),
+                wavy: true,
+            };
+            let last_style = UnderlineStyle {
+                wavy: false,
+                ..first_style
+            };
+            let decoration = DecorationRun {
+                len: 1,
+                color: black(),
+                background_color: None,
+                underline: Some(first_style),
+                strikethrough: None,
+            };
+            let line = underline_test_line(
+                "ab",
+                &[
+                    decoration.clone(),
+                    DecorationRun {
+                        underline: Some(last_style),
+                        ..decoration
+                    },
+                ],
+                true,
+                window,
+            );
+            let half_width = cx
+                .text_system()
+                .bounding_box(line.runs[0].font_id, line.font_size)
+                .size
+                .width
+                / 2.;
+            let origin = point(px(40.25), px(10.25));
+            let line_height = px(20.);
+            let y = origin.y + underline_y_offset(line_height, line.ascent, line.descent);
+            for (align, offset) in [
+                (TextAlign::Left, 0.),
+                (TextAlign::Center, 16.),
+                (TextAlign::Right, 32.),
+            ] {
+                window.next_frame.scene.clear();
+                line.paint(origin, line_height, align, Some(px(32.)), window, cx)
+                    .unwrap();
+                let original = window.next_frame.scene.underlines.clone();
+                window.next_frame.scene.clear();
+                let mut strokes = Vec::new();
+                line.paint_with_underline_handler(
+                    origin,
+                    line_height,
+                    align,
+                    Some(px(32.)),
+                    window,
+                    cx,
+                    |range, origin, width, style, window| {
+                        strokes.push((range, origin, width, *style));
+                        window.paint_underline(origin, width, style);
+                    },
+                )
+                .unwrap();
+                let end = origin.x + px(offset);
+                let start = point(end - half_width, y);
+                let width = end - start.x;
+                assert_eq!(
+                    strokes,
+                    [
+                        (0..1, start, width, first_style),
+                        (1..2, start, width, last_style),
+                    ]
+                );
+                assert_underline_primitives_eq(&window.next_frame.scene.underlines, &original);
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_underline_handler_matches_wrapped_paint(cx: &mut TestAppContext) {
+        test_underline_handler_at_scales(cx, |window, cx| {
+            let style = UnderlineStyle {
+                thickness: px(1.),
+                color: Some(black()),
+                wavy: true,
+            };
+            for zero_advance in [false, true] {
+                let line = underline_test_line(
+                    "abcd",
+                    &[DecorationRun {
+                        len: 4,
+                        color: black(),
+                        background_color: None,
+                        underline: Some(style),
+                        strikethrough: None,
+                    }],
+                    zero_advance,
+                    window,
+                );
+                let half_width = cx
+                    .text_system()
+                    .bounding_box(line.runs[0].font_id, line.font_size)
+                    .size
+                    .width
+                    / 2.;
+                let origin = point(px(40.25), px(10.25));
+                let line_height = px(20.);
+                let y = origin.y + underline_y_offset(line_height, line.ascent, line.descent);
+                let wrapped = WrappedLine {
+                    layout: Arc::new(WrappedLineLayout {
+                        unwrapped_layout: line.layout,
+                        wrap_boundaries: SmallVec::from_buf([WrapBoundary {
+                            run_ix: 0,
+                            glyph_ix: 2,
+                        }]),
+                        wrap_width: Some(px(16.)),
+                    }),
+                    text: line.text,
+                    decoration_runs: line.decoration_runs.into_vec(),
+                };
+                window.next_frame.scene.clear();
+                wrapped
+                    .paint(origin, line_height, TextAlign::Left, None, window, cx)
+                    .unwrap();
+                let original = window.next_frame.scene.underlines.clone();
+                window.next_frame.scene.clear();
+                let mut strokes = Vec::new();
+                paint_line(
+                    origin,
+                    &wrapped.unwrapped_layout,
+                    line_height,
+                    TextAlign::Left,
+                    Some(px(16.)),
+                    &wrapped.decoration_runs,
+                    &wrapped.wrap_boundaries,
+                    window,
+                    cx,
+                    &mut |range, origin, width, style, window| {
+                        strokes.push((range, origin, width, *style));
+                        window.paint_underline(origin, width, style);
+                    },
+                )
+                .unwrap();
+                let (start, width) = if zero_advance {
+                    let start = origin.x - half_width;
+                    (start, origin.x - start)
+                } else {
+                    (origin.x, px(16.))
+                };
+                assert_eq!(
+                    strokes,
+                    [
+                        (0..4, point(start, y), width, style),
+                        (0..4, point(start, y + line_height), width, style),
+                    ]
+                );
+                assert_underline_primitives_eq(&window.next_frame.scene.underlines, &original);
+            }
+        });
     }
 
     #[test]
@@ -1021,5 +1535,336 @@ mod tests {
         assert_eq!(right.decoration_runs[0].color, green);
         assert_eq!(right.decoration_runs[1].len, 1);
         assert_eq!(right.decoration_runs[1].color, blue);
+    }
+
+    struct UnderlineHandlerTestView(Rc<dyn Fn(&mut Window, &mut App)>);
+
+    impl Render for UnderlineHandlerTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let paint = self.0.clone();
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, cx| {
+                    window.with_element_opacity(Some(0.5), |window| paint(window, cx));
+                },
+            )
+            .size_full()
+        }
+    }
+
+    fn test_underline_handler_at_scales(
+        cx: &mut TestAppContext,
+        paint: impl Fn(&mut Window, &mut App) + 'static,
+    ) {
+        let window = cx.add_window(move |_, _| UnderlineHandlerTestView(Rc::new(paint)));
+        for scale in [1., 1.25, 1.5, 2., 3.] {
+            cx.simulate_window_scale_factor_change(window.into(), scale);
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        }
+    }
+
+    fn underline_test_line(
+        text: &str,
+        decorations: &[DecorationRun],
+        zero_advance: bool,
+        window: &Window,
+    ) -> ShapedLine {
+        let mut line = window.text_system().shape_line(
+            SharedString::new(text),
+            px(16.),
+            &[TextRun {
+                len: text.len(),
+                font: font(".ZedMono"),
+                color: black(),
+                ..TextRun::default()
+            }],
+            None,
+        );
+        line.decoration_runs = SmallVec::from(decorations.to_vec());
+        let layout = &line.layout;
+        let mut runs = layout.runs.clone();
+        let advance = if zero_advance { px(0.) } else { px(8.) };
+        let mut width = px(0.);
+        for glyph in runs.iter_mut().flat_map(|run| &mut run.glyphs) {
+            glyph.position.x = width;
+            width += advance;
+        }
+        line.layout = Arc::new(LineLayout {
+            font_size: layout.font_size,
+            width,
+            ascent: layout.ascent,
+            descent: layout.descent,
+            runs,
+            len: layout.len,
+        });
+        line
+    }
+
+    fn assert_underline_primitives_eq(actual: &[Underline], expected: &[Underline]) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_eq!(actual.bounds, expected.bounds);
+            assert_eq!(actual.content_mask, expected.content_mask);
+            assert_eq!(actual.color, expected.color);
+            assert_eq!(actual.thickness, expected.thickness);
+            assert_eq!(actual.wavy, expected.wavy);
+            assert_eq!(actual.order, expected.order);
+            assert_eq!(actual.pad, expected.pad);
+        }
+    }
+
+    #[test]
+    fn test_cursor_preserves_shaping_metadata_across_runs() {
+        let line = ShapedLine {
+            layout: Arc::new(LineLayout {
+                font_size: px(16.0),
+                width: px(50.0),
+                ascent: px(12.0),
+                descent: px(4.0),
+                runs: vec![
+                    ShapedRun {
+                        font_id: FontId(3),
+                        glyphs: vec![
+                            ShapedGlyph {
+                                id: GlyphId(11),
+                                position: point(px(0.0), px(1.0)),
+                                index: 0,
+                                is_emoji: true,
+                            },
+                            ShapedGlyph {
+                                id: GlyphId(12),
+                                position: point(px(17.0), px(1.0)),
+                                index: 1,
+                                is_emoji: false,
+                            },
+                            ShapedGlyph {
+                                id: GlyphId(13),
+                                position: point(px(19.0), px(-1.0)),
+                                index: 1,
+                                is_emoji: false,
+                            },
+                        ],
+                    },
+                    ShapedRun {
+                        font_id: FontId(8),
+                        glyphs: vec![
+                            ShapedGlyph {
+                                id: GlyphId(21),
+                                position: point(px(25.0), px(1.0)),
+                                index: 5,
+                                is_emoji: true,
+                            },
+                            ShapedGlyph {
+                                id: GlyphId(22),
+                                position: point(px(41.0), px(1.0)),
+                                index: 7,
+                                is_emoji: false,
+                            },
+                        ],
+                    },
+                ],
+                len: 10,
+            }),
+            text: "a😀bcdef".into(),
+            decoration_runs: SmallVec::new(),
+        };
+        let mut cursor = line.cursor();
+        let first = cursor.take_until(5);
+        assert_eq!(first.text.as_ref(), "a😀");
+        assert_eq!(first.runs[0].font_id, FontId(3));
+        assert_eq!(first.runs[0].glyphs[0].id, GlyphId(11));
+        assert!(first.runs[0].glyphs[0].is_emoji);
+        assert_eq!(first.runs[0].glyphs[1].index, 1);
+        assert_eq!(first.runs[0].glyphs[1].position, point(px(17.0), px(1.0)));
+        assert_eq!(first.runs[0].glyphs.len(), 3);
+        assert_eq!(first.runs[0].glyphs[2].index, 1);
+        assert_eq!(first.runs[0].glyphs[2].position, point(px(19.0), px(-1.0)));
+        assert_eq!(cursor.x_offset(), px(25.0));
+
+        let second = cursor.take_until(7);
+        assert_eq!(second.text.as_ref(), "bc");
+        assert_eq!(second.runs[0].font_id, FontId(8));
+        assert_eq!(second.runs[0].glyphs[0].id, GlyphId(21));
+        assert_eq!(second.runs[0].glyphs[0].index, 0);
+        assert_eq!(second.runs[0].glyphs[0].position, point(px(0.0), px(1.0)));
+        assert_eq!(cursor.x_offset(), px(41.0));
+
+        let final_part = cursor.take_until(10);
+        assert_eq!(final_part.text.as_ref(), "def");
+        assert_eq!(final_part.runs[0].font_id, FontId(8));
+        assert_eq!(final_part.runs[0].glyphs[0].id, GlyphId(22));
+        assert_eq!(final_part.runs[0].glyphs[0].index, 0);
+        assert_eq!(
+            final_part.runs[0].glyphs[0].position,
+            point(px(0.0), px(1.0))
+        );
+    }
+
+    #[test]
+    fn test_cursor_preserves_existing_visual_order_splitting() {
+        let line = make_shaped_line("abc", &[(0, 0.0), (2, 10.0), (1, 20.0)], 30.0, &[]);
+        let mut cursor = line.cursor();
+        let mut remainder = line.clone();
+        let mut previous_boundary = 0;
+        for boundary in [0, 1, 2, 3] {
+            let (expected, rest) = remainder.split_at(boundary - previous_boundary);
+            let actual = cursor.take_until(boundary);
+            assert_eq!(actual.text, expected.text);
+            assert_eq!(actual.width(), expected.width());
+            assert_eq!(actual.runs.len(), expected.runs.len());
+            for (actual, expected) in actual.runs.iter().zip(&expected.runs) {
+                assert_eq!(actual.font_id, expected.font_id);
+                assert_eq!(actual.glyphs.len(), expected.glyphs.len());
+                for (actual, expected) in actual.glyphs.iter().zip(&expected.glyphs) {
+                    assert_eq!(actual.id, expected.id);
+                    assert_eq!(actual.index, expected.index);
+                    assert_eq!(actual.position, expected.position);
+                }
+            }
+            assert_eq!(cursor.x_offset(), line.x_for_index(boundary));
+            remainder = rest;
+            previous_boundary = boundary;
+        }
+    }
+
+    #[test]
+    fn test_cursor_partitions_one_decoration_across_three_chunks() {
+        let line = make_shaped_line(
+            "abcdef",
+            &[
+                (0, 0.0),
+                (1, 10.0),
+                (2, 20.0),
+                (3, 30.0),
+                (4, 40.0),
+                (5, 50.0),
+            ],
+            60.0,
+            &[DecorationRun {
+                len: 6,
+                color: Hsla {
+                    h: 0.2,
+                    s: 0.4,
+                    l: 0.6,
+                    a: 1.0,
+                },
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }],
+        );
+        let mut cursor = line.cursor();
+        assert_eq!(cursor.take_until(2).decoration_runs[0].len, 2);
+        assert_eq!(cursor.take_until(4).decoration_runs[0].len, 2);
+        assert_eq!(cursor.take_until(6).decoration_runs[0].len, 2);
+    }
+
+    #[test]
+    fn test_cursor_matches_successive_splits_at_ordered_boundaries() {
+        let decorations: Vec<_> = [2, 0, 3, 1]
+            .into_iter()
+            .map(|len| DecorationRun {
+                len,
+                color: Hsla {
+                    h: len as f32 / 10.0,
+                    s: 0.5,
+                    l: 0.5,
+                    a: 1.0,
+                },
+                background_color: Some(black()),
+                underline: None,
+                strikethrough: None,
+            })
+            .collect();
+        let line = make_shaped_line(
+            "abcdef",
+            &[(0, 5.0), (0, 5.0), (2, 15.0), (4, 25.0), (5, 35.0)],
+            45.0,
+            &decorations,
+        );
+        for first in 0..=line.len() {
+            for second in first..=line.len() {
+                let mut cursor = line.cursor();
+                let mut remainder = line.clone();
+                let mut previous_boundary = 0;
+                let mut total_width = px(0.0);
+                let mut text = String::new();
+                for boundary in [first, second, line.len(), line.len()] {
+                    let (expected, rest) = remainder.split_at(boundary - previous_boundary);
+                    let actual = cursor.take_until(boundary);
+                    assert_eq!(actual.text, expected.text);
+                    assert_eq!(actual.len(), expected.len());
+                    assert_eq!(actual.width(), expected.width());
+                    assert_eq!(actual.runs.len(), expected.runs.len());
+                    for (actual, expected) in actual.runs.iter().zip(&expected.runs) {
+                        assert_eq!(actual.font_id, expected.font_id);
+                        assert_eq!(actual.glyphs.len(), expected.glyphs.len());
+                        for (actual, expected) in actual.glyphs.iter().zip(&expected.glyphs) {
+                            assert_eq!(actual.id, expected.id);
+                            assert_eq!(actual.index, expected.index);
+                            assert_eq!(actual.position, expected.position);
+                        }
+                    }
+                    assert_eq!(actual.decoration_runs.len(), expected.decoration_runs.len());
+                    for (actual, expected) in
+                        actual.decoration_runs.iter().zip(&expected.decoration_runs)
+                    {
+                        assert_eq!(actual.len, expected.len);
+                        assert_eq!(actual.color, expected.color);
+                        assert_eq!(actual.background_color, expected.background_color);
+                    }
+                    total_width += actual.width();
+                    text.push_str(&actual.text);
+                    remainder = rest;
+                    previous_boundary = boundary;
+                }
+                assert_eq!(total_width, line.width());
+                assert_eq!(text, line.text.as_ref());
+            }
+        }
+    }
+
+    #[test]
+    fn test_cursor_empty_chunks_and_repeated_boundaries() {
+        let line = make_shaped_line("ab", &[(0, 5.0), (1, 15.0)], 20.0, &[]);
+        let mut cursor = line.cursor();
+        assert_eq!(cursor.take_until(0).text.as_ref(), "");
+        assert_eq!(cursor.take_until(0).text.as_ref(), "");
+        assert_eq!(cursor.take_until(1).text.as_ref(), "a");
+        assert_eq!(cursor.take_until(2).text.as_ref(), "b");
+        assert_eq!(cursor.take_until(2).text.as_ref(), "");
+        let empty = make_shaped_line("", &[], 0.0, &[]);
+        let piece = empty.cursor().take_until(0);
+        assert!(piece.text.is_empty());
+        assert!(piece.runs.is_empty());
+        assert_eq!(piece.width(), px(0.0));
+    }
+
+    #[test]
+    fn test_cursor_rejects_invalid_boundaries() {
+        let line = make_shaped_line("é", &[(0, 0.0)], 10.0, &[]);
+        let mut cursor = line.cursor();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cursor.take_until(1);
+            }))
+            .is_err()
+        );
+        let mut cursor = line.cursor();
+        cursor.take_until(2);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cursor.take_until(0);
+            }))
+            .is_err()
+        );
+        let mut cursor = line.cursor();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cursor.take_until(3);
+            }))
+            .is_err()
+        );
     }
 }
