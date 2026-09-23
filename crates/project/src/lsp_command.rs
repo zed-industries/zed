@@ -3894,31 +3894,22 @@ impl InlayHints {
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
         cx: &mut AsyncApp,
-    ) -> anyhow::Result<InlayHint> {
+    ) -> InlayHint {
         let kind = lsp_hint.kind.and_then(|kind| match kind {
             lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
             lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
             _ => None,
         });
 
-        let unclipped = point_from_lsp(lsp_hint.position);
-        let position = buffer_handle
-            .read_with(cx, |buffer, _| {
-                let max_point = buffer.max_point_utf16();
-                if unclipped.0.row > max_point.row
-                    || (unclipped.0.row == max_point.row && unclipped.0.column > max_point.column)
-                {
-                    return None;
-                }
-                let position = buffer.clip_point_utf16(unclipped, Bias::Left);
+        let position = buffer_handle.read_with(cx, |buffer, _| {
+            let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
 
-                Some(if kind == Some(InlayHintKind::Parameter) {
-                    buffer.anchor_before(position)
-                } else {
-                    buffer.anchor_after(position)
-                })
-            })
-            .context("inlay hint position overflow")?;
+            if kind == Some(InlayHintKind::Parameter) {
+                buffer.anchor_before(position)
+            } else {
+                buffer.anchor_after(position)
+            }
+        });
 
         let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id).await;
         let padding_left = if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
@@ -3927,7 +3918,7 @@ impl InlayHints {
             lsp_hint.padding_left.unwrap_or(false)
         };
 
-        Ok(InlayHint {
+        InlayHint {
             position,
             padding_left,
             padding_right: lsp_hint.padding_right.unwrap_or(false),
@@ -3946,7 +3937,7 @@ impl InlayHints {
                 }
             }),
             resolve_state,
-        })
+        }
     }
 
     async fn lsp_inlay_label_to_project(
@@ -4360,32 +4351,33 @@ impl LspCommand for InlayHints {
             )
         });
 
-        let hints = message.unwrap_or_default().into_iter().map(|lsp_hint| {
-            let resolve_state = if can_resolve {
-                ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
-            } else {
-                ResolveState::Resolved
-            };
-
-            let buffer = buffer.clone();
-            cx.spawn(async move |cx| {
-                InlayHints::lsp_to_project_hint(
-                    lsp_hint,
-                    &buffer,
-                    server_id,
-                    resolve_state,
-                    force_no_type_left_padding,
-                    cx,
-                )
-                .await
-            })
-        });
-
-        Ok(future::join_all(hints)
-            .await
+        let max_point = buffer.read_with(&cx, |buffer, _| buffer.max_point_utf16());
+        let hints = message
+            .unwrap_or_default()
             .into_iter()
-            .flatten()
-            .collect())
+            .filter(|lsp_hint| point_from_lsp(lsp_hint.position).0.row <= max_point.row)
+            .map(|lsp_hint| {
+                let resolve_state = if can_resolve {
+                    ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
+                } else {
+                    ResolveState::Resolved
+                };
+
+                let buffer = buffer.clone();
+                cx.spawn(async move |cx| {
+                    InlayHints::lsp_to_project_hint(
+                        lsp_hint,
+                        &buffer,
+                        server_id,
+                        resolve_state,
+                        force_no_type_left_padding,
+                        cx,
+                    )
+                    .await
+                })
+            });
+
+        Ok(future::join_all(hints).await.into_iter().collect())
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {

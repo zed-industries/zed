@@ -315,7 +315,7 @@ impl LspStore {
                     false,
                     cx,
                 )
-                .await?;
+                .await;
                 Ok(resolved_hint)
             })
         }

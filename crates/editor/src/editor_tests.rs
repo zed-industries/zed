@@ -49416,55 +49416,6 @@ async fn test_lsp_show_document_unsupported_uri(cx: &mut TestAppContext) {
     assert_eq!(response, lsp::ShowDocumentResult { success: false });
 }
 
-#[gpui::test]
-async fn test_inlay_hint_overflow(cx: &mut TestAppContext) {
-    use settings::InlayHintSettingsContent;
-
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-            ..Default::default()
-        },
-        cx,
-    )
-    .await;
-
-    cx.update(|_, cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, &|settings: &mut SettingsContent| {
-                settings.project.all_languages.defaults.inlay_hints =
-                    Some(InlayHintSettingsContent {
-                        enabled: Some(true),
-                        show_parameter_hints: Some(true),
-                        show_type_hints: Some(true),
-                        edit_debounce_ms: Some(0),
-                        scroll_debounce_ms: Some(0),
-                        ..Default::default()
-                    })
-            });
-        });
-    });
-
-    cx.set_state("fooˇ");
-
-    cx.lsp
-        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |_, _| async move {
-            Ok(Some(vec![lsp::InlayHint {
-                position: lsp::Position::new(1090, 1090),
-                label: lsp::InlayHintLabel::String("out-of-bounds hint".to_string()),
-                kind: Some(lsp::InlayHintKind::PARAMETER),
-                text_edits: None,
-                tooltip: None,
-                padding_left: None,
-                padding_right: None,
-                data: None,
-            }]))
-        });
-    cx.background_executor.run_until_parked();
-
-    cx.assert_display_state("fooˇ");
-}
-
 async fn register_document_highlight_capability(
     lsp: &lsp::FakeLanguageServer,
     registration_id: &str,
