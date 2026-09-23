@@ -3,7 +3,9 @@ use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
-use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
+use gpui::{
+    App, AsyncApp, BackgroundExecutor, Context, Entity, SharedString, Task, TaskExt, Window,
+};
 use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
@@ -18,7 +20,10 @@ use serde::Deserialize;
 pub use settings::OpenCodeApiProtocol;
 pub use settings::OpenCodeAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::sync::{Arc, LazyLock};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use ui::{
     Banner, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, Severity, Switch,
     SwitchLabelPosition, ToggleState, prelude::*,
@@ -73,6 +78,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 const OPENCODE_SESSION_HEADER_NAME: &str = "x-opencode-session";
 const RICH_MODEL_CATALOG_URL: &str = "https://models.opencode.ai/api.json";
 const MODEL_CATALOG_RESPONSE_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
+const MODEL_CATALOG_FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &[OPENCODE_SESSION_HEADER_NAME];
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -155,8 +161,6 @@ impl State {
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
         self.fetch_models_task = None;
-        self.discovered_models.clear();
-        self.fetch_models_errors.clear();
         let api_url = OpenCodeLanguageModelProvider::api_url(cx);
         if self.api_key_state.key(&api_url).is_none() {
             self.fetch_models_task = None;
@@ -164,31 +168,52 @@ impl State {
             return;
         }
         let http_client = self.http_client.clone();
+        let executor = cx.background_executor().clone();
         self.fetch_models_task = Some(cx.spawn(async move |this, cx| {
-            let mut discovered_models = HashMap::default();
-            let mut fetch_models_errors = HashMap::default();
-            for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
-                match fetch_discovered_models(http_client.clone(), &api_url, subscription).await {
-                    Ok(models) => {
-                        discovered_models.insert(subscription, models);
-                    }
-                    Err(error) => {
+            let catalog = fetch_model_catalog(http_client, executor).await;
+            let results =
+                [OpenCodeSubscription::Zen, OpenCodeSubscription::Go].map(|subscription| {
+                    let result = catalog
+                        .as_ref()
+                        .map_err(|error| anyhow!("{error:#}"))
+                        .and_then(|catalog| parse_discovered_models(catalog, subscription));
+                    if let Err(error) = &result {
                         log::warn!(
                             "Failed to fetch OpenCode {} models: {error:#}",
                             subscription.display_name()
                         );
-                        fetch_models_errors.insert(subscription, format!("{error:#}").into());
                     }
-                }
-            }
+                    (subscription, result)
+                });
             this.update(cx, |this, cx| {
-                this.discovered_models = discovered_models;
-                this.fetch_models_errors = fetch_models_errors;
+                apply_discovery_results(
+                    &mut this.discovered_models,
+                    &mut this.fetch_models_errors,
+                    results,
+                );
                 this.fetch_models_task = None;
                 cx.notify();
             })
             .ok();
         }));
+    }
+}
+
+fn apply_discovery_results(
+    discovered_models: &mut HashMap<OpenCodeSubscription, Vec<DiscoveredModel>>,
+    fetch_models_errors: &mut HashMap<OpenCodeSubscription, SharedString>,
+    results: [(OpenCodeSubscription, Result<Vec<DiscoveredModel>>); 2],
+) {
+    for (subscription, result) in results {
+        match result {
+            Ok(models) => {
+                discovered_models.insert(subscription, models);
+                fetch_models_errors.remove(&subscription);
+            }
+            Err(error) => {
+                fetch_models_errors.insert(subscription, format!("{error:#}").into());
+            }
+        }
     }
 }
 
@@ -853,16 +878,6 @@ impl LanguageModel for OpenCodeLanguageModel {
 }
 
 #[derive(Deserialize)]
-struct AvailableModelsResponse {
-    data: Vec<AvailableModelResponse>,
-}
-
-#[derive(Deserialize)]
-struct AvailableModelResponse {
-    id: String,
-}
-
-#[derive(Deserialize)]
 struct RichCatalogProvider {
     npm: Option<String>,
     models: HashMap<String, RichCatalogModel>,
@@ -922,11 +937,9 @@ struct ReasoningOption {
 }
 
 fn parse_discovered_models(
-    available_models: &str,
     rich_catalog: &str,
     subscription: OpenCodeSubscription,
 ) -> Result<Vec<DiscoveredModel>> {
-    let available_models = serde_json::from_str::<AvailableModelsResponse>(available_models)?;
     let provider_key = match subscription {
         OpenCodeSubscription::Zen => "opencode",
         OpenCodeSubscription::Go => "opencode-go",
@@ -937,12 +950,11 @@ fn parse_discovered_models(
         .cloned()
         .ok_or_else(|| anyhow!("OpenCode catalog is missing {provider_key}"))?;
     let provider = serde_json::from_value::<RichCatalogProvider>(provider)?;
-    let mut available_model_count = available_models.data.len();
-    let models = available_models
-        .data
+    let mut compatible_candidate_count = provider.models.len();
+    let models = provider
+        .models
         .into_iter()
-        .filter_map(|available| {
-            let metadata = provider.models.get(&available.id)?;
+        .filter_map(|(catalog_id, metadata)| {
             if metadata.status.as_deref() == Some("deprecated")
                 || (subscription == OpenCodeSubscription::Zen
                     && metadata
@@ -950,10 +962,10 @@ fn parse_discovered_models(
                         .as_ref()
                         .is_some_and(|cost| cost.input == Some(0.0) && cost.output == Some(0.0)))
             {
-                available_model_count -= 1;
+                compatible_candidate_count -= 1;
                 return None;
             }
-            if metadata.id != available.id
+            if metadata.id != catalog_id
                 || !metadata.tool_call
                 || !metadata
                     .modalities
@@ -1006,7 +1018,7 @@ fn parse_discovered_models(
             })
         })
         .collect::<Vec<_>>();
-    if available_model_count > 0 && models.is_empty() {
+    if compatible_candidate_count > 0 && models.is_empty() {
         bail!("OpenCode model metadata did not contain any compatible models");
     }
     Ok(models)
@@ -1022,19 +1034,17 @@ fn protocol_for_transport(transport: &str) -> Option<ApiProtocol> {
     }
 }
 
-async fn fetch_discovered_models(
+async fn fetch_model_catalog(
     client: Arc<dyn HttpClient>,
-    api_url: &str,
-    subscription: OpenCodeSubscription,
-) -> Result<Vec<DiscoveredModel>> {
-    let models_url = format!(
-        "{}{}/v1/models",
-        api_url.trim_end_matches('/'),
-        subscription.api_path_suffix()
-    );
-    let available_models = fetch_catalog_resource(client.as_ref(), &models_url).await?;
-    let rich_catalog = fetch_catalog_resource(client.as_ref(), RICH_MODEL_CATALOG_URL).await?;
-    parse_discovered_models(&available_models, &rich_catalog, subscription)
+    executor: BackgroundExecutor,
+) -> Result<String> {
+    let fetch = fetch_catalog_resource(client.as_ref(), RICH_MODEL_CATALOG_URL).fuse();
+    let timeout = executor.timer(MODEL_CATALOG_FETCH_TIMEOUT).fuse();
+    futures::pin_mut!(fetch, timeout);
+    futures::select_biased! {
+        result = fetch => result,
+        _ = timeout => bail!("OpenCode model catalog request timed out"),
+    }
 }
 
 async fn fetch_catalog_resource(client: &dyn HttpClient, url: &str) -> Result<String> {
@@ -1300,7 +1310,19 @@ mod tests {
     use parking_lot::Mutex;
 
     #[gpui::test]
-    async fn test_discovery_sends_no_authentication_headers() {
+    async fn test_catalog_fetch_times_out(executor: BackgroundExecutor) {
+        let client = FakeHttpClient::create(|_| async { futures::future::pending().await });
+        let error = fetch_model_catalog(client, executor)
+            .await
+            .expect_err("a stalled catalog request should time out");
+        assert_eq!(
+            error.to_string(),
+            "OpenCode model catalog request timed out"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_one_public_fetch_serves_both_catalogs(cx: &mut gpui::TestAppContext) {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let http_client = FakeHttpClient::create({
             let requests = requests.clone();
@@ -1311,14 +1333,13 @@ mod tests {
                     requests
                         .lock()
                         .push((uri.clone(), request.headers().clone()));
-                    let body = if uri == RICH_MODEL_CATALOG_URL {
-                        r#"{
+                    let body = r#"{
                             "opencode": {
                                 "npm": "@ai-sdk/anthropic",
                                 "models": {
-                                    "new-model": {
-                                        "id": "new-model",
-                                        "name": "New Model",
+                                    "zen-model": {
+                                        "id": "zen-model",
+                                        "name": "Zen Model",
                                         "tool_call": true,
                                         "modalities": {"input":["text"],"output":["text"]},
                                         "limit": {"context": 12345}
@@ -1328,46 +1349,32 @@ mod tests {
                             "opencode-go": {
                                 "npm": "@ai-sdk/openai-compatible",
                                 "models": {
-                                    "new-model": {
-                                        "id": "new-model",
-                                        "name": "New Model",
+                                    "go-model": {
+                                        "id": "go-model",
+                                        "name": "Go Model",
                                         "tool_call": true,
                                         "modalities": {"input":["text"],"output":["text"]},
                                         "limit": {"context": 12345}
                                     }
                                 }
                             }
-                        }"#
-                    } else {
-                        r#"{"data":[{"id":"new-model"}]}"#
-                    };
+                        }"#;
                     Ok(Response::builder()
                         .status(200)
                         .body(AsyncBody::from(body))?)
                 }
             }
         });
+        let catalog = fetch_model_catalog(http_client, cx.background_executor.clone())
+            .await
+            .unwrap();
         for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
-            let models =
-                fetch_discovered_models(http_client.clone(), OPENCODE_API_URL, subscription)
-                    .await
-                    .unwrap();
+            let models = parse_discovered_models(&catalog, subscription).unwrap();
             assert_eq!(models.len(), 1);
         }
         let requests = requests.lock();
-        assert_eq!(requests.len(), 4);
-        assert_eq!(
-            requests
-                .iter()
-                .map(|(url, _)| url.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "https://opencode.ai/zen/v1/models",
-                RICH_MODEL_CATALOG_URL,
-                "https://opencode.ai/zen/go/v1/models",
-                RICH_MODEL_CATALOG_URL,
-            ]
-        );
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, RICH_MODEL_CATALOG_URL);
         for (url, headers) in requests.iter() {
             assert!(
                 headers.is_empty(),
@@ -1415,6 +1422,53 @@ mod tests {
         });
 
         store_task.await.unwrap();
+    }
+
+    #[test]
+    fn test_refresh_failure_preserves_last_success_per_subscription() {
+        let mut discovered_models = HashMap::default();
+        discovered_models.insert(
+            OpenCodeSubscription::Zen,
+            vec![DiscoveredModel {
+                model: test_model("old-zen", ApiProtocol::Anthropic),
+                supports_images: true,
+                supports_thinking: false,
+            }],
+        );
+        discovered_models.insert(
+            OpenCodeSubscription::Go,
+            vec![DiscoveredModel {
+                model: test_model("old-go", ApiProtocol::OpenAiChat),
+                supports_images: false,
+                supports_thinking: false,
+            }],
+        );
+        let mut errors = HashMap::default();
+        let new_go_model = DiscoveredModel {
+            model: test_model("new-go", ApiProtocol::OpenAiChat),
+            supports_images: true,
+            supports_thinking: true,
+        };
+
+        apply_discovery_results(
+            &mut discovered_models,
+            &mut errors,
+            [
+                (OpenCodeSubscription::Zen, Err(anyhow!("refresh failed"))),
+                (OpenCodeSubscription::Go, Ok(vec![new_go_model])),
+            ],
+        );
+
+        assert_eq!(
+            discovered_models[&OpenCodeSubscription::Zen][0].model.id(),
+            "old-zen"
+        );
+        assert_eq!(
+            discovered_models[&OpenCodeSubscription::Go][0].model.id(),
+            "new-go"
+        );
+        assert!(errors.contains_key(&OpenCodeSubscription::Zen));
+        assert!(!errors.contains_key(&OpenCodeSubscription::Go));
     }
 
     #[test]
@@ -1467,11 +1521,7 @@ mod tests {
                 (OpenCodeSubscription::Zen, zen_model_count),
                 (OpenCodeSubscription::Go, 1),
             ] {
-                let models = parse_discovered_models(
-                    r#"{"data":[{"id":"model"}]}"#,
-                    &catalog,
-                    subscription,
-                )?;
+                let models = parse_discovered_models(&catalog, subscription)?;
                 assert_eq!(models.len(), expected_count, "{subscription:?}: {cost}");
             }
         }
@@ -1507,11 +1557,7 @@ mod tests {
                 (OpenCodeSubscription::Zen, zen_count),
                 (OpenCodeSubscription::Go, go_count),
             ] {
-                let models = parse_discovered_models(
-                    r#"{"data":[{"id":"model"}]}"#,
-                    &catalog.to_string(),
-                    subscription,
-                )?;
+                let models = parse_discovered_models(&catalog.to_string(), subscription)?;
                 assert_eq!(models.len(), expected_count, "{subscription:?}: {catalog}",);
             }
         }
@@ -1519,9 +1565,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_discovered_models_joins_subscription_and_metadata_catalogs() {
+    fn test_parse_discovered_models_uses_catalog_entries_directly() {
         let models = parse_discovered_models(
-            r#"{"data":[{"id":"new-model"}]}"#,
             r#"{
                 "opencode-go": {
                     "npm": "@ai-sdk/openai-compatible",
@@ -1560,7 +1605,6 @@ mod tests {
     #[test]
     fn test_parse_discovered_models_rejects_catalog_without_compatible_models() {
         let result = parse_discovered_models(
-            r#"{"data":[{"id":"text-only"}]}"#,
             r#"{
                 "opencode": {
                     "npm": "@ai-sdk/anthropic",
