@@ -271,7 +271,9 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
             self.model.id.to_string(),
             1.0,
             self.model.max_output_tokens as u64,
-            if enable_thinking {
+            if enable_thinking && effort.is_some() {
+                AnthropicModelMode::AdaptiveThinking
+            } else if enable_thinking {
                 AnthropicModelMode::Thinking {
                     budget_tokens: Some(4_096),
                 }
@@ -281,14 +283,6 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )?;
-        if enable_thinking && effort.is_some() {
-            request.thinking = Some(anthropic::Thinking::Adaptive {
-                display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
-                // The cloud proxy owns the beta header needed for block binding.
-                block_binding: None,
-            });
-            request.output_config = Some(anthropic::OutputConfig { effort });
-        }
         if !self.model.supports_fast_mode {
             request.speed = None;
         }
@@ -2112,6 +2106,30 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn opus_55_hosted_requests_use_adaptive_thinking_with_prefix_binding() -> Result<()> {
+        let mut model = cloud_anthropic_test_model(FakeHttpClient::with_404_response());
+        Arc::make_mut(&mut model.model).id =
+            cloud_llm_client::LanguageModelId("claude-opus-5-5".into());
+        for effort in [None, Some("high")] {
+            let request = model.anthropic_request(LanguageModelRequest {
+                thinking_allowed: true,
+                thinking_effort: effort.map(str::to_string),
+                temperature: Some(0.25),
+                ..Default::default()
+            })?;
+            let body = serde_json::to_value(request)?;
+            assert_eq!(body["thinking"]["type"], "adaptive");
+            assert_eq!(
+                body["thinking"]["block_binding"]["prefix_mismatch_behavior"],
+                "drop_block"
+            );
+            assert_eq!(body["output_config"]["effort"].as_str(), effort);
+            assert!(body.get("temperature").is_none());
+        }
+        Ok(())
     }
 
     #[gpui::test]
