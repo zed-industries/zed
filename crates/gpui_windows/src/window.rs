@@ -1630,10 +1630,12 @@ fn dwm_set_window_cloak(hwnd: HWND, cloak: bool) {
 
 /// Applies the given background appearance to the given window.
 ///
-/// Must be called before the window is shown: DWM composites asynchronously,
-/// so applying an accent/backdrop to an already-visible window lets DWM
-/// present frames without it, causing a visible flash (e.g. transparent ->
-/// blurred).
+/// Prefer calling this before the window is shown: DWM composites
+/// asynchronously, so a window that becomes visible before its accent/backdrop
+/// is applied can be composited without it, causing a visible flash (e.g.
+/// transparent -> blurred). This is also called from
+/// [`PlatformWindow::set_background_appearance`] when the appearance changes on
+/// an already visible window, where that flash cannot be avoided.
 fn apply_background_appearance(hwnd: HWND, background_appearance: WindowBackgroundAppearance) {
     // using Dwm APIs for Mica and MicaAlt backdrops.
     // others follow the set_window_composition_attribute approach
