@@ -205,6 +205,20 @@ impl MentionSet {
         Some((uri.clone(), mention))
     }
 
+    pub(crate) fn image_for_crease(&self, crease_id: &CreaseId, cx: &App) -> Option<Image> {
+        let image_task = self
+            .crease_entities
+            .get(crease_id)?
+            .read(cx)
+            .image
+            .as_ref()?
+            .clone();
+        image_task
+            .now_or_never()
+            .and_then(|result| result.log_err())
+            .map(|image| image.as_ref().clone())
+    }
+
     pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
         self.crease_entities
             .retain(|id, _| mentions.contains_key(id));
@@ -886,91 +900,116 @@ pub(crate) async fn insert_images_as_context(
     workspace: WeakEntity<Workspace>,
     cx: &mut gpui::AsyncWindowContext,
 ) {
-    if images.is_empty() {
-        return;
-    }
-
+    let mut tasks = Vec::new();
     for (image, name) in images {
-        let mention_uri = MentionUri::PastedImage {
-            name: name.to_string(),
-        };
-        let replacement_text = mention_uri.as_link().to_string();
-        let Some((text_anchor, multibuffer_anchor)) = editor
-            .update_in(cx, |editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                let (cursor_anchor, buffer_snapshot) = snapshot
-                    .buffer_snapshot()
-                    .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
-                    .unwrap();
-                let text_anchor = cursor_anchor.bias_left(buffer_snapshot);
-                let multibuffer_anchor = snapshot.buffer_snapshot().anchor_in_excerpt(text_anchor);
-                editor.insert(&format!("{replacement_text} "), window, cx);
-                (text_anchor, multibuffer_anchor)
-            })
-            .ok()
-        else {
-            break;
-        };
+        if let Some(task) = insert_image_as_context(
+            image,
+            name,
+            true,
+            editor.clone(),
+            mention_set.clone(),
+            workspace.clone(),
+            cx,
+        )
+        .log_err()
+        .flatten()
+        {
+            tasks.push(task);
+        }
+    }
+    futures::future::join_all(tasks).await;
+}
 
-        let content_len = replacement_text.len();
-        let Some(start_anchor) = multibuffer_anchor else {
-            continue;
-        };
-        let end_anchor = editor.update(cx, |editor, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
-        });
-        let image = Arc::new(image);
-        let Ok(Some((crease_id, tx, crease_entity))) = cx.update(|window, cx| {
-            insert_crease_for_mention(
-                text_anchor,
-                content_len,
-                name.clone(),
-                IconName::Image.path().into(),
-                None,
-                None,
-                None,
-                Some(Task::ready(Ok(image.clone())).shared()),
-                editor.clone(),
-                window,
-                cx,
-            )
-        }) else {
-            continue;
-        };
-        let task = cx
-            .spawn(async move |cx| {
-                let image = cx
-                    .update(|_, cx| LanguageModelImage::from_image(image, cx))
-                    .map_err(|e| e.to_string())?
-                    .await;
-                drop(tx);
-                if let Some(image) = image {
-                    Ok(Mention::Image(MentionImage {
-                        data: image.source,
-                        format: LanguageModelImage::FORMAT,
-                    }))
-                } else {
-                    Err("Failed to convert image".into())
-                }
-            })
-            .shared();
+pub(crate) fn insert_image_as_context(
+    image: Image,
+    name: SharedString,
+    append_separator: bool,
+    editor: Entity<Editor>,
+    mention_set: Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
+    cx: &mut gpui::AsyncWindowContext,
+) -> Result<Option<Task<()>>> {
+    let mention_uri = MentionUri::PastedImage {
+        name: name.to_string(),
+    };
+    let replacement_text = mention_uri.as_link().to_string();
+    let mut inserted_text = replacement_text.clone();
+    if append_separator {
+        inserted_text.push(' ');
+    }
+    let Some((text_anchor, multibuffer_anchor)) = editor.update_in(cx, |editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let (cursor_anchor, buffer_snapshot) = snapshot
+            .buffer_snapshot()
+            .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?;
+        let text_anchor = cursor_anchor.bias_left(buffer_snapshot);
+        let multibuffer_anchor = snapshot.buffer_snapshot().anchor_in_excerpt(text_anchor);
+        editor.insert(&inserted_text, window, cx);
+        Some((text_anchor, multibuffer_anchor))
+    })?
+    else {
+        return Ok(None);
+    };
 
-        mention_set.update(cx, |mention_set, cx| {
-            mention_set.insert_mention(
-                crease_id,
-                MentionUri::PastedImage {
-                    name: name.to_string(),
-                },
-                task.clone(),
-                crease_entity,
-                cx,
-            )
-        });
+    let content_len = replacement_text.len();
+    let Some(start_anchor) = multibuffer_anchor else {
+        return Ok(None);
+    };
+    let end_anchor = editor.update(cx, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
+    });
+    let image = Arc::new(image);
+    let Some((crease_id, tx, crease_entity)) = cx.update(|window, cx| {
+        insert_crease_for_mention(
+            text_anchor,
+            content_len,
+            name.clone(),
+            IconName::Image.path().into(),
+            None,
+            None,
+            None,
+            Some(Task::ready(Ok(image.clone())).shared()),
+            editor.clone(),
+            window,
+            cx,
+        )
+    })?
+    else {
+        return Ok(None);
+    };
+    let image_task = cx
+        .spawn(async move |cx| {
+            let image = cx
+                .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                .map_err(|e| e.to_string())?
+                .await;
+            drop(tx);
+            if let Some(image) = image {
+                Ok(Mention::Image(MentionImage {
+                    data: image.source,
+                    format: LanguageModelImage::FORMAT,
+                }))
+            } else {
+                Err("Failed to convert image".into())
+            }
+        })
+        .shared();
 
-        if task
+    mention_set.update(cx, |mention_set, cx| {
+        mention_set.insert_mention(
+            crease_id,
+            mention_uri,
+            image_task.clone(),
+            crease_entity,
+            cx,
+        )
+    });
+
+    Ok(Some(cx.spawn(async move |cx| {
+        if image_task
             .await
-            .notify_workspace_async_err(workspace.clone(), cx)
+            .notify_workspace_async_err(workspace, cx)
             .is_none()
         {
             editor.update(cx, |editor, cx| {
@@ -980,7 +1019,7 @@ pub(crate) async fn insert_images_as_context(
                 mention_set.remove_mention(&crease_id, cx)
             });
         }
-    }
+    })))
 }
 
 fn image_format_from_external_content(format: image::ImageFormat) -> Option<ImageFormat> {

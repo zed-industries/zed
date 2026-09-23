@@ -35,8 +35,9 @@ use project::{
     CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectPath, Worktree,
 };
 use rope::Point;
+use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
 use text::LineEnding;
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, prelude::*};
@@ -307,29 +308,55 @@ fn insert_mention_for_project_path(
 }
 
 enum ResolvedPastedContextItem {
-    Image(gpui::Image, gpui::SharedString),
+    Text(String),
+    Image(gpui::Image, gpui::SharedString, bool),
     ProjectPath(ProjectPath),
+}
+
+// Native clipboard formats can flatten mixed image and text entries, so retain the ordered sequence in string metadata.
+#[derive(Deserialize, Serialize)]
+struct AgentClipboardMetadata {
+    version: u8,
+    entries: Vec<AgentClipboardEntry>,
+}
+
+#[derive(Deserialize, Serialize)]
+enum AgentClipboardEntry {
+    Text(String),
+    Image { format: String, bytes: String },
 }
 
 async fn resolve_pasted_context_items(
     project: Entity<Project>,
     project_is_local: bool,
     supports_images: bool,
+    append_image_separator: bool,
     entries: Vec<ClipboardEntry>,
     cx: &mut gpui::AsyncWindowContext,
 ) -> (Vec<ResolvedPastedContextItem>, Vec<Entity<Worktree>>) {
     let mut items = Vec::new();
     let mut added_worktrees = Vec::new();
     let default_image_name: SharedString = "Image".into();
+    let has_images = entries
+        .iter()
+        .any(|entry| matches!(entry, ClipboardEntry::Image(_)));
+    let has_text_with_images = has_images
+        && entries
+            .iter()
+            .any(|entry| matches!(entry, ClipboardEntry::String(_)));
 
     for entry in entries {
         match entry {
+            ClipboardEntry::String(text) if has_images => {
+                items.push(ResolvedPastedContextItem::Text(text.text().to_string()));
+            }
             ClipboardEntry::String(_) => {}
             ClipboardEntry::Image(image) => {
                 if supports_images {
                     items.push(ResolvedPastedContextItem::Image(
                         image,
                         default_image_name.clone(),
+                        append_image_separator && !has_text_with_images,
                     ));
                 }
             }
@@ -349,7 +376,11 @@ async fn resolve_pasted_context_items(
                         .await
                     {
                         if supports_images {
-                            items.push(ResolvedPastedContextItem::Image(image, name));
+                            items.push(ResolvedPastedContextItem::Image(
+                                image,
+                                name,
+                                append_image_separator,
+                            ));
                         }
                         continue;
                     }
@@ -408,25 +439,36 @@ fn insert_project_path_as_context(
 async fn insert_resolved_pasted_context_items(
     items: Vec<ResolvedPastedContextItem>,
     added_worktrees: Vec<Entity<Worktree>>,
+    message_editor: WeakEntity<MessageEditor>,
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
     workspace: WeakEntity<Workspace>,
     supports_images: bool,
     cx: &mut gpui::AsyncWindowContext,
-) {
-    let mut path_mention_tasks = Vec::new();
+) -> Result<()> {
+    let mut mention_tasks = Vec::new();
 
     for item in items {
         match item {
-            ResolvedPastedContextItem::Image(image, name) => {
-                crate::mention_set::insert_images_as_context(
-                    vec![(image, name)],
+            ResolvedPastedContextItem::Text(text) => {
+                message_editor
+                    .update_in(cx, |message_editor, window, cx| {
+                        message_editor.paste_item(&ClipboardItem::new_string(text), window, cx)
+                    })
+                    .log_err();
+            }
+            ResolvedPastedContextItem::Image(image, name, append_separator) => {
+                if let Some(task) = crate::mention_set::insert_image_as_context(
+                    image,
+                    name,
+                    append_separator,
                     editor.clone(),
                     mention_set.clone(),
                     workspace.clone(),
                     cx,
-                )
-                .await;
+                )? {
+                    mention_tasks.push(task);
+                }
             }
             ResolvedPastedContextItem::ProjectPath(project_path) => {
                 if let Some(task) = insert_project_path_as_context(
@@ -437,14 +479,15 @@ async fn insert_resolved_pasted_context_items(
                     supports_images,
                     cx,
                 ) {
-                    path_mention_tasks.push(task);
+                    mention_tasks.push(task);
                 }
             }
         }
     }
 
-    join_all(path_mention_tasks).await;
+    join_all(mention_tasks).await;
     drop(added_worktrees);
+    Ok(())
 }
 
 impl MessageEditor {
@@ -1066,6 +1109,13 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.session_capabilities.read().supports_images()
+            && let Some(restored_clipboard) = Self::clipboard_item_from_metadata(clipboard)
+            && self.handle_pasted_context(&restored_clipboard, window, cx, false)
+        {
+            return;
+        }
+
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -1304,7 +1354,7 @@ impl MessageEditor {
             }
         }
 
-        if self.handle_pasted_context(clipboard, window, cx) {
+        if self.handle_pasted_context(clipboard, window, cx, true) {
             return;
         }
 
@@ -1314,21 +1364,23 @@ impl MessageEditor {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let Some((text, _)) = self.serialize_selection_with_mentions(false, cx) else {
+        let Some((text, _, images)) = self.serialize_selection_with_mentions(false, cx) else {
             cx.propagate();
             return;
         };
 
         cx.stop_propagation();
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        let clipboard = Self::clipboard_item_with_mention_images(text, images);
+        cx.write_to_clipboard(clipboard);
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((text, ranges)) = self.serialize_selection_with_mentions(true, cx) else {
+        let Some((text, ranges, images)) = self.serialize_selection_with_mentions(true, cx) else {
             cx.propagate();
             return;
         };
 
+        let clipboard = Self::clipboard_item_with_mention_images(text, images);
         cx.stop_propagation();
         self.editor.update(cx, |editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -1338,7 +1390,7 @@ impl MessageEditor {
                 editor.insert("", window, cx);
             });
         });
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        cx.write_to_clipboard(clipboard);
     }
 
     fn paste_raw(&mut self, _: &PasteRaw, window: &mut Window, cx: &mut Context<Self>) {
@@ -1353,11 +1405,14 @@ impl MessageEditor {
         clipboard: &ClipboardItem,
         window: &mut Window,
         cx: &mut Context<Self>,
+        append_image_separator: bool,
     ) -> bool {
-        if matches!(
-            clipboard.entries().first(),
-            Some(ClipboardEntry::String(_)) | None
-        ) {
+        if !clipboard.entries().iter().any(|entry| {
+            matches!(
+                entry,
+                ClipboardEntry::Image(_) | ClipboardEntry::ExternalPaths(_)
+            )
+        }) {
             return false;
         }
 
@@ -1372,6 +1427,7 @@ impl MessageEditor {
         }
         let editor = self.editor.clone();
         let mention_set = self.mention_set.clone();
+        let message_editor = cx.weak_entity();
         let workspace = self.workspace.clone();
         let entries = clipboard.clone().into_entries().collect::<Vec<_>>();
 
@@ -1381,6 +1437,7 @@ impl MessageEditor {
                     project,
                     project_is_local,
                     supports_images,
+                    append_image_separator,
                     entries,
                     &mut cx,
                 )
@@ -1388,13 +1445,14 @@ impl MessageEditor {
                 insert_resolved_pasted_context_items(
                     items,
                     added_worktrees,
+                    message_editor,
                     editor,
                     mention_set,
                     workspace,
                     supports_images,
                     &mut cx,
                 )
-                .await;
+                .await?;
                 Ok::<(), anyhow::Error>(())
             })
             .detach_and_log_err(cx);
@@ -1913,7 +1971,11 @@ impl MessageEditor {
         &self,
         expand_empty_to_line: bool,
         cx: &mut App,
-    ) -> Option<(String, Vec<Range<MultiBufferOffset>>)> {
+    ) -> Option<(
+        String,
+        Vec<Range<MultiBufferOffset>>,
+        Vec<(Range<usize>, Image)>,
+    )> {
         if self.mention_set.read(cx).is_empty() {
             return None;
         }
@@ -1935,6 +1997,7 @@ impl MessageEditor {
             .filter_map(|(crease_id, range)| {
                 mention_set.mention_uri_for_crease(&crease_id).map(|uri| {
                     (
+                        crease_id,
                         range.start.to_offset(&snapshot),
                         range.end.to_offset(&snapshot),
                         uri,
@@ -1949,6 +2012,7 @@ impl MessageEditor {
 
         let mut text = String::new();
         let mut ranges = Vec::with_capacity(point_selections.len());
+        let mut images = Vec::new();
         let mut has_mentions = false;
         let mut is_first = true;
         let mut prev_was_entire_line = false;
@@ -1973,14 +2037,29 @@ impl MessageEditor {
             prev_was_entire_line = is_entire_line;
 
             let mut cursor = range.start;
-            for (start, end, uri) in mention_ranges
+            for (crease_id, start, end, uri) in mention_ranges
                 .iter()
-                .filter(|(start, end, _)| *start < range.end && range.start < *end)
+                .filter(|(_, start, end, _)| *start < range.end && range.start < *end)
             {
                 if cursor < *start {
                     text.extend(snapshot.text_for_range(cursor..*start));
                 }
-                write!(text, "{}", uri.as_link()).unwrap();
+                let image_range_start = text.len();
+                text.push_str(&uri.as_link().to_string());
+                let image = mention_set.image_for_crease(crease_id, cx).or_else(|| {
+                    let Some((_, Some(Mention::Image(image)))) =
+                        mention_set.resolved_mention_for_crease(crease_id)
+                    else {
+                        return None;
+                    };
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(image.data.as_bytes())
+                        .log_err()?;
+                    Some(Image::from_bytes(image.format, bytes))
+                });
+                if let Some(image) = image {
+                    images.push((image_range_start..text.len(), image));
+                }
                 cursor = *end;
                 has_mentions = true;
             }
@@ -1991,7 +2070,82 @@ impl MessageEditor {
             ranges.push(range);
         }
 
-        has_mentions.then_some((text, ranges))
+        has_mentions.then_some((text, ranges, images))
+    }
+
+    fn clipboard_item_with_mention_images(
+        text: String,
+        images: Vec<(Range<usize>, Image)>,
+    ) -> ClipboardItem {
+        let mut copied_entries = Vec::new();
+        let mut cursor = 0;
+        for (image_range, image) in &images {
+            if cursor < image_range.start {
+                copied_entries.push(AgentClipboardEntry::Text(
+                    text[cursor..image_range.start].to_string(),
+                ));
+            }
+            copied_entries.push(AgentClipboardEntry::Image {
+                format: image.format().mime_type().to_string(),
+                bytes: base64::engine::general_purpose::STANDARD.encode(image.bytes()),
+            });
+            cursor = image_range.end;
+        }
+
+        if cursor < text.len() {
+            copied_entries.push(AgentClipboardEntry::Text(text[cursor..].to_string()));
+        }
+
+        if images.is_empty() {
+            return ClipboardItem::new_string(text);
+        }
+
+        let Some(metadata) = serde_json::to_string(&AgentClipboardMetadata {
+            version: 1,
+            entries: copied_entries,
+        })
+        .log_err() else {
+            return ClipboardItem::new_string(text);
+        };
+
+        let mut entries = ClipboardItem::new_string_with_metadata(text, metadata)
+            .into_entries()
+            .collect::<Vec<_>>();
+        entries.extend(
+            images
+                .into_iter()
+                .map(|(_, image)| ClipboardEntry::Image(image)),
+        );
+        ClipboardItem { entries }
+    }
+
+    fn clipboard_item_from_metadata(clipboard: &ClipboardItem) -> Option<ClipboardItem> {
+        let metadata = clipboard.entries().iter().find_map(|entry| {
+            let ClipboardEntry::String(text) = entry else {
+                return None;
+            };
+            text.metadata_json::<AgentClipboardMetadata>()
+        })?;
+        if metadata.version != 1 {
+            return None;
+        }
+
+        let entries = metadata
+            .entries
+            .into_iter()
+            .map(|entry| match entry {
+                AgentClipboardEntry::Text(text) => Some(ClipboardEntry::from(text)),
+                AgentClipboardEntry::Image { format, bytes } => {
+                    let format = ImageFormat::from_mime_type(&format)?;
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(bytes.as_bytes())
+                        .log_err()?;
+                    Some(ClipboardEntry::Image(Image::from_bytes(format, bytes)))
+                }
+            })
+            .collect::<Option<Vec<_>>>()?;
+
+        Some(ClipboardItem { entries })
     }
 }
 
@@ -2244,7 +2398,7 @@ fn find_matching_bracket(text: &str, open: char, close: char) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range, path::Path, path::PathBuf, rc::Rc, sync::Arc};
+    use std::{ops::Range, path::Path, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
     use super::PromptLocalCommand;
     use acp_thread::MentionUri;
@@ -2253,7 +2407,7 @@ mod tests {
     use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
-        actions::{Cut, Paste},
+        actions::{Copy, Cut, Paste},
     };
 
     use fs::FakeFs;
@@ -2281,6 +2435,318 @@ mod tests {
             Mention, MessageEditor, MessageEditorEvent, SessionCapabilities, parse_mention_links,
         },
     };
+
+    #[test]
+    fn test_image_clipboard_metadata_preserves_text_and_image_order() {
+        let image_link = "[@Image](zed:///agent/pasted-image?name=Image)";
+        let text = format!("literal {image_link} before {image_link} between {image_link} after");
+        let image_positions = text
+            .match_indices(image_link)
+            .map(|(offset, _)| offset)
+            .collect::<Vec<_>>();
+        let first_image_start = image_positions[1];
+        let second_image_start = image_positions[2];
+        let first_image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1]);
+        let second_image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![2]);
+
+        let clipboard = MessageEditor::clipboard_item_with_mention_images(
+            text,
+            vec![
+                (
+                    first_image_start..first_image_start + image_link.len(),
+                    first_image.clone(),
+                ),
+                (
+                    second_image_start..second_image_start + image_link.len(),
+                    second_image.clone(),
+                ),
+            ],
+        );
+        let restored = MessageEditor::clipboard_item_from_metadata(&clipboard)
+            .expect("image clipboard metadata should be readable");
+
+        assert_eq!(
+            restored,
+            ClipboardItem {
+                entries: vec![
+                    ClipboardEntry::from(format!("literal {image_link} before ")),
+                    ClipboardEntry::Image(first_image),
+                    ClipboardEntry::from(" between ".to_string()),
+                    ClipboardEntry::Image(second_image),
+                    ClipboardEntry::from(" after".to_string()),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn test_image_clipboard_metadata_handles_images_at_boundaries_and_without_text() {
+        let image_link = "[@Image](zed:///agent/pasted-image?name=Image)";
+        let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1]);
+        let text = format!("{image_link}  {image_link}");
+        let second_image_start = image_link.len() + 2;
+        let clipboard = MessageEditor::clipboard_item_with_mention_images(
+            text,
+            vec![
+                (0..image_link.len(), image.clone()),
+                (
+                    second_image_start..second_image_start + image_link.len(),
+                    image.clone(),
+                ),
+            ],
+        );
+
+        assert_eq!(
+            MessageEditor::clipboard_item_from_metadata(&clipboard),
+            Some(ClipboardItem {
+                entries: vec![
+                    ClipboardEntry::Image(image.clone()),
+                    ClipboardEntry::from("  ".to_string()),
+                    ClipboardEntry::Image(image),
+                ],
+            })
+        );
+
+        let clipboard = MessageEditor::clipboard_item_with_mention_images(
+            image_link.to_string(),
+            vec![(
+                0..image_link.len(),
+                gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![3]),
+            )],
+        );
+        assert_eq!(
+            MessageEditor::clipboard_item_from_metadata(&clipboard)
+                .and_then(|clipboard| clipboard.into_entries().next()),
+            Some(ClipboardEntry::Image(gpui::Image::from_bytes(
+                gpui::ImageFormat::Png,
+                vec![3]
+            )))
+        );
+    }
+
+    fn pasted_image_preview_results(message_editor: &Entity<MessageEditor>, cx: &App) -> Vec<bool> {
+        message_editor.read_with(cx, |message_editor, cx| {
+            let mention_set = message_editor.mention_set.read(cx);
+            mention_set
+                .creases()
+                .iter()
+                .filter(|crease_id| {
+                    mention_set
+                        .mention_uri_for_crease(crease_id)
+                        .is_some_and(|mention_uri| mention_uri.name() == "Image")
+                })
+                .map(|crease_id| mention_set.image_for_crease(crease_id, cx).is_some())
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_copy_and_paste_image_mentions_while_conversion_is_pending(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (source_message_editor, source_editor, mut cx) =
+            setup_paste_test_message_editor(json!({}), cx).await;
+        source_message_editor.update(&mut cx, |message_editor, _cx| {
+            message_editor
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(acp::PromptCapabilities::new().image(true));
+        });
+
+        let temporary_image_path = write_test_png_file(None);
+        let image_bytes = std::fs::read(&temporary_image_path).expect("read test image");
+        std::fs::remove_file(&temporary_image_path).expect("remove test image");
+        let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, image_bytes);
+        let first_image_uri = MentionUri::PastedImage {
+            name: "first.png".to_string(),
+        };
+        let second_image_uri = MentionUri::PastedImage {
+            name: "second.png".to_string(),
+        };
+        let text = format!(
+            "before {} between {} after",
+            first_image_uri.as_link(),
+            second_image_uri.as_link()
+        );
+        let image_link = first_image_uri.as_link().to_string();
+        let image_ranges = [
+            7..7 + image_link.len(),
+            7 + image_link.len() + " between ".len()
+                ..7 + image_link.len()
+                    + " between ".len()
+                    + second_image_uri.as_link().to_string().len(),
+        ];
+        let unresolved_image_task = cx
+            .spawn(|cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_secs(60))
+                    .await;
+                Err("image conversion is still pending".to_string())
+            })
+            .shared();
+
+        source_message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.set_text(&text, window, cx);
+            let snapshot = message_editor
+                .editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx);
+
+            for (range, uri) in image_ranges.iter().zip([first_image_uri, second_image_uri]) {
+                let anchor = snapshot
+                    .anchor_to_buffer_anchor(snapshot.anchor_before(MultiBufferOffset(range.start)))
+                    .expect("image mention anchor should map to a buffer")
+                    .0;
+                let Some((crease_id, sender, crease_entity)) = insert_crease_for_mention(
+                    anchor,
+                    range.len(),
+                    uri.name().into(),
+                    uri.icon_path(cx),
+                    uri.tooltip_text(),
+                    Some(uri.clone()),
+                    Some(message_editor.workspace.clone()),
+                    Some(Task::ready(Ok(Arc::new(image.clone()))).shared()),
+                    message_editor.editor.clone(),
+                    window,
+                    cx,
+                ) else {
+                    panic!("image mention crease should be inserted");
+                };
+                drop(sender);
+
+                message_editor.mention_set.update(cx, |mention_set, cx| {
+                    mention_set.insert_mention(
+                        crease_id,
+                        uri,
+                        unresolved_image_task.clone(),
+                        crease_entity,
+                        cx,
+                    );
+                });
+            }
+
+            message_editor.editor.update(cx, |editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([MultiBufferOffset(0)..snapshot.len()]);
+                });
+            });
+            message_editor.copy(&Copy, window, cx);
+        });
+
+        let clipboard = cx
+            .read_from_clipboard()
+            .expect("copy should write the clipboard");
+        let restored = MessageEditor::clipboard_item_from_metadata(&clipboard)
+            .expect("copy should retain images that are ready for preview");
+        let copied_images = restored
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                ClipboardEntry::Image(copied_image) => Some(copied_image),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(copied_images.len(), 2);
+        assert!(
+            copied_images
+                .iter()
+                .all(|copied_image| *copied_image == &image)
+        );
+
+        source_editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections
+                    .select_ranges([MultiBufferOffset(text.len())..MultiBufferOffset(text.len())]);
+            });
+        });
+        source_message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.paste_item(&clipboard, window, cx);
+        });
+        cx.run_until_parked();
+
+        let pasted_text = format!(
+            "before {} between {} after",
+            MentionUri::PastedImage {
+                name: "Image".to_string()
+            }
+            .as_link(),
+            MentionUri::PastedImage {
+                name: "Image".to_string()
+            }
+            .as_link()
+        );
+        let expected_text = format!("{text}{pasted_text}");
+        assert_eq!(
+            source_editor.read_with(&cx, |editor, cx| editor.text(cx)),
+            expected_text
+        );
+        let pasted_images = cx.update(|_, cx| {
+            pasted_image_preview_results(&source_message_editor, cx)
+        });
+        assert_eq!(pasted_images.len(), 2);
+        assert!(pasted_images.into_iter().all(|has_preview| has_preview));
+
+        let workspace = source_message_editor.read_with(&cx, |message_editor, _| {
+            message_editor.workspace.upgrade().expect("workspace")
+        });
+        let project = workspace.read_with(&cx, |workspace, _| workspace.project().clone());
+        let target_message_editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    Some(thread_store),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            message_editor.update(cx, |message_editor, cx| {
+                message_editor
+                    .session_capabilities
+                    .write()
+                    .set_prompt_capabilities(acp::PromptCapabilities::new().image(true));
+                message_editor.set_text("target: ", window, cx);
+                message_editor.set_cursor_offset("target: ".len(), window, cx);
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor
+        });
+
+        target_message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.paste_item(&clipboard, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            target_message_editor.read_with(&cx, |message_editor, cx| message_editor.text(cx)),
+            format!("target: {pasted_text}")
+        );
+        let pasted_images = cx.update(|_, cx| {
+            pasted_image_preview_results(&target_message_editor, cx)
+        });
+        assert_eq!(pasted_images.len(), 2);
+        assert!(pasted_images.into_iter().all(|has_preview| has_preview));
+    }
 
     #[test]
     fn test_session_capabilities_keep_commands_and_skills_separate() {
@@ -4648,7 +5114,7 @@ mod tests {
         let copied_text = source_message_editor.update(&mut cx, |message_editor, cx| {
             message_editor
                 .serialize_selection_with_mentions(false, cx)
-                .map(|(text, _)| text)
+                .map(|(text, _, _)| text)
                 .expect("selection mentions should serialize")
         });
         let expected_text = format!(
@@ -4839,7 +5305,7 @@ mod tests {
             .update(&mut cx, |message_editor, cx| {
                 message_editor
                     .serialize_selection_with_mentions(false, cx)
-                    .map(|(text, _)| text)
+                    .map(|(text, _, _)| text)
             });
 
         assert_eq!(copied, Some(fixture.first_uri.as_link().to_string()));
@@ -4873,7 +5339,7 @@ mod tests {
             .update(&mut cx, |message_editor, cx| {
                 message_editor
                     .serialize_selection_with_mentions(false, cx)
-                    .map(|(text, _)| text)
+                    .map(|(text, _, _)| text)
             });
 
         assert_eq!(copied, None);
