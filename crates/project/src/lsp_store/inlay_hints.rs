@@ -314,8 +314,7 @@ impl LspStore {
                     ResolveState::Resolved,
                     false,
                     cx,
-                )
-                .await;
+                );
                 Ok(resolved_hint)
             })
         }

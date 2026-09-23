@@ -3887,7 +3887,7 @@ impl LspCommand for OnTypeFormatting {
 }
 
 impl InlayHints {
-    pub async fn lsp_to_project_hint(
+    pub fn lsp_to_project_hint(
         lsp_hint: lsp::InlayHint,
         buffer_handle: &Entity<Buffer>,
         server_id: LanguageServerId,
@@ -3903,7 +3903,6 @@ impl InlayHints {
 
         let position = buffer_handle.read_with(cx, |buffer, _| {
             let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
-
             if kind == Some(InlayHintKind::Parameter) {
                 buffer.anchor_before(position)
             } else {
@@ -3911,7 +3910,7 @@ impl InlayHints {
             }
         });
 
-        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id).await;
+        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id);
         let padding_left = if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
             false
         } else {
@@ -3940,7 +3939,7 @@ impl InlayHints {
         }
     }
 
-    async fn lsp_inlay_label_to_project(
+    fn lsp_inlay_label_to_project(
         lsp_label: lsp::InlayHintLabel,
         server_id: LanguageServerId,
     ) -> InlayHintLabel {
@@ -4373,7 +4372,6 @@ impl LspCommand for InlayHints {
                         force_no_type_left_padding,
                         cx,
                     )
-                    .await
                 })
             });
 

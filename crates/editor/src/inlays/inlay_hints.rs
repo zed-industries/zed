@@ -1133,8 +1133,9 @@ pub mod tests {
     use pretty_assertions::assert_eq;
     use project::{CodeAction, FakeFs, InlayId, InvalidationStrategy, LspAction, Project};
     use serde_json::json;
-    use settings::SettingsContent;
-    use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};
+    use settings::{
+        AllLanguageSettingsContent, InlayHintSettingsContent, SettingsContent, SettingsStore,
+    };
     use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -5318,14 +5319,7 @@ let c = 3;"#
 
     #[gpui::test]
     async fn test_inlay_hint_overflow(cx: &mut TestAppContext) {
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -5333,11 +5327,7 @@ let c = 3;"#
                     settings.project.all_languages.defaults.inlay_hints =
                         Some(InlayHintSettingsContent {
                             enabled: Some(true),
-                            show_parameter_hints: Some(true),
-                            show_type_hints: Some(true),
-                            edit_debounce_ms: Some(0),
-                            scroll_debounce_ms: Some(0),
-                            ..Default::default()
+                            ..InlayHintSettingsContent::default()
                         })
                 });
             });
