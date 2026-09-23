@@ -902,6 +902,7 @@ struct RichCatalogModel {
     limit: ModelLimits,
     provider: Option<ModelTransport>,
     cost: Option<ModelCost>,
+    status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -959,11 +960,12 @@ fn parse_discovered_models(
         .into_iter()
         .filter_map(|available| {
             let metadata = provider.models.get(&available.id)?;
-            if subscription == OpenCodeSubscription::Zen
-                && metadata
-                    .cost
-                    .as_ref()
-                    .is_some_and(|cost| cost.input == Some(0.0) && cost.output == Some(0.0))
+            if metadata.status.as_deref() == Some("deprecated")
+                || (subscription == OpenCodeSubscription::Zen
+                    && metadata
+                        .cost
+                        .as_ref()
+                        .is_some_and(|cost| cost.input == Some(0.0) && cost.output == Some(0.0)))
             {
                 available_model_count -= 1;
                 return None;
@@ -1498,6 +1500,46 @@ mod tests {
                     subscription,
                 )?;
                 assert_eq!(models.len(), expected_count, "{subscription:?}: {cost}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_discovery_filters_deprecated_status_per_subscription() -> Result<()> {
+        for (zen_status, go_status, zen_count, go_count) in [
+            (Some("deprecated"), None, 0, 1),
+            (None, Some("deprecated"), 1, 0),
+            (Some("active"), Some("preview"), 1, 1),
+            (Some("deprecated"), Some("deprecated"), 0, 0),
+        ] {
+            let mut catalog = serde_json::json!({});
+            for (provider_key, status) in [("opencode", zen_status), ("opencode-go", go_status)] {
+                let mut model = serde_json::json!({
+                    "id": "model",
+                    "name": "Model",
+                    "tool_call": true,
+                    "modalities": {"output": ["text"]},
+                    "limit": {"context": 1000},
+                });
+                if let Some(status) = status {
+                    model["status"] = status.into();
+                }
+                catalog[provider_key] = serde_json::json!({
+                    "npm": "@ai-sdk/openai-compatible",
+                    "models": {"model": model},
+                });
+            }
+            for (subscription, expected_count) in [
+                (OpenCodeSubscription::Zen, zen_count),
+                (OpenCodeSubscription::Go, go_count),
+            ] {
+                let models = parse_discovered_models(
+                    r#"{"data":[{"id":"model"}]}"#,
+                    &catalog.to_string(),
+                    subscription,
+                )?;
+                assert_eq!(models.len(), expected_count, "{subscription:?}: {catalog}",);
             }
         }
         Ok(())
