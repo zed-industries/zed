@@ -1,5 +1,16 @@
 use super::*;
 
+/// How a [`crate::actions::SelectNext`] or [`crate::actions::SelectPrevious`]
+/// action originated.
+///
+/// When started from a caret, whole-word matching is always enabled, compared
+/// to when started from a selection, where the configured whole-word option is
+/// used instead.
+enum SelectNextOrigin {
+    Caret,
+    Selection,
+}
+
 impl Editor {
     pub fn sync_selections(
         &mut self,
@@ -542,10 +553,10 @@ impl Editor {
                         .collect::<String>();
                     let is_empty = query.is_empty();
                     let select_state = self.build_select_state(
-                        &[query.chars().rev().collect::<String>()],
-                        cx,
-                        Some(true),
+                        query.chars().rev().collect(),
+                        SelectNextOrigin::Caret,
                         is_empty,
+                        cx,
                     )?;
                     self.select_prev_state = Some(select_state);
                 } else {
@@ -553,10 +564,10 @@ impl Editor {
                 }
             } else if let Some(selected_text) = selected_text {
                 self.select_prev_state = Some(self.build_select_state(
-                    &[selected_text.chars().rev().collect::<String>()],
-                    cx,
-                    None,
+                    selected_text.chars().rev().collect(),
+                    SelectNextOrigin::Selection,
                     false,
+                    cx,
                 )?);
                 self.select_previous(action, window, cx)?;
             }
@@ -2286,14 +2297,18 @@ impl Editor {
                         .collect::<String>();
                     let is_empty = query.is_empty();
                     let select_state =
-                        self.build_select_state(&[query], cx, Some(true), is_empty)?;
+                        self.build_select_state(query, SelectNextOrigin::Caret, is_empty, cx)?;
                     self.select_next_state = Some(select_state);
                 } else {
                     self.select_next_state = None;
                 }
             } else if let Some(selected_text) = selected_text {
-                self.select_next_state =
-                    Some(self.build_select_state(&[selected_text], cx, None, false)?);
+                self.select_next_state = Some(self.build_select_state(
+                    selected_text,
+                    SelectNextOrigin::Selection,
+                    false,
+                    cx,
+                )?);
                 self.select_next_match_internal(
                     display_map,
                     replace_newest,
@@ -2316,17 +2331,13 @@ impl Editor {
         builder.build(patterns)
     }
 
-    fn build_select_state<I, P>(
+    fn build_select_state(
         &self,
-        patterns: I,
-        cx: &mut Context<Self>,
-        wordwise: Option<bool>,
+        query: String,
+        origin: SelectNextOrigin,
         done: bool,
-    ) -> Result<SelectNextState, BuildError>
-    where
-        I: IntoIterator<Item = P>,
-        P: AsRef<[u8]>,
-    {
+        cx: &App,
+    ) -> Result<SelectNextState, BuildError> {
         let search_options = self.select_next_options.unwrap_or_else(|| {
             let search_settings = EditorSettings::get_global(cx).search;
             SelectSearchOptions {
@@ -2335,8 +2346,8 @@ impl Editor {
             }
         });
         Ok(SelectNextState {
-            query: Self::build_query(patterns, search_options.case_sensitive)?,
-            wordwise: wordwise.unwrap_or(search_options.whole_word),
+            query: Self::build_query(&[query], search_options.case_sensitive)?,
+            wordwise: matches!(origin, SelectNextOrigin::Caret) || search_options.whole_word,
             done,
         })
     }
