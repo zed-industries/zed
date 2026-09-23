@@ -5333,6 +5333,8 @@ let c = 3;"#
                     settings.project.all_languages.defaults.inlay_hints =
                         Some(InlayHintSettingsContent {
                             enabled: Some(true),
+                            edit_debounce_ms: Some(0),
+                            scroll_debounce_ms: Some(0),
                             ..InlayHintSettingsContent::default()
                         })
                 });
