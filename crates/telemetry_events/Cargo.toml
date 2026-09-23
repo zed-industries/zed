@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/telemetry_events.rs"
+test = false
+doctest = false
 
 [dependencies]
 semver.workspace = true
