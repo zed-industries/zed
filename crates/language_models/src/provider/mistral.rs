@@ -319,6 +319,14 @@ impl LanguageModel for MistralLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking()
+    }
+
+    fn supports_disabling_thinking(&self) -> bool {
+        self.model.supports_disabling_thinking()
+    }
+
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }
@@ -583,9 +591,18 @@ pub fn into_mistral(
                     })
                 })
                 .collect::<Result<_>>()?,
-            reasoning_effort: if model.supports_thinking() && request.thinking_allowed {
+            reasoning_effort: if !model.supports_thinking() {
+                None
+            } else if request.thinking_allowed {
                 Some(mistral::ReasoningEffort::High)
+            } else if model.supports_disabling_thinking() {
+                // Explicitly disable thinking rather than relying on the API's
+                // default.
+                Some(mistral::ReasoningEffort::None)
             } else {
+                // Models for which thinking can't be disabled will reject
+                // "none" as the `reasoning_effort` value. Omitting the field is
+                // the only way to request the API's default effort.
                 None
             },
         },
@@ -937,20 +954,52 @@ mod tests {
             max_output_tokens: None,
         };
 
-        let (mistral_request, _) =
-            into_mistral(request(true), mistral::Model::MistralMediumLatest, None).unwrap();
-        assert_eq!(
-            mistral_request.reasoning_effort,
-            Some(mistral::ReasoningEffort::High)
-        );
+        let cases = vec![
+            (
+                mistral::Model::MistralSmallLatest,
+                true,
+                Some(mistral::ReasoningEffort::High),
+            ),
+            (
+                mistral::Model::MistralSmallLatest,
+                false,
+                Some(mistral::ReasoningEffort::None),
+            ),
+            (
+                mistral::Model::MistralMediumLatest,
+                true,
+                Some(mistral::ReasoningEffort::High),
+            ),
+            (
+                mistral::Model::MistralMediumLatest,
+                false,
+                Some(mistral::ReasoningEffort::None),
+            ),
+            (
+                mistral::Model::ZaiGlmLatest,
+                true,
+                Some(mistral::ReasoningEffort::High),
+            ),
+            // Z.ai GLM always thinks and rejects "none", so the field is
+            // omitted when the toggle is off instead of sending an explicit
+            // value.
+            (mistral::Model::ZaiGlmLatest, false, None),
+            // Ensure that, for non-thinking models, `reasoning_effort` is
+            // always omitted.
+            (mistral::Model::CodestralLatest, true, None),
+            (mistral::Model::CodestralLatest, false, None),
+        ];
 
-        let (mistral_request, _) =
-            into_mistral(request(false), mistral::Model::MistralMediumLatest, None).unwrap();
-        assert_eq!(mistral_request.reasoning_effort, None);
+        for (model, thinking_allowed, reasoning_effort) in cases {
+            let (mistral_request, _) = into_mistral(request(thinking_allowed), model, None)
+                .expect("should be able to convert request");
 
-        let (mistral_request, _) =
-            into_mistral(request(true), mistral::Model::CodestralLatest, None).unwrap();
-        assert_eq!(mistral_request.reasoning_effort, None);
+            assert_eq!(
+                mistral_request.reasoning_effort, reasoning_effort,
+                "reasoning_effort should match, expected {:?}, got {:?}",
+                reasoning_effort, mistral_request.reasoning_effort
+            )
+        }
     }
 
     #[test]
