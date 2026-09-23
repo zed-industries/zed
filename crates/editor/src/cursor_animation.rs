@@ -73,6 +73,13 @@ impl CursorViewport {
             && f32::from(self.line_height).is_finite()
             && f32::from(self.em_advance).is_finite()
     }
+
+    fn has_same_layout(self, other: Self) -> bool {
+        self.content_origin == other.content_origin
+            && self.text_bounds == other.text_bounds
+            && self.line_height == other.line_height
+            && self.em_advance == other.em_advance
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -400,6 +407,11 @@ impl CursorAnimationStates {
         self.newest_selection_id = None;
         self.newest_state = None;
     }
+
+    #[cfg(test)]
+    pub(crate) fn has_active_animation(&self) -> bool {
+        self.states.values().any(|state| state.active)
+    }
 }
 
 impl Default for CursorAnimationState {
@@ -436,20 +448,40 @@ impl CursorAnimationState {
             return None;
         }
 
-        let Some(previous_geometry) = self.target_geometry else {
+        let Some(mut previous_geometry) = self.target_geometry else {
+            self.snap(logical_position, target_geometry, viewport, now);
+            return None;
+        };
+        let Some(previous_viewport) = self.last_viewport else {
             self.snap(logical_position, target_geometry, viewport, now);
             return None;
         };
 
         let logical_position_changed = self.last_logical_position != Some(logical_position);
-        let target_origin_changed = !previous_geometry.has_same_origin(target_geometry);
-        let viewport_changed = self.last_viewport != Some(viewport);
-        let geometry_size_changed = !previous_geometry.has_same_size(target_geometry);
+        let viewport_changed = previous_viewport != viewport;
 
-        if viewport_changed
-            || geometry_size_changed
-            || (!logical_position_changed && target_origin_changed)
-        {
+        if viewport_changed {
+            if !previous_viewport.has_same_layout(viewport) {
+                self.snap(logical_position, target_geometry, viewport, now);
+                return None;
+            }
+
+            self.translate(AnimationPoint {
+                x: (previous_viewport.scroll_pixel_position.x - viewport.scroll_pixel_position.x)
+                    as f32,
+                y: (previous_viewport.scroll_pixel_position.y - viewport.scroll_pixel_position.y)
+                    as f32,
+            });
+            if let Some(target_geometry) = self.target_geometry {
+                previous_geometry = target_geometry;
+            }
+        }
+
+        let target_origin_changed = !previous_geometry.has_same_origin(target_geometry);
+        let geometry_size_changed = !previous_geometry.has_same_size(target_geometry);
+        let geometry_changed = target_origin_changed || geometry_size_changed;
+
+        if !logical_position_changed && geometry_changed {
             self.snap(logical_position, target_geometry, viewport, now);
             return None;
         }
@@ -458,7 +490,7 @@ impl CursorAnimationState {
         self.last_viewport = Some(viewport);
         self.target_geometry = Some(target_geometry);
 
-        if target_origin_changed {
+        if logical_position_changed && geometry_changed {
             let elapsed = if self.active {
                 self.elapsed_since_last_frame(now)
             } else {
@@ -477,6 +509,16 @@ impl CursorAnimationState {
             self.corners
                 .map(|corner| point(px(corner.current_position.x), px(corner.current_position.y)))
         })
+    }
+
+    fn translate(&mut self, delta: AnimationPoint) {
+        for corner in &mut self.corners {
+            corner.current_position = corner.current_position + delta;
+            corner.target_position = corner.target_position + delta;
+        }
+        if let Some(target_geometry) = &mut self.target_geometry {
+            target_geometry.origin = target_geometry.origin + delta;
+        }
     }
 
     pub(crate) fn reset(&mut self) {
@@ -556,15 +598,48 @@ fn nearly_equal(left: f32, right: f32) -> bool {
     (left - right).abs() <= GEOMETRY_EPSILON
 }
 
+pub(crate) fn animated_corners_overlap_target(
+    target_bounds: Bounds<Pixels>,
+    corners: &[Point<Pixels>; 4],
+) -> bool {
+    let min_x = corners
+        .iter()
+        .map(|p| p.x)
+        .min()
+        .expect("the corners argument is a 4 item array, which should always have an x min");
+    let max_x = corners
+        .iter()
+        .map(|p| p.x)
+        .max()
+        .expect("the corners argument is a 4 item array, which should always have an x max");
+    let min_y = corners
+        .iter()
+        .map(|p| p.y)
+        .min()
+        .expect("the corners argument is a 4 item array, which should always have an y min");
+    let max_y = corners
+        .iter()
+        .map(|p| p.y)
+        .max()
+        .expect("the corners argument is a 4 item array, which should always have an x max");
+    let animated_bounds = Bounds::from_corners(point(min_x, min_y), point(max_x, max_y));
+
+    animated_bounds.intersects(&target_bounds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::size;
 
     fn bounds(x: f32, y: f32) -> Bounds<Pixels> {
+        bounds_with_width(x, y, 2.0)
+    }
+
+    fn bounds_with_width(x: f32, y: f32, width: f32) -> Bounds<Pixels> {
         Bounds {
             origin: point(px(x), px(y)),
-            size: size(px(2.0), px(20.0)),
+            size: size(px(width), px(20.0)),
         }
     }
 
@@ -584,6 +659,32 @@ mod tests {
 
     fn logical_position(row: u32, column: u32) -> LogicalCursorPosition {
         LogicalCursorPosition { row, column }
+    }
+
+    fn assert_converges_to(
+        state: &mut CursorAnimationState,
+        logical_position: LogicalCursorPosition,
+        target_bounds: Bounds<Pixels>,
+        viewport: CursorViewport,
+        now: Instant,
+    ) {
+        for frame in 1..30 {
+            state.update(
+                logical_position,
+                target_bounds,
+                viewport,
+                now + Duration::from_millis(frame * 16),
+            );
+        }
+
+        assert!(!state.active);
+        let target_geometry = CursorGeometry::from_bounds(target_bounds);
+        assert_eq!(
+            state.corners.map(|corner| corner.current_position),
+            state
+                .corners
+                .map(|corner| corner.destination(target_geometry))
+        );
     }
 
     #[test]
@@ -735,6 +836,147 @@ mod tests {
     }
 
     #[test]
+    fn moving_to_a_wider_cursor_animates_and_converges() {
+        let now = Instant::now();
+        let mut state = CursorAnimationState::default();
+        state.update(
+            logical_position(0, 0),
+            bounds_with_width(0.0, 0.0, 8.0),
+            viewport(0.0),
+            now,
+        );
+
+        assert!(
+            state
+                .update(
+                    logical_position(0, 1),
+                    bounds_with_width(8.0, 0.0, 16.0),
+                    viewport(0.0),
+                    now,
+                )
+                .is_some()
+        );
+        assert!(state.active);
+
+        assert_converges_to(
+            &mut state,
+            logical_position(0, 1),
+            bounds_with_width(8.0, 0.0, 16.0),
+            viewport(0.0),
+            now,
+        );
+    }
+
+    #[test]
+    fn moving_to_a_narrower_cursor_animates_and_converges() {
+        let now = Instant::now();
+        let mut state = CursorAnimationState::default();
+        state.update(
+            logical_position(0, 0),
+            bounds_with_width(0.0, 0.0, 16.0),
+            viewport(0.0),
+            now,
+        );
+
+        assert!(
+            state
+                .update(
+                    logical_position(0, 1),
+                    bounds_with_width(16.0, 0.0, 8.0),
+                    viewport(0.0),
+                    now,
+                )
+                .is_some()
+        );
+        assert!(state.active);
+
+        assert_converges_to(
+            &mut state,
+            logical_position(0, 1),
+            bounds_with_width(16.0, 0.0, 8.0),
+            viewport(0.0),
+            now,
+        );
+    }
+
+    #[test]
+    fn one_cell_movement_overlaps_target_only_after_advancing() {
+        let now = Instant::now();
+        let mut state = CursorAnimationState::default();
+        let target = bounds_with_width(8.0, 0.0, 8.0);
+        state.update(
+            logical_position(0, 0),
+            bounds_with_width(0.0, 0.0, 8.0),
+            viewport(0.0),
+            now,
+        );
+
+        let corners = state
+            .update(logical_position(0, 1), target, viewport(0.0), now)
+            .unwrap();
+        assert!(!animated_corners_overlap_target(target, &corners));
+
+        let corners = state
+            .update(
+                logical_position(0, 1),
+                target,
+                viewport(0.0),
+                now + Duration::from_millis(16),
+            )
+            .unwrap();
+        assert!(animated_corners_overlap_target(target, &corners));
+
+        let mut vertical_state = CursorAnimationState::default();
+        let vertical_target = bounds_with_width(0.0, 20.0, 8.0);
+        vertical_state.update(
+            logical_position(0, 0),
+            bounds_with_width(0.0, 0.0, 8.0),
+            viewport(0.0),
+            now,
+        );
+        let corners = vertical_state
+            .update(logical_position(1, 0), vertical_target, viewport(0.0), now)
+            .unwrap();
+        assert!(!animated_corners_overlap_target(vertical_target, &corners));
+
+        let corners = vertical_state
+            .update(
+                logical_position(1, 0),
+                vertical_target,
+                viewport(0.0),
+                now + Duration::from_millis(16),
+            )
+            .unwrap();
+        assert!(animated_corners_overlap_target(vertical_target, &corners));
+    }
+
+    #[test]
+    fn geometry_change_without_logical_movement_snaps() {
+        let now = Instant::now();
+        let mut state = CursorAnimationState::default();
+        state.update(
+            logical_position(0, 0),
+            bounds_with_width(0.0, 0.0, 8.0),
+            viewport(0.0),
+            now,
+        );
+
+        assert!(
+            state
+                .update(
+                    logical_position(0, 0),
+                    bounds_with_width(4.0, 0.0, 16.0),
+                    viewport(0.0),
+                    now + Duration::from_millis(16),
+                )
+                .is_none()
+        );
+        assert!(!state.active);
+        assert_eq!(state.corners[0].current_position.x, 4.0);
+        assert_eq!(state.corners[1].current_position.x, 20.0);
+    }
+
+    #[test]
     fn long_movement_ranks_leading_corners_ahead_of_trailing_corners() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
@@ -789,7 +1031,35 @@ mod tests {
     }
 
     #[test]
-    fn viewport_movement_snaps_even_during_animation() {
+    fn moving_down_while_the_viewport_scrolls_starts_animation() {
+        let now = Instant::now();
+        let mut state = CursorAnimationState::default();
+        state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
+
+        assert!(
+            state
+                .update(logical_position(1, 0), bounds(0.0, 0.0), viewport(1.0), now,)
+                .is_some()
+        );
+        assert!(state.active);
+    }
+
+    #[test]
+    fn moving_up_while_the_viewport_scrolls_starts_animation() {
+        let now = Instant::now();
+        let mut state = CursorAnimationState::default();
+        state.update(logical_position(1, 0), bounds(0.0, 0.0), viewport(1.0), now);
+
+        assert!(
+            state
+                .update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now,)
+                .is_some()
+        );
+        assert!(state.active);
+    }
+
+    #[test]
+    fn scrolling_during_animation_preserves_motion_and_velocity() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
         state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
@@ -799,7 +1069,20 @@ mod tests {
             viewport(0.0),
             now,
         );
+        state.update(
+            logical_position(0, 10),
+            bounds(100.0, 0.0),
+            viewport(0.0),
+            now + Duration::from_millis(16),
+        );
         assert!(state.active);
+        let positions_before_scroll = state.corners.map(|corner| corner.current_position);
+        let velocities_before_scroll = state.corners.map(|corner| {
+            (
+                corner.horizontal_animation.velocity,
+                corner.vertical_animation.velocity,
+            )
+        });
 
         assert!(
             state
@@ -809,10 +1092,69 @@ mod tests {
                     viewport(1.0),
                     now + Duration::from_millis(16),
                 )
-                .is_none()
+                .is_some()
         );
-        assert!(!state.active);
-        assert_eq!(state.corners[0].current_position.y, -20.0);
+        assert!(state.active);
+        assert_eq!(
+            state.corners.map(|corner| corner.current_position),
+            positions_before_scroll.map(|position| AnimationPoint {
+                x: position.x,
+                y: position.y - 20.0,
+            })
+        );
+        assert_eq!(
+            state.corners.map(|corner| (
+                corner.horizontal_animation.velocity,
+                corner.vertical_animation.velocity,
+            )),
+            velocities_before_scroll
+        );
+    }
+
+    #[test]
+    fn layout_changes_snap_even_during_animation() {
+        let now = Instant::now();
+
+        for changed_viewport in [
+            CursorViewport {
+                line_height: px(24.0),
+                ..viewport(0.0)
+            },
+            CursorViewport {
+                text_bounds: Bounds {
+                    origin: point(px(0.0), px(0.0)),
+                    size: size(px(700.0), px(500.0)),
+                },
+                ..viewport(0.0)
+            },
+            CursorViewport {
+                em_advance: px(10.0),
+                ..viewport(0.0)
+            },
+        ] {
+            let mut state = CursorAnimationState::default();
+            state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
+            state.update(
+                logical_position(0, 10),
+                bounds(100.0, 0.0),
+                viewport(0.0),
+                now,
+            );
+            assert!(state.active);
+
+            assert!(
+                state
+                    .update(
+                        logical_position(0, 10),
+                        bounds(100.0, 0.0),
+                        changed_viewport,
+                        now + Duration::from_millis(16),
+                    )
+                    .is_none()
+            );
+            assert!(!state.active);
+            assert_eq!(state.corners[0].current_position.x, 100.0);
+        }
     }
 
     #[test]
