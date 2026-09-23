@@ -121,10 +121,32 @@ To use a fixed reset width, disable flexible sizing in the Settings Editor. Or a
 
 See [Agent Panel visual customization](../visual-customization.md#agent-panel) for other panel appearance settings.
 
+### Threads Sidebar Position {#agent-threads-sidebar-position}
+
+- Description: Which side of the window displays the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
+- Setting: `agent.threads_sidebar.position`
+- Default: `"left"`
+
+**Options**
+
+`"left"` or `"right"`.
+
+Open the Settings Editor and search for “Threads Sidebar Position”. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads_sidebar": {
+      "position": "right"
+    }
+  }
+}
+```
+
 ### Threads Sidebar Default Width {#agent-threads-sidebar-default-width}
 
 - Description: Default width in pixels of the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
-- Setting: `agent.threads_sidebar_default_width`
+- Setting: `agent.threads_sidebar.default_width`
 - Default: `300`
 
 **Options**
@@ -136,19 +158,21 @@ Open the Settings Editor and search for “Threads Sidebar Default Width”. Or 
 ```json [settings]
 {
   "agent": {
-    "threads_sidebar_default_width": 360
+    "threads_sidebar": {
+      "default_width": 360
+    }
   }
 }
 ```
 
-If you haven't manually resized the sidebar, its width follows changes to this setting immediately. A manually resized width takes precedence until you double-click the divider to reset it. After resetting, the sidebar follows this setting again.
+Changing this setting immediately updates the sidebar width, even if you previously resized it manually. You can also double-click the divider to reset the sidebar to the configured width.
 
 Widths saved by older versions of Zed are preserved if they differ from the previous default of 300 pixels. A saved width of 300 pixels uses this setting instead.
 
 ### Threads Sidebar Auto Open {#agent-threads-sidebar-auto-open}
 
 - Description: Whether opening a folder in an existing window automatically opens the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
-- Setting: `agent.threads_sidebar_auto_open`
+- Setting: `agent.threads_sidebar.auto_open`
 - Default: `true`
 
 **Options**
@@ -162,7 +186,9 @@ Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add 
 ```json [settings]
 {
   "agent": {
-    "threads_sidebar_auto_open": false
+    "threads_sidebar": {
+      "auto_open": false
+    }
   }
 }
 ```
@@ -5247,8 +5273,8 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 ### Terminal: Path Hyperlink Regexes
 
-- Description: Regexes used to identify path hyperlinks. The regexes can be specified in two forms - a single regex string, or an array of strings (which will be collected into a single multi-line regex string).
 - Setting: `path_hyperlink_regexes`
+- Description: Regexes used to identify paths for hyperlink navigation.
 - Default:
 
 ```json [settings]
@@ -5261,30 +5287,48 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
       // surrounding symbols or quotes
       [
         "(?x)",
-        "# optionally starts with 0-2 opening prefix symbols",
-        "[({\\[<]{0,2}",
-        "# which may be followed by an opening quote",
-        "(?<quote>[\"'`])?",
-        "# `path` is the shortest sequence of any non-space character",
-        "(?<link>(?<path>[^ ]+?",
-        "    # which may end with a line and optionally a column,",
-        "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
-        "))",
-        "# which must be followed by a matching quote",
-        "(?(<quote>)\\k<quote>)",
-        "# and optionally a single closing symbol",
-        "[)}\\]>]?",
-        "# if line/column matched, may be followed by a description",
-        "(?(<line_column>):[^ 0-9][^ ]*)?",
-        "# which may be followed by trailing punctuation",
-        "[.,:)}\\]>]*",
-        "# and always includes trailing whitespace or end of line",
-        "([ ]+|$)"
+        "(?<path>",
+        "    (",
+        "        # multi-char path: first char (not opening delimiter, space, or box drawing char)",
+        "        [^({\\[<\"'`\\ \\u2500-\\u257F]",
+        "        # middle chars: non-space, and colon/paren only if not followed by digit/paren/space",
+        "        ([^\\ :(]|[:(][^0-9()\\ ])*",
+        "        # last char: not closing delimiter or colon",
+        "        [^()}\\]>\"'`.,;:\\ ]",
+        "    |",
+        "        # single-char path: not delimiter, punctuation, space, or box drawing char",
+        "        [^(){}\\[\\]<>\"'`.,;:\\ \\u2500-\\u257F]",
+        "    )",
+        "    # optional line/column suffix (included in path for PathWithPosition::parse_str)",
+        "    (:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:]?[0-9]+)?\\))?",
+        ")"
       ]
     ]
   }
 }
 ```
+
+Use `"..."` to add regexes without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list. Set `[]` to clear it. Omitting this setting keeps the inherited list.
+
+```json [settings]
+{
+  "terminal": {
+    "path_hyperlink_regexes": [
+      "\\s+(-->|:::|at) (?<link>(?<path>.+?))(:$|$)",
+      "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<link>(?<path>.+))\\)",
+      "..."
+    ]
+  }
+}
+```
+
+Inherited regexes are inserted at `"..."`, and duplicates keep their first occurrence. Regexes are duplicates when their text is identical after joining multiline entries with newlines.
+
+Each regex can be a single string or an array of strings joined with newlines. The marker is recognized only as a top-level string. To use `...` as a regex matching three characters, write `["..."]` as an entry. A `"..."` line inside a multiline entry is always regex text.
+
+The optional named capture `path` selects the hyperlink target. Without it, the entire match is the target. With `path`, `line` and `column` specify the position. Without a captured `line`, built-in suffix processing parses `line:column` and `(line,column)` variants. The optional `link` capture selects the clickable text, otherwise the entire match is clickable.
+
+Processing stops at the first regex that matches the terminal line, even if the cursor is outside its clickable text. Put more specific regexes before broader ones. Regexes use Rust's `regex` syntax. Invalid regexes are logged and ignored. The `path_hyperlink_timeout_ms` setting controls the discovery timeout. Setting it to `0` disables path hyperlinks.
 
 ### Terminal: Path Hyperlink Timeout (ms)
 

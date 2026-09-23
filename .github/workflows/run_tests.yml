@@ -444,6 +444,8 @@ jobs:
     - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
+    env:
+      RUST_LIB_BACKTRACE: '0'
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

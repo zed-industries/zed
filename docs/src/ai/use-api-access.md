@@ -359,13 +359,15 @@ Zed does not sign in to OpenCode with OAuth or detect your OpenCode subscription
 
 Zed also reads `OPENCODE_API_KEY` from the local Zed process environment.
 
-By default, models from all OpenCode subscription types are shown. You can hide subscriptions that are not relevant to you in the provider UI or in settings:
+Zed fetches the available Zen and Go models and their capabilities from OpenCode. OpenCode Free models are excluded since they are only allowed to be used from within OpenCode.
+
+By default, both Zen and Go models are shown. You can hide Zen or Go models by adding this to your settings file:
 
 ```json [settings]
 {
   "language_models": {
     "opencode": {
-      "show_zen_models": false,
+      "show_zen_models": true,
       "show_go_models": true
     }
   }
@@ -374,7 +376,7 @@ By default, models from all OpenCode subscription types are shown. You can hide 
 
 #### Custom OpenCode Models {#opencode-custom-models}
 
-The Zed Agent comes preconfigured with OpenCode models. Add custom OpenCode models when you need newer models or models with custom endpoints.
+Add a custom OpenCode model to use a custom endpoint or configure a model that discovery does not include. A custom entry overrides a fetched model with the same `name` and `subscription`.
 
 Add custom models in your settings file:
 
