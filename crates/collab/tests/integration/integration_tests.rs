@@ -10,7 +10,7 @@ use collab::rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT};
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{
-    StreamExt as _,
+    FutureExt as _, StreamExt as _,
     channel::{mpsc, oneshot},
 };
 use git::{
@@ -1556,12 +1556,60 @@ async fn test_lsp_log_streams_reconnect_guest_only_close_one_view(
     .await;
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_lsp_log_streams_reconnect_without_views_does_not_exhaust_handlers(
+    executor: BackgroundExecutor,
+    cx_host: &mut TestAppContext,
+    cx_guest: &mut TestAppContext,
+) {
+    assert_lsp_log_streams_reconnect(
+        executor,
+        cx_host,
+        cx_guest,
+        LspLogStreamsReconnectScenario::ManyServersWithoutViews,
+    )
+    .await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_lsp_log_streams_reconnect_enable_during_replay(
+    executor: BackgroundExecutor,
+    cx_host: &mut TestAppContext,
+    cx_guest: &mut TestAppContext,
+) {
+    assert_lsp_log_streams_reconnect(
+        executor,
+        cx_host,
+        cx_guest,
+        LspLogStreamsReconnectScenario::EnableDuringReplay,
+    )
+    .await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_lsp_log_streams_reconnect_disable_during_replay(
+    executor: BackgroundExecutor,
+    cx_host: &mut TestAppContext,
+    cx_guest: &mut TestAppContext,
+) {
+    assert_lsp_log_streams_reconnect(
+        executor,
+        cx_host,
+        cx_guest,
+        LspLogStreamsReconnectScenario::DisableDuringReplay,
+    )
+    .await;
+}
+
 #[derive(Clone, Copy, Debug)]
 enum LspLogStreamsReconnectScenario {
     BothPeers { guest_first: bool },
     SwitchToTraceWhileOffline,
     CloseWhileOffline,
     CloseOneViewWhileOffline,
+    ManyServersWithoutViews,
+    EnableDuringReplay,
+    DisableDuringReplay,
 }
 
 async fn assert_lsp_log_streams_reconnect(
@@ -1597,7 +1645,7 @@ async fn assert_lsp_log_streams_reconnect(
     host.fs()
         .insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
         .await;
-    let (host_project, _) = host.build_local_project(path!("/project"), cx_host).await;
+    let (host_project, worktree_id) = host.build_local_project(path!("/project"), cx_host).await;
     host_logs.update(cx_host, |store, cx| store.add_project(&host_project, cx));
     let _buffer = host_project
         .update(cx_host, |project, cx| {
@@ -1639,7 +1687,31 @@ async fn assert_lsp_log_streams_reconnect(
         },
         server_id,
     );
+    if matches!(
+        scenario,
+        LspLogStreamsReconnectScenario::ManyServersWithoutViews
+    ) {
+        guest_logs.update(cx_guest, |store, cx| {
+            // Reconciliation sends three toggles per registered server, even without views.
+            // One real server plus 85 synthetic registrations exceeds collab's 256-handler budget.
+            for offset in 1..86 {
+                store
+                    .add_language_server(
+                        guest_key.kind.clone(),
+                        LanguageServerId(server_id.0 + offset),
+                        None,
+                        None,
+                        None,
+                        cx,
+                    )
+                    .expect("guest should register the synthetic server");
+            }
+            assert_eq!(store.language_servers.len(), 86);
+        });
+    }
     let initial_log_kinds: &[LogKind] = match scenario {
+        LspLogStreamsReconnectScenario::ManyServersWithoutViews
+        | LspLogStreamsReconnectScenario::EnableDuringReplay => &[],
         LspLogStreamsReconnectScenario::SwitchToTraceWhileOffline => &[LogKind::Logs],
         _ => &[LogKind::Logs, LogKind::Trace, LogKind::Rpc],
     };
@@ -1706,13 +1778,58 @@ async fn assert_lsp_log_streams_reconnect(
         "initial [Logs, Trace, Rpc] forwarding ({scenario:?})"
     );
 
+    let forwarded_toggles = Rc::new(RefCell::new(Vec::new()));
+    let _host_subscription = cx_host.update(|cx| {
+        cx.subscribe(&host_project, {
+            let forwarded_toggles = forwarded_toggles.clone();
+            move |_, event, _| {
+                if let project::Event::ToggleLspLogs {
+                    peer_id,
+                    server_id,
+                    enabled,
+                    toggled_log_kind,
+                } = event
+                {
+                    forwarded_toggles.borrow_mut().push((
+                        *peer_id,
+                        *server_id,
+                        *toggled_log_kind,
+                        *enabled,
+                    ));
+                }
+            }
+        })
+    });
     let rejoined = Rc::new(Cell::new(false));
     let _subscription = cx_guest.update(|cx| {
         cx.subscribe(&guest_project, {
             let rejoined = rejoined.clone();
-            move |_, event, _| {
+            let guest_logs = guest_logs.clone();
+            let guest_key = guest_key.clone();
+            move |_, event, cx| {
                 if matches!(event, project::Event::Rejoined) {
                     rejoined.set(true);
+                    if matches!(
+                        scenario,
+                        LspLogStreamsReconnectScenario::EnableDuringReplay
+                            | LspLogStreamsReconnectScenario::DisableDuringReplay
+                    ) {
+                        // LogStore subscribed first, so replay is queued but cannot drain
+                        // before this synchronous user toggle is queued behind it.
+                        guest_logs.update(cx, |store, cx| {
+                            for kind in [LogKind::Logs, LogKind::Trace, LogKind::Rpc] {
+                                let result = if matches!(
+                                    scenario,
+                                    LspLogStreamsReconnectScenario::EnableDuringReplay
+                                ) {
+                                    store.retain_view_log_stream(&guest_key, kind, cx)
+                                } else {
+                                    store.release_view_log_stream(&guest_key, kind, cx)
+                                };
+                                result.expect("guest should toggle its view during replay");
+                            }
+                        });
+                    }
                 }
             }
         })
@@ -1774,23 +1891,30 @@ async fn assert_lsp_log_streams_reconnect(
         host_project.read_with(cx_host, |project, _| {
             assert!(project.collaborators().contains_key(&old_guest_peer));
         });
-        // These disables cannot reach the online host; rejoin must reconcile
-        // ownership without replacing the project/store or toggling again.
-        guest_logs.update(cx_guest, |store, cx| {
-            for &kind in initial_log_kinds {
-                store
-                    .release_view_log_stream(&guest_key, kind, cx)
-                    .expect("guest should release its view while offline");
-            }
-            if matches!(
-                scenario,
-                LspLogStreamsReconnectScenario::SwitchToTraceWhileOffline
-            ) {
-                store
-                    .retain_view_log_stream(&guest_key, LogKind::Trace, cx)
-                    .expect("guest should switch to Trace while offline");
-            }
-        });
+        if matches!(
+            scenario,
+            LspLogStreamsReconnectScenario::SwitchToTraceWhileOffline
+                | LspLogStreamsReconnectScenario::CloseWhileOffline
+                | LspLogStreamsReconnectScenario::CloseOneViewWhileOffline
+        ) {
+            // These disables cannot reach the online host; rejoin must reconcile
+            // ownership without replacing the project/store or toggling again.
+            guest_logs.update(cx_guest, |store, cx| {
+                for &kind in initial_log_kinds {
+                    store
+                        .release_view_log_stream(&guest_key, kind, cx)
+                        .expect("guest should release its view while offline");
+                }
+                if matches!(
+                    scenario,
+                    LspLogStreamsReconnectScenario::SwitchToTraceWhileOffline
+                ) {
+                    store
+                        .retain_view_log_stream(&guest_key, LogKind::Trace, cx)
+                        .expect("guest should switch to Trace while offline");
+                }
+            });
+        }
         executor.run_until_parked();
         assert!(!guest.status().borrow().is_connected());
         server.allow_connections();
@@ -1822,11 +1946,71 @@ async fn assert_lsp_log_streams_reconnect(
         }
     });
 
+    if matches!(
+        scenario,
+        LspLogStreamsReconnectScenario::ManyServersWithoutViews
+    ) {
+        let open_buffer = guest_project.update(cx_guest, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        });
+        executor.run_until_parked();
+        open_buffer
+            .now_or_never()
+            .expect("a normal guest request must not stall behind unacknowledged log toggles")
+            .expect("guest should open a buffer after reconciliation");
+        let forwarded_toggles = forwarded_toggles.borrow();
+        assert_eq!(forwarded_toggles.len(), 86 * 3);
+        assert!(
+            forwarded_toggles
+                .iter()
+                .all(|(peer_id, _, _, enabled)| { *peer_id == new_guest_peer && !enabled })
+        );
+    }
+    if matches!(
+        scenario,
+        LspLogStreamsReconnectScenario::EnableDuringReplay
+            | LspLogStreamsReconnectScenario::DisableDuringReplay
+    ) {
+        let enabled = matches!(scenario, LspLogStreamsReconnectScenario::EnableDuringReplay);
+        let forwarded_toggles = forwarded_toggles.borrow();
+        assert_eq!(forwarded_toggles.len(), 6);
+        for kind in [LogKind::Logs, LogKind::Trace, LogKind::Rpc] {
+            assert_eq!(
+                forwarded_toggles
+                    .iter()
+                    .copied()
+                    .filter(|(_, _, log_kind, _)| *log_kind == kind)
+                    .collect::<Vec<_>>(),
+                vec![
+                    (new_guest_peer, server_id, kind, !enabled),
+                    (new_guest_peer, server_id, kind, enabled),
+                ],
+                "collab must preserve replay/user toggle order and the authenticated sender ({scenario:?})"
+            );
+        }
+    }
     let remaining_log_kinds: &[LogKind] = match scenario {
         LspLogStreamsReconnectScenario::SwitchToTraceWhileOffline => &[LogKind::Trace],
-        LspLogStreamsReconnectScenario::CloseWhileOffline => &[],
+        LspLogStreamsReconnectScenario::CloseWhileOffline
+        | LspLogStreamsReconnectScenario::ManyServersWithoutViews
+        | LspLogStreamsReconnectScenario::DisableDuringReplay => &[],
+        LspLogStreamsReconnectScenario::EnableDuringReplay => {
+            &[LogKind::Logs, LogKind::Trace, LogKind::Rpc]
+        }
         _ => initial_log_kinds,
     };
+    host_logs.read_with(cx_host, |store, _| {
+        assert_eq!(
+            store
+                .language_servers
+                .get(&host_key)
+                .expect("host server should remain registered")
+                .rpc_state
+                .is_some(),
+            remaining_log_kinds.contains(&LogKind::Rpc),
+            "host RPC capture must reflect the final guest stream ownership ({scenario:?})"
+        );
+    });
     send_marker("after reconnect");
     executor.run_until_parked();
     let received_after_reconnect = guest_received("after reconnect", cx_guest);
