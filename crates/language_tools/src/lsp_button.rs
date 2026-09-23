@@ -346,7 +346,15 @@ impl LanguageServerState {
                 .lsp_store
                 .update(cx, |lsp_store, _| lsp_store.as_remote().is_some())
                 .unwrap_or(false);
-            let has_logs = is_remote || lsp_logs.read(cx).has_server_logs(&server_selector);
+            let has_logs = is_remote
+                || self.workspace.upgrade().is_some_and(|workspace| {
+                    let project = workspace.read(cx).project();
+                    lsp_logs.read(cx).has_server_logs(
+                        &server_selector,
+                        &project.downgrade(),
+                        &self.lsp_store,
+                    )
+                });
 
             let (status_color, status_label) = server_info
                 .binary_status
@@ -967,7 +975,8 @@ impl LspButton {
                     let Some(name) = name.as_ref() else {
                         return;
                     };
-                    if let Some(binary_status) = proto::ServerBinaryStatus::from_i32(*binary_status)
+                    if let Some(binary_status) =
+                        proto::ServerBinaryStatus::try_from(*binary_status).ok()
                     {
                         let binary_status = match binary_status {
                             proto::ServerBinaryStatus::None => BinaryStatus::None,
@@ -996,7 +1005,7 @@ impl LspButton {
                     };
                 }
                 Some(proto::status_update::Status::Health(health_status)) => {
-                    if let Some(health) = proto::ServerHealth::from_i32(*health_status) {
+                    if let Some(health) = proto::ServerHealth::try_from(*health_status).ok() {
                         let health = match health {
                             proto::ServerHealth::Ok => ServerHealth::Ok,
                             proto::ServerHealth::Warning => ServerHealth::Warning,

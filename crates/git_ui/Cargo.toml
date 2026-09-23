@@ -11,6 +11,7 @@ workspace = true
 [lib]
 name = "git_ui"
 path = "src/git_ui.rs"
+doctest = false
 
 [features]
 test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
@@ -43,7 +44,6 @@ markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 notifications.workspace = true
-panel.workspace = true
 picker.workspace = true
 project.workspace = true
 prompt_store.workspace = true

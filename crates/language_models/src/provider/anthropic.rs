@@ -347,6 +347,13 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
     {
         extra_beta_headers.push(anthropic::FAST_MODE_BETA_HEADER.to_string());
     }
+    if anthropic::binds_thinking_blocks_to_prefix(&available.name)
+        && !extra_beta_headers
+            .iter()
+            .any(|header| header.trim() == anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER)
+    {
+        extra_beta_headers.push(anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string());
+    }
 
     anthropic::Model {
         display_name: available
@@ -460,6 +467,7 @@ mod tests {
         let model = direct_anthropic_test_model(&provider);
 
         assert!(model.supports_explicit_compaction());
+        assert_eq!(model.max_total_tokens(), Some(model.max_token_count()));
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
@@ -563,6 +571,7 @@ mod tests {
         store_key.await.unwrap();
         let model = direct_anthropic_test_model(&provider);
         let request = LanguageModelRequest {
+            max_output_tokens: Some(8192),
             messages: vec![LanguageModelRequestMessage {
                 role: language_model::Role::User,
                 content: vec![MessageContent::Text("Retain this context.".to_string())],
@@ -607,6 +616,7 @@ mod tests {
                 .is_some_and(|header| header.contains(anthropic::COMPACTION_BETA_HEADER))
         );
         let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
+        assert_eq!(body["max_tokens"], 8192);
         assert_eq!(
             body["context_management"],
             json!({
@@ -762,9 +772,8 @@ impl LanguageModel for AnthropicModel {
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto
-            | LanguageModelToolChoice::Any
-            | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Any => anthropic::supports_forced_tool_use(&self.model.id),
         }
     }
 
@@ -790,6 +799,10 @@ impl LanguageModel for AnthropicModel {
 
     fn supports_explicit_compaction(&self) -> bool {
         self.model.supports_compaction
+    }
+
+    fn supports_explicit_compaction_output_limit(&self) -> bool {
+        self.supports_explicit_compaction()
     }
 
     fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
@@ -827,9 +840,11 @@ impl LanguageModel for AnthropicModel {
             request.speed = None;
         }
         let request = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.run(async move {
             let response = request.await?;
             let stream = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response);
+            let stream = language_model::stream_in_background(stream.boxed(), executor);
             let (context, usage) = collect_compaction_result(stream.boxed(), PROVIDER_NAME).await?;
             Ok(CompactionResult { context, usage })
         });
@@ -877,6 +892,51 @@ impl LanguageModel for AnthropicModel {
         Some(self.model.max_output_tokens)
     }
 
+    fn count_input_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        let request_id = self.model.request_id(!request.tools.is_empty()).to_string();
+        let request = into_anthropic(
+            request,
+            request_id,
+            self.model.default_temperature,
+            self.model.max_output_tokens,
+            self.model.mode.clone(),
+            AnthropicPromptCacheMode::Automatic,
+            &PROVIDER_ID,
+        );
+        let http_client = self.http_client.clone();
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = AnthropicLanguageModelProvider::api_url(cx);
+            let extra_headers = AnthropicLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+        let beta_headers = self.model.beta_headers();
+        self.request_limiter
+            .run(async move {
+                let request = request?.into_count_tokens_request();
+                let api_key = api_key.ok_or(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                })?;
+                anthropic::count_input_tokens(
+                    http_client.as_ref(),
+                    &api_url,
+                    &api_key,
+                    request,
+                    beta_headers,
+                    &extra_headers,
+                )
+                .await
+                .map(Some)
+                .map_err(Into::into)
+            })
+            .boxed()
+    }
+
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -906,9 +966,14 @@ impl LanguageModel for AnthropicModel {
             request.speed = None;
         }
         let request = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            Ok(AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response))
+            let events = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response);
+            Ok(language_model::stream_in_background(
+                events.boxed(),
+                executor,
+            ))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }

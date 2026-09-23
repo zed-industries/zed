@@ -1,11 +1,11 @@
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, SharedString, TaskExt,
+    SharedString,
     http_client::{self, HttpClient},
 };
 use language::language_settings::OpenAiCompatibleEditPredictionSettings;
-use language_model::{LanguageModelProviderId, LanguageModelRegistry};
+use ollama::get_models;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -35,32 +35,23 @@ pub(crate) struct OllamaGenerateResponse {
     pub response: String,
 }
 
-const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollama");
-
-pub fn is_available(cx: &App) -> bool {
-    LanguageModelRegistry::read_global(cx)
-        .provider(&PROVIDER_ID)
-        .is_some_and(|provider| provider.is_authenticated(cx))
-}
-
-pub fn ensure_authenticated(cx: &mut App) {
-    if let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&PROVIDER_ID) {
-        provider.authenticate(cx).detach_and_log_err(cx);
-    }
-}
-
-pub fn fetch_models(cx: &mut App) -> Vec<SharedString> {
-    let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&PROVIDER_ID) else {
-        return Vec::new();
-    };
-    provider.authenticate(cx).detach_and_log_err(cx);
-    let mut models: Vec<SharedString> = provider
-        .provided_models(cx)
-        .into_iter()
-        .map(|model| model.id().0)
-        .collect();
+/// Fetches models from the Ollama server at `api_url` directly, independent
+/// of the Assistant's Ollama language model provider. Only returns models
+/// with a known completion prompt format, since edit predictions need
+/// FIM-style models rather than chat models.
+pub async fn fetch_models_from_server(
+    http_client: Arc<dyn HttpClient>,
+    api_url: &str,
+) -> Result<Vec<SharedString>> {
+    let mut models: Vec<SharedString> =
+        get_models(http_client.as_ref(), api_url, None, &Default::default())
+            .await?
+            .into_iter()
+            .filter(|model| crate::fim::infer_prompt_format(&model.name).is_some())
+            .map(|model| SharedString::new(model.name))
+            .collect();
     models.sort();
-    models
+    Ok(models)
 }
 
 pub(crate) async fn make_request(
@@ -105,4 +96,38 @@ pub(crate) async fn make_request(
     let ollama_response: OllamaGenerateResponse =
         serde_json::from_str(&body).context("Failed to parse Ollama response")?;
     Ok(ollama_response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, http_client::FakeHttpClient};
+
+    #[gpui::test]
+    async fn fetch_models_from_server_filters_to_fim_capable_models(_cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder().status(200).body(
+                http_client::AsyncBody::from(
+                    r#"{"models":[
+                        {"name":"qwen2.5-coder:3b","modified_at":"","size":0,"digest":"","details":{"format":"gguf","family":"qwen2","families":null,"parameter_size":"3B","quantization_level":"Q4_0"}},
+                        {"name":"llama3:70b","modified_at":"","size":0,"digest":"","details":{"format":"gguf","family":"llama","families":null,"parameter_size":"70B","quantization_level":"Q4_0"}},
+                        {"name":"nomic-embed-text","modified_at":"","size":0,"digest":"","details":{"format":"gguf","family":"nomic-bert","families":null,"parameter_size":"137M","quantization_level":"F16"}},
+                        {"name":"codestral:latest","modified_at":"","size":0,"digest":"","details":{"format":"gguf","family":"mistral","families":null,"parameter_size":"22B","quantization_level":"Q4_0"}}
+                    ]}"#,
+                ),
+            )?)
+        });
+
+        let models = fetch_models_from_server(http_client, "http://localhost:11434")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            models,
+            vec![
+                SharedString::from("codestral:latest"),
+                SharedString::from("qwen2.5-coder:3b"),
+            ]
+        );
+    }
 }
