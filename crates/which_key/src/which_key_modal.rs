@@ -61,7 +61,6 @@ impl WhichKeyModal {
 
     fn update_pending_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pending_keys) = window.pending_input_keystrokes() else {
-            self.scroll_handle.set_offset(Default::default());
             cx.emit(DismissEvent);
             return;
         };
