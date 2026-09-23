@@ -2771,8 +2771,16 @@ impl ConversationView {
                 return self.render_unsupported(path, current_version, minimum_version, window, cx);
             }
             LoadError::FailedToInstall(msg) => ("Failed to Install", msg.to_string()),
-            LoadError::Exited { status, stderr } => {
+            LoadError::Exited {
+                status,
+                stderr,
+                command,
+            } => {
                 let mut message = format!("Server exited with status {status}");
+                if let Some(command) = command {
+                    message.push_str("\nCommand: ");
+                    message.push_str(command);
+                }
                 if let Some(stderr) = stderr {
                     message.push_str("\n");
                     message.push_str(stderr);

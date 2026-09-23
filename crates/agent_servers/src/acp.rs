@@ -57,6 +57,7 @@ async fn exited_load_error_after_drain(
     status: ExitStatus,
     drained: impl Future<Output = ()>,
     debug_log: &AcpDebugLog,
+    command: Option<SharedString>,
     cx: &AsyncApp,
 ) -> LoadError {
     // Descendants can keep stdout or stderr open after the direct child exits.
@@ -69,7 +70,20 @@ async fn exited_load_error_after_drain(
     LoadError::Exited {
         status,
         stderr: debug_log.trailing_stderr().map(SharedString::from),
+        command,
     }
+}
+
+fn command_description(command: &AgentServerCommand) -> SharedString {
+    let mut description = command.path.to_string_lossy().into_owned();
+    if let Some(entrypoint) = command.args.first().filter(|argument| {
+        std::path::Path::new(argument).is_absolute() || argument.contains("node_modules")
+    }) {
+        description.push_str(" (entrypoint: ");
+        description.push_str(entrypoint);
+        description.push(')');
+    }
+    description.into()
 }
 
 #[derive(Debug, Error)]
@@ -656,6 +670,7 @@ impl AcpConnection {
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let original_command = command.clone();
+        let command_display = command_description(&original_command);
         let transport::StdioProcess {
             mut child,
             incoming,
@@ -714,11 +729,15 @@ impl AcpConnection {
         {
             futures::future::Either::Left((connection, status_fut)) => (connection?, status_fut),
             futures::future::Either::Right((status, _connection_rx)) => {
-                return Err(
-                    exited_load_error_after_drain(status?, stderr_task, &debug_log, cx)
-                        .await
-                        .into(),
-                );
+                return Err(exited_load_error_after_drain(
+                    status?,
+                    stderr_task,
+                    &debug_log,
+                    Some(command_display.clone()),
+                    cx,
+                )
+                .await
+                .into());
             }
         };
 
@@ -785,7 +804,11 @@ impl AcpConnection {
                         futures::future::select(status_fut, timer).await
                     {
                         return Err(exited_load_error_after_drain(
-                            status?, drained, &debug_log, cx,
+                            status?,
+                            drained,
+                            &debug_log,
+                            Some(command_display.clone()),
+                            cx,
                         )
                         .await
                         .into());
@@ -794,11 +817,15 @@ impl AcpConnection {
                     return Err(error.into());
                 }
                 futures::future::Either::Right((status, _initialize_response)) => {
-                    return Err(
-                        exited_load_error_after_drain(status?, drained, &debug_log, cx)
-                            .await
-                            .into(),
-                    );
+                    return Err(exited_load_error_after_drain(
+                        status?,
+                        drained,
+                        &debug_log,
+                        Some(command_display.clone()),
+                        cx,
+                    )
+                    .await
+                    .into());
                 }
             };
 
@@ -809,10 +836,17 @@ impl AcpConnection {
         let wait_task = cx.spawn({
             let sessions = sessions.clone();
             let debug_log = debug_log.clone();
+            let command_display = command_display.clone();
             async move |cx| {
                 let status = status_fut.await?;
-                let load_error =
-                    exited_load_error_after_drain(status, drained, &debug_log, cx).await;
+                let load_error = exited_load_error_after_drain(
+                    status,
+                    drained,
+                    &debug_log,
+                    Some(command_display),
+                    cx,
+                )
+                .await;
                 emit_load_error_to_all_sessions(&sessions, load_error, cx);
                 anyhow::Ok(())
             }
@@ -1949,6 +1983,7 @@ pub mod test_support {
                             LoadError::Exited {
                                 status,
                                 stderr: None,
+                                command: None,
                             },
                             cx,
                         );
@@ -2446,8 +2481,23 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
     use feature_flags::{AcpBetaFeatureFlag, FeatureFlag as _};
     use settings::Settings as _;
+
+    #[test]
+    fn command_description_identifies_registry_entrypoint() {
+        let command = AgentServerCommand {
+            path: "/usr/local/bin/node".into(),
+            args: vec!["/tmp/node_modules/codex-acp/dist/index.js".into()],
+            env: None,
+        };
+
+        assert_eq!(
+            command_description(&command).as_ref(),
+            "/usr/local/bin/node (entrypoint: /tmp/node_modules/codex-acp/dist/index.js)"
+        );
+    }
 
     fn init_feature_flags_test(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
@@ -3540,8 +3590,13 @@ mod tests {
             .downcast::<LoadError>()
             .expect("startup failure should preserve the typed load error");
         match load_error {
-            LoadError::Exited { status, stderr } => {
+            LoadError::Exited {
+                status,
+                stderr,
+                command,
+            } => {
                 assert!(!status.success(), "expected non-zero exit status");
+                assert_eq!(command.as_deref(), Some("/bin/sh"));
                 assert_eq!(
                     stderr.as_deref(),
                     Some(

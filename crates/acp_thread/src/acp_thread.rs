@@ -2418,6 +2418,7 @@ pub enum LoadError {
     Exited {
         status: ExitStatus,
         stderr: Option<SharedString>,
+        command: Option<SharedString>,
     },
     Other(SharedString),
 }

@@ -126,6 +126,10 @@ pub trait ExternalAgentServer {
         None
     }
 
+    fn installed_version(&self, _cx: &mut AsyncApp) -> Task<Result<Option<Version>>> {
+        Task::ready(Ok(None))
+    }
+
     fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
         None
     }
@@ -591,6 +595,30 @@ impl AgentServerStore {
             .map(|entry| entry.server.as_mut())
     }
 
+    pub fn registry_agent_installed_version(
+        &self,
+        name: &AgentId,
+        cx: &mut AsyncApp,
+    ) -> Option<Task<Result<Option<Version>>>> {
+        let entry = self.external_agents.get(name)?;
+        if entry.source != ExternalAgentSource::Registry {
+            return None;
+        }
+        Some(entry.server.installed_version(cx))
+    }
+
+    pub fn install_registry_agent(
+        &mut self,
+        name: &AgentId,
+        cx: &mut AsyncApp,
+    ) -> Option<Task<Result<AgentServerCommand>>> {
+        let entry = self.external_agents.get_mut(name)?;
+        if entry.source != ExternalAgentSource::Registry {
+            return None;
+        }
+        Some(entry.server.get_command(Vec::new(), HashMap::default(), cx))
+    }
+
     pub fn no_browser(&self) -> bool {
         match &self.state {
             AgentServerStoreState::Local {
@@ -1052,6 +1080,46 @@ fn versioned_archive_cache_dir(
 // so we only ever remove directories that we created ourselves.
 const VERSIONED_ARCHIVE_CACHE_DIR_PREFIX: &str = "v_";
 
+async fn installed_archive_version(fs: Arc<dyn Fs>, base_dir: &Path) -> Result<Option<Version>> {
+    if !fs.is_dir(base_dir).await {
+        return Ok(None);
+    }
+
+    let mut entries = fs.read_dir(base_dir).await?;
+    let mut installed_version = None;
+    while let Some(entry) = entries.next().await {
+        let entry = entry?;
+        let Some(entry_name) = entry.file_name() else {
+            continue;
+        };
+        let Some(version_and_hashes) = entry_name
+            .to_string_lossy()
+            .strip_prefix(VERSIONED_ARCHIVE_CACHE_DIR_PREFIX)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Some((version, _)) = version_and_hashes.split_once('_') else {
+            continue;
+        };
+        let Ok(version) = Version::parse(version) else {
+            continue;
+        };
+        if fs
+            .metadata(&entry)
+            .await?
+            .is_some_and(|metadata| metadata.is_dir)
+            && installed_version
+                .as_ref()
+                .is_none_or(|installed: &Version| version.cmp(installed).is_gt())
+        {
+            installed_version = Some(version);
+        }
+    }
+
+    Ok(installed_version)
+}
+
 async fn remove_stale_versioned_archive_cache_dirs(
     fs: Arc<dyn Fs>,
     base_dir: &Path,
@@ -1132,6 +1200,13 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         Some(&self.version)
     }
 
+    fn installed_version(&self, cx: &mut AsyncApp) -> Task<Result<Option<Version>>> {
+        let fs = self.fs.clone();
+        let installation_dir = self.installation_dir.clone();
+
+        cx.background_spawn(async move { installed_archive_version(fs, &installation_dir).await })
+    }
+
     fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
         self.new_version_available_tx.take()
     }
@@ -1162,7 +1237,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
         let version = self.version.clone();
-        let loading_status_tx = self.loading_status_tx.take();
+        let loading_status_tx = self.loading_status_tx.clone();
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1353,6 +1428,30 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         Some(&self.version)
     }
 
+    fn installed_version(&self, cx: &mut AsyncApp) -> Task<Result<Option<Version>>> {
+        let fs = self.fs.clone();
+        let registry_id = self.registry_id.clone();
+        let package = self.package.clone();
+
+        cx.background_spawn(async move {
+            let install_dir = paths::external_agents_dir()
+                .join("registry")
+                .join("npx")
+                .join(sanitize_path_component(&registry_id));
+            let (package_name, _) = bounded_npm_package_spec(&package);
+            let package_json = install_dir
+                .join("node_modules")
+                .join(package_name)
+                .join("package.json");
+            if !fs.is_file(&package_json).await {
+                return Ok(None);
+            }
+
+            let contents = fs.load(&package_json).await?;
+            Ok(Some(parse_npm_package_version(&contents)?))
+        })
+    }
+
     fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
         self.new_version_available_tx.take()
     }
@@ -1460,6 +1559,15 @@ fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
 
 fn npm_install_args(package_spec: &str) -> [&str; 3] {
     [package_spec, "--save-exact", "--prefer-online"]
+}
+
+fn parse_npm_package_version(contents: &str) -> Result<Version> {
+    #[derive(Deserialize)]
+    struct PackageJson {
+        version: Version,
+    }
+
+    Ok(serde_json::from_str::<PackageJson>(contents)?.version)
 }
 
 struct LocalCustomAgent {
@@ -1863,6 +1971,15 @@ mod tests {
                 "--prefer-online"
             ]
         );
+    }
+
+    #[test]
+    fn parses_installed_npm_package_version() {
+        assert_eq!(
+            parse_npm_package_version(r#"{"version":"1.2.3"}"#).unwrap(),
+            Version::new(1, 2, 3)
+        );
+        assert!(parse_npm_package_version(r#"{}"#).is_err());
     }
 
     #[test]
