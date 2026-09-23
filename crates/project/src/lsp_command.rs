@@ -3888,11 +3888,10 @@ impl LspCommand for OnTypeFormatting {
 impl InlayHints {
     pub fn lsp_to_project_hint(
         lsp_hint: lsp::InlayHint,
-        buffer_handle: &Entity<Buffer>,
+        snapshot: &BufferSnapshot,
         server_id: LanguageServerId,
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
-        cx: &AsyncApp,
     ) -> InlayHint {
         let kind = lsp_hint.kind.and_then(|kind| match kind {
             lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
@@ -3900,14 +3899,12 @@ impl InlayHints {
             _ => None,
         });
 
-        let position = buffer_handle.read_with(cx, |buffer, _| {
-            let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
-            if kind == Some(InlayHintKind::Parameter) {
-                buffer.anchor_before(position)
-            } else {
-                buffer.anchor_after(position)
-            }
-        });
+        let position = snapshot.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
+        let position = if kind == Some(InlayHintKind::Parameter) {
+            snapshot.anchor_before(position)
+        } else {
+            snapshot.anchor_after(position)
+        };
 
         let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id);
         let padding_left = if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
@@ -4349,11 +4346,12 @@ impl LspCommand for InlayHints {
             )
         });
 
-        let max_point = buffer.read_with(&cx, |buffer, _| buffer.max_point_utf16());
+        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+        let last_row = snapshot.max_point().row;
         let hints = message
             .unwrap_or_default()
             .into_iter()
-            .filter(|lsp_hint| point_from_lsp(lsp_hint.position).0.row <= max_point.row)
+            .filter(|lsp_hint| lsp_hint.position.line <= last_row)
             .map(|lsp_hint| {
                 let resolve_state = if can_resolve {
                     ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
@@ -4363,15 +4361,15 @@ impl LspCommand for InlayHints {
 
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
-                    &buffer,
+                    &snapshot,
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
-                    &cx,
                 )
-            });
+            })
+            .collect();
 
-        Ok(hints.collect())
+        Ok(hints)
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {

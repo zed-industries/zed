@@ -5317,7 +5317,7 @@ let c = 3;"#
     }
 
     #[gpui::test]
-    async fn test_inlay_hint_overflow(cx: &mut TestAppContext) {
+    async fn test_inlay_hints_at_buffer_bounds(cx: &mut TestAppContext) {
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
@@ -5341,24 +5341,30 @@ let c = 3;"#
             });
         });
 
-        cx.set_state("fooˇ");
+        cx.set_state("ˇfoo\nbar");
 
         cx.lsp
-            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |_, _| async move {
-                Ok(Some(vec![lsp::InlayHint {
-                    position: lsp::Position::new(1090, 1090),
-                    label: lsp::InlayHintLabel::String("out-of-bounds hint".to_string()),
-                    kind: Some(lsp::InlayHintKind::PARAMETER),
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(|_, _| async move {
+                let hint = |line, character, kind, label: &str| lsp::InlayHint {
+                    position: lsp::Position::new(line, character),
+                    label: lsp::InlayHintLabel::String(label.to_string()),
+                    kind: Some(kind),
                     text_edits: None,
                     tooltip: None,
                     padding_left: None,
                     padding_right: None,
                     data: None,
-                }]))
+                };
+                Ok(Some(vec![
+                    hint(1090, 1090, lsp::InlayHintKind::PARAMETER, "row_overflow"),
+                    hint(1090, 0, lsp::InlayHintKind::TYPE, "row_overflow"),
+                    hint(0, 1090, lsp::InlayHintKind::PARAMETER, "clipped_column"),
+                    hint(1, 3, lsp::InlayHintKind::TYPE, "buffer_end"),
+                ]))
             });
         cx.background_executor.run_until_parked();
 
-        cx.assert_display_state("fooˇ");
+        cx.assert_display_state("ˇfooclipped_column\nbarbuffer_end");
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext, f: &dyn Fn(&mut AllLanguageSettingsContent)) {
