@@ -3892,7 +3892,7 @@ impl InlayHints {
         server_id: LanguageServerId,
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
-        cx: &mut AsyncApp,
+        cx: &AsyncApp,
     ) -> InlayHint {
         let kind = lsp_hint.kind.and_then(|kind| match kind {
             lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
@@ -4361,18 +4361,17 @@ impl LspCommand for InlayHints {
                     ResolveState::Resolved
                 };
 
-                let buffer = buffer.clone();
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
                     &buffer,
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
-                    &mut cx,
+                    &cx,
                 )
             });
 
-        Ok(hints.into_iter().collect())
+        Ok(hints.collect())
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {
