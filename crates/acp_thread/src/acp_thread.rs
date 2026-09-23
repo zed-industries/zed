@@ -2265,6 +2265,9 @@ pub struct AcpThread {
     title: Option<SharedString>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
+    // Notices stay with the live session, but never enter conversation history or exports.
+    notices: Vec<(usize, acp::Notice)>,
+    next_notice_id: usize,
     elicitations: ElicitationStore,
     plan: Plan,
     project: Entity<Project>,
@@ -2338,6 +2341,7 @@ pub enum AcpThreadEvent {
     PromptUpdated,
     NewEntry,
     TitleUpdated,
+    NoticesUpdated,
     TokenUsageUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
@@ -2478,6 +2482,7 @@ impl AcpThread {
                 AcpThreadEvent::PromptUpdated
                 | AcpThreadEvent::NewEntry
                 | AcpThreadEvent::TitleUpdated
+                | AcpThreadEvent::NoticesUpdated
                 | AcpThreadEvent::TokenUsageUpdated
                 | AcpThreadEvent::EntryUpdated(_)
                 | AcpThreadEvent::Retry(_)
@@ -2516,6 +2521,8 @@ impl AcpThread {
             update_last_checkpoint_if_changed_task: None,
             shared_buffers: Default::default(),
             entries: Default::default(),
+            notices: Vec::new(),
+            next_notice_id: 0,
             elicitations: ElicitationStore::default(),
             plan: Default::default(),
             title,
@@ -2606,6 +2613,19 @@ impl AcpThread {
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
+    }
+
+    pub fn notices(&self) -> &[(usize, acp::Notice)] {
+        &self.notices
+    }
+
+    pub fn dismiss_notice(&mut self, notice_id: usize, cx: &mut Context<Self>) {
+        let previous_count = self.notices.len();
+        self.notices.retain(|(id, _)| *id != notice_id);
+        if self.notices.len() != previous_count {
+            cx.emit(AcpThreadEvent::NoticesUpdated);
+            cx.notify();
+        }
     }
 
     pub fn is_compacting(&self) -> bool {
@@ -2829,6 +2849,13 @@ impl AcpThread {
             }
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
+            }
+            acp::SessionUpdate::Notice(notice) => {
+                let notice_id = self.next_notice_id;
+                self.next_notice_id += 1;
+                self.notices.push((notice_id, notice));
+                cx.emit(AcpThreadEvent::NoticesUpdated);
+                cx.notify();
             }
             acp::SessionUpdate::SessionInfoUpdate(info_update) => {
                 if let MaybeUndefined::Value(title) = info_update.title {
@@ -11500,6 +11527,167 @@ mod tests {
             connection.set_title_calls.borrow().is_empty(),
             "session info title update should not propagate back to the connection"
         );
+    }
+
+    #[gpui::test]
+    async fn test_session_notices_are_live_and_independently_dismissible(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+
+        let notice_events = Rc::new(RefCell::new(0));
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe_self({
+                let notice_events = notice_events.clone();
+                move |_, event, _| {
+                    assert!(matches!(event, AcpThreadEvent::NoticesUpdated));
+                    *notice_events.borrow_mut() += 1;
+                }
+            })
+        });
+
+        let warning = acp::Notice::new(acp::NoticeSeverity::Warning, "MCP server unavailable")
+            .description("Continuing without it.");
+        let notices = vec![
+            acp::Notice::new(acp::NoticeSeverity::Info, "Using default configuration"),
+            warning.clone(),
+            warning.clone(),
+            acp::Notice::new(acp::NoticeSeverity::Error, "Optional integration failed"),
+            acp::Notice::new(
+                acp::NoticeSeverity::Other("critical".into()),
+                "Future severity",
+            ),
+            acp::Notice::new(
+                acp::NoticeSeverity::Other("_custom".into()),
+                "**Plain text**, not Markdown",
+            )
+            .meta(acp::Meta::from_iter([("source".into(), "test".into())])),
+        ];
+
+        thread.update(cx, |thread, cx| {
+            for notice in &notices {
+                thread
+                    .handle_session_update(acp::SessionUpdate::Notice(notice.clone()), cx)
+                    .expect("notice should be accepted");
+            }
+            assert_eq!(
+                thread.notices(),
+                notices.iter().cloned().enumerate().collect::<Vec<_>>()
+            );
+            assert!(thread.entries().is_empty());
+            assert!(thread.to_markdown(cx).is_empty());
+            assert!(thread.is_draft_thread());
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+            assert!(!thread.had_error());
+            assert!(!thread.is_waiting_for_confirmation());
+            assert!(thread.title().is_none());
+        });
+        assert_eq!(*notice_events.borrow(), notices.len());
+
+        thread.update(cx, |thread, cx| thread.dismiss_notice(1, cx));
+        assert_eq!(*notice_events.borrow(), notices.len() + 1);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.notices(),
+                notices
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .filter(|(id, _)| *id != 1)
+                    .collect::<Vec<_>>()
+            );
+        });
+
+        thread.update(cx, |thread, cx| thread.dismiss_notice(1, cx));
+        assert_eq!(*notice_events.borrow(), notices.len() + 1);
+
+        thread.update(cx, |thread, cx| {
+            for notice_id in 0..notices.len() {
+                thread.dismiss_notice(notice_id, cx);
+            }
+            assert!(thread.notices().is_empty());
+            thread
+                .handle_session_update(acp::SessionUpdate::Notice(warning.clone()), cx)
+                .expect("a repeated notice is a new live event");
+            thread.dismiss_notice(1, cx);
+            assert_eq!(thread.notices(), &[(notices.len(), warning)]);
+            assert!(thread.entries().is_empty());
+            assert!(thread.to_markdown(cx).is_empty());
+        });
+        assert_eq!(*notice_events.borrow(), notices.len() * 2 + 1);
+    }
+
+    #[gpui::test]
+    async fn test_session_notice_error_does_not_interrupt_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |_, thread, mut cx| {
+                async move {
+                    thread.update(&mut cx, |thread, cx| {
+                        assert_eq!(thread.status(), ThreadStatus::Generating);
+                        let history_before_notice = thread.to_markdown(cx);
+                        let entry_count = thread.entries().len();
+                        thread.handle_session_update(
+                            acp::SessionUpdate::Notice(
+                                acp::Notice::new(
+                                    acp::NoticeSeverity::Error,
+                                    "Optional integration failed",
+                                )
+                                .description("Work will continue without the integration."),
+                            ),
+                            cx,
+                        )?;
+                        assert_eq!(thread.status(), ThreadStatus::Generating);
+                        assert!(!thread.had_error());
+                        assert_eq!(thread.entries().len(), entry_count);
+                        assert_eq!(thread.to_markdown(cx), history_before_notice);
+                        thread.handle_session_update(
+                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                                "The response continues.".into(),
+                            )),
+                            cx,
+                        )
+                    })??;
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            },
+        ));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("hello", cx))
+            .await
+            .expect("advisory errors must not fail prompts");
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+            assert!(!thread.had_error());
+            assert_eq!(thread.notices().len(), 1);
+            assert_eq!(thread.entries().len(), 2);
+            assert!(thread.to_markdown(cx).contains("The response continues."));
+            assert!(
+                !thread
+                    .to_markdown(cx)
+                    .contains("Optional integration failed")
+            );
+        });
     }
 
     #[gpui::test]
