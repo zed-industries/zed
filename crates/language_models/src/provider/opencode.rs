@@ -307,24 +307,12 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiOpenCode)
     }
 
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.provided_models(cx)
-            .into_iter()
-            .min_by_key(|model| match model.id().0.as_ref() {
-                "go/kimi-k3" => 0,
-                "zen/kimi-k3" => 1,
-                _ => 2,
-            })
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        None
     }
 
-    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.provided_models(cx)
-            .into_iter()
-            .min_by_key(|model| match model.id().0.as_ref() {
-                "go/gpt-5.6-luna" => 0,
-                "zen/gpt-5.6-luna" => 1,
-                _ => 2,
-            })
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        None
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -1453,64 +1441,6 @@ mod tests {
         });
 
         store_task.await.unwrap();
-    }
-
-    #[gpui::test]
-    fn test_defaults_select_only_available_models(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            let provider = OpenCodeLanguageModelProvider::new(
-                FakeHttpClient::with_404_response(),
-                Arc::new(TestCredentialsProvider),
-                cx,
-            );
-            assert!(provider.default_model(cx).is_none());
-            assert!(provider.default_fast_model(cx).is_none());
-
-            for (subscription, names, expected_default, expected_fast) in [
-                (
-                    OpenCodeSubscription::Zen,
-                    vec!["other-model"],
-                    "zen/other-model",
-                    "zen/other-model",
-                ),
-                (
-                    OpenCodeSubscription::Zen,
-                    vec!["other-model", "kimi-k3", "gpt-5.6-luna"],
-                    "zen/kimi-k3",
-                    "zen/gpt-5.6-luna",
-                ),
-                (
-                    OpenCodeSubscription::Go,
-                    vec!["other-model", "kimi-k3", "gpt-5.6-luna"],
-                    "go/kimi-k3",
-                    "go/gpt-5.6-luna",
-                ),
-            ] {
-                provider.state.update(cx, |state, _cx| {
-                    state.discovered_models.insert(
-                        subscription,
-                        names
-                            .into_iter()
-                            .map(|name| DiscoveredModel {
-                                model: test_model(name, ApiProtocol::OpenAiChat),
-                                supports_images: false,
-                                supports_thinking: false,
-                            })
-                            .collect(),
-                    );
-                });
-                assert_eq!(
-                    provider.default_model(cx).map(|model| model.id()),
-                    Some(LanguageModelId::from(expected_default.to_string())),
-                );
-                assert_eq!(
-                    provider.default_fast_model(cx).map(|model| model.id()),
-                    Some(LanguageModelId::from(expected_fast.to_string())),
-                );
-            }
-        });
     }
 
     #[test]
