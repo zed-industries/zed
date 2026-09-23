@@ -51,6 +51,14 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                   | Anthropic | Output              | $5.00                        | $5.50                   |
 |                   | Anthropic | Input - Cache Write | $1.25                        | $1.375                  |
 |                   | Anthropic | Input - Cache Read  | $0.10                        | $0.11                   |
+| GPT-6 Sol         | OpenAI    | Input               | $2.00                        | $2.20                   |
+|                   | OpenAI    | Output              | $10.00                       | $11.00                  |
+|                   | OpenAI    | Input - Cache Write | $2.50                        | $2.75                   |
+|                   | OpenAI    | Cached Input        | $0.20                        | $0.22                   |
+| GPT-6 Luna        | OpenAI    | Input               | $0.10                        | $0.11                   |
+|                   | OpenAI    | Output              | $0.50                        | $0.55                   |
+|                   | OpenAI    | Input - Cache Write | $0.125                       | $0.1375                 |
+|                   | OpenAI    | Cached Input        | $0.01                        | $0.011                  |
 | GPT-5.6 Sol       | OpenAI    | Input               | $5.00                        | $5.50                   |
 |                   | OpenAI    | Output              | $30.00                       | $33.00                  |
 |                   | OpenAI    | Input - Cache Write | $6.25                        | $6.875                  |
@@ -136,6 +144,8 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Claude Sonnet 4.5 | Anthropic | 200k                      |
 | Claude Sonnet 4.6 | Anthropic | 1M                        |
 | Claude Haiku 4.5  | Anthropic | 200k                      |
+| GPT-6 Sol         | OpenAI    | 272k input / 400k total   |
+| GPT-6 Luna        | OpenAI    | 272k input / 400k total   |
 | GPT-5.6 Sol       | OpenAI    | 272k input / 400k total   |
 | GPT-5.6 Terra     | OpenAI    | 272k input / 400k total   |
 | GPT-5.6 Luna      | OpenAI    | 272k input / 400k total   |
