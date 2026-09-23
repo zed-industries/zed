@@ -1520,6 +1520,50 @@ mod tests {
         Ok(())
     }
 
+    /// cosmic-text sums word widths to get a line's width but accumulates glyph
+    /// advances to position glyphs, so a trailing zero-advance glyph (here a
+    /// zero-width space) can land a few ulps past the width. When that glyph is a
+    /// wrap boundary, the row before it extends past the line's width, and hit
+    /// testing in that sliver used to panic (ZED-BW8, ZED-75K, ZED-81Z).
+    #[test]
+    fn index_for_position_past_line_width() -> Result<()> {
+        let text_system = Arc::new(gpui::TextSystem::new(Arc::new(text_system()?)));
+        let window_text_system = gpui::WindowTextSystem::new(text_system);
+        let text: SharedString = "Warning: this will delete files\u{200b}".into();
+        let runs = [gpui::TextRun {
+            len: text.len(),
+            font: gpui::font("IBM Plex Sans"),
+            ..Default::default()
+        }];
+        let lines =
+            window_text_system.shape_text(text, gpui::px(14.), &runs, Some(gpui::px(4.)), None)?;
+        let line = &lines[0];
+        let width = line.unwrapped_layout.width;
+        let boundary_glyph = |row: usize| {
+            let boundary = line.wrap_boundaries()[row];
+            &line.runs()[boundary.run_ix].glyphs[boundary.glyph_ix]
+        };
+        let row = (1..line.wrap_boundaries().len())
+            .find(|row| boundary_glyph(*row).position.x > width)
+            .expect("trailing zero-width space should be a wrap boundary past the line width");
+        let row_start_x = f32::from(boundary_glyph(row - 1).position.x);
+        let row_end = boundary_glyph(row);
+
+        let mut x = f32::from(width) - row_start_x;
+        while x + row_start_x < f32::from(width) {
+            x = x.next_up();
+        }
+        assert!(gpui::px(x + row_start_x) < row_end.position.x);
+
+        let line_height = gpui::px(20.);
+        let position = gpui::point(gpui::px(x), line_height * row as f32 + gpui::px(1.));
+        assert_eq!(
+            line.index_for_position(position, line_height),
+            Err(row_end.index)
+        );
+        Ok(())
+    }
+
     #[test]
     fn paragraph_separator_detection() {
         for separator in SEPARATORS {
