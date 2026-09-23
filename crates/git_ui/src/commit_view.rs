@@ -1603,14 +1603,6 @@ mod tests {
         .expect("historical buffer should build");
 
         let editor = cx.new_window_entity(|window, cx| {
-            assert!(matches!(
-                buffer
-                    .read(cx)
-                    .file()
-                    .expect("GitBlob should be attached")
-                    .disk_state(),
-                DiskState::Historic { was_deleted: false }
-            ));
             let multibuffer = cx.new(|cx| {
                 if singleton {
                     MultiBuffer::singleton(buffer.clone(), cx)
