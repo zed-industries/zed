@@ -6800,17 +6800,18 @@ impl ThreadView {
         }
 
         let copy_response_button = copy_response_index.map(|response_index| {
-            IconButton::new(("copy_agent_response", entry_ix), IconName::Copy)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .tooltip(Tooltip::text("Copy This Agent Response"))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let entries = this.thread.read(cx).entries();
-                    if let Some(text) = Self::get_agent_message_content(entries, response_index, cx)
-                    {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    }
-                }))
+            let thread = thread.clone();
+            CopyButton::new_with_action(("copy_agent_response", entry_ix), move |_window, cx| {
+                let entries = thread.read(cx).entries();
+                let Some(text) = Self::get_agent_message_content(entries, response_index, cx)
+                else {
+                    return false;
+                };
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                true
+            })
+            .icon_size(IconSize::Small)
+            .tooltip_label("Copy This Agent Response")
         });
 
         let scroll_to_recent_user_prompt = IconButton::new(

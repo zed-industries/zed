@@ -37,7 +37,7 @@ pub struct CopyButton {
     disabled: bool,
     tooltip_label: SharedString,
     visible_on_hover: Option<SharedString>,
-    custom_on_click: Option<Box<dyn Fn(&mut Window, &mut App) + 'static>>,
+    custom_on_click: Option<Box<dyn Fn(&mut Window, &mut App) -> bool + 'static>>,
 }
 
 impl CopyButton {
@@ -51,6 +51,13 @@ impl CopyButton {
             visible_on_hover: None,
             custom_on_click: None,
         }
+    }
+
+    pub fn new_with_action(
+        id: impl Into<ElementId>,
+        action: impl Fn(&mut Window, &mut App) -> bool + 'static,
+    ) -> Self {
+        Self::new(id, String::new()).custom_on_click(action)
     }
 
     pub fn icon_size(mut self, icon_size: IconSize) -> Self {
@@ -75,7 +82,7 @@ impl CopyButton {
 
     pub fn custom_on_click(
         mut self,
-        custom_on_click: impl Fn(&mut Window, &mut App) + 'static,
+        custom_on_click: impl Fn(&mut Window, &mut App) -> bool + 'static,
     ) -> Self {
         self.custom_on_click = Some(Box::new(custom_on_click));
         self
@@ -105,25 +112,28 @@ impl RenderOnce for CopyButton {
             .disabled(self.disabled)
             .tooltip(Tooltip::text(tooltip))
             .on_click(move |_, window, cx| {
-                state.update(cx, |state, _cx| {
-                    state.mark_copied();
-                });
-
-                if let Some(custom_on_click) = custom_on_click.as_ref() {
-                    (custom_on_click)(window, cx);
+                let copied = if let Some(custom_on_click) = custom_on_click.as_ref() {
+                    (custom_on_click)(window, cx)
                 } else {
                     cx.stop_propagation();
                     cx.write_to_clipboard(ClipboardItem::new_string(message.to_string()));
-                }
+                    true
+                };
 
-                let state_id = state.entity_id();
-                cx.spawn(async move |cx| {
-                    cx.background_executor().timer(COPIED_STATE_DURATION).await;
-                    cx.update(|cx| {
-                        cx.notify(state_id);
+                if copied {
+                    state.update(cx, |state, _cx| {
+                        state.mark_copied();
+                    });
+
+                    let state_id = state.entity_id();
+                    cx.spawn(async move |cx| {
+                        cx.background_executor().timer(COPIED_STATE_DURATION).await;
+                        cx.update(|cx| {
+                            cx.notify(state_id);
+                        })
                     })
-                })
-                .detach();
+                    .detach();
+                }
             });
 
         if let Some(visible_on_hover) = visible_on_hover {
@@ -196,5 +206,49 @@ impl Component for CopyButton {
         ];
 
         example_group(examples).vertical().into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Render, TestAppContext};
+    use std::{cell::Cell, rc::Rc};
+
+    struct TestCopyButton {
+        should_copy: Rc<Cell<bool>>,
+    }
+
+    impl Render for TestCopyButton {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let should_copy = self.should_copy.clone();
+            div().child(CopyButton::new_with_action("test-copy", move |_, _| {
+                should_copy.get()
+            }))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_custom_copy_action_only_shows_success_when_it_copies(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let should_copy = Rc::new(Cell::new(false));
+        let (_view, cx) = cx.add_window_view({
+            let should_copy = should_copy.clone();
+            move |_, _| TestCopyButton { should_copy }
+        });
+
+        let button = cx.debug_bounds("ICON-Copy").unwrap();
+        cx.simulate_click(button.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("ICON-Check").is_none());
+
+        should_copy.set(true);
+        cx.simulate_click(button.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("ICON-Check").is_some());
     }
 }

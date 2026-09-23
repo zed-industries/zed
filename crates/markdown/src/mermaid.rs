@@ -945,6 +945,7 @@ fn render_mermaid_copy_button(
                     })
                     .detach();
                 });
+                true
             }
         })
 }

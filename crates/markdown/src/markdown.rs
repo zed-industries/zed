@@ -3540,6 +3540,7 @@ fn render_copy_code_block_button(
                 })
                 .detach();
             });
+            true
         }
     })
 }
