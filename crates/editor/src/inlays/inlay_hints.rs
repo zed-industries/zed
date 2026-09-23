@@ -5318,7 +5318,14 @@ let c = 3;"#
 
     #[gpui::test]
     async fn test_inlay_hint_overflow(cx: &mut TestAppContext) {
-        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
 
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
