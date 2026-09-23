@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
-use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request, RequestBuilderExt, http};
+use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
@@ -158,28 +158,17 @@ impl State {
         self.discovered_models.clear();
         self.fetch_models_errors.clear();
         let api_url = OpenCodeLanguageModelProvider::api_url(cx);
-        let custom_headers = OpenCodeLanguageModelProvider::settings(cx)
-            .custom_headers
-            .clone();
-        let Some(api_key) = self.api_key_state.key(&api_url) else {
+        if self.api_key_state.key(&api_url).is_none() {
             self.fetch_models_task = None;
             cx.notify();
             return;
-        };
+        }
         let http_client = self.http_client.clone();
         self.fetch_models_task = Some(cx.spawn(async move |this, cx| {
             let mut discovered_models = HashMap::default();
             let mut fetch_models_errors = HashMap::default();
             for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
-                match fetch_discovered_models(
-                    http_client.clone(),
-                    &api_url,
-                    subscription,
-                    &api_key,
-                    &custom_headers,
-                )
-                .await
-                {
+                match fetch_discovered_models(http_client.clone(), &api_url, subscription).await {
                     Ok(models) => {
                         discovered_models.insert(subscription, models);
                     }
@@ -212,20 +201,14 @@ impl OpenCodeLanguageModelProvider {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>({
                 let mut last_api_url = Self::api_url(cx);
-                let mut last_custom_headers = Self::settings(cx).custom_headers.clone();
                 move |this: &mut State, cx| {
                     let api_url = Self::api_url(cx);
-                    let custom_headers = Self::settings(cx).custom_headers.clone();
                     if api_url != last_api_url {
                         last_api_url = api_url;
-                        last_custom_headers = custom_headers;
                         this.discovered_models.clear();
                         this.fetch_models_errors.clear();
                         this.fetch_models_task = None;
                         this.authenticate(cx).detach();
-                    } else if custom_headers != last_custom_headers {
-                        last_custom_headers = custom_headers;
-                        this.restart_fetch_models_task(cx);
                     }
                     cx.notify();
                 }
@@ -1043,39 +1026,20 @@ async fn fetch_discovered_models(
     client: Arc<dyn HttpClient>,
     api_url: &str,
     subscription: OpenCodeSubscription,
-    api_key: &str,
-    custom_headers: &CustomHeaders,
 ) -> Result<Vec<DiscoveredModel>> {
     let models_url = format!(
         "{}{}/v1/models",
         api_url.trim_end_matches('/'),
         subscription.api_path_suffix()
     );
-    let available_models =
-        fetch_catalog_resource(client.as_ref(), &models_url, Some(api_key), custom_headers).await?;
-    let rich_catalog = fetch_catalog_resource(
-        client.as_ref(),
-        RICH_MODEL_CATALOG_URL,
-        None,
-        &CustomHeaders::default(),
-    )
-    .await?;
+    let available_models = fetch_catalog_resource(client.as_ref(), &models_url).await?;
+    let rich_catalog = fetch_catalog_resource(client.as_ref(), RICH_MODEL_CATALOG_URL).await?;
     parse_discovered_models(&available_models, &rich_catalog, subscription)
 }
 
-async fn fetch_catalog_resource(
-    client: &dyn HttpClient,
-    url: &str,
-    api_key: Option<&str>,
-    custom_headers: &CustomHeaders,
-) -> Result<String> {
-    let mut request = Request::builder()
-        .method(Method::GET)
-        .uri(url)
-        .extra_headers(custom_headers);
-    if let Some(api_key) = api_key {
-        request = request.header(http::header::AUTHORIZATION, format!("Bearer {api_key}"));
-    }
+async fn fetch_catalog_resource(client: &dyn HttpClient, url: &str) -> Result<String> {
+    // Catalogs are public; completion credentials and custom headers must not be sent here.
+    let request = Request::builder().method(Method::GET).uri(url);
     let mut response = client
         .send(request.body(AsyncBody::empty())?)
         .await
@@ -1336,7 +1300,7 @@ mod tests {
     use parking_lot::Mutex;
 
     #[gpui::test]
-    async fn test_discovery_authenticates_and_applies_custom_headers() {
+    async fn test_discovery_sends_no_authentication_headers() {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let http_client = FakeHttpClient::create({
             let requests = requests.clone();
@@ -1344,15 +1308,25 @@ mod tests {
                 let requests = requests.clone();
                 async move {
                     let uri = request.uri().to_string();
-                    requests.lock().push((
-                        uri.clone(),
-                        request.headers().get(http::header::AUTHORIZATION).cloned(),
-                        request.headers().get("x-test-header").cloned(),
-                    ));
+                    requests
+                        .lock()
+                        .push((uri.clone(), request.headers().clone()));
                     let body = if uri == RICH_MODEL_CATALOG_URL {
                         r#"{
                             "opencode": {
                                 "npm": "@ai-sdk/anthropic",
+                                "models": {
+                                    "new-model": {
+                                        "id": "new-model",
+                                        "name": "New Model",
+                                        "tool_call": true,
+                                        "modalities": {"input":["text"],"output":["text"]},
+                                        "limit": {"context": 12345}
+                                    }
+                                }
+                            },
+                            "opencode-go": {
+                                "npm": "@ai-sdk/openai-compatible",
                                 "models": {
                                     "new-model": {
                                         "id": "new-model",
@@ -1373,34 +1347,33 @@ mod tests {
                 }
             }
         });
-        let custom_headers = CustomHeaders::new(vec![(
-            http::HeaderName::from_static("x-test-header"),
-            http::HeaderValue::from_static("configured"),
-        )]);
-
-        let models = fetch_discovered_models(
-            http_client,
-            "https://api.example.test",
-            OpenCodeSubscription::Zen,
-            "secret",
-            &custom_headers,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(models.len(), 1);
+        for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
+            let models =
+                fetch_discovered_models(http_client.clone(), OPENCODE_API_URL, subscription)
+                    .await
+                    .unwrap();
+            assert_eq!(models.len(), 1);
+        }
         let requests = requests.lock();
-        assert_eq!(requests.len(), 2);
+        assert_eq!(requests.len(), 4);
         assert_eq!(
-            requests[0].1.as_ref().and_then(|value| value.to_str().ok()),
-            Some("Bearer secret")
+            requests
+                .iter()
+                .map(|(url, _)| url.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "https://opencode.ai/zen/v1/models",
+                RICH_MODEL_CATALOG_URL,
+                "https://opencode.ai/zen/go/v1/models",
+                RICH_MODEL_CATALOG_URL,
+            ]
         );
-        assert_eq!(
-            requests[0].2.as_ref().and_then(|value| value.to_str().ok()),
-            Some("configured")
-        );
-        assert_eq!(requests[1].1, None);
-        assert_eq!(requests[1].2, None);
+        for (url, headers) in requests.iter() {
+            assert!(
+                headers.is_empty(),
+                "unexpected catalog headers for {url}: {headers:?}"
+            );
+        }
     }
 
     #[gpui::test]
