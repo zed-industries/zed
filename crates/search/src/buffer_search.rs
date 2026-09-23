@@ -880,7 +880,6 @@ impl BufferSearchBar {
             }
             self.search_suggested(seed_query_override, window, cx);
             self.smartcase(window, cx);
-            self.sync_select_search_options(cx);
             self.replace_enabled |= deploy.replace_enabled;
             self.selection_search_enabled =
                 self.selection_search_enabled
@@ -943,6 +942,7 @@ impl BufferSearchBar {
         self.search_options.remove(SearchOptions::BACKWARDS);
 
         self.dismissed = false;
+        self.sync_select_search_options(cx);
         self.adjust_query_regex_language(cx);
         handle.search_bar_visibility_changed(true, window, cx);
         cx.notify();
@@ -1876,7 +1876,7 @@ impl BufferSearchBar {
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range, path::Display, time::Duration};
+    use std::{ops::Range, time::Duration};
 
     use super::*;
     use editor::{
@@ -1890,7 +1890,6 @@ mod tests {
     #[cfg(target_os = "macos")]
     use project::Project;
     use settings::{SearchSettingsContent, SettingsStore};
-    use theme::ThemeColorField::SearchActiveMatchBackground;
     use unindent::Unindent as _;
     use util_macros::perf;
     #[cfg(target_os = "macos")]
@@ -4404,9 +4403,6 @@ mod tests {
     async fn test_search_option_change_during_selections(cx: &mut TestAppContext) {
         init_globals(cx);
 
-        // Set up 2 editors, with both buffers containing a lowercase and
-        // uppercase version of the same word, so we can confirm whether case
-        // sensitivity is affecting `editor: select next` .
         let cx = cx.add_empty_window();
         let buffer = cx.new(|cx| Buffer::local("abc\ndefabc\nghiabc\nabc", cx));
         let editor =
@@ -4460,6 +4456,54 @@ mod tests {
                     DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
                     DisplayPoint::new(DisplayRow(1), 3)..DisplayPoint::new(DisplayRow(1), 6),
                     DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 3)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_show_syncs_select_search_options(cx: &mut TestAppContext) {
+        init_globals(cx);
+
+        let cx = cx.add_empty_window();
+        let buffer = cx.new(|cx| Buffer::local("zed\nzedfoo\nzed", cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_search_options(SearchOptions::WHOLE_WORD, cx);
+
+            // Reopening the search bar with the same options should sync them
+            // back to the editor after dismissing cleared them from the editor.
+            search_bar.dismiss(&Default::default(), window, cx);
+            search_bar.show(window, cx)
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("should be able to select next");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
+                    DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 3)
                 ]
             );
         });
