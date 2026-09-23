@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashMap;
-use futures::future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, TaskExt, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
@@ -4363,19 +4362,17 @@ impl LspCommand for InlayHints {
                 };
 
                 let buffer = buffer.clone();
-                cx.spawn(async move |cx| {
-                    InlayHints::lsp_to_project_hint(
-                        lsp_hint,
-                        &buffer,
-                        server_id,
-                        resolve_state,
-                        force_no_type_left_padding,
-                        cx,
-                    )
-                })
+                InlayHints::lsp_to_project_hint(
+                    lsp_hint,
+                    &buffer,
+                    server_id,
+                    resolve_state,
+                    force_no_type_left_padding,
+                    &mut cx,
+                )
             });
 
-        Ok(future::join_all(hints).await.into_iter().collect())
+        Ok(hints.into_iter().collect())
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {
