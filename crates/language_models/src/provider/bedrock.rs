@@ -2466,6 +2466,13 @@ pub fn into_bedrock(
             })
             .unwrap_or(default_effort)
     };
+    // Claude Opus 5.5 always runs adaptive thinking and, because of that,
+    // rejects both an explicit thinking opt-out and any sampling controls
+    // (temperature/top_p/top_k). The request id is matched as a substring
+    // because `model` is a cross-region inference id (e.g.
+    // `global.anthropic.claude-opus-5-5`).
+    // <https://platform.claude.com/docs/en/models/opus-5-5/overview>
+    let requires_adaptive_thinking = model.contains(ConverseModel::ClaudeOpus5_5.request_id());
     let thinking = match thinking_mode {
         BedrockModelMode::Reasoning { effort } => Some(bedrock::Thinking::Reasoning {
             effort: selected_effort(effort),
@@ -2484,6 +2491,10 @@ pub fn into_bedrock(
         BedrockModelMode::Thinking { budget_tokens } if request.thinking_allowed => {
             Some(bedrock::Thinking::Enabled { budget_tokens })
         }
+        // Opus 5.5 rejects `disabled`, so omit the field. This must precede the Opus 5 check
+        // below, because `claude-opus-5-5` also contains the Opus 5 request id.
+        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
+        _ if requires_adaptive_thinking => None,
         _ if !request.thinking_allowed
             && model.contains(ConverseModel::ClaudeOpus5.request_id()) =>
         {
@@ -2493,7 +2504,7 @@ pub fn into_bedrock(
         }
         _ => None,
     };
-    let temperature = if is_fable_5_1 || is_gpt_6_astra {
+    let temperature = if is_fable_5_1 || is_gpt_6_astra || requires_adaptive_thinking {
         None
     } else {
         request.temperature.or(default_temperature)
@@ -3830,6 +3841,10 @@ mod tests {
         for (model, expects_explicit_opt_out, output_limit, expected_output) in [
             ("us.anthropic.claude-opus-5", true, None, 128_000),
             ("global.anthropic.claude-opus-5", true, Some(8192), 8192),
+            // Opus 5.5 rejects an explicit `disabled` opt-out, so thinking is
+            // omitted even though its request id contains the Opus 5 request id.
+            ("us.anthropic.claude-opus-5-5", false, None, 128_000),
+            ("global.anthropic.claude-opus-5-5", false, Some(8192), 8192),
             (
                 "us.anthropic.claude-opus-4-8",
                 false,
@@ -3919,6 +3934,81 @@ mod tests {
         )
         .unwrap();
         assert_eq!(configured.temperature, Some(0.7));
+    }
+
+    #[test]
+    fn test_opus_5_5_rejects_only_forced_tool_choice() {
+        let opus_5_5 = converse_language_model(&ConverseModel::ClaudeOpus5_5);
+        assert!(opus_5_5.supports_tools);
+        assert!(opus_5_5.tool_choice_support.auto);
+        assert!(opus_5_5.tool_choice_support.none);
+        assert!(
+            !opus_5_5.tool_choice_support.any,
+            "Opus 5.5 rejects forced tool use"
+        );
+
+        for model in [
+            ConverseModel::ClaudeOpus5,
+            ConverseModel::ClaudeFable5,
+            ConverseModel::NovaPro,
+        ] {
+            assert!(
+                converse_language_model(&model).tool_choice_support.any,
+                "{} should still support forced tool use",
+                model.id()
+            );
+        }
+    }
+
+    #[test]
+    fn test_opus_5_5_omits_sampling_controls() {
+        // Opus 5.5's always-on adaptive thinking rejects sampling controls, so
+        // its request must omit temperature (top_k/top_p are always unset).
+        // Other adaptive-thinking Claude models keep their default temperature.
+        for (model, expects_temperature) in [
+            ("global.anthropic.claude-opus-5-5", false),
+            ("us.anthropic.claude-opus-5-5", false),
+            ("us.anthropic.claude-opus-5", true),
+            ("us.anthropic.claude-sonnet-5", true),
+        ] {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![MessageContent::Text("Hi".into())],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    ..Default::default()
+                },
+                model.to_string(),
+                Some(1.0),
+                128_000,
+                BedrockModelMode::AdaptiveThinking {
+                    effort: bedrock::BedrockAdaptiveThinkingEffort::High,
+                },
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap();
+
+            assert_eq!(request.top_k, None, "{model} must not send top_k");
+            assert_eq!(request.top_p, None, "{model} must not send top_p");
+            if expects_temperature {
+                assert_eq!(
+                    request.temperature,
+                    Some(1.0),
+                    "{model} should send its default temperature"
+                );
+            } else {
+                assert_eq!(
+                    request.temperature, None,
+                    "{model} must omit temperature because adaptive thinking is always on"
+                );
+            }
+        }
     }
 
     #[test]
