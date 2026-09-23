@@ -1119,6 +1119,14 @@ impl MessageEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
+        let path_style = workspace.read(cx).project().read(cx).path_style(cx);
+        if self.session_capabilities.read().supports_images()
+            && let Some(clipboard_with_native_images) =
+                Self::clipboard_item_with_native_images(clipboard, path_style)
+            && self.handle_pasted_context(&clipboard_with_native_images, window, cx, false)
+        {
+            return;
+        }
         let editor_clipboard_selections =
             clipboard.entries().iter().find_map(|entry| match entry {
                 ClipboardEntry::String(text) => {
@@ -1259,6 +1267,7 @@ impl MessageEditor {
             ClipboardEntry::String(text) => Some(text.text().to_string()),
             _ => None,
         });
+        let mut contains_pasted_image_mention = false;
         if let Some(clipboard_text) = clipboard_text.as_deref() {
             if clipboard_text.contains("[@") {
                 let selections_before = self.editor.update(cx, |editor, cx| {
@@ -1294,6 +1303,10 @@ impl MessageEditor {
 
                     let parsed_mentions = parse_mention_links(&inserted_text, path_style);
                     for (range, mention_uri) in parsed_mentions {
+                        if matches!(mention_uri, MentionUri::PastedImage { .. }) {
+                            contains_pasted_image_mention = true;
+                            continue;
+                        }
                         let mention_start_offset = MultiBufferOffset(start_offset.0 + range.start);
                         let anchor = snapshot.anchor_before(mention_start_offset);
                         let content_len = range.end - range.start;
@@ -1352,6 +1365,10 @@ impl MessageEditor {
                     return;
                 }
             }
+        }
+
+        if contains_pasted_image_mention {
+            return;
         }
 
         if self.handle_pasted_context(clipboard, window, cx, true) {
@@ -2147,6 +2164,66 @@ impl MessageEditor {
 
         Some(ClipboardItem { entries })
     }
+
+    fn clipboard_item_with_native_images(
+        clipboard: &ClipboardItem,
+        path_style: PathStyle,
+    ) -> Option<ClipboardItem> {
+        let mut clipboard_string = None;
+        let mut images = Vec::new();
+        for entry in clipboard.entries() {
+            match entry {
+                ClipboardEntry::String(text) if clipboard_string.is_none() => {
+                    clipboard_string = Some(text);
+                }
+                ClipboardEntry::String(_) | ClipboardEntry::ExternalPaths(_) => return None,
+                ClipboardEntry::Image(image) => images.push(image.clone()),
+            }
+        }
+        let clipboard_string = clipboard_string?;
+        if clipboard_string
+            .metadata_json::<Vec<editor::ClipboardSelection>>()
+            .is_some()
+        {
+            return None;
+        }
+        let text = clipboard_string.text().to_string();
+        let image_ranges = parse_mention_links(&text, path_style)
+            .into_iter()
+            .filter_map(|(range, uri)| {
+                matches!(uri, MentionUri::PastedImage { .. }).then_some(range)
+            })
+            .collect::<Vec<_>>();
+        if image_ranges.is_empty() || images.is_empty() {
+            return None;
+        }
+
+        let mut entries = Vec::new();
+        let mut cursor = 0;
+        for (image_index, range) in image_ranges.iter().enumerate() {
+            let Some(image) = images.get(image_index) else {
+                continue;
+            };
+            if cursor < range.start {
+                entries.push(ClipboardEntry::from(
+                    text.get(cursor..range.start)?.to_string(),
+                ));
+            }
+            entries.push(ClipboardEntry::Image(image.clone()));
+            cursor = range.end;
+        }
+        if cursor < text.len() {
+            entries.push(ClipboardEntry::from(text.get(cursor..)?.to_string()));
+        }
+        entries.extend(
+            images
+                .into_iter()
+                .skip(image_ranges.len())
+                .map(ClipboardEntry::Image),
+        );
+
+        Some(ClipboardItem { entries })
+    }
 }
 
 impl Focusable for MessageEditor {
@@ -2524,6 +2601,64 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_native_image_clipboard_fallback_replaces_pasted_image_mentions() {
+        let image_link = "[@Image](zed:///agent/pasted-image?name=Image)";
+        let text = format!("before {image_link} after");
+        let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1]);
+        let mut entries =
+            ClipboardItem::new_string_with_metadata(text, "unsupported metadata".to_string())
+                .into_entries()
+                .collect::<Vec<_>>();
+        entries.push(ClipboardEntry::Image(image.clone()));
+
+        let restored = MessageEditor::clipboard_item_with_native_images(
+            &ClipboardItem { entries },
+            PathStyle::local(),
+        )
+        .expect("native image should be available as a fallback");
+
+        assert_eq!(
+            restored,
+            ClipboardItem {
+                entries: vec![
+                    ClipboardEntry::from("before ".to_string()),
+                    ClipboardEntry::Image(image),
+                    ClipboardEntry::from(" after".to_string()),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn test_native_image_clipboard_fallback_keeps_unmatched_mentions_as_text() {
+        let image_link = "[@Image](zed:///agent/pasted-image?name=Image)";
+        let text = format!("before {image_link} between {image_link} after");
+        let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1]);
+        let mut entries =
+            ClipboardItem::new_string_with_metadata(text, "unsupported metadata".to_string())
+                .into_entries()
+                .collect::<Vec<_>>();
+        entries.push(ClipboardEntry::Image(image.clone()));
+
+        let restored = MessageEditor::clipboard_item_with_native_images(
+            &ClipboardItem { entries },
+            PathStyle::local(),
+        )
+        .expect("native image should be available as a fallback");
+
+        assert_eq!(
+            restored,
+            ClipboardItem {
+                entries: vec![
+                    ClipboardEntry::from("before ".to_string()),
+                    ClipboardEntry::Image(image),
+                    ClipboardEntry::from(format!(" between {image_link} after")),
+                ],
+            }
+        );
+    }
+
     fn pasted_image_preview_results(message_editor: &Entity<MessageEditor>, cx: &App) -> Vec<bool> {
         message_editor.read_with(cx, |message_editor, cx| {
             let mention_set = message_editor.mention_set.read(cx);
@@ -2683,9 +2818,8 @@ mod tests {
             source_editor.read_with(&cx, |editor, cx| editor.text(cx)),
             expected_text
         );
-        let pasted_images = cx.update(|_, cx| {
-            pasted_image_preview_results(&source_message_editor, cx)
-        });
+        let pasted_images =
+            cx.update(|_, cx| pasted_image_preview_results(&source_message_editor, cx));
         assert_eq!(pasted_images.len(), 2);
         assert!(pasted_images.into_iter().all(|has_preview| has_preview));
 
@@ -2741,9 +2875,8 @@ mod tests {
             target_message_editor.read_with(&cx, |message_editor, cx| message_editor.text(cx)),
             format!("target: {pasted_text}")
         );
-        let pasted_images = cx.update(|_, cx| {
-            pasted_image_preview_results(&target_message_editor, cx)
-        });
+        let pasted_images =
+            cx.update(|_, cx| pasted_image_preview_results(&target_message_editor, cx));
         assert_eq!(pasted_images.len(), 2);
         assert!(pasted_images.into_iter().all(|has_preview| has_preview));
     }
