@@ -1,6 +1,7 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
+use collections::FxHashMap;
 use gpui::{
     AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch,
     ScaledPixels, Scene, Size, get_gamma_correction_ratios,
@@ -8,6 +9,7 @@ use gpui::{
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::num::NonZeroU64;
 use std::ops::Range;
@@ -184,6 +186,7 @@ struct WgpuResources {
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas_sampler: wgpu::Sampler,
+    atlas_texture_bind_groups: FxHashMap<AtlasTextureId, CachedTextureBindGroup>,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
@@ -192,6 +195,11 @@ struct WgpuResources {
     path_intermediate_view: Option<wgpu::TextureView>,
     path_msaa_texture: Option<wgpu::Texture>,
     path_msaa_view: Option<wgpu::TextureView>,
+}
+
+struct CachedTextureBindGroup {
+    texture_generation: u64,
+    bind_group: wgpu::BindGroup,
 }
 
 impl WgpuResources {
@@ -568,6 +576,7 @@ impl WgpuRenderer {
             pipelines,
             bind_group_layouts,
             atlas_sampler,
+            atlas_texture_bind_groups: FxHashMap::default(),
             globals_buffer,
             globals_bind_group,
             path_globals_bind_group,
@@ -1418,6 +1427,7 @@ impl WgpuRenderer {
                     scene.polychrome_sprites.len(),
                 )
             })?;
+        self.prepare_texture_bind_groups(scene);
 
         let mut encoder =
             self.resources()
@@ -1498,13 +1508,15 @@ impl WgpuRenderer {
                         instance_range(range),
                         &mut pass,
                     ),
-                    PrimitiveBatch::MonochromeSprites { texture_id, range } => self.draw_sprites(
-                        &instance_bindings.monochrome_sprites,
-                        texture_id,
-                        &self.resources().pipelines.mono_sprites,
-                        instance_range(range),
-                        &mut pass,
-                    ),
+                    PrimitiveBatch::MonochromeSprites { texture_id, range } => {
+                        self.draw_sprites(
+                            &instance_bindings.monochrome_sprites,
+                            texture_id,
+                            &self.resources().pipelines.mono_sprites,
+                            instance_range(range),
+                            &mut pass,
+                        )?;
+                    }
                     PrimitiveBatch::SubpixelSprites { texture_id, range } => {
                         let resources = self.resources();
                         self.draw_sprites(
@@ -1517,15 +1529,17 @@ impl WgpuRenderer {
                                 .unwrap_or(&resources.pipelines.mono_sprites),
                             instance_range(range),
                             &mut pass,
-                        );
+                        )?;
                     }
-                    PrimitiveBatch::PolychromeSprites { texture_id, range } => self.draw_sprites(
-                        &instance_bindings.polychrome_sprites,
-                        texture_id,
-                        &self.resources().pipelines.poly_sprites,
-                        instance_range(range),
-                        &mut pass,
-                    ),
+                    PrimitiveBatch::PolychromeSprites { texture_id, range } => {
+                        self.draw_sprites(
+                            &instance_bindings.polychrome_sprites,
+                            texture_id,
+                            &self.resources().pipelines.poly_sprites,
+                            instance_range(range),
+                            &mut pass,
+                        )?;
+                    }
                     // Surfaces are macOS-only for video playback and are not
                     // implemented by the WGPU renderer.
                     PrimitiveBatch::Surfaces(_surfaces) => {}
@@ -1602,6 +1616,52 @@ impl WgpuRenderer {
             })
     }
 
+    fn prepare_texture_bind_groups(&mut self, scene: &Scene) {
+        let mut texture_ids = SmallVec::<[AtlasTextureId; 8]>::new();
+        for batch in scene.batches() {
+            let texture_id = match batch {
+                PrimitiveBatch::MonochromeSprites { texture_id, .. }
+                | PrimitiveBatch::SubpixelSprites { texture_id, .. }
+                | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
+                _ => continue,
+            };
+            if !texture_ids.contains(&texture_id) {
+                texture_ids.push(texture_id);
+            }
+        }
+
+        self.resources_mut()
+            .atlas_texture_bind_groups
+            .retain(|texture_id, _| texture_ids.contains(texture_id));
+
+        for texture_id in texture_ids {
+            let Some(texture_info) = self.atlas.get_texture_info(texture_id) else {
+                self.resources_mut()
+                    .atlas_texture_bind_groups
+                    .remove(&texture_id);
+                continue;
+            };
+            let is_current = self
+                .resources()
+                .atlas_texture_bind_groups
+                .get(&texture_id)
+                .is_some_and(|cached| cached.texture_generation == texture_info.generation);
+            if is_current {
+                continue;
+            }
+
+            let bind_group =
+                self.create_texture_bind_group("atlas_texture_bind_group", &texture_info.view);
+            self.resources_mut().atlas_texture_bind_groups.insert(
+                texture_id,
+                CachedTextureBindGroup {
+                    texture_generation: texture_info.generation,
+                    bind_group,
+                },
+            );
+        }
+    }
+
     fn draw_instances(
         &self,
         instances: &InstanceBinding,
@@ -1628,22 +1688,26 @@ impl WgpuRenderer {
         pipeline: &wgpu::RenderPipeline,
         range: Range<u32>,
         pass: &mut wgpu::RenderPass<'_>,
-    ) {
+    ) -> Result<()> {
         if range.is_empty() {
-            return;
+            return Ok(());
         }
-        let texture_info = self.atlas.get_texture_info(texture_id);
-        let texture =
-            self.create_texture_bind_group("atlas_texture_bind_group", &texture_info.view);
+        let resources = self.resources();
+        // The atlas has released this texture; the batch belongs to a stale
+        // paint that will be replaced once its view re-renders.
+        let Some(texture) = resources.atlas_texture_bind_groups.get(&texture_id) else {
+            return Ok(());
+        };
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
+        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, &sprite_instances.bind_group, &[]);
-        pass.set_bind_group(2, &texture, &[]);
+        pass.set_bind_group(2, &texture.bind_group, &[]);
         pass.draw(
             0..4,
             sprite_instances.first_instance + range.start
                 ..sprite_instances.first_instance + range.end,
         );
+        Ok(())
     }
 
     unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
@@ -2201,7 +2265,11 @@ impl RenderingParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{MonochromeSprite, PolychromeSprite, Quad, Shadow, SubpixelSprite, Underline};
+    use gpui::{
+        BorderStyle, ColorSpace, ContentMask, Corners, Edges, Hsla, MonochromeSprite,
+        PolychromeSprite, Quad, Shadow, SubpixelSprite, Underline, linear_color_stop,
+        linear_gradient,
+    };
 
     #[test]
     fn webgl_shader_is_valid_wgsl_without_storage_buffers() {
@@ -2239,5 +2307,123 @@ mod tests {
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
+    }
+
+    #[test]
+    fn webgl_quad_layout_matches_fixed_decoder() {
+        let quad = Quad {
+            order: 41,
+            border_style: BorderStyle::Dashed,
+            bounds: Bounds {
+                origin: Point {
+                    x: 1.0.into(),
+                    y: 2.0.into(),
+                },
+                size: Size {
+                    width: 3.0.into(),
+                    height: 4.0.into(),
+                },
+            },
+            content_mask: ContentMask {
+                bounds: Bounds {
+                    origin: Point {
+                        x: 5.0.into(),
+                        y: 6.0.into(),
+                    },
+                    size: Size {
+                        width: 7.0.into(),
+                        height: 8.0.into(),
+                    },
+                },
+            },
+            background: linear_gradient(
+                11.0,
+                linear_color_stop(
+                    Hsla {
+                        h: 12.0,
+                        s: 13.0,
+                        l: 14.0,
+                        a: 15.0,
+                    },
+                    16.0,
+                ),
+                linear_color_stop(
+                    Hsla {
+                        h: 17.0,
+                        s: 18.0,
+                        l: 19.0,
+                        a: 20.0,
+                    },
+                    21.0,
+                ),
+            )
+            .color_space(ColorSpace::Oklab),
+            border_color: Hsla {
+                h: 22.0,
+                s: 23.0,
+                l: 24.0,
+                a: 25.0,
+            },
+            corner_radii: Corners {
+                top_left: 26.0.into(),
+                top_right: 27.0.into(),
+                bottom_right: 28.0.into(),
+                bottom_left: 29.0.into(),
+            },
+            border_widths: Edges {
+                top: 30.0.into(),
+                right: 31.0.into(),
+                bottom: 32.0.into(),
+                left: 33.0.into(),
+            },
+        };
+
+        let bytes = unsafe { WgpuRenderer::instance_bytes(std::slice::from_ref(&quad)) };
+        let words: &[u32] = bytemuck::cast_slice(bytes);
+        assert_eq!(
+            words,
+            &[
+                41,
+                1,
+                1.0_f32.to_bits(),
+                2.0_f32.to_bits(),
+                3.0_f32.to_bits(),
+                4.0_f32.to_bits(),
+                5.0_f32.to_bits(),
+                6.0_f32.to_bits(),
+                7.0_f32.to_bits(),
+                8.0_f32.to_bits(),
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                11.0_f32.to_bits(),
+                12.0_f32.to_bits(),
+                13.0_f32.to_bits(),
+                14.0_f32.to_bits(),
+                15.0_f32.to_bits(),
+                16.0_f32.to_bits(),
+                17.0_f32.to_bits(),
+                18.0_f32.to_bits(),
+                19.0_f32.to_bits(),
+                20.0_f32.to_bits(),
+                21.0_f32.to_bits(),
+                0,
+                22.0_f32.to_bits(),
+                23.0_f32.to_bits(),
+                24.0_f32.to_bits(),
+                25.0_f32.to_bits(),
+                26.0_f32.to_bits(),
+                27.0_f32.to_bits(),
+                28.0_f32.to_bits(),
+                29.0_f32.to_bits(),
+                30.0_f32.to_bits(),
+                31.0_f32.to_bits(),
+                32.0_f32.to_bits(),
+                33.0_f32.to_bits(),
+            ]
+        );
     }
 }
