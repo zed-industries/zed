@@ -884,7 +884,7 @@ impl ContextMenu {
 
     pub fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.selected_index else {
-            return;
+            return cx.emit(DismissEvent);
         };
 
         if let Some(ContextMenuItem::Submenu { builder, .. }) = self.items.get(ix) {
@@ -2519,8 +2519,12 @@ mod tests {
             a11y_enabled.then_some(3),
         );
 
-        cx.dispatch_action(SelectFirst);
-        assert_eq!(menu.read_with(&cx, |menu, _| menu.selected_index), Some(1));
+        cx.dispatch_action(SelectNext);
+        assert_eq!(
+            menu.read_with(&cx, |menu, _| menu.selected_index),
+            Some(1),
+            "SelectNext right after opening should select the first selectable entry",
+        );
         cx.dispatch_action(SelectNext);
         assert_eq!(menu.read_with(&cx, |menu, _| menu.selected_index), Some(3));
         cx.dispatch_action(SelectPrevious);
@@ -2570,6 +2574,47 @@ mod tests {
     #[gpui::test]
     fn persistent_focus_selection_without_accessibility(cx: &mut TestAppContext) {
         assert_focus_selection(cx, true, false);
+    }
+
+    #[gpui::test]
+    fn confirm_without_selection_dismisses(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let entry_handler_calls = Rc::new(Cell::new(0));
+        let context_menu = cx.update(|window, cx| {
+            ContextMenu::build(window, cx, {
+                let entry_handler_calls = entry_handler_calls.clone();
+                move |menu, _, _| {
+                    menu.header("Header").entry("Entry", None, move |_, _| {
+                        entry_handler_calls.set(entry_handler_calls.get() + 1);
+                    })
+                }
+            })
+        });
+
+        let dismiss_events = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            let dismiss_events = dismiss_events.clone();
+            cx.subscribe(&context_menu, move |_, _: &DismissEvent, _| {
+                dismiss_events.set(dismiss_events.get() + 1);
+            })
+        });
+
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            assert_eq!(None, context_menu.selected_index);
+            context_menu.confirm(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            dismiss_events.get(),
+            1,
+            "Confirming without a selection should dismiss the menu"
+        );
+        assert_eq!(
+            entry_handler_calls.get(),
+            0,
+            "Confirming without a selection should not trigger any entry"
+        );
     }
 
     #[gpui::test]
