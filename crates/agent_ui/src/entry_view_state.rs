@@ -6,7 +6,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
-    Editor, EditorEvent, EditorMode, MinimapVisibility, RestoreOnlyUnstagedDiffHunkDelegate,
+    Editor, EditorEvent, EditorMode, HiddenUnstagedDiffHunkRenderer, MinimapVisibility,
     SizingBehavior,
 };
 use gpui::{
@@ -323,7 +323,11 @@ impl EntryViewState {
                             entry.insert(element);
                         }
                         collections::hash_map::Entry::Occupied(_entry) => {
-                            if is_tool_call_completed && terminal.read(cx).output().is_none() {
+                            let terminal = terminal.read(cx);
+                            if is_tool_call_completed
+                                && terminal.is_process_backed()
+                                && terminal.output().is_none()
+                            {
                                 cx.emit(EntryViewEvent {
                                     entry_index: index,
                                     view_event: ViewEvent::TerminalMovedToBackground(id.clone()),
@@ -639,6 +643,7 @@ fn create_terminal(
     cx: &mut App,
 ) -> Entity<TerminalView> {
     cx.new(|cx| {
+        let read_only = !terminal.read(cx).is_process_backed();
         let mut view = TerminalView::new(
             terminal.read(cx).inner().clone(),
             workspace,
@@ -646,7 +651,8 @@ fn create_terminal(
             project,
             window,
             cx,
-        );
+        )
+        .with_read_only(read_only);
         view.set_embedded_mode(Some(1000), cx);
         view
     })
@@ -685,7 +691,7 @@ fn create_editor_diff(
         editor.set_show_code_actions(false, cx);
         editor.set_show_git_diff_gutter(false, cx);
         editor.set_expand_all_diff_hunks(cx);
-        editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
+        editor.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
         editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
         editor
     })

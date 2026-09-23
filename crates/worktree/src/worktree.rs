@@ -19,6 +19,7 @@ use futures::{
     select_biased, stream,
     task::Poll,
 };
+use futures_lite::future::yield_now;
 use fuzzy::CharBag;
 use git::{
     BISECT_LOG, COMMIT_MESSAGE, DOT_GIT, FETCH_HEAD, FSMONITOR_DAEMON, GC_PID, GITIGNORE,
@@ -80,6 +81,12 @@ use util::{
 pub use worktree_settings::WorktreeSettings;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+
+/// How often the background scanner verifies that the worktree root still
+/// exists at its recorded path. Native watchers report the root itself being
+/// renamed or deleted, but not a rename of one of its ancestors, which leaves
+/// the watcher silently attached to a path that no longer exists.
+pub const ROOT_PATH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
@@ -1355,7 +1362,7 @@ impl LocalWorktree {
             let background = cx.background_executor().clone();
             async move {
                 let defer_watch =
-                    force_defer_watch || (scanning_enabled && fs::requires_poll_watcher(&abs_path));
+                    force_defer_watch || (scanning_enabled && fs.requires_poll_watcher(&abs_path));
 
                 let (events, watcher) = if scanning_enabled && !defer_watch {
                     fs.watch(&abs_path, FS_WATCH_LATENCY).await
@@ -3107,6 +3114,8 @@ impl LocalSnapshot {
         for repo_exclude in repo_excludes.into_iter().rev() {
             ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude);
         }
+        ignore_stack.global_ignore_root =
+            Some(repo_root.clone().unwrap_or_else(|| self.abs_path().clone()));
         ignore_stack.repo_root = repo_root;
         let mut ancestor_ignore_stack = ignore_stack.clone();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
@@ -4555,6 +4564,10 @@ impl BackgroundScanner {
         // Continue processing events until the worktree is dropped.
         self.phase = BackgroundScannerPhase::Events;
 
+        let root_path_check_timer = self.executor.timer(ROOT_PATH_CHECK_INTERVAL).fuse();
+        futures::pin_mut!(root_path_check_timer);
+        let mut root_path_missing = false;
+
         loop {
             select_biased! {
                 // Process any path refresh requests from the worktree. Prioritize
@@ -4608,6 +4621,20 @@ impl BackgroundScanner {
                     if let Some(path) = &global_gitignore_file {
                         self.update_global_gitignore(&path).await;
                     }
+                }
+
+                _ = root_path_check_timer => {
+                    let root_path = self.state.lock().await.snapshot.abs_path.clone();
+                    match self.fs.canonicalize(root_path.as_path()).await {
+                        Ok(_) => root_path_missing = false,
+                        Err(error) => {
+                            if !root_path_missing {
+                                root_path_missing = true;
+                                self.report_root_moved_or_deleted(&root_path, &error).await;
+                            }
+                        }
+                    }
+                    root_path_check_timer.set(self.executor.timer(ROOT_PATH_CHECK_INTERVAL).fuse());
                 }
             }
         }
@@ -4743,56 +4770,67 @@ impl BackgroundScanner {
         events
     }
 
+    /// Called when the worktree root can no longer be canonicalized. Uses the
+    /// open handle on the root to find where it moved to, and reports the new
+    /// location (or, for single-file worktrees, the deletion) to the worktree.
+    async fn report_root_moved_or_deleted(
+        &self,
+        root_path: &Arc<SanitizedPath>,
+        canonicalize_error: &anyhow::Error,
+    ) {
+        let new_path = self
+            .state
+            .lock()
+            .await
+            .snapshot
+            .root_file_handle
+            .clone()
+            .and_then(|handle| match handle.current_path(&self.fs) {
+                Ok(new_path) => Some(new_path),
+                Err(e) => {
+                    log::error!("Failed to refresh worktree root path: {e:#}");
+                    None
+                }
+            })
+            .map(|path| SanitizedPath::new_arc(&path))
+            .filter(|new_path| new_path != root_path);
+
+        if let Some(new_path) = new_path {
+            log::info!(
+                "root renamed from {:?} to {:?}",
+                root_path.as_path(),
+                new_path.as_path(),
+            );
+            self.status_updates_tx
+                .unbounded_send(ScanState::RootUpdated { new_path })
+                .ok();
+        } else {
+            log::error!("root path could not be canonicalized: {canonicalize_error:#}");
+
+            // For single-file worktrees, if we can't canonicalize and the file handle
+            // fallback also failed, the file is gone - close the worktree
+            if self.is_single_file {
+                log::info!(
+                    "single-file worktree root {:?} no longer exists, marking as deleted",
+                    root_path.as_path()
+                );
+                self.status_updates_tx
+                    .unbounded_send(ScanState::RootDeleted)
+                    .ok();
+            }
+        }
+    }
+
     async fn process_events(&self, mut events: Vec<PathEvent>) {
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
-        let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
-        let root_canonical_path = match &root_canonical_path {
-            Ok(path) => SanitizedPath::new(path),
-            Err(err) => {
-                let new_path = self
-                    .state
-                    .lock()
-                    .await
-                    .snapshot
-                    .root_file_handle
-                    .clone()
-                    .and_then(|handle| match handle.current_path(&self.fs) {
-                        Ok(new_path) => Some(new_path),
-                        Err(e) => {
-                            log::error!("Failed to refresh worktree root path: {e:#}");
-                            None
-                        }
-                    })
-                    .map(|path| SanitizedPath::new_arc(&path))
-                    .filter(|new_path| *new_path != root_path);
-
-                if let Some(new_path) = new_path {
-                    log::info!(
-                        "root renamed from {:?} to {:?}",
-                        root_path.as_path(),
-                        new_path.as_path(),
-                    );
-                    self.status_updates_tx
-                        .unbounded_send(ScanState::RootUpdated { new_path })
-                        .ok();
-                } else {
-                    log::error!("root path could not be canonicalized: {err:#}");
-
-                    // For single-file worktrees, if we can't canonicalize and the file handle
-                    // fallback also failed, the file is gone - close the worktree
-                    if self.is_single_file {
-                        log::info!(
-                            "single-file worktree root {:?} no longer exists, marking as deleted",
-                            root_path.as_path()
-                        );
-                        self.status_updates_tx
-                            .unbounded_send(ScanState::RootDeleted)
-                            .ok();
-                    }
-                }
+        let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
+            Ok(path) => path,
+            Err(error) => {
+                self.report_root_moved_or_deleted(&root_path, &error).await;
                 return;
             }
         };
+        let root_canonical_path = SanitizedPath::new(&root_canonical_path);
 
         {
             let state = self.state.lock().await;
@@ -5383,6 +5421,7 @@ impl BackgroundScanner {
             && path.ends_with(DOT_GIT)
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
+            ignore_stack.global_ignore_root = Some(job.abs_path.clone());
         }
 
         for child_abs_path in child_paths {
@@ -6015,6 +6054,7 @@ impl BackgroundScanner {
 
         if let Ok(Some(_)) = self.fs.metadata(&job.abs_path.join(DOT_GIT)).await {
             ignore_stack.repo_root = Some(job.abs_path.clone());
+            ignore_stack.global_ignore_root = Some(job.abs_path.clone());
         }
 
         for mut entry in snapshot.child_entries(&path).cloned() {
@@ -7196,6 +7236,40 @@ fn read_file_header(file: &mut dyn Read, abs_path: &Path) -> Result<(Vec<u8>, bo
     Ok((header, reached_eof))
 }
 
+const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
+
+async fn read_file_to_end(
+    file: &mut (dyn Read + Send),
+    content: &mut Vec<u8>,
+    abs_path: &Path,
+) -> Result<()> {
+    let mut buf = vec![0u8; STREAM_BLOCK_BYTES];
+    loop {
+        let mut block_len = 0;
+        while block_len < buf.len() {
+            let n = file
+                .read(&mut buf[block_len..])
+                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
+            if n == 0 {
+                break;
+            }
+            block_len += n;
+        }
+
+        if block_len == 0 {
+            break;
+        }
+
+        content.extend_from_slice(&buf[..block_len]);
+        if block_len < buf.len() {
+            break;
+        }
+
+        yield_now().await;
+    }
+    Ok(())
+}
+
 pub async fn decode_file_text(
     fs: &dyn Fs,
     abs_path: &Path,
@@ -7215,22 +7289,12 @@ pub async fn decode_file_text(
     // If the file is eligible for opening, read the rest of the file.
     let mut content = file_first_bytes;
     if !reached_eof {
-        let mut buf = [0u8; 8 * 1024];
-        loop {
-            let n = file
-                .read(&mut buf)
-                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
-            if n == 0 {
-                break;
-            }
-            content.extend_from_slice(&buf[..n]);
-        }
+        read_file_to_end(&mut *file, &mut content, abs_path).await?;
     }
     let decoded = decode_text(content)?;
     Ok((decoded.text, decoded.encoding, decoded.has_bom))
 }
 
-const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
 /// Reads and decodes a file straight into a [`Rope`].
 /// The returned rope has already had its line endings normalized, the
 /// [`LineEnding`] detected before normalizing is returned alongside it.
@@ -7255,7 +7319,7 @@ pub async fn decode_file_text_to_rope(
     if bom_encoding.is_none()
         && byte_content == ByteContent::Unknown
         && let Some((rope, line_ending)) =
-            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path)?
+            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path).await?
     {
         return Ok((rope, line_ending, encoding_rs::UTF_8, false));
     }
@@ -7273,8 +7337,8 @@ pub async fn decode_file_text_to_rope(
 /// Returns `None` if the file turns out not to be plain UTF-8, in which case the
 /// caller re-reads it and decodes it the slow way. `prefix` is the portion of
 /// the file already consumed from `file` for encoding detection.
-fn stream_utf8_into_rope(
-    file: &mut dyn Read,
+async fn stream_utf8_into_rope(
+    file: &mut (dyn Read + Send),
     prefix: Vec<u8>,
     reached_eof: bool,
     abs_path: &Path,
@@ -7338,6 +7402,8 @@ fn stream_utf8_into_rope(
         if eof {
             break;
         }
+
+        yield_now().await;
     }
 
     // At EOF everything should have been consumed. Anything left over is a
@@ -7393,33 +7459,63 @@ mod tests {
 
     /// Streams `bytes` the way `decode_file_text_to_rope` would, returning the
     /// decoded text and detected line ending, or `None` if the fast path bailed.
-    fn stream(bytes: &[u8]) -> Option<(String, LineEnding)> {
+    async fn stream(bytes: &[u8]) -> Option<(String, LineEnding)> {
         let mut reader = std::io::Cursor::new(bytes.to_vec());
         stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+            .await
             .unwrap()
             .map(|(rope, line_ending)| (rope.to_string(), line_ending))
     }
 
     #[test]
-    fn test_stream_utf8_normalizes_line_endings() {
+    fn test_stream_utf8_yields_between_blocks() {
+        let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
+
+        assert!(
+            stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+                .now_or_never()
+                .is_none()
+        );
+        assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
+    }
+
+    #[test]
+    fn test_file_reading_yields_between_blocks() {
+        let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
+        let mut content = Vec::new();
+
+        assert!(
+            read_file_to_end(&mut reader, &mut content, Path::new("test"))
+                .now_or_never()
+                .is_none()
+        );
+        assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
+        assert_eq!(content.len(), STREAM_BLOCK_BYTES);
+    }
+
+    #[gpui::test]
+    async fn test_stream_utf8_normalizes_line_endings() {
         let crlf = "one\r\ntwo\r\nthree\r\n".repeat(40);
-        let (text, line_ending) = stream(crlf.as_bytes()).unwrap();
+        let (text, line_ending) = stream(crlf.as_bytes()).await.unwrap();
         assert_eq!(text, crlf.replace("\r\n", "\n"));
         assert_eq!(line_ending, LineEnding::Windows);
 
         let cr = "one\rtwo\rthree\r".repeat(40);
-        assert_eq!(stream(cr.as_bytes()).unwrap().0, cr.replace('\r', "\n"));
+        assert_eq!(
+            stream(cr.as_bytes()).await.unwrap().0,
+            cr.replace('\r', "\n")
+        );
     }
 
-    #[test]
-    fn test_stream_utf8_block_boundaries() {
+    #[gpui::test]
+    async fn test_stream_utf8_block_boundaries() {
         // A carriage return landing on the last byte of a block, with and
         // without its newline arriving in the next one.
         for (suffix, expected) in [("\r\ntail\n", "\ntail\n"), ("\rtail", "\ntail")] {
             let filler = "a".repeat(STREAM_BLOCK_BYTES - 1);
             let source = format!("{filler}{suffix}");
             assert_eq!(
-                stream(source.as_bytes()).unwrap().0,
+                stream(source.as_bytes()).await.unwrap().0,
                 format!("{filler}{expected}"),
                 "suffix = {suffix:?}"
             );
@@ -7431,7 +7527,7 @@ mod tests {
                 let filler = "a".repeat(STREAM_BLOCK_BYTES - split);
                 let source = format!("{filler}{ch}tail");
                 assert_eq!(
-                    stream(source.as_bytes()).unwrap().0,
+                    stream(source.as_bytes()).await.unwrap().0,
                     source,
                     "ch = {ch:?}, split = {split}"
                 );
@@ -7439,13 +7535,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_stream_utf8_falls_back_on_non_utf8() {
+    #[gpui::test]
+    async fn test_stream_utf8_falls_back_on_non_utf8() {
         // Each of these must bail so the caller re-reads and decodes the slow
         // way, rather than silently mangling the file.
-        assert_eq!(stream(b"hello \xff\xfeA"), None, "invalid utf-8");
-        assert_eq!(stream(b"hello \xe2\x82"), None, "truncated at eof");
-        assert_eq!(stream(b"plain \x1b$B text"), None, "iso-2022 escape");
+        assert_eq!(stream(b"hello \xff\xfeA").await, None, "invalid utf-8");
+        assert_eq!(stream(b"hello \xe2\x82").await, None, "truncated at eof");
+        assert_eq!(stream(b"plain \x1b$B text").await, None, "iso-2022 escape");
     }
 
     /// reproduction of issue #50785
