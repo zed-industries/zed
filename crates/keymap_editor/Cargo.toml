@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/keymap_editor.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true

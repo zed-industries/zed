@@ -5,6 +5,7 @@ mod terminal;
 pub use ::terminal::HeadlessTerminal;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
@@ -12,8 +13,8 @@ pub use diff::*;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{
-    AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    ActivityGuard, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription,
+    Task, WeakEntity,
 };
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
@@ -29,6 +30,7 @@ use project::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
+use settings::{Settings, SettingsStore};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
@@ -61,19 +63,18 @@ impl std::fmt::Display for MaxOutputTokensError {
 
 impl std::error::Error for MaxOutputTokensError {}
 
-/// Key used in ACP ToolCall meta to store the tool's programmatic name.
-/// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
+/// Legacy ACP metadata key used before tool calls had a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
 
-/// Helper to extract tool name from ACP meta
+/// Extracts a tool name from the legacy ACP metadata field.
 pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
     meta.as_ref()
-        .and_then(|m| m.get(TOOL_NAME_META_KEY))
-        .and_then(|v| v.as_str())
-        .map(|s| SharedString::from(s.to_owned()))
+        .and_then(|meta| meta.get(TOOL_NAME_META_KEY))
+        .and_then(|value| value.as_str())
+        .map(|name| SharedString::from(name.to_owned()))
 }
 
-/// Helper to create meta with tool name
+/// Creates ACP metadata containing the legacy tool-name field.
 pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
     acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
 }
@@ -295,7 +296,7 @@ pub struct UserMessage {
     pub protocol_id: Option<acp::MessageId>,
     pub client_id: Option<ClientUserMessageId>,
     pub is_optimistic: bool,
-    pub content: ContentBlock,
+    pub content: MessageContent,
     pub chunks: Vec<acp::ContentBlock>,
     pub checkpoint: Option<Checkpoint>,
     pub indented: bool,
@@ -349,11 +350,11 @@ impl AssistantMessage {
 pub enum AssistantMessageChunk {
     Message {
         id: Option<acp::MessageId>,
-        block: ContentBlock,
+        block: MessageContent,
     },
     Thought {
         id: Option<acp::MessageId>,
-        block: ContentBlock,
+        block: MessageContent,
     },
 }
 
@@ -366,13 +367,13 @@ impl AssistantMessageChunk {
     ) -> Self {
         Self::Message {
             id: None,
-            block: ContentBlock::new(chunk.into(), language_registry, path_style, cx),
+            block: MessageContent::new(chunk.into(), language_registry, path_style, cx),
         }
     }
 
     fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::Message { block, .. } => block.to_markdown(cx).to_string(),
+            Self::Message { block, .. } => block.to_markdown(cx),
             Self::Thought { block, .. } => {
                 format!("<thinking>\n{}\n</thinking>", block.to_markdown(cx))
             }
@@ -753,11 +754,26 @@ impl ElicitationStore {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextCompactionId(pub Arc<str>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextCompactionStatus {
     InProgress,
     Completed,
+    Failed,
     Canceled,
+    Other(Arc<str>),
+}
+
+impl From<acp::CompactionStatus> for ContextCompactionStatus {
+    fn from(status: acp::CompactionStatus) -> Self {
+        match status {
+            acp::CompactionStatus::InProgress => Self::InProgress,
+            acp::CompactionStatus::Completed => Self::Completed,
+            acp::CompactionStatus::Failed => Self::Failed,
+            acp::CompactionStatus::Cancelled => Self::Canceled,
+            acp::CompactionStatus::Other(status) => Self::Other(status.into()),
+            _ => Self::Other("unknown".into()),
+        }
+    }
 }
 
 /// A point in the thread where the conversation history was compacted to free
@@ -767,14 +783,59 @@ pub enum ContextCompactionStatus {
 pub struct ContextCompaction {
     pub id: ContextCompactionId,
     pub status: ContextCompactionStatus,
-    /// The compaction summary, streamed in as the model produces it. This is
-    /// `None` for provider-native compaction, which produces no summary to show.
-    pub summary: Option<Entity<Markdown>>,
+    pub error: Option<Entity<Markdown>>,
+    pub summary: Vec<ContentBlock>,
 }
 
 impl ContextCompaction {
     pub fn is_in_progress(&self) -> bool {
         self.status == ContextCompactionStatus::InProgress
+    }
+
+    fn apply_update(
+        &mut self,
+        update: acp::CompactionUpdate,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        self.status = update.status.into();
+        match update.summary {
+            MaybeUndefined::Undefined => {}
+            MaybeUndefined::Null => self.summary.clear(),
+            MaybeUndefined::Value(blocks) => {
+                self.summary.clear();
+                for block in blocks {
+                    self.append_summary(block, language_registry, cx);
+                }
+            }
+        }
+        match update.error {
+            MaybeUndefined::Undefined => {}
+            MaybeUndefined::Null => self.error = None,
+            MaybeUndefined::Value(error) => {
+                if let Some(markdown) = &self.error {
+                    markdown.update(cx, |markdown, cx| markdown.reset(error.into(), cx));
+                } else {
+                    self.error = Some(cx.new(|cx| Markdown::new_text(error.into(), cx)));
+                }
+            }
+        }
+    }
+
+    fn append_summary(
+        &mut self,
+        content: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        if let acp::ContentBlock::Text(text) = &content
+            && let Some(ContentBlock::Markdown { markdown }) = self.summary.last()
+        {
+            markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
+        } else {
+            self.summary
+                .push(ContentBlock::new_output(content, language_registry, cx));
+        }
     }
 }
 
@@ -811,7 +872,27 @@ impl AgentThreadEntry {
                 }
                 md
             }
-            Self::ContextCompaction(_) => "--- Context Compacted ---\n\n".to_string(),
+            Self::ContextCompaction(compaction) => {
+                let status = match &compaction.status {
+                    ContextCompactionStatus::InProgress => "In Progress",
+                    ContextCompactionStatus::Completed => "Completed",
+                    ContextCompactionStatus::Failed => "Failed",
+                    ContextCompactionStatus::Canceled => "Canceled",
+                    ContextCompactionStatus::Other(status) => status,
+                };
+                let mut markdown =
+                    format!("## Context Compaction ({})\n\n", MarkdownEscaped(status));
+                for block in &compaction.summary {
+                    markdown.push_str(block.to_markdown(cx));
+                    markdown.push_str("\n\n");
+                }
+                if let Some(error) = &compaction.error {
+                    markdown.push_str("**Error:** ");
+                    markdown.push_str(&MarkdownEscaped(error.read(cx).source()).to_string());
+                    markdown.push_str("\n\n");
+                }
+                markdown
+            }
         }
     }
 
@@ -860,6 +941,7 @@ impl AgentThreadEntry {
 pub struct ToolCall {
     pub id: acp::ToolCallId,
     pub label: Entity<Markdown>,
+    title: Option<SharedString>,
     pub kind: acp::ToolKind,
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
@@ -883,28 +965,16 @@ impl ToolCall {
         tool_call: acp::ToolCall,
         status: ToolCallStatus,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
-        let title = if tool_call.kind == acp::ToolKind::Execute {
-            tool_call.title
-        } else if tool_call.kind == acp::ToolKind::Edit {
-            MarkdownEscaped(tool_call.title.as_str()).to_string()
-        } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
-            first_line.to_owned() + "…"
-        } else {
-            tool_call.title
-        };
+        let title =
+            Some(SharedString::from(tool_call.title)).filter(|title| !title.trim().is_empty());
         let mut content = Vec::with_capacity(tool_call.content.len());
         for item in tool_call.content {
-            if let Some(item) = ToolCallContent::from_acp(
-                item,
-                language_registry.clone(),
-                path_style,
-                terminals,
-                cx,
-            )? {
+            if let Some(item) =
+                ToolCallContent::from_acp(item, language_registry.clone(), terminals, cx)?
+            {
                 content.push(item);
             }
         }
@@ -914,7 +984,10 @@ impl ToolCall {
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
 
-        let tool_name = tool_name_from_meta(&tool_call.meta);
+        let tool_name = tool_call
+            .name
+            .map(SharedString::from)
+            .or_else(|| tool_name_from_meta(&tool_call.meta));
 
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
         let sandbox_authorization_details =
@@ -923,15 +996,18 @@ impl ToolCall {
             sandbox_fallback_authorization_details_from_meta(&tool_call.meta);
         let sandbox_not_applied = sandbox_not_applied_from_meta(&tool_call.meta);
 
-        let label = if tool_call.kind == acp::ToolKind::Execute {
-            cx.new(|cx| Markdown::new_text(title.into(), cx))
-        } else {
-            cx.new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx))
-        };
+        let label = Self::new_label(
+            title.as_ref(),
+            tool_name.as_ref(),
+            tool_call.kind,
+            language_registry,
+            cx,
+        );
 
         let result = Self {
             id: tool_call.tool_call_id,
             label,
+            title,
             kind: tool_call.kind,
             content,
             locations: tool_call.locations,
@@ -949,12 +1025,51 @@ impl ToolCall {
         Ok(result)
     }
 
+    fn label_text(
+        title: Option<&SharedString>,
+        tool_name: Option<&SharedString>,
+        kind: acp::ToolKind,
+    ) -> SharedString {
+        let Some(title) = title else {
+            return tool_name
+                .filter(|name| !name.trim().is_empty())
+                .cloned()
+                .unwrap_or_else(|| "Tool call".into());
+        };
+
+        if kind == acp::ToolKind::Execute {
+            title.clone()
+        } else if kind == acp::ToolKind::Edit {
+            MarkdownEscaped(title).to_string().into()
+        } else if let Some((first_line, _)) = title.split_once('\n') {
+            (first_line.to_owned() + "…").into()
+        } else {
+            title.clone()
+        }
+    }
+
+    fn new_label(
+        title: Option<&SharedString>,
+        tool_name: Option<&SharedString>,
+        kind: acp::ToolKind,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Entity<Markdown> {
+        let text = Self::label_text(title, tool_name, kind);
+        cx.new(|cx| {
+            if title.is_none() || kind == acp::ToolKind::Execute {
+                Markdown::new_text(text, cx)
+            } else {
+                Markdown::new(text, Some(language_registry), None, cx)
+            }
+        })
+    }
+
     fn update_fields(
         &mut self,
         fields: acp::ToolCallUpdateFields,
         meta: Option<acp::Meta>,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
@@ -962,6 +1077,7 @@ impl ToolCall {
             kind,
             status,
             title,
+            name,
             content,
             locations,
             raw_input,
@@ -969,12 +1085,24 @@ impl ToolCall {
             ..
         } = fields;
 
+        let was_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
+        let mut label_changed = title.is_some() || kind.is_some();
         if let Some(kind) = kind {
             self.kind = kind;
         }
 
         if let Some(status) = status {
             self.update_acp_status(status);
+        }
+
+        if let Some(tool_name) = name.map(SharedString::from) {
+            self.tool_name = Some(tool_name);
+            label_changed = true;
+        } else if self.tool_name.is_none() {
+            // Legacy metadata only fills a missing name so it cannot replace a
+            // first-class name received earlier.
+            self.tool_name = tool_name_from_meta(&meta);
+            label_changed |= self.tool_name.is_some();
         }
 
         if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
@@ -995,24 +1123,35 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
-            if self.kind == acp::ToolKind::Execute {
+            self.title = Some(SharedString::from(title)).filter(|title| !title.trim().is_empty());
+            if self.kind == acp::ToolKind::Execute
+                && let Some(title) = &self.title
+            {
+                // A missing tool title must not overwrite an actual terminal command.
                 for terminal in self.terminals() {
                     terminal.update(cx, |terminal, cx| {
-                        terminal.update_command_label(&title, cx);
+                        terminal.update_command_label(title, cx);
                     });
                 }
             }
-            self.label.update(cx, |label, cx| {
-                if self.kind == acp::ToolKind::Execute {
-                    label.replace(title, cx);
-                } else if self.kind == acp::ToolKind::Edit {
-                    label.replace(MarkdownEscaped(&title).to_string(), cx)
-                } else if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx);
-                } else {
-                    label.replace(title, cx);
+        }
+        if label_changed {
+            let is_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
+            if was_plain_text != is_plain_text {
+                self.label = Self::new_label(
+                    self.title.as_ref(),
+                    self.tool_name.as_ref(),
+                    self.kind,
+                    language_registry.clone(),
+                    cx,
+                );
+            } else {
+                let text =
+                    Self::label_text(self.title.as_ref(), self.tool_name.as_ref(), self.kind);
+                if self.label.read(cx).source() != &text {
+                    self.label.update(cx, |label, cx| label.replace(text, cx));
                 }
-            });
+            }
         }
 
         if let Some(content) = content {
@@ -1022,19 +1161,15 @@ impl ToolCall {
             // Reuse existing content if we can
             for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
                 let valid_content =
-                    old.update_from_acp(new, language_registry.clone(), path_style, terminals, cx)?;
+                    old.update_from_acp(new, language_registry.clone(), terminals, cx)?;
                 if !valid_content {
                     new_content_len -= 1;
                 }
             }
             for new in content {
-                if let Some(new) = ToolCallContent::from_acp(
-                    new,
-                    language_registry.clone(),
-                    path_style,
-                    terminals,
-                    cx,
-                )? {
+                if let Some(new) =
+                    ToolCallContent::from_acp(new, language_registry.clone(), terminals, cx)?
+                {
                     self.content.push(new);
                 } else {
                     new_content_len -= 1;
@@ -1113,11 +1248,13 @@ impl ToolCall {
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
-        let mut markdown = format!(
-            "**Tool Call: {}**\nStatus: {}\n\n",
-            self.label.read(cx).source(),
-            self.status
-        );
+        let label = self.label.read(cx).source();
+        let label = if self.title.is_none() {
+            MarkdownEscaped(label).to_string()
+        } else {
+            label.to_string()
+        };
+        let mut markdown = format!("**Tool Call: {}**\nStatus: {}\n\n", label, self.status);
         for content in &self.content {
             markdown.push_str(content.to_markdown(cx).as_str());
             markdown.push_str("\n\n");
@@ -1343,9 +1480,108 @@ fn elicitation_status_for_response(response: &acp::CreateElicitationResponse) ->
     }
 }
 
+#[derive(Debug, Default, PartialEq)]
+pub struct MessageContent {
+    blocks: Vec<ContentBlock>,
+}
+
+impl MessageContent {
+    pub fn new(
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) -> Self {
+        let mut content = Self::default();
+        content.append(block, language_registry, path_style, cx);
+        content
+    }
+
+    pub fn blocks(&self) -> &[ContentBlock] {
+        &self.blocks
+    }
+
+    pub fn markdowns(&self) -> impl Iterator<Item = &Entity<Markdown>> {
+        self.blocks.iter().filter_map(ContentBlock::markdown)
+    }
+
+    pub fn visible_content(&self, cx: &App) -> bool {
+        self.blocks.iter().any(|block| block.visible_content(cx))
+    }
+
+    pub fn to_markdown(&self, cx: &App) -> String {
+        self.blocks
+            .iter()
+            .map(|block| block.to_markdown(cx))
+            .filter(|text| !text.is_empty())
+            .join("\n\n")
+    }
+
+    fn trailing_text(&self) -> Option<&Entity<Markdown>> {
+        match self.blocks.last()? {
+            ContentBlock::Markdown { markdown } => Some(markdown),
+            _ => None,
+        }
+    }
+
+    pub fn append(
+        &mut self,
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        let block = match block {
+            acp::ContentBlock::ResourceLink(resource) => {
+                let mut text = ContentBlock::resource_link_md(&resource.uri, path_style);
+                if self.blocks.is_empty() {
+                    // Legacy leading links separated the next chunk. Include that separator
+                    // now because streamed text can append directly to the Markdown entity.
+                    text.push('\n');
+                }
+                text.into()
+            }
+            block => block,
+        };
+        if let acp::ContentBlock::Text(text) = &block {
+            if text.text.is_empty() {
+                return;
+            }
+            if let Some(markdown) = self.trailing_text() {
+                markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
+                return;
+            }
+        }
+        self.blocks
+            .push(ContentBlock::new_output(block, language_registry, cx));
+    }
+
+    fn append_prompt(
+        &mut self,
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        // Prompt text resources are mentions, not output previews. Keep their text
+        // inline while retaining the original payloads in UserMessage::chunks.
+        let block = match block {
+            acp::ContentBlock::Resource(resource)
+                if matches!(
+                    resource.resource,
+                    acp::EmbeddedResourceResource::TextResourceContents(_)
+                ) =>
+            {
+                ContentBlock::embedded_resource_string_contents(&resource, path_style).into()
+            }
+            block => block,
+        };
+        self.append(block, language_registry, path_style, cx);
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum ContentBlock {
-    Empty,
     Markdown {
         markdown: Entity<Markdown>,
     },
@@ -1360,41 +1596,30 @@ pub enum ContentBlock {
         image: Arc<gpui::Image>,
         dimensions: Option<gpui::Size<u32>>,
     },
+    Unsupported {
+        content: acp::ContentBlock,
+        markdown: Entity<Markdown>,
+    },
 }
 
 impl ContentBlock {
-    pub fn new(
+    pub fn new_output(
         block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
-        path_style: PathStyle,
-        cx: &mut App,
-    ) -> Self {
-        let mut this = Self::Empty;
-        this.append(block, language_registry, path_style, cx);
-        this
-    }
-
-    pub fn new_combined(
-        blocks: impl IntoIterator<Item = acp::ContentBlock>,
-        language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
-        cx: &mut App,
-    ) -> Self {
-        let mut this = Self::Empty;
-        for block in blocks {
-            this.append(block, &language_registry, path_style, cx);
-        }
-        this
-    }
-
-    pub fn new_tool_call_content(
-        block: acp::ContentBlock,
-        language_registry: &Arc<LanguageRegistry>,
-        path_style: PathStyle,
         cx: &mut App,
     ) -> Self {
         match block {
-            acp::ContentBlock::Resource(resource) => {
+            acp::ContentBlock::Text(text) => {
+                Self::create_markdown_block(text.text, language_registry, cx)
+            }
+            acp::ContentBlock::ResourceLink(resource_link) => Self::ResourceLink { resource_link },
+            acp::ContentBlock::Resource(resource)
+                if matches!(
+                    &resource.resource,
+                    acp::EmbeddedResourceResource::TextResourceContents(_)
+                        | acp::EmbeddedResourceResource::BlobResourceContents(_)
+                ) =>
+            {
                 if let Some((image, dimensions)) = Self::decode_embedded_resource_image(&resource) {
                     Self::Image { image, dimensions }
                 } else {
@@ -1403,56 +1628,30 @@ impl ContentBlock {
                     Self::EmbeddedResource { resource, markdown }
                 }
             }
-            block => Self::new(block, language_registry, path_style, cx),
-        }
-    }
-
-    pub fn append(
-        &mut self,
-        block: acp::ContentBlock,
-        language_registry: &Arc<LanguageRegistry>,
-        path_style: PathStyle,
-        cx: &mut App,
-    ) {
-        match (&mut *self, &block) {
-            (ContentBlock::Empty, acp::ContentBlock::ResourceLink(resource_link)) => {
-                *self = ContentBlock::ResourceLink {
-                    resource_link: resource_link.clone(),
-                };
-            }
-            (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
-                if let Some((image, dimensions)) = Self::decode_image(image_content) {
-                    *self = ContentBlock::Image { image, dimensions };
+            acp::ContentBlock::Image(image) => {
+                if let Some((image, dimensions)) = Self::decode_image(&image) {
+                    Self::Image { image, dimensions }
                 } else {
-                    let new_content = Self::image_md(image_content);
-                    *self = Self::create_markdown_block(new_content, language_registry, cx);
+                    Self::Unsupported {
+                        content: acp::ContentBlock::Image(image),
+                        markdown: Self::create_markdown(
+                            "Image content could not be displayed.".into(),
+                            language_registry,
+                            cx,
+                        ),
+                    }
                 }
             }
-            (ContentBlock::Empty, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                *self = Self::create_markdown_block(new_content, language_registry, cx);
-            }
-            (ContentBlock::Markdown { markdown }, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
-            }
-            (ContentBlock::ResourceLink { resource_link }, _) => {
-                let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("{}\n{}", existing_content, new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
-            }
-            (ContentBlock::EmbeddedResource { resource, .. }, _) => {
-                let existing_content =
-                    Self::embedded_resource_string_contents(resource, path_style);
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("{}\n{}", existing_content, new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
-            }
-            (ContentBlock::Image { .. }, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("`Image`\n{}", new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
+            content => {
+                let description = if matches!(&content, acp::ContentBlock::Audio(_)) {
+                    "Audio content is not supported."
+                } else {
+                    "This content is not supported."
+                };
+                Self::Unsupported {
+                    content,
+                    markdown: Self::create_markdown(description.into(), language_registry, cx),
+                }
             }
         }
     }
@@ -1588,15 +1787,15 @@ impl ContentBlock {
 
     pub fn text_content<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
         match self {
-            ContentBlock::Markdown { markdown } => Some(markdown.read(cx).source()),
+            ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
+                Some(markdown.read(cx).source())
+            }
             ContentBlock::EmbeddedResource { resource, .. } => match &resource.resource {
                 acp::EmbeddedResourceResource::TextResourceContents(text) => Some(&text.text),
                 acp::EmbeddedResourceResource::BlobResourceContents(_) => None,
                 _ => None,
             },
-            ContentBlock::Empty
-            | ContentBlock::ResourceLink { .. }
-            | ContentBlock::Image { .. } => None,
+            ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => None,
         }
     }
 
@@ -1667,32 +1866,14 @@ impl ContentBlock {
 
     pub fn visible_content(&self, cx: &App) -> bool {
         match self {
-            ContentBlock::Empty => false,
-            ContentBlock::Markdown { markdown } => !markdown.read(cx).source().trim().is_empty(),
+            ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
+                !markdown.read(cx).source().trim().is_empty()
+            }
             ContentBlock::EmbeddedResource { resource, markdown } => match markdown {
                 Some(markdown) => !markdown.read(cx).source().trim().is_empty(),
                 None => !Self::embedded_resource_text(resource).trim().is_empty(),
             },
             ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => true,
-        }
-    }
-
-    fn block_string_contents(block: &acp::ContentBlock, path_style: PathStyle) -> String {
-        match block {
-            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
-            acp::ContentBlock::ResourceLink(resource_link) => {
-                Self::resource_link_md(&resource_link.uri, path_style)
-            }
-            acp::ContentBlock::Resource(acp::EmbeddedResource {
-                resource:
-                    acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
-                        uri,
-                        ..
-                    }),
-                ..
-            }) => Self::resource_link_md(uri, path_style),
-            acp::ContentBlock::Image(image) => Self::image_md(image),
-            _ => String::new(),
         }
     }
 
@@ -1704,14 +1885,11 @@ impl ContentBlock {
         }
     }
 
-    fn image_md(_image: &acp::ImageContent) -> String {
-        "`Image`".into()
-    }
-
     pub fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
         match self {
-            ContentBlock::Empty => "",
-            ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
+            ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
+                markdown.read(cx).source()
+            }
             ContentBlock::EmbeddedResource { resource, markdown } => {
                 if let Some(markdown) = markdown {
                     markdown.read(cx).source()
@@ -1726,8 +1904,9 @@ impl ContentBlock {
 
     pub fn markdown(&self) -> Option<&Entity<Markdown>> {
         match self {
-            ContentBlock::Empty => None,
-            ContentBlock::Markdown { markdown } => Some(markdown),
+            ContentBlock::Markdown { markdown } | ContentBlock::Unsupported { markdown, .. } => {
+                Some(markdown)
+            }
             ContentBlock::EmbeddedResource { markdown, .. } => markdown.as_ref(),
             ContentBlock::ResourceLink { .. } => None,
             ContentBlock::Image { .. } => None,
@@ -1815,18 +1994,12 @@ impl ToolCallContent {
     pub fn from_acp(
         content: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Option<Self>> {
         match content {
             acp::ToolCallContent::Content(acp::Content { content, .. }) => Ok(Some(
-                Self::ContentBlock(ContentBlock::new_tool_call_content(
-                    content,
-                    &language_registry,
-                    path_style,
-                    cx,
-                )),
+                Self::ContentBlock(ContentBlock::new_output(content, &language_registry, cx)),
             )),
             acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
@@ -1850,7 +2023,6 @@ impl ToolCallContent {
         &mut self,
         new: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<bool> {
@@ -1876,7 +2048,7 @@ impl ToolCallContent {
             _ => true,
         };
 
-        if let Some(update) = Self::from_acp(new, language_registry, path_style, terminals, cx)? {
+        if let Some(update) = Self::from_acp(new, language_registry, terminals, cx)? {
             if needs_update {
                 *self = update;
             }
@@ -2108,6 +2280,7 @@ pub struct AcpThread {
     prompt_capabilities: acp::PromptCapabilities,
     available_commands: Vec<acp::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
+    _idle_sleep_subscriptions: Vec<Subscription>,
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
@@ -2121,6 +2294,14 @@ pub struct AcpThread {
     /// gradually to create a fluid typing effect instead of choppy chunk-at-a-time
     /// updates.
     streaming_text_buffer: Option<StreamingTextBuffer>,
+    idle_sleep_prevention: IdleSleepPrevention,
+}
+
+enum IdleSleepPrevention {
+    Inactive,
+    Acquiring { _task: Task<()> },
+    Active { _guard: ActivityGuard },
+    Failed,
 }
 
 struct StreamingTextBuffer {
@@ -2283,6 +2464,34 @@ impl AcpThread {
                 })?;
             }
         });
+        let idle_sleep_settings_subscription = cx.observe_global::<SettingsStore>(|this, cx| {
+            this.update_idle_sleep_prevention(cx);
+        });
+        let idle_sleep_event_subscription =
+            cx.subscribe_self(|this, event: &AcpThreadEvent, cx| match event {
+                AcpThreadEvent::StatusChanged
+                | AcpThreadEvent::EntriesRemoved(_)
+                | AcpThreadEvent::ToolAuthorizationRequested(_)
+                | AcpThreadEvent::ToolAuthorizationReceived(_)
+                | AcpThreadEvent::ElicitationRequested(_)
+                | AcpThreadEvent::ElicitationResponded(_) => this.update_idle_sleep_prevention(cx),
+                AcpThreadEvent::PromptUpdated
+                | AcpThreadEvent::NewEntry
+                | AcpThreadEvent::TitleUpdated
+                | AcpThreadEvent::TokenUsageUpdated
+                | AcpThreadEvent::EntryUpdated(_)
+                | AcpThreadEvent::Retry(_)
+                | AcpThreadEvent::SubagentSpawned(_)
+                | AcpThreadEvent::Stopped(_)
+                | AcpThreadEvent::Error
+                | AcpThreadEvent::LoadError(_)
+                | AcpThreadEvent::PromptCapabilitiesUpdated
+                | AcpThreadEvent::Refusal
+                | AcpThreadEvent::AvailableCommandsUpdated(_)
+                | AcpThreadEvent::ModeUpdated(_)
+                | AcpThreadEvent::ConfigOptionsUpdated(_)
+                | AcpThreadEvent::WorkingDirectoriesUpdated => {}
+            });
 
         let git_store = project.read(cx).git_store().clone();
         let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
@@ -2321,6 +2530,10 @@ impl AcpThread {
             prompt_capabilities,
             available_commands: Vec::new(),
             _observe_prompt_capabilities: task,
+            _idle_sleep_subscriptions: vec![
+                idle_sleep_settings_subscription,
+                idle_sleep_event_subscription,
+            ],
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
@@ -2328,6 +2541,7 @@ impl AcpThread {
             draft_prompt: None,
             ui_scroll_position: None,
             streaming_text_buffer: None,
+            idle_sleep_prevention: IdleSleepPrevention::Inactive,
         }
     }
 
@@ -2395,7 +2609,7 @@ impl AcpThread {
     }
 
     pub fn is_compacting(&self) -> bool {
-        self.entries.last().is_some_and(|entry| {
+        self.entries.iter().rev().any(|entry| {
             matches!(
                 entry,
                 AgentThreadEntry::ContextCompaction(compaction) if compaction.is_in_progress()
@@ -2414,7 +2628,7 @@ impl AcpThread {
                     AssistantMessageChunk::Message { block, .. } => block,
                     AssistantMessageChunk::Thought { block, .. } => block,
                 };
-                if let Some(markdown) = block.markdown() {
+                for markdown in block.markdowns() {
                     markdown.update(cx, |markdown, cx| {
                         markdown.invalidate_mermaid_cache(cx);
                     });
@@ -2607,6 +2821,12 @@ impl AcpThread {
             acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
                 self.update_tool_call(tool_call_update, cx)?;
             }
+            acp::SessionUpdate::CompactionUpdate(compaction_update) => {
+                self.upsert_context_compaction_update(compaction_update, cx);
+            }
+            acp::SessionUpdate::CompactionSummaryChunk(summary_chunk) => {
+                self.append_context_compaction_summary(summary_chunk, cx);
+            }
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
             }
@@ -2727,12 +2947,13 @@ impl AcpThread {
             if existing_protocol_id.is_none() {
                 *existing_protocol_id = protocol_id;
             }
-            content.append(chunk.clone(), &language_registry, path_style, cx);
+            content.append_prompt(chunk.clone(), &language_registry, path_style, cx);
             chunks.push(chunk);
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
-            let content = ContentBlock::new(chunk.clone(), &language_registry, path_style, cx);
+            let mut content = MessageContent::default();
+            content.append_prompt(chunk.clone(), &language_registry, path_style, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
                     protocol_id,
@@ -2824,7 +3045,7 @@ impl AcpThread {
                     block.append(chunk, &language_registry, path_style, cx)
                 }
                 _ => {
-                    let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
+                    let block = MessageContent::new(chunk, &language_registry, path_style, cx);
                     if is_thought {
                         chunks.push(AssistantMessageChunk::Thought {
                             id: message_id,
@@ -2839,7 +3060,7 @@ impl AcpThread {
                 }
             }
         } else {
-            let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
+            let block = MessageContent::new(chunk, &language_registry, path_style, cx);
             let chunk = if is_thought {
                 AssistantMessageChunk::Thought {
                     id: message_id,
@@ -2882,17 +3103,18 @@ impl AcpThread {
                 (
                     AssistantMessageChunk::Message {
                         id: existing_id,
-                        block: ContentBlock::Markdown { markdown },
+                        block,
                     },
                     false,
                 )
                 | (
                     AssistantMessageChunk::Thought {
                         id: existing_id,
-                        block: ContentBlock::Markdown { markdown },
+                        block,
                     },
                     true,
                 ) if can_merge_message_chunks(existing_id.as_ref(), message_id) => {
+                    let markdown = block.trailing_text()?;
                     if existing_id.is_none() {
                         *existing_id = message_id.cloned();
                     }
@@ -3025,6 +3247,67 @@ impl AcpThread {
         }
     }
 
+    fn upsert_context_compaction_update(
+        &mut self,
+        update: acp::CompactionUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let id = ContextCompactionId(update.compaction_id.0.clone());
+        let language_registry = self.project.read(cx).languages().clone();
+
+        if let Some((entry_index, compaction)) =
+            self.entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(entry_index, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(compaction) if compaction.id == id => {
+                        Some((entry_index, compaction))
+                    }
+                    _ => None,
+                })
+        {
+            compaction.apply_update(update, &language_registry, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
+            return;
+        }
+
+        let mut compaction = ContextCompaction {
+            id,
+            status: update.status.clone().into(),
+            error: None,
+            summary: Vec::new(),
+        };
+        compaction.apply_update(update, &language_registry, cx);
+        self.push_entry(AgentThreadEntry::ContextCompaction(compaction), cx);
+    }
+
+    fn append_context_compaction_summary(
+        &mut self,
+        chunk: acp::CompactionSummaryChunk,
+        cx: &mut Context<Self>,
+    ) {
+        let language_registry = self.project.read(cx).languages().clone();
+        if let Some((entry_index, compaction)) =
+            self.entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(entry_index, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(compaction)
+                        if compaction.id.0 == chunk.compaction_id.0
+                            && compaction.is_in_progress() =>
+                    {
+                        Some((entry_index, compaction))
+                    }
+                    _ => None,
+                })
+        {
+            compaction.append_summary(chunk.content, &language_registry, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
+        }
+    }
+
     pub fn update_context_compaction(
         &mut self,
         update: ContextCompactionUpdate,
@@ -3045,20 +3328,11 @@ impl AcpThread {
         };
 
         if !update.summary_delta.is_empty() {
-            if compaction.summary.is_none() {
-                compaction.summary = Some(cx.new(|cx| {
-                    Markdown::new(
-                        update.summary_delta.into(),
-                        Some(language_registry),
-                        None,
-                        cx,
-                    )
-                }));
-            } else if let Some(summary) = compaction.summary.clone() {
-                summary.update(cx, |markdown, cx| {
-                    markdown.append(&update.summary_delta, cx)
-                });
-            }
+            compaction.append_summary(
+                acp::ContentBlock::Text(acp::TextContent::new(update.summary_delta)),
+                &language_registry,
+                cx,
+            );
         }
 
         if let Some(status) = update.status {
@@ -3119,7 +3393,6 @@ impl AcpThread {
     ) -> Result<()> {
         let update = update.into();
         let languages = self.project.read(cx).languages().clone();
-        let path_style = self.project.read(cx).path_style(cx);
 
         let ix = match self.index_for_tool_call(update.id()) {
             Some(ix) => ix,
@@ -3128,11 +3401,11 @@ impl AcpThread {
                 let failed_tool_call = ToolCall {
                     id: update.id().clone(),
                     label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
+                    title: Some("Tool call not found".into()),
                     kind: acp::ToolKind::Fetch,
-                    content: vec![ToolCallContent::ContentBlock(ContentBlock::new(
+                    content: vec![ToolCallContent::ContentBlock(ContentBlock::new_output(
                         "Tool call not found".into(),
                         &languages,
-                        path_style,
                         cx,
                     ))],
                     status: ToolCallStatus::Failed,
@@ -3158,14 +3431,12 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                call.update_fields(
-                    update.fields,
-                    update.meta,
-                    languages,
-                    path_style,
-                    &self.terminals,
-                    cx,
-                )?;
+                if let Err(error) =
+                    call.update_fields(update.fields, update.meta, languages, &self.terminals, cx)
+                {
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    return Err(error);
+                }
                 if location_updated {
                     self.resolve_locations(update.tool_call_id, cx);
                 }
@@ -3204,7 +3475,6 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
         let language_registry = self.project.read(cx).languages().clone();
-        let path_style = self.project.read(cx).path_style(cx);
         let id = update.tool_call_id.clone();
 
         let agent_telemetry_id = self.connection().telemetry_id();
@@ -3230,14 +3500,16 @@ impl AcpThread {
                 unreachable!()
             };
 
-            call.update_fields(
+            if let Err(error) = call.update_fields(
                 update.fields,
                 update.meta,
                 language_registry,
-                path_style,
                 &self.terminals,
                 cx,
-            )?;
+            ) {
+                cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                return Err(acp::Error::from(error));
+            }
             call.update_status(status);
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -3246,7 +3518,6 @@ impl AcpThread {
                 update.try_into()?,
                 status,
                 language_registry,
-                self.project.read(cx).path_style(cx),
                 &self.terminals,
                 cx,
             )?;
@@ -3653,12 +3924,12 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
-        let block = ContentBlock::new_combined(
-            message.clone(),
-            self.project.read(cx).languages().clone(),
-            self.project.read(cx).path_style(cx),
-            cx,
-        );
+        let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        let mut block = MessageContent::default();
+        for chunk in &message {
+            block.append_prompt(chunk.clone(), &language_registry, path_style, cx);
+        }
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
 
@@ -3753,14 +4024,21 @@ impl AcpThread {
         });
         cx.emit(AcpThreadEvent::StatusChanged);
 
-        cx.spawn(async move |this, cx| {
+        let completion = async move |thread: WeakEntity<Self>, cx: &mut AsyncApp| {
             let response = rx.await;
 
-            this.update(cx, |this, cx| this.update_last_checkpoint(cx))?
+            thread
+                .update(cx, |this, cx| {
+                    if this.turn_id == turn_id {
+                        this.update_last_checkpoint(cx)
+                    } else {
+                        Task::ready(Ok(()))
+                    }
+                })?
                 .await?;
 
-            this.update(cx, |this, cx| {
-                if this.parent_session_id.is_none() {
+            thread.update(cx, |this, cx| {
+                if this.turn_id == turn_id && this.parent_session_id.is_none() {
                     this.project
                         .update(cx, |project, cx| project.set_agent_location(None, cx));
                 }
@@ -3786,6 +4064,10 @@ impl AcpThread {
                     // tx dropped, just return
                     return Ok(None);
                 };
+
+                if this.turn_id != turn_id {
+                    return response.map(Some);
+                }
 
                 match response {
                     Ok(r) => {
@@ -3894,8 +4176,13 @@ impl AcpThread {
                     }
                 }
             })?
+        };
+        let (completion_tx, completion_rx) = oneshot::channel();
+        cx.spawn(async move |thread, cx| {
+            completion_tx.send(completion(thread, cx).await).ok();
         })
-        .boxed()
+        .detach();
+        async move { completion_rx.await? }.boxed()
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -3919,6 +4206,38 @@ impl AcpThread {
 
         // Wait for the send task to complete
         cx.background_spawn(turn.send_task)
+    }
+
+    fn update_idle_sleep_prevention(&mut self, cx: &mut Context<Self>) {
+        if !AgentSettings::get_global(cx).prevent_idle_sleep
+            || self.running_turn.is_none()
+            || self.is_waiting_for_confirmation()
+        {
+            self.idle_sleep_prevention = IdleSleepPrevention::Inactive;
+            return;
+        }
+
+        if !matches!(self.idle_sleep_prevention, IdleSleepPrevention::Inactive) {
+            return;
+        }
+
+        let acquisition = cx.prevent_idle_sleep("Agent thread in progress");
+        self.idle_sleep_prevention = IdleSleepPrevention::Acquiring {
+            _task: cx.spawn(async move |thread, cx| {
+                let result = acquisition.await;
+                thread
+                    .update(cx, |thread, _| {
+                        thread.idle_sleep_prevention = match result {
+                            Ok(guard) => IdleSleepPrevention::Active { _guard: guard },
+                            Err(error) => {
+                                log::error!("Failed to prevent idle sleep: {error:#}");
+                                IdleSleepPrevention::Failed
+                            }
+                        };
+                    })
+                    .log_err();
+            }),
+        };
     }
 
     fn cancel_pending_turn_entries(&mut self, cx: &mut Context<Self>) {
@@ -4649,30 +4968,46 @@ impl AcpThread {
                 output_byte_limit,
                 terminal,
             } => {
-                let entity = self.register_terminal_created(
-                    terminal_id.clone(),
-                    label,
-                    cwd,
-                    output_byte_limit,
-                    terminal,
-                    cx,
-                );
+                if self.terminals.contains_key(&terminal_id) {
+                    return;
+                }
+                let language_registry = self.project.read(cx).languages().clone();
+                let entity = cx.new(|cx| {
+                    Terminal::new_display(
+                        terminal_id.clone(),
+                        &label,
+                        cwd,
+                        output_byte_limit.map(|limit| limit as usize),
+                        terminal,
+                        language_registry,
+                        cx,
+                    )
+                });
+                // Provider output and exit can arrive without another tool-call update.
+                cx.observe(&entity, |this, terminal, cx| {
+                    for (index, entry) in this.entries.iter().enumerate() {
+                        if entry
+                            .terminals()
+                            .any(|entry_terminal| entry_terminal == &terminal)
+                        {
+                            cx.emit(AcpThreadEvent::EntryUpdated(index));
+                        }
+                    }
+                    cx.notify();
+                })
+                .detach();
+                self.terminals.insert(terminal_id.clone(), entity.clone());
 
                 if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
                     for data in chunks.drain(..) {
                         entity.update(cx, |term, cx| {
-                            term.inner().update(cx, |inner, cx| {
-                                inner.write_output(&data, cx);
-                            })
+                            term.write_display_output(&data, cx);
                         });
                     }
                 }
 
-                if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, _| inner.shrink_to_used());
-                        cx.notify();
-                    });
+                if let Some(status) = self.pending_terminal_exit.remove(&terminal_id) {
+                    entity.update(cx, |term, cx| term.finish_display(status, cx));
                 }
 
                 cx.notify();
@@ -4680,9 +5015,7 @@ impl AcpThread {
             TerminalProviderEvent::Output { terminal_id, data } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
                     entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, cx| {
-                            inner.write_output(&data, cx);
-                        })
+                        term.write_display_output(&data, cx);
                     });
                 } else {
                     self.pending_terminal_output
@@ -4706,12 +5039,11 @@ impl AcpThread {
                 status,
             } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, _| inner.shrink_to_used());
-                        cx.notify();
-                    });
+                    entity.update(cx, |term, cx| term.finish_display(status, cx));
                 } else {
-                    self.pending_terminal_exit.insert(terminal_id, status);
+                    self.pending_terminal_exit
+                        .entry(terminal_id)
+                        .or_insert(status);
                 }
             }
         }
@@ -4852,6 +5184,378 @@ mod tests {
         });
     }
 
+    fn message_test_image() -> acp::ContentBlock {
+        acp::ContentBlock::Image(acp::ImageContent::new(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+            "image/png",
+        ))
+    }
+
+    #[gpui::test]
+    fn test_message_content_preserves_mixed_order(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            for (chunks, expected_kinds, expected_export) in [
+                (
+                    vec!["before".into(), message_test_image()],
+                    vec!["text", "image"],
+                    "before\n\n`Image`",
+                ),
+                (
+                    vec![message_test_image(), "after".into()],
+                    vec!["image", "text"],
+                    "`Image`\n\nafter",
+                ),
+                (
+                    vec![message_test_image(), message_test_image()],
+                    vec!["image", "image"],
+                    "`Image`\n\n`Image`",
+                ),
+                (
+                    vec!["".into(), message_test_image()],
+                    vec!["image"],
+                    "`Image`",
+                ),
+            ] {
+                let mut content = MessageContent::default();
+                for chunk in chunks {
+                    content.append(chunk, &language_registry, PathStyle::local(), cx);
+                }
+                assert_eq!(
+                    content
+                        .blocks()
+                        .iter()
+                        .map(|block| match block {
+                            ContentBlock::Markdown { .. } => "text",
+                            ContentBlock::Image { .. } => "image",
+                            other => panic!("unexpected block {other:?}"),
+                        })
+                        .collect::<Vec<_>>(),
+                    expected_kinds,
+                );
+                assert_eq!(content.to_markdown(cx), expected_export);
+                assert!(content.visible_content(cx));
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_resources_and_fallbacks(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let mut content = MessageContent::default();
+            for chunk in [
+                "before".into(),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new("resource text", "tool://preview"),
+                    ),
+                )),
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                    "link",
+                    "https://example.com/resource",
+                )),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::BlobResourceContents(
+                        acp::BlobResourceContents::new("private-blob-data", "tool://archive.bin"),
+                    ),
+                )),
+                acp::ContentBlock::Image(acp::ImageContent::new("not-base64", "image/png")),
+                acp::ContentBlock::Audio(acp::AudioContent::new("private-audio-data", "audio/wav")),
+                "after".into(),
+            ] {
+                content.append(chunk, &language_registry, PathStyle::local(), cx);
+            }
+            assert!(matches!(
+                content.blocks(),
+                [
+                    ContentBlock::Markdown { .. },
+                    ContentBlock::EmbeddedResource { .. },
+                    ContentBlock::Markdown { .. },
+                    ContentBlock::EmbeddedResource { markdown: None, .. },
+                    ContentBlock::Unsupported { .. },
+                    ContentBlock::Unsupported { .. },
+                    ContentBlock::Markdown { .. },
+                ]
+            ));
+            assert_eq!(
+                content.to_markdown(cx),
+                concat!(
+                    "before\n\n```\nresource text\n```\n\n",
+                    "[@https://example.com/resource](https://example.com/resource)\n\n",
+                    "tool://archive.bin\n\n",
+                    "Image content could not be displayed.\n\n",
+                    "Audio content is not supported.\n\nafter",
+                )
+            );
+            assert_eq!(
+                content
+                    .markdowns()
+                    .map(|markdown| markdown.read(cx).source())
+                    .collect::<Vec<_>>(),
+                [
+                    "before",
+                    "```\nresource text\n```",
+                    "[@https://example.com/resource](https://example.com/resource)",
+                    "Image content could not be displayed.",
+                    "Audio content is not supported.",
+                    "after",
+                ]
+            );
+            assert!(!content.to_markdown(cx).contains("private-audio-data"));
+            assert!(!content.to_markdown(cx).contains("private-blob-data"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_message_content_preserves_streaming_entities(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+
+        let (before, after, image) = thread.update(cx, |thread, cx| {
+            thread.push_assistant_content_block("before".into(), false, cx);
+            let before = thread
+                .streaming_markdown_target(None, false, false)
+                .expect("text should have a streaming target");
+            thread.push_assistant_content_block(" image".into(), false, cx);
+            assert!(thread.streaming_text_buffer.is_some());
+            thread.push_assistant_content_block(message_test_image(), false, cx);
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(before.read(cx).source(), "before image");
+            assert!(
+                thread
+                    .streaming_markdown_target(None, false, false)
+                    .is_none()
+            );
+
+            thread.push_assistant_content_block("after".into(), false, cx);
+            let after = thread
+                .streaming_markdown_target(None, false, false)
+                .expect("text after an image should have its own streaming target");
+            assert_ne!(before.entity_id(), after.entity_id());
+            thread.push_assistant_content_block(" image".into(), false, cx);
+            assert_eq!(
+                thread
+                    .streaming_text_buffer
+                    .as_ref()
+                    .expect("streaming text")
+                    .target,
+                after,
+            );
+
+            let [AgentThreadEntry::AssistantMessage(message)] = thread.entries() else {
+                panic!("expected one assistant message");
+            };
+            let [AssistantMessageChunk::Message { block, .. }] = message.chunks.as_slice() else {
+                panic!("expected one message chunk");
+            };
+            let [_, ContentBlock::Image { image, .. }, _] = block.blocks() else {
+                panic!("expected text, image, text");
+            };
+            (before, after, image.clone())
+        });
+
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(after.read(cx).source(), "after image");
+            let [AgentThreadEntry::AssistantMessage(message)] = thread.entries() else {
+                panic!("expected one assistant message");
+            };
+            let [AssistantMessageChunk::Message { block, .. }] = message.chunks.as_slice() else {
+                panic!("expected one message chunk");
+            };
+            let [
+                ContentBlock::Markdown { markdown: first },
+                ContentBlock::Image {
+                    image: current_image,
+                    ..
+                },
+                ContentBlock::Markdown { markdown: last },
+            ] = block.blocks()
+            else {
+                panic!("expected text, image, text");
+            };
+            assert_eq!(first, &before);
+            assert_eq!(last, &after);
+            assert!(Arc::ptr_eq(&image, current_image));
+        });
+
+        let whole = cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let mut content = MessageContent::default();
+            for chunk in [
+                "before image".into(),
+                message_test_image(),
+                "after image".into(),
+            ] {
+                content.append(chunk, &language_registry, PathStyle::local(), cx);
+            }
+            content.to_markdown(cx)
+        });
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                format!("## Assistant\n\n{whole}\n\n")
+            );
+        });
+
+        for (content, preview) in [
+            (
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new("Resource preview", "tool://preview")
+                            .mime_type("text/markdown".to_string()),
+                    ),
+                )),
+                "Resource preview",
+            ),
+            (
+                acp::ContentBlock::Audio(acp::AudioContent::new("private-audio-data", "audio/wav")),
+                "Audio content is not supported.",
+            ),
+        ] {
+            thread.update(cx, |thread, cx| {
+                thread.push_assistant_content_block(content, false, cx);
+                assert!(
+                    thread
+                        .streaming_markdown_target(None, false, false)
+                        .is_none()
+                );
+                let Some(AgentThreadEntry::AssistantMessage(message)) = thread.entries().last()
+                else {
+                    panic!("expected assistant output");
+                };
+                let Some(AssistantMessageChunk::Message { block, .. }) = message.chunks.last()
+                else {
+                    panic!("expected message content");
+                };
+                let preview_markdown = block
+                    .blocks()
+                    .last()
+                    .and_then(ContentBlock::markdown)
+                    .expect("Markdown-backed non-text content")
+                    .clone();
+                thread.push_assistant_content_block("Following".into(), false, cx);
+                let target = thread
+                    .streaming_markdown_target(None, false, false)
+                    .expect("new text target");
+                assert_ne!(target, preview_markdown);
+                thread.push_assistant_content_block(" text".into(), false, cx);
+                AcpThread::flush_streaming_text(&mut thread.streaming_text_buffer, cx);
+                assert_eq!(target.read(cx).source(), "Following text");
+                assert_eq!(preview_markdown.read(cx).source(), preview);
+            });
+        }
+
+        let (streamed, expected) = thread.update(cx, |thread, cx| {
+            let path_style = thread.project.read(cx).path_style(cx);
+            let languages = thread.project.read(cx).languages().clone();
+            let uri = "file:///project/report.md";
+            let link = acp::ContentBlock::ResourceLink(acp::ResourceLink::new("report", uri));
+            let expected = format!(
+                "{}\n## Details\n",
+                ContentBlock::resource_link_md(uri, path_style),
+            );
+            let mut direct = MessageContent::new(link.clone(), &languages, path_style, cx);
+            direct.append("## Details\n".into(), &languages, path_style, cx);
+            assert_eq!(direct.to_markdown(cx), expected);
+
+            thread.push_user_content_block(None, "Next response".into(), cx);
+            thread.push_assistant_content_block(link, false, cx);
+            let target = thread
+                .streaming_markdown_target(None, false, false)
+                .expect("leading link should retain its Markdown entity");
+            thread.push_assistant_content_block("## Det".into(), false, cx);
+            thread.push_assistant_content_block("ails\n".into(), false, cx);
+            assert_eq!(
+                thread
+                    .streaming_text_buffer
+                    .as_ref()
+                    .expect("buffered text")
+                    .target,
+                target,
+            );
+            (target, expected)
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        streamed.read_with(cx, |markdown, _| assert_eq!(markdown.source(), &expected));
+    }
+
+    #[gpui::test]
+    async fn test_message_content_preserves_prompt_mentions_and_raw_chunks(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+        let chunks = vec![
+            "read ".into(),
+            acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new(
+                        "attached file contents",
+                        "https://example.com/file",
+                    ),
+                ),
+            )),
+            " and ".into(),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "link",
+                "https://example.com/link",
+            )),
+            message_test_image(),
+        ];
+
+        thread.update(cx, |thread, cx| {
+            for chunk in &chunks {
+                thread.push_user_content_block(None, chunk.clone(), cx);
+            }
+            let [AgentThreadEntry::UserMessage(message)] = thread.entries() else {
+                panic!("expected one user message");
+            };
+            assert_eq!(message.chunks, chunks);
+            assert!(matches!(
+                message.content.blocks(),
+                [ContentBlock::Markdown { .. }, ContentBlock::Image { .. }]
+            ));
+            let expected = format!(
+                "read {} and {}\n\n`Image`",
+                ContentBlock::resource_link_md("https://example.com/file", PathStyle::local()),
+                ContentBlock::resource_link_md("https://example.com/link", PathStyle::local()),
+            );
+            assert_eq!(message.content.to_markdown(cx), expected);
+            assert!(
+                !message
+                    .content
+                    .to_markdown(cx)
+                    .contains("attached file contents")
+            );
+        });
+    }
+
     #[test]
     fn text_resource_markdown_uses_mime_type_for_code_blocks() {
         let shell = acp::TextResourceContents::new("echo 'hello from exec test'", "tool://preview")
@@ -4905,12 +5609,7 @@ mod tests {
                 ),
             ));
 
-            let block = ContentBlock::new_tool_call_content(
-                content,
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
+            let block = ContentBlock::new_output(content, &language_registry, cx);
 
             let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
                 panic!("expected embedded resource block, got {block:?}");
@@ -4937,14 +5636,13 @@ mod tests {
             );
             assert_eq!(block.text_content(cx), Some("echo 'hello from exec test'"));
 
-            let untyped = ContentBlock::new_tool_call_content(
+            let untyped = ContentBlock::new_output(
                 acp::ContentBlock::Resource(acp::EmbeddedResource::new(
                     acp::EmbeddedResourceResource::TextResourceContents(
                         acp::TextResourceContents::new("# plain preview", "tool://preview"),
                     ),
                 )),
                 &language_registry,
-                PathStyle::local(),
                 cx,
             );
             assert_eq!(untyped.to_markdown(cx), "```\n# plain preview\n```");
@@ -4971,10 +5669,9 @@ mod tests {
                 ),
             ));
 
-            let block = ContentBlock::new_tool_call_content(
+            let block = ContentBlock::new_output(
                 image_blob,
                 &language_registry,
-                PathStyle::local(),
                 cx,
             );
 
@@ -5007,12 +5704,7 @@ mod tests {
                 ),
             ));
 
-            let block = ContentBlock::new_tool_call_content(
-                archive_blob,
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
+            let block = ContentBlock::new_output(archive_blob, &language_registry, cx);
 
             let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
                 panic!("expected embedded resource block, got {block:?}");
@@ -5034,12 +5726,7 @@ mod tests {
                         .mime_type("image/png".to_string()),
                 ),
             ));
-            let invalid = ContentBlock::new_tool_call_content(
-                invalid_image_blob,
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
+            let invalid = ContentBlock::new_output(invalid_image_blob, &language_registry, cx);
             let ContentBlock::EmbeddedResource { resource, markdown } = &invalid else {
                 panic!("expected embedded resource block, got {invalid:?}");
             };
@@ -5179,6 +5866,22 @@ mod tests {
                 cx,
             );
         });
+        cx.run_until_parked();
+        thread.update(cx, |thread, cx| {
+            let terminal = thread
+                .terminal(terminal_id.clone())
+                .expect("display terminal");
+            terminal.update(cx, |terminal, cx| {
+                assert!(!terminal.is_process_backed());
+                assert!(terminal.wait_for_exit().is_err());
+                terminal.stop_by_user(cx);
+                assert!(!terminal.was_stopped_by_user());
+                assert!(
+                    terminal.output().is_none(),
+                    "a display terminal must wait for the provider's exit event",
+                );
+            });
+        });
 
         let mut output = String::new();
         for line in 0..15_000 {
@@ -5193,17 +5896,36 @@ mod tests {
                 },
                 cx,
             );
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, cx| {
+            let terminal = thread
+                .terminal(terminal_id.clone())
+                .expect("display terminal");
+            let output = terminal.read(cx).current_output(cx);
+            assert!(output.output.contains("line 14999"));
+            assert!(output.exit_status.is_none());
+        });
+
+        thread.update(cx, |thread, cx| {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
-                    status: acp::TerminalExitStatus::new().exit_code(0),
+                    status: acp::TerminalExitStatus::new().exit_code(7),
                 },
                 cx,
             );
         });
+        cx.run_until_parked();
 
         let content = thread.read_with(cx, |thread, cx| {
             let term = thread.terminal(terminal_id.clone()).unwrap();
+            let output = term.read(cx).current_output(cx);
+            assert_eq!(
+                output.exit_status.and_then(|status| status.exit_code),
+                Some(7)
+            );
+            assert!(output.output.contains("line 14999"));
             term.read_with(cx, |term, cx| term.inner().read(cx).get_content())
         });
 
@@ -5211,6 +5933,68 @@ mod tests {
             content.contains("line 14999"),
             "expected output to remain visible after terminal exit, got: {content}"
         );
+
+        let terminal = thread.read_with(cx, |thread, _| {
+            thread
+                .terminal(terminal_id.clone())
+                .expect("display terminal")
+        });
+        let ended_at = terminal.read_with(cx, |terminal, _| {
+            terminal.output().expect("completed output").ended_at
+        });
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "Duplicate".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower.clone(),
+                },
+                cx,
+            );
+            assert_eq!(
+                thread
+                    .terminal(terminal_id.clone())
+                    .expect("terminal")
+                    .entity_id(),
+                terminal.entity_id(),
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id.clone(),
+                    status: acp::TerminalExitStatus::new().signal("SIGTERM"),
+                },
+                cx,
+            );
+        });
+        terminal.read_with(cx, |terminal, _| {
+            let output = terminal.output().expect("completed output");
+            assert_eq!(output.ended_at, ended_at);
+            assert_eq!(output.exit_status.exit_code, Some(7));
+            assert_eq!(output.exit_status.signal, None);
+            assert_eq!(output.content, content);
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id,
+                    data: b"late output\n".to_vec(),
+                },
+                cx,
+            );
+        });
+        terminal.read_with(cx, |terminal, cx| {
+            let output = terminal.output().expect("completed output");
+            assert_eq!(output.ended_at, ended_at);
+            assert_eq!(output.exit_status.exit_code, Some(7));
+            assert_eq!(output.exit_status.signal, None);
+            assert!(output.content.contains("late output"));
+            assert_eq!(output.content, lower.read(cx).get_content());
+            assert_eq!(output.original_content_len, output.content.len());
+            assert_eq!(output.content_line_count, lower.read(cx).total_lines());
+        });
     }
 
     #[gpui::test]
@@ -5249,7 +6033,21 @@ mod tests {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
+                    status: acp::TerminalExitStatus::new().signal("SIGTERM"),
+                },
+                cx,
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id.clone(),
                     status: acp::TerminalExitStatus::new().exit_code(0),
+                },
+                cx,
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id: terminal_id.clone(),
+                    data: b"\nlate output".to_vec(),
                 },
                 cx,
             );
@@ -5284,6 +6082,12 @@ mod tests {
         // Output should be present after Created (flushed from buffer)
         let content = thread.read_with(cx, |thread, cx| {
             let term = thread.terminal(terminal_id.clone()).unwrap();
+            let output = term.read(cx).current_output(cx);
+            let exit_status = output.exit_status.expect("buffered exit status");
+            assert_eq!(exit_status.signal.as_deref(), Some("SIGTERM"));
+            assert_eq!(exit_status.exit_code, None);
+            assert!(output.output.contains("pre-exit data"));
+            assert!(output.output.contains("late output"));
             term.read_with(cx, |t, cx| t.inner().read(cx).get_content())
         });
 
@@ -5303,12 +6107,24 @@ mod tests {
     #[cfg(unix)]
     #[gpui::test]
     async fn test_terminal_kill_allows_wait_for_exit_to_complete(cx: &mut gpui::TestAppContext) {
+        assert_process_terminal_can_stop(false, cx).await;
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_headless_terminal_retains_process_control(cx: &mut gpui::TestAppContext) {
+        assert_process_terminal_can_stop(true, cx).await;
+    }
+
+    #[cfg(unix)]
+    async fn assert_process_terminal_can_stop(headless: bool, cx: &mut gpui::TestAppContext) {
         use std::collections::HashMap;
         use task::Shell;
         use util::shell_builder::ShellBuilder;
 
         init_test(cx);
         cx.executor().allow_parking();
+        cx.update(|cx| cx.set_global(::terminal::HeadlessTerminal(headless)));
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
@@ -5326,7 +6142,6 @@ mod tests {
 
         let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
 
-        // Create a real PTY terminal that runs a command which prints output then sleeps
         // We use printf instead of echo and chain with && sleep to ensure proper execution
         let (program, args) = ShellBuilder::new(&Shell::System, false).build(
             Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
@@ -5365,49 +6180,61 @@ mod tests {
             .unwrap();
 
         let lower_terminal = cx.new(|cx| builder.subscribe(cx));
+        assert_eq!(
+            lower_terminal.read_with(cx, |terminal, _| terminal.is_pty()),
+            !headless
+        );
 
         // Create the acp_thread Terminal wrapper
         thread.update(cx, |thread, cx| {
-            thread.on_terminal_provider_event(
-                TerminalProviderEvent::Created {
-                    terminal_id: terminal_id.clone(),
-                    label: "printf output_before_kill && sleep 60".to_string(),
-                    cwd: None,
-                    output_byte_limit: None,
-                    terminal: lower_terminal.clone(),
-                },
+            let terminal = thread.register_terminal_created(
+                terminal_id.clone(),
+                "printf output_before_kill && sleep 60".to_string(),
+                None,
+                None,
+                lower_terminal.clone(),
                 cx,
             );
+            assert!(terminal.read(cx).is_process_backed());
         });
 
         // Poll until the printf command produces output, rather than using a
         // fixed sleep which is flaky on loaded machines.
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            let has_output = thread.read_with(cx, |thread, cx| {
-                let term = thread
-                    .terminals
-                    .get(&terminal_id)
-                    .expect("terminal not found");
-                let content = term.read(cx).inner().read(cx).get_content();
-                content.contains("output_before_kill")
-            });
-            if has_output {
-                break;
+        if !headless {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let has_output = thread.read_with(cx, |thread, cx| {
+                    let term = thread
+                        .terminals
+                        .get(&terminal_id)
+                        .expect("terminal not found");
+                    let content = term.read(cx).inner().read(cx).get_content();
+                    content.contains("output_before_kill")
+                });
+                if has_output {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Timed out waiting for printf output to appear in terminal",
+                );
+                cx.executor().timer(Duration::from_millis(50)).await;
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "Timed out waiting for printf output to appear in terminal",
-            );
-            cx.executor().timer(Duration::from_millis(50)).await;
         }
 
         // Get the acp_thread Terminal and kill it
+        let killed_at = std::time::Instant::now();
         let wait_for_exit = thread.update(cx, |thread, cx| {
             let term = thread.terminals.get(&terminal_id).unwrap();
-            let wait_for_exit = term.read(cx).wait_for_exit();
+            let wait_for_exit = term.read(cx).wait_for_exit().expect("process terminal");
             term.update(cx, |term, cx| {
-                term.kill(cx);
+                assert!(term.output().is_none(), "the process must still be running");
+                if headless {
+                    term.stop_by_user(cx);
+                    assert!(term.was_stopped_by_user());
+                } else {
+                    term.kill(cx);
+                }
             });
             wait_for_exit
         });
@@ -5426,22 +6253,28 @@ mod tests {
             "wait_for_exit should complete after kill, but it timed out. \
             This indicates kill_active_task is not properly killing the shell process."
         );
+        assert!(
+            killed_at.elapsed() < Duration::from_secs(5),
+            "the process must stop without waiting for its natural exit",
+        );
 
         // Give the system a chance to process any pending updates
         cx.run_until_parked();
 
-        // Verify that the underlying terminal still has the output that was
-        // written before the kill. This verifies that killing doesn't lose output.
-        let inner_content = thread.read_with(cx, |thread, cx| {
-            let term = thread.terminals.get(&terminal_id).unwrap();
-            term.read(cx).inner().read(cx).get_content()
-        });
+        if !headless {
+            // Verify that the underlying terminal still has the output that was
+            // written before the kill. This verifies that killing doesn't lose output.
+            let inner_content = thread.read_with(cx, |thread, cx| {
+                let term = thread.terminals.get(&terminal_id).unwrap();
+                term.read(cx).inner().read(cx).get_content()
+            });
 
-        assert!(
-            inner_content.contains("output_before_kill"),
-            "Underlying terminal should contain output from before kill, got: {}",
-            inner_content
-        );
+            assert!(
+                inner_content.contains("output_before_kill"),
+                "Underlying terminal should contain output from before kill, got: {}",
+                inner_content
+            );
+        }
     }
 
     #[gpui::test]
@@ -5885,7 +6718,8 @@ mod tests {
                             ContextCompaction {
                                 id: ContextCompactionId("c1".into()),
                                 status: ContextCompactionStatus::Completed,
-                                summary: None,
+                                error: None,
+                                summary: Vec::new(),
                             },
                             cx,
                         );
@@ -6346,6 +7180,713 @@ mod tests {
                 })
             ));
         });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_session_updates(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+
+        thread.update(cx, |thread, cx| {
+            for summary in ["retained context", "replacement summary"] {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new(
+                                "compaction",
+                                acp::CompactionStatus::Completed,
+                            )
+                            .summary(vec![acp::ContentBlock::Text(
+                                acp::TextContent::new(summary),
+                            )]),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to set context compaction summary");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must exist");
+                };
+                assert_eq!(compaction.status, ContextCompactionStatus::Completed);
+                assert!(compaction.error.is_none());
+                assert_eq!(
+                    compaction
+                        .summary
+                        .first()
+                        .map(|block| block.to_markdown(cx)),
+                    Some(summary)
+                );
+                assert_eq!(
+                    thread.to_markdown(cx),
+                    format!("## Context Compaction (Completed)\n\n{summary}\n\n")
+                );
+            }
+
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(
+                        acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
+                            .summary(None::<Vec<acp::ContentBlock>>)
+                            .error("model unavailable"),
+                    ),
+                    cx,
+                )
+                .expect("failed to record context compaction failure");
+            let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+            else {
+                panic!("compaction entry must still exist");
+            };
+            assert_eq!(compaction.status, ContextCompactionStatus::Failed);
+            assert!(compaction.summary.is_empty());
+            assert_eq!(
+                compaction
+                    .error
+                    .as_ref()
+                    .map(|error| error.read(cx).source().as_ref()),
+                Some("model unavailable")
+            );
+            assert_eq!(
+                thread.to_markdown(cx),
+                "## Context Compaction (Failed)\n\n**Error:** model unavailable\n\n"
+            );
+
+            for error in [
+                MaybeUndefined::Undefined,
+                MaybeUndefined::Value("model *still* unavailable".to_string()),
+                MaybeUndefined::Null,
+            ] {
+                let expected_error = match &error {
+                    MaybeUndefined::Undefined => Some("model unavailable".to_string()),
+                    MaybeUndefined::Value(error) => Some(error.clone()),
+                    MaybeUndefined::Null => None,
+                };
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
+                                .error(error),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to patch compaction error");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must still exist");
+                };
+                assert_eq!(
+                    compaction
+                        .error
+                        .as_ref()
+                        .map(|error| error.read(cx).source().to_string()),
+                    expected_error
+                );
+                if let Some(error) = expected_error {
+                    assert!(
+                        thread
+                            .to_markdown(cx)
+                            .contains(&format!("**Error:** {}", MarkdownEscaped(&error)))
+                    );
+                }
+            }
+
+            for summary in [
+                vec![acp::ContentBlock::Text(acp::TextContent::new(""))],
+                Vec::new(),
+            ] {
+                let expected_length = summary.len();
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new(
+                                "compaction",
+                                acp::CompactionStatus::Completed,
+                            )
+                            .summary(summary),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to patch compaction summary");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must still exist");
+                };
+                assert_eq!(compaction.summary.len(), expected_length);
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_preserves_summary_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+        let image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        let text_resource =
+            acp::EmbeddedResource::new(acp::EmbeddedResourceResource::TextResourceContents(
+                acp::TextResourceContents::new("Retained resource text", "summary://context")
+                    .mime_type("text/markdown".to_string()),
+            ));
+        let blob_resource =
+            acp::EmbeddedResource::new(acp::EmbeddedResourceResource::BlobResourceContents(
+                acp::BlobResourceContents::new("c3VtbWFyeQ==", "summary://attachment")
+                    .mime_type("application/octet-stream".to_string()),
+            ));
+        let audio = acp::ContentBlock::Audio(acp::AudioContent::new("YXVkaW8=", "audio/wav"));
+        let blocks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new("retained ")),
+            acp::ContentBlock::Text(acp::TextContent::new("context")),
+            acp::ContentBlock::Resource(text_resource.clone()),
+            acp::ContentBlock::Image(acp::ImageContent::new(image_data, "image/png")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "Reference",
+                "https://example.com/context",
+            )),
+            audio.clone(),
+            acp::ContentBlock::Resource(blob_resource.clone()),
+        ];
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                        "compaction",
+                        acp::CompactionStatus::InProgress,
+                    )),
+                    cx,
+                )
+                .expect("failed to start compaction");
+            for block in &blocks {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionSummaryChunk(
+                            acp::CompactionSummaryChunk::new("compaction", block.clone()),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to append summary block");
+            }
+        });
+
+        for replace_summary in [false, true] {
+            thread.update(cx, |thread, cx| {
+                let mut update =
+                    acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Completed);
+                if replace_summary {
+                    update = update.summary(blocks.clone());
+                }
+                thread
+                    .handle_session_update(acp::SessionUpdate::CompactionUpdate(update), cx)
+                    .expect("failed to complete compaction");
+            });
+            thread.read_with(cx, |thread, cx| {
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.first()
+                else {
+                    panic!("expected compaction entry");
+                };
+                let [text, resource, image, link, unsupported, blob] =
+                    compaction.summary.as_slice()
+                else {
+                    panic!("expected six retained content blocks");
+                };
+                assert_eq!(text.to_markdown(cx), "retained context");
+                assert_eq!(
+                    resource.embedded_resource().map(|(resource, _)| resource),
+                    Some(&text_resource)
+                );
+                assert_eq!(resource.to_markdown(cx), "Retained resource text");
+                assert_eq!(
+                    image
+                        .image()
+                        .and_then(|(_, dimensions)| dimensions)
+                        .map(|size| (size.width, size.height)),
+                    Some((1, 1))
+                );
+                assert_eq!(
+                    link.resource_link().map(|link| link.uri.as_str()),
+                    Some("https://example.com/context")
+                );
+                let ContentBlock::Unsupported { content, .. } = unsupported else {
+                    panic!("expected preserved audio with a visible fallback");
+                };
+                assert_eq!(content, &audio);
+                assert!(unsupported.visible_content(cx));
+                assert_eq!(
+                    blob.embedded_resource().map(|(resource, _)| resource),
+                    Some(&blob_resource)
+                );
+                assert!(blob.visible_content(cx));
+                assert_eq!(
+                    thread.to_markdown(cx),
+                    concat!(
+                        "## Context Compaction (Completed)\n\n",
+                        "retained context\n\n",
+                        "Retained resource text\n\n",
+                        "`Image`\n\n",
+                        "https://example.com/context\n\n",
+                        "Audio content is not supported.\n\n",
+                        "summary://attachment\n\n",
+                    )
+                );
+            });
+        }
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(
+                        acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Completed)
+                            .summary(vec![audio.clone()]),
+                    ),
+                    cx,
+                )
+                .expect("failed to replace summary with audio");
+        });
+        thread.read_with(cx, |thread, cx| {
+            let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.first()
+            else {
+                panic!("expected compaction entry");
+            };
+            assert!(matches!(
+                compaction.summary.as_slice(),
+                [ContentBlock::Unsupported { content, .. }] if content == &audio
+            ));
+            assert!(
+                thread
+                    .to_markdown(cx)
+                    .contains("Audio content is not supported.")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_updates_preserve_timeline_and_emit_events(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let events = events.clone();
+            cx.subscribe(&thread, move |_, event, _| match event {
+                AcpThreadEvent::NewEntry => events.borrow_mut().push(None),
+                AcpThreadEvent::EntryUpdated(index) => events.borrow_mut().push(Some(*index)),
+                _ => {}
+            })
+        });
+
+        thread.update(cx, |thread, cx| {
+            for update in [
+                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    "first",
+                    acp::CompactionStatus::InProgress,
+                )),
+                acp::SessionUpdate::ToolCall(acp::ToolCall::new("tool", "Unrelated tool")),
+                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    "second",
+                    acp::CompactionStatus::InProgress,
+                )),
+                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    "second",
+                    acp::CompactionStatus::Completed,
+                )),
+                acp::SessionUpdate::CompactionSummaryChunk(acp::CompactionSummaryChunk::new(
+                    "first",
+                    acp::ContentBlock::Text(acp::TextContent::new("partial summary")),
+                )),
+            ] {
+                thread
+                    .handle_session_update(update, cx)
+                    .expect("failed to apply interleaved session update");
+            }
+            assert!(thread.is_compacting());
+        });
+        assert_eq!(*events.borrow(), [None, None, None, Some(2), Some(0)]);
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                        "first",
+                        acp::CompactionStatus::Cancelled,
+                    )),
+                    cx,
+                )
+                .expect("failed to cancel compaction");
+            assert!(!thread.is_compacting());
+        });
+        assert_eq!(
+            *events.borrow(),
+            [None, None, None, Some(2), Some(0), Some(0)]
+        );
+        thread.read_with(cx, |thread, cx| {
+            let [
+                AgentThreadEntry::ContextCompaction(first),
+                AgentThreadEntry::ToolCall(_),
+                AgentThreadEntry::ContextCompaction(second),
+            ] = thread.entries.as_slice()
+            else {
+                panic!("updates must preserve the original timeline positions");
+            };
+            assert_eq!(first.id.0.as_ref(), "first");
+            assert_eq!(first.status, ContextCompactionStatus::Canceled);
+            assert_eq!(second.id.0.as_ref(), "second");
+            assert_eq!(second.status, ContextCompactionStatus::Completed);
+            assert!(
+                thread
+                    .to_markdown(cx)
+                    .starts_with("## Context Compaction (Canceled)\n\npartial summary\n\n")
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_call_label_fallback(cx: &mut TestAppContext) {
+        use markdown::parser::{MarkdownEvent, MarkdownTag};
+
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        for (call, expected, has_strong_text) in [
+            (
+                acp::ToolCall::new("tool", "Reading **file**").name("read_file"),
+                "Reading **file**",
+                true,
+            ),
+            (acp::ToolCall::new("tool", ""), "Tool call", false),
+            (
+                acp::ToolCall::new("tool", "\n\t ").name(" \t"),
+                "Tool call",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "").name("**mcp__tool**"),
+                "**mcp__tool**",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "\n\t ")
+                    .name("**mcp__tool**")
+                    .kind(acp::ToolKind::Edit),
+                "**mcp__tool**",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "")
+                    .name("**mcp__tool**")
+                    .kind(acp::ToolKind::Execute),
+                "**mcp__tool**",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "").meta(meta_with_tool_name("legacy_tool")),
+                "legacy_tool",
+                false,
+            ),
+        ] {
+            let call = cx.update(|cx| {
+                ToolCall::from_acp(
+                    call,
+                    ToolCallStatus::Pending,
+                    languages.clone(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("tool call should convert")
+            });
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let label = call.label.read(cx);
+                assert_eq!(label.source().as_ref(), expected);
+                assert_eq!(
+                    label.parsed_markdown().events().iter().any(|(_, event)| {
+                        matches!(event, MarkdownEvent::Start(MarkdownTag::Strong))
+                    }),
+                    has_strong_text
+                );
+                if call.title.is_none() {
+                    assert_eq!(
+                        call.to_markdown(cx),
+                        format!(
+                            "**Tool Call: {}**\nStatus: Pending\n\n",
+                            MarkdownEscaped(expected)
+                        )
+                    );
+                }
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn test_tool_call_label_updates_preserve_titles(cx: &mut TestAppContext) {
+        use markdown::parser::{MarkdownEvent, MarkdownTag};
+
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let mut call = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("tool", ""),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("tool call should convert")
+        });
+        for (update, expected, has_strong_text) in [
+            (
+                acp::ToolCallUpdateFields::new().name("**tool_name**"),
+                "**tool_name**",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().title("**Readable title**"),
+                "**Readable title**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().name("renamed_tool"),
+                "**Readable title**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().kind(acp::ToolKind::Execute),
+                "**Readable title**",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().kind(acp::ToolKind::Read),
+                "**Readable title**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().title("\n\t "),
+                "renamed_tool",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().name(" \t"),
+                "Tool call",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new()
+                    .title("**same_name**")
+                    .name("**same_name**"),
+                "**same_name**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().name("different_name"),
+                "**same_name**",
+                true,
+            ),
+        ] {
+            cx.update(|cx| {
+                call.update_fields(update, None, languages.clone(), &HashMap::default(), cx)
+                    .expect("tool label update should apply");
+            });
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let label = call.label.read(cx);
+                assert_eq!(label.source().as_ref(), expected);
+                assert_eq!(
+                    label.parsed_markdown().events().iter().any(|(_, event)| {
+                        matches!(event, MarkdownEvent::Start(MarkdownTag::Strong))
+                    }),
+                    has_strong_text
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_name_precedence_and_updates(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("tool-call", "Tool call")
+                            .name("first_class")
+                            .meta(meta_with_tool_name("legacy")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to create first-class named tool call");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::ToolCall(tool_call)) = thread.entries.last() else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("first_class"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("legacy-tool-call", "Legacy tool call")
+                            .meta(meta_with_tool_name("legacy")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to create legacy named tool call");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::ToolCall(tool_call)) = thread.entries.last() else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("legacy"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new("tool-call", acp::ToolCallUpdateFields::new())
+                            .meta(meta_with_tool_name("legacy_update")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to apply stale legacy tool-call name update");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(tool_call) = thread.entries.iter().find_map(|entry| match entry {
+                AgentThreadEntry::ToolCall(tool_call)
+                    if tool_call.id == acp::ToolCallId::new("tool-call") =>
+                {
+                    Some(tool_call)
+                }
+                _ => None,
+            }) else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("first_class"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new(
+                            "legacy-tool-call",
+                            acp::ToolCallUpdateFields::new().name("first_class_update"),
+                        )
+                        .meta(meta_with_tool_name("ignored_legacy_update")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to apply first-class tool-call name update");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(tool_call) = thread.entries.iter().find_map(|entry| match entry {
+                AgentThreadEntry::ToolCall(tool_call)
+                    if tool_call.id == acp::ToolCallId::new("legacy-tool-call") =>
+                {
+                    Some(tool_call)
+                }
+                _ => None,
+            }) else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("first_class_update"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(acp::ToolCall::new(
+                        "late-legacy-tool-call",
+                        "Late legacy tool call",
+                    )),
+                    cx,
+                )
+            })
+            .expect("failed to create unnamed tool call");
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new(
+                            "late-legacy-tool-call",
+                            acp::ToolCallUpdateFields::new(),
+                        )
+                        .meta(meta_with_tool_name("late_legacy")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to apply late legacy tool-call name");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::ToolCall(tool_call)) = thread.entries.last() else {
+                unreachable!("tool call update must preserve the tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("late_legacy"));
+        });
+    }
+
+    #[gpui::test]
+    fn test_context_compaction_exports_status(cx: &mut App) {
+        for (status, expected_label) in [
+            (acp::CompactionStatus::InProgress, "In Progress"),
+            (acp::CompactionStatus::Completed, "Completed"),
+            (acp::CompactionStatus::Failed, "Failed"),
+            (acp::CompactionStatus::Cancelled, "Canceled"),
+            (
+                acp::CompactionStatus::Other("interrupted".into()),
+                "interrupted",
+            ),
+        ] {
+            let entry = AgentThreadEntry::ContextCompaction(ContextCompaction {
+                id: ContextCompactionId("compaction".into()),
+                status: status.into(),
+                error: None,
+                summary: Vec::new(),
+            });
+            assert_eq!(
+                entry.to_markdown(cx),
+                format!("## Context Compaction ({expected_label})\n\n")
+            );
+        }
     }
 
     #[gpui::test]
@@ -9002,7 +10543,6 @@ mod tests {
                             let markdown_text = markdown.read(cx).source();
                             assert!(markdown_text.contains("Tool call not found"));
                         }
-                        ContentBlock::Empty => panic!("Expected markdown content, got empty"),
                         ContentBlock::ResourceLink { .. } => {
                             panic!("Expected markdown content, got resource link")
                         }
@@ -9011,6 +10551,9 @@ mod tests {
                         }
                         ContentBlock::Image { .. } => {
                             panic!("Expected markdown content, got image")
+                        }
+                        ContentBlock::Unsupported { .. } => {
+                            panic!("Expected markdown content, got unsupported content")
                         }
                     }
                 } else {
@@ -9371,7 +10914,7 @@ mod tests {
                     protocol_id: None,
                     client_id: Some(ClientUserMessageId::new()),
                     is_optimistic: true,
-                    content: ContentBlock::Empty,
+                    content: MessageContent::default(),
                     chunks: vec!["Injected message (no checkpoint)".into()],
                     checkpoint: None,
                     indented: false,
@@ -9481,6 +11024,8 @@ mod tests {
         // First handler waits for this signal before completing
         let (first_complete_tx, first_complete_rx) = futures::channel::oneshot::channel::<()>();
         let first_complete_rx = RefCell::new(Some(first_complete_rx));
+        let (second_complete_tx, second_complete_rx) = oneshot::channel::<()>();
+        let second_complete_rx = RefCell::new(Some(second_complete_rx));
 
         let connection = Rc::new(FakeAgentConnection::new().on_user_message({
             move |params, _thread, _cx| {
@@ -9489,6 +11034,11 @@ mod tests {
                     .prompt
                     .iter()
                     .any(|c| matches!(c, acp::ContentBlock::Text(t) if t.text.contains("first")));
+                let second_complete_rx = if is_first {
+                    None
+                } else {
+                    second_complete_rx.borrow_mut().take()
+                };
 
                 async move {
                     if is_first {
@@ -9496,6 +11046,10 @@ mod tests {
                         if let Some(rx) = first_complete_rx {
                             rx.await.ok();
                         }
+                    } else {
+                        second_complete_rx
+                            .expect("second completion receiver should be available")
+                            .await?;
                     }
                     Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
                 }
@@ -9512,7 +11066,9 @@ mod tests {
 
         // Send first message (turn_id=1) - handler will block
         let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+        cx.run_until_parked();
         assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 1);
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
         let permission_task = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
@@ -9523,6 +11079,7 @@ mod tests {
                 )
             })
             .unwrap();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
 
         // Send second message (turn_id=2) while first is still blocked
         // This calls cancel() which takes turn 1's running_turn and sets turn 2's
@@ -9532,6 +11089,7 @@ mod tests {
             RequestPermissionOutcome::InterruptedByFollowUp
         ));
         assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 2);
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         let running_turn_after_second_send =
             thread.read_with(cx, |thread, _| thread.running_turn.as_ref().map(|t| t.id));
@@ -9555,8 +11113,12 @@ mod tests {
             Some(2),
             "first turn completing should not clear running_turn (belongs to turn 2)"
         );
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         // Second request completes - SHOULD clear running_turn
+        second_complete_tx
+            .send(())
+            .expect("second completion receiver should still be alive");
         second_request.await.unwrap();
 
         let running_turn_after_second =
@@ -9565,6 +11127,40 @@ mod tests {
             !running_turn_after_second,
             "second turn completing should clear running_turn"
         );
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_setting_toggle_updates_idle_sleep_prevention_for_running_turn(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        set_prevent_idle_sleep(false, cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        for (enabled, expected_count) in [(true, 1), (true, 1), (false, 0), (false, 0), (true, 1)] {
+            set_prevent_idle_sleep(enabled, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), expected_count);
+            assert_eq!(
+                thread.read_with(cx, |thread, _| thread.status()),
+                ThreadStatus::Generating
+            );
+        }
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        for enabled in [false, true] {
+            set_prevent_idle_sleep(enabled, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
     }
 
     #[gpui::test]
@@ -9601,7 +11197,8 @@ mod tests {
                                 ContextCompaction {
                                     id: compaction_id,
                                     status: ContextCompactionStatus::InProgress,
-                                    summary: None,
+                                    error: None,
+                                    summary: Vec::new(),
                                 },
                                 cx,
                             );
@@ -9969,7 +11566,8 @@ mod tests {
                 ContextCompaction {
                     id: ContextCompactionId("compaction-1".into()),
                     status: ContextCompactionStatus::InProgress,
-                    summary: None,
+                    error: None,
+                    summary: Vec::new(),
                 },
                 cx,
             );
@@ -10196,5 +11794,1096 @@ mod tests {
             ThreadStatus::Idle,
             "running_turn must be cleared even when tx was dropped without send"
         );
+    }
+
+    #[gpui::test]
+    async fn test_dropped_completion_waiter_does_not_leave_thread_generating(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, completion) = oneshot::channel::<()>();
+        let backend_finished = Rc::new(AtomicBool::new(false));
+        let statuses = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let statuses = statuses.clone();
+                move |thread, event, cx| {
+                    if matches!(event, AcpThreadEvent::StatusChanged) {
+                        statuses.borrow_mut().push(thread.read(cx).status());
+                    }
+                }
+            })
+        });
+        let request = thread.update(cx, |thread, cx| {
+            thread.run_turn(cx, {
+                let backend_finished = backend_finished.clone();
+                async move |_, _| {
+                    completion.await?;
+                    backend_finished.store(true, SeqCst);
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Generating
+        );
+        assert!(!backend_finished.load(SeqCst));
+
+        drop(request);
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Generating
+        );
+        complete.send(()).expect("backend should still be running");
+        cx.run_until_parked();
+
+        assert!(backend_finished.load(SeqCst));
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Idle
+        );
+        assert_eq!(
+            *statuses.borrow(),
+            vec![ThreadStatus::Generating, ThreadStatus::Idle]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_released_on_turn_completion(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        assert!(cx.read(|cx| AgentSettings::get_global(cx).prevent_idle_sleep));
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        for (delay, expected_count) in [(Duration::ZERO, 1), (Duration::from_secs(2), 0)] {
+            cx.set_idle_sleep_prevention_delay(delay);
+            for (backend_result, expected_result, expected_had_error) in [
+                (
+                    Ok(acp::StopReason::EndTurn),
+                    Ok(acp::StopReason::EndTurn),
+                    false,
+                ),
+                (
+                    Ok(acp::StopReason::Cancelled),
+                    Ok(acp::StopReason::Cancelled),
+                    false,
+                ),
+                (
+                    Ok(acp::StopReason::Refusal),
+                    Ok(acp::StopReason::Refusal),
+                    true,
+                ),
+                (
+                    Ok(acp::StopReason::MaxTokens),
+                    Err("output token limit reached"),
+                    true,
+                ),
+                (Err(anyhow!("backend failed")), Err("backend failed"), true),
+            ] {
+                let (complete, request) = start_test_turn(&thread, cx);
+                cx.run_until_parked();
+                assert_eq!(cx.active_idle_sleep_preventions(), expected_count);
+                assert_eq!(
+                    thread.read_with(cx, |thread, _| thread.status()),
+                    ThreadStatus::Generating
+                );
+                assert!(!thread.read_with(cx, |thread, _| thread.had_error()));
+
+                complete
+                    .send(backend_result.map(acp::PromptResponse::new))
+                    .expect("turn should still be running");
+                let result = request
+                    .await
+                    .map(|response| response.map(|response| response.stop_reason))
+                    .map_err(|error| error.to_string());
+                assert_eq!(result, expected_result.map(Some).map_err(String::from));
+                assert_eq!(cx.active_idle_sleep_preventions(), 0);
+                thread.read_with(cx, |thread, _| {
+                    assert_eq!(thread.status(), ThreadStatus::Idle);
+                    assert_eq!(thread.had_error(), expected_had_error);
+                    assert!(matches!(
+                        thread.idle_sleep_prevention,
+                        IdleSleepPrevention::Inactive
+                    ));
+                });
+                cx.executor().advance_clock(Duration::from_secs(2));
+                cx.run_until_parked();
+                assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_overlaps_distinct_threads_and_subagent(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let parent = new_test_thread(cx).await;
+        let independent = new_test_thread(cx).await;
+        let subagent = cx.update(|cx| {
+            let parent = parent.read(cx);
+            let session_id = parent.session_id().clone();
+            let connection = parent.connection.clone();
+            let project = parent.project.clone();
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            cx.new(|cx| {
+                AcpThread::new(
+                    Some(session_id),
+                    None,
+                    None,
+                    connection,
+                    project,
+                    action_log,
+                    acp::SessionId::new("subagent"),
+                    watch::Receiver::constant(acp::PromptCapabilities::new()),
+                    cx,
+                )
+            })
+        });
+        assert_ne!(parent.entity_id(), independent.entity_id());
+        assert_ne!(parent.entity_id(), subagent.entity_id());
+        assert_ne!(independent.entity_id(), subagent.entity_id());
+        assert_eq!(
+            subagent.read_with(cx, |thread, _| thread.parent_session_id().cloned()),
+            Some(parent.read_with(cx, |thread, _| thread.session_id().clone()))
+        );
+
+        let (parent_complete, parent_request) = start_test_turn(&parent, cx);
+        let (independent_complete, independent_request) = start_test_turn(&independent, cx);
+        let (subagent_complete, subagent_request) = start_test_turn(&subagent, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 3);
+
+        let parent_cancel = parent.update(cx, |thread, cx| thread.cancel(cx));
+        assert_eq!(cx.active_idle_sleep_preventions(), 2);
+        parent_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .expect("parent backend should still be running");
+        parent_cancel.await;
+        parent_request.await.expect("parent turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 2);
+
+        independent_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("independent turn should still be running");
+        independent_request
+            .await
+            .expect("independent turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        assert_eq!(
+            subagent.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Generating
+        );
+
+        subagent_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("subagent should still be running");
+        subagent_request
+            .await
+            .expect("subagent turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_cancel_releases_pending_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        for (delay, acquisition_fails, expected_count) in [
+            (Duration::ZERO, false, 1),
+            (Duration::from_secs(2), false, 0),
+            (Duration::from_secs(2), true, 0),
+        ] {
+            cx.set_idle_sleep_prevention_delay(delay);
+            cx.set_idle_sleep_prevention_fails(acquisition_fails);
+            let thread = new_test_thread(cx).await;
+            let (complete, request) = start_test_turn(&thread, cx);
+            assert_eq!(cx.active_idle_sleep_preventions(), expected_count);
+            thread.read_with(cx, |thread, _| {
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Acquiring { .. }
+                ));
+            });
+
+            let cancel = thread.update(cx, |thread, cx| thread.cancel(cx));
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(2));
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.status(), ThreadStatus::Idle);
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Inactive
+                ));
+            });
+
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("backend should still be running");
+            cancel.await;
+            request.await.expect("turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_setting_disables_pending_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.set_idle_sleep_prevention_delay(Duration::from_secs(2));
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        set_prevent_idle_sleep(false, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Inactive
+            ));
+        });
+
+        set_prevent_idle_sleep(true, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        set_prevent_idle_sleep(true, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Active { .. }
+            ));
+        });
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_follow_up_keeps_pending_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.set_idle_sleep_prevention_delay(Duration::from_secs(2));
+        let thread = new_test_thread(cx).await;
+        let (first_complete, first_request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        let (second_complete, second_request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(2));
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Acquiring { .. }
+            ));
+        });
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Active { .. }
+            ));
+        });
+
+        first_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .expect("first backend should still be running");
+        first_request.await.expect("first turn should complete");
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(2));
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Active { .. }
+            ));
+        });
+
+        second_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("second backend should still be running");
+        second_request.await.expect("second turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_dropping_thread_releases_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        for (delay, expected_count) in [(Duration::ZERO, 1), (Duration::from_secs(2), 0)] {
+            cx.set_idle_sleep_prevention_delay(delay);
+            let thread = new_test_thread(cx).await;
+            let weak_thread = thread.downgrade();
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), expected_count);
+
+            cx.update(|_| drop(thread));
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(2));
+            cx.run_until_parked();
+            assert!(weak_thread.upgrade().is_none());
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            assert!(request.await.is_err());
+            drop(complete);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_failure_retries_only_on_setting_toggle(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for delay in [Duration::ZERO, Duration::from_secs(2)] {
+            cx.set_idle_sleep_prevention_delay(delay);
+            cx.set_idle_sleep_prevention_fails(true);
+            let thread = new_test_thread(cx).await;
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            cx.executor().advance_clock(delay);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            thread.read_with(cx, |thread, _| {
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Failed
+                ));
+                assert_eq!(thread.status(), ThreadStatus::Generating);
+                assert!(!thread.had_error());
+            });
+
+            cx.set_idle_sleep_prevention_fails(false);
+            set_prevent_idle_sleep(true, cx);
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(4));
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            assert!(thread.read_with(cx, |thread, _| matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Failed
+            )));
+
+            set_prevent_idle_sleep(false, cx);
+            cx.run_until_parked();
+            assert!(!thread.read_with(cx, |thread, _| matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Failed
+            )));
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            set_prevent_idle_sleep(true, cx);
+            cx.run_until_parked();
+            cx.executor().advance_clock(delay);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+            thread.read_with(cx, |thread, _| {
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Active { .. }
+                ));
+            });
+
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("turn should still be running");
+            request.await.expect("turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_failure_clears_when_turn_stops(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        for cancel_turn in [false, true] {
+            cx.set_idle_sleep_prevention_fails(true);
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            assert!(thread.read_with(cx, |thread, _| matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Failed
+            )));
+
+            let cancel = if cancel_turn {
+                let cancel = thread.update(cx, |thread, cx| thread.cancel(cx));
+                thread.read_with(cx, |thread, _| {
+                    assert!(matches!(
+                        thread.idle_sleep_prevention,
+                        IdleSleepPrevention::Inactive
+                    ));
+                    assert_eq!(thread.status(), ThreadStatus::Idle);
+                });
+                Some(cancel)
+            } else {
+                None
+            };
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("backend should still be running");
+            if let Some(cancel) = cancel {
+                cancel.await;
+            }
+            request.await.expect("turn should complete");
+            thread.read_with(cx, |thread, _| {
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Inactive
+                ));
+                assert_eq!(thread.status(), ThreadStatus::Idle);
+            });
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+            cx.set_idle_sleep_prevention_fails(false);
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("next turn should still be running");
+            request.await.expect("next turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_waits_for_all_confirmations(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        let first_id = acp::ToolCallId::new("first-permission");
+        let second_id = acp::ToolCallId::new("second-permission");
+        let first_permission = request_test_permission(&thread, first_id.clone(), cx);
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        let second_permission = request_test_permission(&thread, second_id.clone(), cx);
+        let (elicitation_id, elicitation_response) = request_test_form_elicitation(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        for enabled in [false, true] {
+            set_prevent_idle_sleep(enabled, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_tool_call(
+                    acp::ToolCallUpdate::new(
+                        first_id.clone(),
+                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+                    ),
+                    cx,
+                )
+                .expect("tool update should succeed");
+            thread.authorize_tool_call(
+                second_id,
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("reject"),
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+                cx,
+            );
+        });
+        assert!(matches!(
+            second_permission.await,
+            RequestPermissionOutcome::Selected(outcome)
+                if outcome.option_kind == acp::PermissionOptionKind::RejectOnce
+        ));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+        });
+        assert_eq!(
+            elicitation_response.await.action,
+            acp::ElicitationAction::Decline
+        );
+        cx.run_until_parked();
+        assert!(thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                first_id,
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+        assert!(matches!(
+            first_permission.await,
+            RequestPermissionOutcome::Selected(outcome)
+                if outcome.option_kind == acp::PermissionOptionKind::AllowOnce
+        ));
+        cx.run_until_parked();
+        assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_resumes_after_permission_cancellation_or_terminal_update(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for status in [
+            None,
+            Some(acp::ToolCallStatus::Completed),
+            Some(acp::ToolCallStatus::Failed),
+        ] {
+            let thread = new_test_thread(cx).await;
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+            let tool_call_id = acp::ToolCallId::new("permission");
+            let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+            thread.update(cx, |thread, cx| {
+                if let Some(status) = status {
+                    thread
+                        .handle_session_update(
+                            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                                tool_call_id,
+                                acp::ToolCallUpdateFields::new().status(status),
+                            )),
+                            cx,
+                        )
+                        .expect("terminal tool update should succeed");
+                } else {
+                    thread.cancel_tool_call_authorization(&tool_call_id, cx);
+                }
+            });
+            assert!(matches!(
+                permission.await,
+                RequestPermissionOutcome::Cancelled
+            ));
+            cx.run_until_parked();
+            assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+            assert_eq!(cx.active_idle_sleep_preventions(), 1, "status: {status:?}");
+
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("turn should still be running");
+            request.await.expect("turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_permission_suspends_pending_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.set_idle_sleep_prevention_delay(Duration::from_secs(2));
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        let tool_call_id = acp::ToolCallId::new("permission");
+        let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.is_waiting_for_confirmation());
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Inactive
+            ));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_call_id,
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Selected(_)
+        ));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_resumes_after_form_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        for action in [
+            acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
+            acp::ElicitationAction::Decline,
+            acp::ElicitationAction::Cancel,
+        ] {
+            let (elicitation_id, response) = request_test_form_elicitation(&thread, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            assert_eq!(
+                thread.read_with(cx, |thread, _| thread.status()),
+                ThreadStatus::Generating
+            );
+
+            thread.update(cx, |thread, cx| {
+                thread.respond_to_elicitation(
+                    &elicitation_id,
+                    acp::CreateElicitationResponse::new(action.clone()),
+                    cx,
+                );
+            });
+            assert_eq!(response.await.action, action);
+            cx.run_until_parked();
+            assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+            thread.update(cx, |thread, cx| {
+                thread.respond_to_elicitation(
+                    &elicitation_id,
+                    acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        }
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_resumes_after_url_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        for (url_id, accept) in [("accepted", true), ("canceled", false)] {
+            let url_id = acp::ElicitationId::new(url_id);
+            let (entry_id, response) = thread.update(cx, |thread, cx| {
+                thread
+                    .request_elicitation_with_id(
+                        acp::CreateElicitationRequest::new(
+                            acp::ElicitationUrlMode::new(
+                                acp::ElicitationSessionScope::new(thread.session_id().clone()),
+                                url_id.clone(),
+                                "https://example.com/complete",
+                            ),
+                            "Complete this in the browser",
+                        ),
+                        cx,
+                    )
+                    .expect("URL elicitation should succeed")
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            thread.update(cx, |thread, cx| {
+                thread.complete_url_elicitation(&url_id, cx)
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+            let expected_action = if accept {
+                acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new())
+            } else {
+                acp::ElicitationAction::Cancel
+            };
+            thread.update(cx, |thread, cx| {
+                if accept {
+                    thread.respond_to_elicitation(
+                        &entry_id,
+                        acp::CreateElicitationResponse::new(expected_action.clone()),
+                        cx,
+                    );
+                } else {
+                    thread.cancel_elicitation(&entry_id, cx);
+                }
+            });
+            assert_eq!(response.await.action, expected_action);
+            cx.run_until_parked();
+            assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+            thread.update(cx, |thread, cx| {
+                thread.complete_url_elicitation(&url_id, cx)
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        }
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_confirmation_resolution_does_not_reacquire_idle_sleep_prevention_after_cancel(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        let tool_call_id = acp::ToolCallId::new("permission");
+        let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
+        let (elicitation_id, elicitation_response) = request_test_form_elicitation(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        let cancel = thread.update(cx, |thread, cx| thread.cancel(cx));
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        assert_eq!(
+            elicitation_response.await.action,
+            acp::ElicitationAction::Cancel
+        );
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_call_id,
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Idle
+        );
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .expect("backend should still be running");
+        cancel.await;
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_stale_refusal_does_not_affect_follow_up_turn(cx: &mut TestAppContext) {
+        assert_stale_completion_does_not_affect_follow_up_turn(Ok(acp::StopReason::Refusal), cx)
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_stale_error_does_not_affect_follow_up_turn(cx: &mut TestAppContext) {
+        assert_stale_completion_does_not_affect_follow_up_turn(Err("first turn failed"), cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_failed_tool_update_resumes_sleep_prevention(cx: &mut TestAppContext) {
+        assert_failed_tool_update_resumes_sleep_prevention(false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_failed_tool_upsert_resumes_sleep_prevention(cx: &mut TestAppContext) {
+        assert_failed_tool_update_resumes_sleep_prevention(true, cx).await;
+    }
+
+    fn start_test_turn(
+        thread: &Entity<AcpThread>,
+        cx: &mut TestAppContext,
+    ) -> (
+        oneshot::Sender<Result<acp::PromptResponse>>,
+        BoxFuture<'static, Result<Option<acp::PromptResponse>>>,
+    ) {
+        let (complete, completion) = oneshot::channel::<Result<acp::PromptResponse>>();
+        let request = thread.update(cx, |thread, cx| {
+            thread.run_turn(cx, async move |_, _| completion.await?)
+        });
+        (complete, request)
+    }
+
+    fn request_test_permission(
+        thread: &Entity<AcpThread>,
+        tool_call_id: acp::ToolCallId,
+        cx: &mut TestAppContext,
+    ) -> Task<RequestPermissionOutcome> {
+        thread.update(cx, |thread, cx| {
+            thread
+                .request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id, "Needs permission").into(),
+                    PermissionOptions::Flat(vec![
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("allow"),
+                            "Allow",
+                            acp::PermissionOptionKind::AllowOnce,
+                        ),
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("reject"),
+                            "Reject",
+                            acp::PermissionOptionKind::RejectOnce,
+                        ),
+                    ]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+                .expect("permission request should succeed")
+        })
+    }
+
+    fn request_test_form_elicitation(
+        thread: &Entity<AcpThread>,
+        cx: &mut TestAppContext,
+    ) -> (ElicitationEntryId, Task<acp::CreateElicitationResponse>) {
+        thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation_with_id(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(thread.session_id().clone()),
+                            acp::ElicitationSchema::new().string("name", false),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .expect("form elicitation should succeed")
+        })
+    }
+
+    fn set_prevent_idle_sleep(enabled: bool, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.agent.get_or_insert_default().prevent_idle_sleep = Some(enabled);
+                });
+            });
+        });
+    }
+
+    async fn assert_stale_completion_does_not_affect_follow_up_turn(
+        backend_result: Result<acp::StopReason, &'static str>,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for drop_waiter in [false, true] {
+            let thread = new_test_thread(cx).await;
+            let (first_complete, first_request) = start_test_turn(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "first".into(), cx);
+                thread.push_assistant_content_block("first reply".into(), false, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+            let first_request = if drop_waiter {
+                drop(first_request);
+                None
+            } else {
+                Some(first_request)
+            };
+            first_complete
+                .send(
+                    backend_result
+                        .map(acp::PromptResponse::new)
+                        .map_err(|message| anyhow!(message)),
+                )
+                .expect("first backend should still be running");
+            let (second_complete, second_request) = start_test_turn(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "second".into(), cx);
+                thread.push_assistant_content_block("second reply".into(), false, cx);
+                assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(2));
+                assert!(!thread.had_error());
+            });
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let _subscription = cx.update(|cx| {
+                cx.subscribe(&thread, {
+                    let events = events.clone();
+                    move |_, event, _| {
+                        let event = match event {
+                            AcpThreadEvent::StatusChanged => "status changed",
+                            AcpThreadEvent::EntriesRemoved(_) => "entries removed",
+                            AcpThreadEvent::Stopped(_) => "stopped",
+                            AcpThreadEvent::Refusal => "refusal",
+                            AcpThreadEvent::Error => "error",
+                            _ => return,
+                        };
+                        events.borrow_mut().push(event);
+                    }
+                })
+            });
+            cx.run_until_parked();
+            if let Some(first_request) = first_request {
+                assert_eq!(
+                    first_request
+                        .await
+                        .map(|response| response.map(|response| response.stop_reason))
+                        .map_err(|error| error.to_string()),
+                    backend_result.map(Some).map_err(String::from)
+                );
+            }
+
+            thread.read_with(cx, |thread, cx| {
+                assert_eq!(thread.entries().len(), 4);
+                assert_eq!(
+                    thread.to_markdown(cx),
+                    concat!(
+                        "## User\n\nfirst\n\n",
+                        "## Assistant\n\nfirst reply\n\n",
+                        "## User\n\nsecond\n\n",
+                        "## Assistant\n\nsecond reply\n\n",
+                    )
+                );
+                assert!(!thread.had_error());
+                assert_eq!(thread.turn_id, 2);
+                assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(2));
+                assert_eq!(thread.status(), ThreadStatus::Generating);
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Active { .. }
+                ));
+            });
+            assert_eq!(*events.borrow(), Vec::<&str>::new());
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+            second_complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("second backend should still be running");
+            second_request.await.expect("second turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    async fn assert_failed_tool_update_resumes_sleep_prevention(
+        upsert: bool,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        let tool_call_id = acp::ToolCallId::new("permission");
+        let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
+        cx.run_until_parked();
+        assert!(thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            let update = acp::ToolCallUpdate::new(
+                tool_call_id.clone(),
+                acp::ToolCallUpdateFields::new()
+                    .status(acp::ToolCallStatus::Completed)
+                    .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                        acp::TerminalId::new("unknown-terminal"),
+                    ))]),
+            );
+            if upsert {
+                assert!(
+                    thread
+                        .upsert_tool_call_inner(update, ToolCallStatus::Completed, cx)
+                        .is_err()
+                );
+            } else {
+                assert_eq!(
+                    thread
+                        .update_tool_call(update, cx)
+                        .map_err(|error| error.to_string()),
+                    Err(String::from(
+                        "Terminal with id `unknown-terminal` not found"
+                    ))
+                );
+            }
+            assert_eq!(
+                thread
+                    .tool_call(&tool_call_id)
+                    .expect("tool call should remain present")
+                    .1
+                    .status
+                    .as_acp_status(),
+                Some(acp::ToolCallStatus::Completed)
+            );
+            assert!(!thread.is_waiting_for_confirmation());
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+            assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(1));
+            assert!(!thread.had_error());
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Active { .. }
+            ));
+        });
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("backend should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
     }
 }
