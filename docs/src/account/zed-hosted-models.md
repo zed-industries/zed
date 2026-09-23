@@ -7,7 +7,7 @@ description: AI models available via Zed Pro including Claude Fable 5.1, Claude 
 
 Zed's plans offer hosted versions of major LLMs with higher rate limits than direct API access. Model availability is updated regularly. To use your own API keys instead, see [LLM Providers](../ai/llm-providers.md). For general setup, see [AI Quick Start](../ai/quick-start.md).
 
-> **Note:** Claude Fable models, Claude Opus models, GPT-6 Astra, GPT-5.5 pro, and GPT-5.4 pro are only available on Zed Pro and Zed Business.
+> **Note:** Zed Pro and Zed Business include all models listed below. The Student plan does not include Claude Fable, Claude Opus, GPT-6 Astra, GPT-5.5 pro, or GPT-5.4 pro. The Zed Pro trial includes GPT-6 Luna only.
 
 | Model             | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |
 | ----------------- | --------- | ------------------- | ---------------------------- | ----------------------- |
