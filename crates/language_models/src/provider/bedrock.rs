@@ -1003,7 +1003,7 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
         // Add support for None - we'll filter tool calls at response
         tool_choice_support: LanguageModelToolChoiceSupport {
             auto: model.supports_tool_use(),
-            any: model.supports_tool_use(),
+            any: model.supports_tool_use() && anthropic::supports_forced_tool_use(model.id()),
             none: model.supports_tool_use(),
         },
         supports_streaming_tools: true,
@@ -3933,6 +3933,44 @@ mod tests {
             reasoning_details_count(&merged_events),
             reasoning_details_count(&baseline_events),
         );
+    }
+
+    #[test]
+    fn claude_models_rejecting_forced_tool_use_do_not_offer_any_tool_choice() {
+        // Claude Fable 5.1 and Claude Opus 5.5 reject `tool_choice: any`, unlike
+        // every earlier Claude model offered on Bedrock.
+        for converse_model in [ConverseModel::ClaudeFable5_1, ConverseModel::ClaudeOpus5_5] {
+            let model = converse_language_model(&converse_model);
+            assert!(
+                model.supports_tool_choice(LanguageModelToolChoice::Auto),
+                "{} should offer automatic tool choice",
+                converse_model.id()
+            );
+            assert!(
+                !model.supports_tool_choice(LanguageModelToolChoice::Any),
+                "{} should not offer forced tool use",
+                converse_model.id()
+            );
+            assert!(
+                model.supports_tool_choice(LanguageModelToolChoice::None),
+                "{} should offer disabling tool use",
+                converse_model.id()
+            );
+        }
+
+        for converse_model in [
+            ConverseModel::ClaudeFable5,
+            ConverseModel::ClaudeOpus5,
+            ConverseModel::ClaudeOpus4_8,
+            ConverseModel::ClaudeSonnet5,
+        ] {
+            let model = converse_language_model(&converse_model);
+            assert!(
+                model.supports_tool_choice(LanguageModelToolChoice::Any),
+                "{} should still offer forced tool use",
+                converse_model.id()
+            );
+        }
     }
 
     #[test]
