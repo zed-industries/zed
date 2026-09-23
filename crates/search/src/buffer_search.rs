@@ -1876,7 +1876,7 @@ impl BufferSearchBar {
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range, time::Duration};
+    use std::{ops::Range, path::Display, time::Duration};
 
     use super::*;
     use editor::{
@@ -1890,6 +1890,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     use project::Project;
     use settings::{SearchSettingsContent, SettingsStore};
+    use theme::ThemeColorField::SearchActiveMatchBackground;
     use unindent::Unindent as _;
     use util_macros::perf;
     #[cfg(target_os = "macos")]
@@ -4394,6 +4395,71 @@ mod tests {
                 vec![
                     DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
                     DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 3)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_option_change_during_selections(cx: &mut TestAppContext) {
+        init_globals(cx);
+
+        // Set up 2 editors, with both buffers containing a lowercase and
+        // uppercase version of the same word, so we can confirm whether case
+        // sensitivity is affecting `editor: select next` .
+        let cx = cx.add_empty_window();
+        let buffer = cx.new(|cx| Buffer::local("abc\ndefabc\nghiabc\nabc", cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3)
+                ]);
+            });
+
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("should be able to select next");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
+                    DisplayPoint::new(DisplayRow(1), 3)..DisplayPoint::new(DisplayRow(1), 6)
+                ]
+            );
+        });
+
+        // Toggle the "Whole Word" search option, so we can later check that
+        // only the last line is now going to be selected.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_whole_word(&Default::default(), window, cx)
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor
+                .select_next(&Default::default(), window, cx)
+                .expect("should be able to select next");
+
+            assert_eq!(
+                editor
+                    .selections
+                    .display_ranges(&editor.display_snapshot(cx)),
+                vec![
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
+                    DisplayPoint::new(DisplayRow(1), 3)..DisplayPoint::new(DisplayRow(1), 6),
+                    DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 3)
                 ]
             );
         });

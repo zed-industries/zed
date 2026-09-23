@@ -70,7 +70,7 @@ pub enum FilteredSearchRange {
     Default,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct SelectSearchOptions {
     pub case_sensitive: bool,
     pub whole_word: bool,

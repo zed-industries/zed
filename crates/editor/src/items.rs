@@ -2126,7 +2126,13 @@ impl SearchableItem for Editor {
         select_search_options: Option<SelectSearchOptions>,
         _cx: &mut Context<Self>,
     ) {
+        if self.select_next_options == select_search_options {
+            return;
+        }
+
         self.select_next_options = select_search_options;
+        self.select_next_state = None;
+        self.select_prev_state = None;
     }
 }
 
