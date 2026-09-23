@@ -6242,6 +6242,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "extension_suggest"
+version = "0.1.0"
+dependencies = [
+ "path",
+]
+
+[[package]]
 name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
@@ -6254,6 +6261,7 @@ dependencies = [
  "editor",
  "extension",
  "extension_host",
+ "extension_suggest",
  "fs",
  "fuzzy",
  "git",
