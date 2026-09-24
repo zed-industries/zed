@@ -2328,7 +2328,7 @@ pub fn into_bedrock(
             }
             BedrockModelMode::Default => None,
         }
-    } else if model.contains(ConverseModel::ClaudeOpus5.request_id()) {
+    } else if model.ends_with(ConverseModel::ClaudeOpus5.request_id()) {
         // On Claude Opus 5, omitting the `thinking` field no longer means
         // "off": the model runs adaptive thinking by default, so features
         // that suppress thinking (e.g. inline assist) must opt out
@@ -2341,6 +2341,15 @@ pub fn into_bedrock(
         None
     };
 
+    // Claude Opus 5.5 always runs adaptive thinking and, unlike Claude
+    // Opus 5, rejects sampling controls such as `temperature` outright.
+    // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
+    let temperature = if model.ends_with(ConverseModel::ClaudeOpus5_5.request_id()) {
+        None
+    } else {
+        request.temperature.or(Some(default_temperature))
+    };
+
     Ok(bedrock::Request {
         model,
         messages: new_messages,
@@ -2350,7 +2359,7 @@ pub fn into_bedrock(
         thinking,
         metadata: None,
         stop_sequences: Vec::new(),
-        temperature: request.temperature.or(Some(default_temperature)),
+        temperature,
         top_k: None,
         top_p: None,
         guardrail_identifier,
@@ -2951,9 +2960,13 @@ mod tests {
         // Claude Opus 5 runs adaptive thinking by default when the `thinking`
         // field is omitted, so suppressing thinking requires an explicit
         // `disabled` opt-out. Earlier Claude models treat omission as "off".
+        // Claude Opus 5.5 also runs adaptive thinking by default, but unlike
+        // Opus 5 it rejects the explicit `disabled` opt-out outright, so it
+        // must keep omitting the field too.
         for (model, expects_explicit_opt_out, output_limit, expected_output) in [
             ("us.anthropic.claude-opus-5", true, None, 128_000),
             ("global.anthropic.claude-opus-5", true, Some(8192), 8192),
+            ("us.anthropic.claude-opus-5-5", false, None, 128_000),
             (
                 "us.anthropic.claude-opus-4-8",
                 false,
@@ -2998,6 +3011,45 @@ mod tests {
                     "{model} should omit the thinking field entirely"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_opus_5_5_omits_temperature() {
+        // Claude Opus 5.5's adaptive thinking cannot be turned off, and the
+        // model rejects sampling controls such as `temperature` outright, so
+        // Zed must never send one for this model regardless of whether
+        // thinking is allowed.
+        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
+        for thinking_allowed in [true, false] {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![MessageContent::Text("Hi".into())],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    thinking_allowed,
+                    ..Default::default()
+                },
+                "us.anthropic.claude-opus-5-5".to_string(),
+                1.0,
+                128_000,
+                BedrockModelMode::AdaptiveThinking {
+                    effort: bedrock::BedrockAdaptiveThinkingEffort::High,
+                },
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap();
+
+            assert!(
+                request.temperature.is_none(),
+                "temperature must be omitted regardless of thinking_allowed ({thinking_allowed})"
+            );
         }
     }
 
