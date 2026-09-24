@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashMap;
-use futures::future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, TaskExt, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
@@ -3887,38 +3886,34 @@ impl LspCommand for OnTypeFormatting {
 }
 
 impl InlayHints {
-    pub async fn lsp_to_project_hint(
+    pub fn lsp_to_project_hint(
         lsp_hint: lsp::InlayHint,
-        buffer_handle: &Entity<Buffer>,
+        snapshot: &BufferSnapshot,
         server_id: LanguageServerId,
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
-        cx: &mut AsyncApp,
-    ) -> anyhow::Result<InlayHint> {
+    ) -> InlayHint {
         let kind = lsp_hint.kind.and_then(|kind| match kind {
             lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
             lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
             _ => None,
         });
 
-        let position = buffer_handle.read_with(cx, |buffer, _| {
-            let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
-            if kind == Some(InlayHintKind::Parameter) {
-                buffer.anchor_before(position)
-            } else {
-                buffer.anchor_after(position)
-            }
-        });
-        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id)
-            .await
-            .context("lsp to project inlay hint conversion")?;
+        let position = snapshot.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
+        let position = if kind == Some(InlayHintKind::Parameter) {
+            snapshot.anchor_before(position)
+        } else {
+            snapshot.anchor_after(position)
+        };
+
+        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id);
         let padding_left = if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
             false
         } else {
             lsp_hint.padding_left.unwrap_or(false)
         };
 
-        Ok(InlayHint {
+        InlayHint {
             position,
             padding_left,
             padding_right: lsp_hint.padding_right.unwrap_or(false),
@@ -3937,13 +3932,13 @@ impl InlayHints {
                 }
             }),
             resolve_state,
-        })
+        }
     }
 
-    async fn lsp_inlay_label_to_project(
+    fn lsp_inlay_label_to_project(
         lsp_label: lsp::InlayHintLabel,
         server_id: LanguageServerId,
-    ) -> anyhow::Result<InlayHintLabel> {
+    ) -> InlayHintLabel {
         let label = match lsp_label {
             lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
             lsp::InlayHintLabel::LabelParts(lsp_parts) => {
@@ -3973,7 +3968,7 @@ impl InlayHints {
             }
         };
 
-        Ok(label)
+        label
     }
 
     pub fn project_to_proto_hint(response_hint: InlayHint) -> proto::InlayHint {
@@ -4351,31 +4346,30 @@ impl LspCommand for InlayHints {
             )
         });
 
-        let hints = message.unwrap_or_default().into_iter().map(|lsp_hint| {
-            let resolve_state = if can_resolve {
-                ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
-            } else {
-                ResolveState::Resolved
-            };
+        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+        let last_row = snapshot.max_point().row;
+        let hints = message
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|lsp_hint| lsp_hint.position.line <= last_row)
+            .map(|lsp_hint| {
+                let resolve_state = if can_resolve {
+                    ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
+                } else {
+                    ResolveState::Resolved
+                };
 
-            let buffer = buffer.clone();
-            cx.spawn(async move |cx| {
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
-                    &buffer,
+                    &snapshot,
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
-                    cx,
                 )
-                .await
             })
-        });
-        future::join_all(hints)
-            .await
-            .into_iter()
-            .collect::<anyhow::Result<_>>()
-            .context("lsp to project inlay hints conversion")
+            .collect();
+
+        Ok(hints)
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {
