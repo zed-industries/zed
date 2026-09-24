@@ -28,6 +28,7 @@ use gpui::{
     Focusable, Image, ImageFormat, KeyContext, SharedString, Subscription, Task, TaskExt,
     TextStyle, WeakEntity,
 };
+use itertools::Itertools;
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
 use project::AgentId;
@@ -1076,7 +1077,7 @@ impl MessageEditor {
                 }
                 _ => None,
             });
-
+        dbg!(&editor_clipboard_selections);
         // Insert creases for pasted clipboard selections that:
         // 1. Contain exactly one selection
         // 2. Have an associated file path
@@ -1089,7 +1090,7 @@ impl MessageEditor {
             }
             let selection = selections.first()?;
             let file_path = selection.file_path.as_ref()?;
-            let line_range = selection.line_range.as_ref()?;
+            let line_range = selection.meta.as_ref()?.line_range.clone();
 
             if line_range.start() == line_range.end() {
                 return Some(false);
@@ -1114,92 +1115,112 @@ impl MessageEditor {
 
             let project = workspace.read(cx).project().clone();
             for selection in selections {
-                if let (Some(file_path), Some(line_range)) =
-                    (selection.file_path, selection.line_range)
-                {
-                    let crease_text =
-                        acp_thread::selection_name(Some(file_path.as_ref()), &line_range);
+                let (Some(file_path), Some(meta)) = (selection.file_path, selection.meta) else {
+                    continue;
+                };
 
-                    let mention_uri = MentionUri::Selection {
-                        abs_path: Some(file_path.clone()),
-                        line_range: line_range.clone(),
-                        column: None,
-                    };
+                let Some(buffer) = project.read(cx).buffer_for_id(meta.buffer_id, cx) else {
+                    log::info!(
+                        "Did not resolve buffer for id {} while pasting an item into the agent panel",
+                        meta.buffer_id
+                    );
+                    continue;
+                };
 
-                    let mention_text = mention_uri.as_link().to_string();
-                    let (text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
-                        let buffer = editor.buffer().read(cx);
-                        let snapshot = buffer.snapshot(cx);
-                        let buffer_snapshot = snapshot.as_singleton().unwrap();
-                        let text_anchor = insertion_target.bias_left(&buffer_snapshot);
+                let start_line = Point::new(*meta.line_range.start(), 0);
+                let end_line = Point::new(*meta.line_range.end(), 0);
+                let Some(line_range) = buffer.read_with(cx, |this, _| {
+                    let adjusted_line_ranges =
+                        this.points_from_version([start_line, end_line].into_iter(), &meta.version);
+                    let [start_line, end_line] = adjusted_line_ranges.collect_array()?;
 
-                        editor.insert(&mention_text, window, cx);
-                        editor.insert(" ", window, cx);
+                    Some(start_line.row..=end_line.row)
+                }) else {
+                    continue;
+                };
 
-                        (text_anchor, mention_text.len())
-                    });
+                let crease_text =
+                    acp_thread::selection_name(Some(file_path.as_ref()), &meta.line_range);
+                let line_range = meta.line_range.clone();
+                let mention_uri = MentionUri::Selection {
+                    abs_path: Some(file_path.clone()),
+                    line_range: meta.line_range.clone(),
+                    column: None,
+                };
 
-                    let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
-                        text_anchor,
-                        content_len,
-                        crease_text.into(),
-                        mention_uri.icon_path(cx),
-                        mention_uri.tooltip_text(),
-                        Some(mention_uri.clone()),
-                        Some(self.workspace.clone()),
-                        None,
-                        self.editor.clone(),
-                        window,
+                let mention_text = mention_uri.as_link().to_string();
+                let (text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx);
+                    let snapshot = buffer.snapshot(cx);
+                    let buffer_snapshot = snapshot.as_singleton().unwrap();
+                    let text_anchor = insertion_target.bias_left(&buffer_snapshot);
+
+                    editor.insert(&mention_text, window, cx);
+                    editor.insert(" ", window, cx);
+
+                    (text_anchor, mention_text.len())
+                });
+
+                let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
+                    text_anchor,
+                    content_len,
+                    crease_text.into(),
+                    mention_uri.icon_path(cx),
+                    mention_uri.tooltip_text(),
+                    Some(mention_uri.clone()),
+                    Some(self.workspace.clone()),
+                    None,
+                    self.editor.clone(),
+                    window,
+                    cx,
+                ) else {
+                    continue;
+                };
+                drop(tx);
+
+                let mention_task = cx
+                    .spawn({
+                        let project = project.clone();
+                        async move |_, cx| {
+                            let project_path = project
+                                .update(cx, |project, cx| {
+                                    project.project_path_for_absolute_path(&file_path, cx)
+                                })
+                                .ok_or_else(|| {
+                                    format!(
+                                        "project path not found for pasted selection {file_path:?}"
+                                    )
+                                })?;
+
+                            let buffer = project
+                                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                                .await
+                                .map_err(|e| e.to_string())?;
+
+                            Ok(buffer.update(cx, |buffer, cx| {
+                                let start =
+                                    Point::new(*line_range.start(), 0).min(buffer.max_point());
+                                let end =
+                                    Point::new(*line_range.end() + 1, 0).min(buffer.max_point());
+                                let content = buffer.text_for_range(start..end).collect();
+                                Mention::Text {
+                                    content,
+                                    tracked_buffers: vec![cx.entity()],
+                                }
+                            }))
+                        }
+                    })
+                    .shared();
+
+                self.mention_set.update(cx, |mention_set, cx| {
+                    mention_set.insert_mention(
+                        crease_id,
+                        mention_uri.clone(),
+                        mention_task,
+                        crease_entity,
                         cx,
-                    ) else {
-                        continue;
-                    };
-                    drop(tx);
-
-                    let mention_task = cx
-                        .spawn({
-                            let project = project.clone();
-                            async move |_, cx| {
-                                let project_path = project
-                                    .update(cx, |project, cx| {
-                                        project.project_path_for_absolute_path(&file_path, cx)
-                                    })
-                                    .ok_or_else(|| {
-                                        format!(
-                                            "project path not found for pasted selection {file_path:?}"
-                                        )
-                                    })?;
-
-                                let buffer = project
-                                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                                    .await
-                                    .map_err(|e| e.to_string())?;
-
-                                Ok(buffer.update(cx, |buffer, cx| {
-                                    let start =
-                                        Point::new(*line_range.start(), 0).min(buffer.max_point());
-                                    let end = Point::new(*line_range.end() + 1, 0)
-                                        .min(buffer.max_point());
-                                    let content = buffer.text_for_range(start..end).collect();
-                                    Mention::Text {
-                                        content,
-                                        tracked_buffers: vec![cx.entity()],
-                                    }
-                                }))
-                            }
-                        })
-                        .shared();
-
-                    self.mention_set.update(cx, |mention_set, cx| {
-                        mention_set.insert_mention(
-                            crease_id,
-                            mention_uri.clone(),
-                            mention_task,
-                            crease_entity,
-                            cx,
-                        )
-                    });
-                }
+                    )
+                });
             }
             return;
         }

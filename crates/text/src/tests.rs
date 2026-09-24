@@ -48,6 +48,79 @@ fn test_point_for_row_and_column_from_external_source() {
     assert_eq!(snapshot.point_from_external_input(1, 3), Point::new(1, 3));
 }
 
+#[test]
+fn test_points_from_version() {
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "one\ntwo\nthree\nfour\n",
+    );
+    let old_version = buffer.version().clone();
+
+    buffer.edit([
+        (Point::new(1, 0)..Point::new(1, 0), "inserted\n"),
+        (Point::new(3, 0)..Point::new(4, 0), "replacement\nline\n"),
+    ]);
+
+    assert_eq!(
+        buffer
+            .snapshot()
+            .points_from_version(
+                [
+                    Point::new(0, 2),
+                    Point::new(1, 0),
+                    Point::new(1, 2),
+                    Point::new(3, 0),
+                    Point::new(3, 2),
+                    Point::new(4, 0),
+                ],
+                &old_version,
+            )
+            .collect::<Vec<_>>(),
+        [
+            Point::new(0, 2),
+            Point::new(2, 0),
+            Point::new(2, 2),
+            Point::new(4, 0),
+            Point::new(4, 2),
+            Point::new(6, 0),
+        ]
+    );
+}
+
+#[test]
+fn test_points_from_version_clips_points_in_deleted_text() {
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "one\ntwo\nthree",
+    );
+    let old_version = buffer.version().clone();
+
+    buffer.edit([(Point::new(1, 0)..Point::new(2, 0), "")]);
+
+    assert_eq!(
+        buffer
+            .snapshot()
+            .points_from_version(
+                [
+                    Point::new(1, 0),
+                    Point::new(1, 2),
+                    Point::new(2, 0),
+                    Point::new(2, 2),
+                ],
+                &old_version,
+            )
+            .collect::<Vec<_>>(),
+        [
+            Point::new(1, 0),
+            Point::new(1, 0),
+            Point::new(1, 0),
+            Point::new(1, 2),
+        ]
+    );
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_edits(mut rng: StdRng) {
     let operations = env::var("OPERATIONS")

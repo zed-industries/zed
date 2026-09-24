@@ -12,7 +12,14 @@ pub struct ClipboardSelection {
     #[serde(default)]
     pub file_path: Option<PathBuf>,
     #[serde(default)]
-    pub line_range: Option<RangeInclusive<u32>>,
+    pub meta: Option<RangeMetadata>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RangeMetadata {
+    pub line_range: RangeInclusive<u32>,
+    pub buffer_id: BufferId,
+    pub version: clock::Global,
 }
 
 impl ClipboardSelection {
@@ -38,10 +45,14 @@ impl ClipboardSelection {
             project.absolute_path(&project_path, cx)
         });
 
-        let line_range = if file_path.is_some() {
+        let meta = if file_path.is_some() {
             buffer
                 .range_to_buffer_range(range)
-                .map(|(_, buffer_range)| buffer_range.start.row..=buffer_range.end.row)
+                .map(|(buffer_snapshot, buffer_range)| RangeMetadata {
+                    line_range: buffer_range.start.row..=buffer_range.end.row,
+                    buffer_id: buffer_snapshot.remote_id(),
+                    version: buffer_snapshot.version().clone(),
+                })
         } else {
             None
         };
@@ -51,7 +62,7 @@ impl ClipboardSelection {
             is_entire_line,
             first_line_indent,
             file_path,
-            line_range,
+            meta,
         }
     }
 }
@@ -704,7 +715,7 @@ fn kill_ring_metadata_for_text(
                 is_entire_line: false,
                 first_line_indent: first_selection.first_line_indent,
                 file_path: None,
-                line_range: None,
+                meta: None,
             }])
         }
     }

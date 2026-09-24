@@ -23,6 +23,7 @@ use postage::{oneshot, prelude::*};
 use regex::Regex;
 pub use rope::*;
 pub use selection::*;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -68,7 +69,7 @@ pub struct Buffer {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, PartialOrd, Ord, Eq, Deserialize, Serialize)]
 pub struct BufferId(NonZeroU64);
 
 impl Display for BufferId {
@@ -2854,6 +2855,40 @@ impl BufferSnapshot {
             }
 
             last_old_end + new_offset.saturating_sub(last_new_end)
+        })
+    }
+
+    /// Converts the given sequence of points from a prior version of this buffer
+    /// into their corresponding points in this version.
+    ///
+    /// Points must be provided in ascending order. A point at an insertion is
+    /// mapped to the end of the inserted text.
+    pub fn points_from_version<'a>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = Point>,
+        version: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = Point> {
+        let mut edits = self.edits_since(version).peekable();
+        let mut last_old_end = Point::zero();
+        let mut last_new_end = Point::zero();
+        points.into_iter().map(move |old_point| {
+            while let Some(edit) = edits.peek() {
+                if edit.old.start > old_point {
+                    break;
+                }
+
+                if edit.old.end <= old_point {
+                    last_old_end = edit.old.end;
+                    last_new_end = edit.new.end;
+                    edits.next();
+                    continue;
+                }
+
+                let overshoot = old_point - edit.old.start;
+                return (edit.new.start + overshoot).min(edit.new.end);
+            }
+
+            last_new_end + old_point.saturating_sub(last_old_end)
         })
     }
 

@@ -18388,6 +18388,7 @@ dependencies = [
  "rand 0.9.4",
  "regex",
  "rope",
+ "serde",
  "smallvec",
  "sum_tree",
  "util",
