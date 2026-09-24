@@ -8750,7 +8750,10 @@ async fn test_recv_returns_serde_error_not_generic_message(_cx: &mut TestAppCont
 
     sender.send_full(json!({"_command": "ls"}));
 
-    let error = input.recv().await.expect_err("should fail with missing field");
+    let error = input
+        .recv()
+        .await
+        .expect_err("should fail with missing field");
     let error_message = error.to_string();
 
     assert!(
@@ -8804,7 +8807,10 @@ async fn test_recv_still_reports_channel_closed_when_no_data(_cx: &mut TestAppCo
 
     drop(sender);
 
-    let error = input.recv().await.expect_err("should fail when channel closes");
+    let error = input
+        .recv()
+        .await
+        .expect_err("should fail when channel closes");
     let error_message = error.to_string();
 
     assert!(
