@@ -240,7 +240,7 @@ impl EntryViewState {
                 let can_rewind = thread.read(cx).supports_truncate(cx);
                 let has_client_id = message.client_id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
-                let chunks = message.chunks.clone();
+                let chunks = message.content.source_blocks().to_vec();
                 if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
                     if !editor.focus_handle(cx).is_focused(window) {
                         // Only update if we are not editing.

@@ -949,27 +949,28 @@ mod tests {
         ContentBlock, ContextCompaction, ContextCompactionId, ContextCompactionStatus,
     };
     use agent_client_protocol::schema::v1 as acp;
+    use language::LanguageRegistry;
 
     #[gpui::test]
     fn test_compaction_markdowns_include_summary_and_error(cx: &mut App) {
         let summary = cx.new(|cx| Markdown::new("summary match".into(), None, None, cx));
-        let unsupported =
-            cx.new(|cx| Markdown::new("unsupported content match".into(), None, None, cx));
         let error = cx.new(|cx| Markdown::new("error match".into(), None, None, cx));
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        let unsupported_block = ContentBlock::new_output(
+            acp::ContentBlock::Audio(acp::AudioContent::new("YXVkaW8=", "audio/wav")),
+            &language_registry,
+            cx,
+        );
+        let unsupported = unsupported_block
+            .markdown()
+            .expect("audio fallback")
+            .clone();
         let compaction = ContextCompaction {
             id: ContextCompactionId("compaction".into()),
             status: ContextCompactionStatus::Failed,
             summary: vec![
-                ContentBlock::Markdown {
-                    markdown: summary.clone(),
-                },
-                ContentBlock::Unsupported {
-                    content: acp::ContentBlock::Audio(acp::AudioContent::new(
-                        "YXVkaW8=",
-                        "audio/wav",
-                    )),
-                    markdown: unsupported.clone(),
-                },
+                ContentBlock::from_markdown(summary.clone()),
+                unsupported_block,
             ],
             error: Some(error.clone()),
         };
