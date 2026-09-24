@@ -1007,33 +1007,31 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let snapshot_len = snapshot.len().0;
 
+        let fingerprint_offsets = OnceCell::new();
+
         // Helper: search for fingerprint in buffer, return offset if found
         let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
             let search_start = snapshot
                 .clip_offset(MultiBufferOffset(search_start), Bias::Left)
                 .0;
-            let search_end = snapshot_len.saturating_sub(fingerprint.len());
-
-            let mut byte_offset = search_start;
-            for ch in snapshot.chars_at(MultiBufferOffset(search_start)) {
-                if byte_offset > search_end {
-                    break;
-                }
-                if snapshot.contains_str_at(MultiBufferOffset(byte_offset), fingerprint) {
-                    return Some(byte_offset);
-                }
-                byte_offset += ch.len_utf8();
+            if fingerprint.is_empty() {
+                return (search_start < snapshot_len).then_some(search_start);
             }
-            None
+            let offsets = fingerprint_offsets
+                .get_or_init(|| find_fingerprint_offsets(&snapshot, &folds))
+                .get(fingerprint)?;
+            offsets
+                .get(offsets.partition_point(|&offset| offset < search_start))
+                .copied()
         };
 
         let mut search_start = 0usize;
 
         let valid_folds: Vec<_> = folds
-            .into_iter()
-            .filter_map(|(stored_start, stored_end, start_fp, end_fp)| {
-                let sfp = start_fp?;
-                let efp = end_fp?;
+            .iter()
+            .filter_map(|&(stored_start, stored_end, ref start_fp, ref end_fp)| {
+                let sfp = start_fp.as_ref()?;
+                let efp = end_fp.as_ref()?;
                 let efp_len = efp.len();
 
                 let start_matches = stored_start < snapshot_len
@@ -1096,4 +1094,33 @@ impl Editor {
         self.scrollbar_marker_state.dirty = true;
         self.active_indent_guides_state.dirty = true;
     }
+}
+
+/// Finds every occurrence of the fold fingerprints in a single pass over the buffer.
+/// Searching for each fingerprint separately rescans the rest of the buffer for every
+/// fold that no longer matches, which freezes large files with many stale folds.
+pub(super) fn find_fingerprint_offsets<'a>(
+    snapshot: &MultiBufferSnapshot,
+    folds: &'a [(usize, usize, Option<String>, Option<String>)],
+) -> HashMap<&'a str, Vec<usize>> {
+    let fingerprints = folds
+        .iter()
+        .flat_map(|(_, _, start_fp, end_fp)| [start_fp.as_deref(), end_fp.as_deref()])
+        .flatten()
+        .filter(|fingerprint| !fingerprint.is_empty())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut offsets = HashMap::<&str, Vec<usize>>::default();
+    let Some(searcher) = AhoCorasick::new(&fingerprints).log_err() else {
+        return offsets;
+    };
+    let text = snapshot.text();
+    for found in searcher.find_overlapping_iter(&text) {
+        offsets
+            .entry(fingerprints[found.pattern().as_usize()])
+            .or_default()
+            .push(found.start());
+    }
+    offsets
 }

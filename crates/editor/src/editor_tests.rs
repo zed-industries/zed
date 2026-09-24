@@ -2385,6 +2385,73 @@ fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_load_folds_from_db_with_stale_folds(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // The file was edited after its folds were saved: a header line was added above them,
+    // and most saved folds no longer exist in it.
+    let header = "// header\n";
+    let function = "fn f() {\n    let first = compute_first();\n    let second = compute_second();\n    first + second\n}\n";
+    let filler = "// filler\n".repeat(200);
+    let text = format!("{header}{function}{filler}{function}");
+
+    let first_start = header.len() + "fn f() {".len();
+    let first_end = header.len() + function.len() - "}\n".len();
+    let second_start = first_start + function.len() + filler.len();
+    let second_end = first_end + function.len() + filler.len();
+
+    let saved_fold = |range: Range<usize>| {
+        (
+            range.start - header.len(),
+            range.end - header.len(),
+            text[range.start..range.start + 32].to_string(),
+            text[range.end - 32..range.end].to_string(),
+        )
+    };
+    let mut saved_folds = vec![saved_fold(first_start..first_end)];
+    saved_folds.extend((0..100).map(|ix| {
+        (
+            1_000 + ix * 3,
+            1_040 + ix * 3,
+            format!("removed start {ix}"),
+            format!("removed end {ix}"),
+        )
+    }));
+    saved_folds.push(saved_fold(second_start..second_end));
+
+    let workspace_id = cx
+        .update(|cx| workspace::WorkspaceDb::global(cx))
+        .next_id()
+        .await
+        .unwrap();
+    let file_path = PathBuf::from(path!("/a/stale_folds.rs"));
+    cx.update(|cx| EditorDb::global(cx))
+        .save_file_folds(workspace_id, file_path.clone().into(), saved_folds)
+        .await
+        .unwrap();
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        build_editor(buffer, window, cx)
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.load_folds_from_db(workspace_id, file_path, window, cx);
+
+            let snapshot = editor.snapshot(window, cx);
+            let buffer = snapshot.buffer_snapshot();
+            let folds = snapshot
+                .folds_in_range(MultiBufferOffset(0)..buffer.len())
+                .map(|fold| {
+                    fold.range.start.to_offset(buffer).0..fold.range.end.to_offset(buffer).0
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(folds, [first_start..first_end, second_start..second_end]);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

@@ -11224,25 +11224,23 @@ impl Editor {
                 let snapshot = buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
                 let snapshot_len = snapshot.len().0;
 
+                let fingerprint_offsets = OnceCell::new();
+
                 // Helper: search for fingerprint in buffer, return offset if found
                 let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
                     // Ensure we start at a character boundary (defensive)
                     let search_start = snapshot
                         .clip_offset(MultiBufferOffset(search_start), Bias::Left)
                         .0;
-                    let search_end = snapshot_len.saturating_sub(fingerprint.len());
-
-                    let mut byte_offset = search_start;
-                    for ch in snapshot.chars_at(MultiBufferOffset(search_start)) {
-                        if byte_offset > search_end {
-                            break;
-                        }
-                        if snapshot.contains_str_at(MultiBufferOffset(byte_offset), fingerprint) {
-                            return Some(byte_offset);
-                        }
-                        byte_offset += ch.len_utf8();
+                    if fingerprint.is_empty() {
+                        return (search_start < snapshot_len).then_some(search_start);
                     }
-                    None
+                    let offsets = fingerprint_offsets
+                        .get_or_init(|| fold::find_fingerprint_offsets(snapshot, &folds))
+                        .get(fingerprint)?;
+                    offsets
+                        .get(offsets.partition_point(|&offset| offset < search_start))
+                        .copied()
                 };
 
                 // Track search position to handle duplicate fingerprints correctly.
@@ -11253,11 +11251,11 @@ impl Editor {
                 let mut db_folds_for_migration: Vec<(usize, usize, String, String)> = Vec::new();
 
                 let valid_folds: Vec<_> = folds
-                    .into_iter()
-                    .filter_map(|(stored_start, stored_end, start_fp, end_fp)| {
+                    .iter()
+                    .filter_map(|&(stored_start, stored_end, ref start_fp, ref end_fp)| {
                         // Skip folds without fingerprints (old data before migration)
-                        let sfp = start_fp?;
-                        let efp = end_fp?;
+                        let sfp = start_fp.as_ref()?;
+                        let efp = end_fp.as_ref()?;
                         let efp_len = efp.len();
 
                         // Fast path: check if fingerprints match at stored offsets
@@ -11298,7 +11296,12 @@ impl Editor {
 
                         // Collect for migration if needed
                         if needs_migration {
-                            db_folds_for_migration.push((new_start, new_end, sfp, efp));
+                            db_folds_for_migration.push((
+                                new_start,
+                                new_end,
+                                sfp.clone(),
+                                efp.clone(),
+                            ));
                         }
 
                         Some(
