@@ -13,6 +13,7 @@ Use a gateway when you route model requests through a platform such as OpenRoute
 | Vercel AI Gateway         | Yes             | Separate config                         | Separate config  | Uses Vercel AI Gateway API access            |
 | Amazon Bedrock            | Yes             | Separate config                         | Separate config  | Uses AWS credentials or Bedrock bearer token |
 | OpenAI-compatible gateway | Yes             | Separate config                         | Separate config  | Configure base URL, model, and key           |
+| Opper                     | Yes             | Separate config                         | Separate config  | OpenAI-compatible, EU-hosted                 |
 
 ## OpenRouter {#openrouter}
 
@@ -248,3 +249,52 @@ You can add custom models served through `bedrock-mantle` with `mantle_available
 ## OpenAI-Compatible Gateways {#openai-compatible}
 
 If your gateway exposes an OpenAI-compatible API, configure it with [Use API Access](./use-api-access.md#openai-compatible).
+
+The provider ID you choose becomes the environment variable Zed reads, as upper
+snake case plus `_API_KEY`, and the same ID names the provider in
+`default_model`.
+
+### Opper {#opper}
+
+[Opper](https://opper.ai) is an EU-hosted gateway that exposes an
+OpenAI-compatible API at `https://api.opper.ai/v3/compat`. Create a key in the
+[Opper console](https://platform.opper.ai), then configure it under the ID
+`opper`, which reads `OPPER_API_KEY`:
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "opper": {
+        "api_url": "https://api.opper.ai/v3/compat",
+        "available_models": [
+          {
+            "name": "claude-sonnet-4-6",
+            "display_name": "Claude Sonnet 4.6",
+            "max_tokens": 200000
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+```json [settings]
+{
+  "agent": {
+    "default_model": {
+      "provider": "opper",
+      "model": "claude-sonnet-4-6"
+    }
+  }
+}
+```
+
+Model names are bare pool names such as `claude-sonnet-4-6` or `gpt-5.5`, where
+a pool is every provider serving that model and Opper picks the route per
+request. A `provider/model` name such as `azure/gpt-5.5` pins one provider or
+region instead. The catalog is at [opper.ai/models](https://opper.ai/models).
+
+Enter the key in the provider settings UI or set the generated environment
+variable. Do not put API keys in `settings.json`.
