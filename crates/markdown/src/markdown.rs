@@ -1279,7 +1279,11 @@ impl Markdown {
             let mut fallback_code_block_language = None;
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
-                    if let Ok(language) = registry.language_for_name_or_extension(&name).await {
+                    // Per CommonMark, only the first word of an info string names the language.
+                    let language_name = name.split_whitespace().next().unwrap_or_default();
+                    if let Ok(language) =
+                        registry.language_for_name_or_extension(language_name).await
+                    {
                         languages_by_name.insert(name, language);
                     }
                 }
@@ -5647,6 +5651,16 @@ mod tests {
             !stale.is_current(),
             "a theme change must make parse-time highlights stale so rendering re-resolves them"
         );
+    }
+
+    #[gpui::test]
+    fn test_code_block_language_uses_first_word_of_info_string(cx: &mut TestAppContext) {
+        let source = "```rust import.meta.vitest\nfn main() {}\n```";
+        let (_, markdown) = markdown_with_rust_language(source, cx);
+
+        let code_start = source.find("fn main").unwrap();
+        let cached = cached_code_block_highlights(&markdown, code_start, cx);
+        assert!(!cached.runs.is_empty());
     }
 
     #[gpui::test]
