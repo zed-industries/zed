@@ -57,6 +57,7 @@ open_ai = { workspace = true, features = ["schemars"] }
 openai_subscribed.workspace = true
 opencode = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
+paths.workspace = true
 rand.workspace = true
 release_channel.workspace = true
 schemars.workspace = true

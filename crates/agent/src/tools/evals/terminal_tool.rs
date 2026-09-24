@@ -154,6 +154,7 @@ impl TerminalToolTest {
         cx.executor().allow_parking();
 
         cx.update(|cx| {
+            <dyn fs::Fs>::set_global(fs::FakeFs::new(cx.background_executor().clone()), cx);
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
 
