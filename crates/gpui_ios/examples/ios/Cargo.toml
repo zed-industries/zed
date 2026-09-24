@@ -18,4 +18,3 @@ bench = false
 gpui.workspace = true
 gpui_ios.workspace = true
 gpui_platform.workspace = true
-log.workspace = true

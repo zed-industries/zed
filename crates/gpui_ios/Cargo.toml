@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/gpui_ios.rs"
 crate-type = ["staticlib", "rlib"]
+doctest = false
 
 [[test]]
 name = "text_input"
