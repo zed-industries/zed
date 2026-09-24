@@ -7244,6 +7244,7 @@ dependencies = [
  "time",
  "time_format",
  "tracing",
+ "tree-sitter-md",
  "ui",
  "ui_input",
  "unindent",
