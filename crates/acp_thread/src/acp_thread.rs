@@ -1482,11 +1482,11 @@ fn elicitation_status_for_response(response: &acp::CreateElicitationResponse) ->
 #[derive(Debug, Default, PartialEq)]
 pub struct MessageContent {
     source_blocks: Vec<acp::ContentBlock>,
-    blocks: Vec<MessageProjection>,
+    blocks: Vec<RenderedMessageBlock>,
 }
 
 #[derive(Debug, PartialEq)]
-struct MessageProjection {
+struct RenderedMessageBlock {
     render: RenderBlock,
     source_index: Option<usize>,
 }
@@ -1578,7 +1578,7 @@ impl MessageContent {
                     RenderBlock::EmbeddedResource { .. } => Some(self.source_blocks.len()),
                     _ => None,
                 };
-                self.blocks.push(MessageProjection {
+                self.blocks.push(RenderedMessageBlock {
                     render,
                     source_index,
                 });
@@ -1593,7 +1593,7 @@ impl MessageContent {
         if let Some(markdown) = self.trailing_text() {
             markdown.update(cx, |markdown, cx| markdown.append(text, cx));
         } else {
-            self.blocks.push(MessageProjection {
+            self.blocks.push(RenderedMessageBlock {
                 render: RenderBlock::Markdown {
                     markdown: ContentBlock::create_markdown(text.to_owned(), language_registry, cx),
                 },
@@ -5720,14 +5720,14 @@ mod tests {
             assert!(!content.to_markdown(cx).contains("private-blob-data"));
             for (render_index, source_index) in [(1, 1), (3, 3)] {
                 let source = &content.source_blocks[source_index];
-                let projection = content.blocks().nth(render_index).expect("rendered block");
+                let rendered_block = content.blocks().nth(render_index).expect("rendered block");
                 assert!(matches!(
-                    projection.render,
+                    rendered_block.render,
                     RenderBlock::EmbeddedResource { .. }
                 ));
                 assert!(std::ptr::eq(
                     source,
-                    projection.source.expect("source block")
+                    rendered_block.source.expect("source block")
                 ));
             }
         });
