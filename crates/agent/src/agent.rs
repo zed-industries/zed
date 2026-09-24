@@ -4312,10 +4312,12 @@ mod internal_tests {
             };
             assert_eq!(compaction.id, compaction_id);
             assert!(compaction.is_in_progress());
-            let [acp_thread::ContentBlock::Markdown { markdown }] = compaction.summary.as_slice()
-            else {
+            let [summary] = compaction.summary.as_slice() else {
                 panic!("native text chunks should create one retained Markdown block");
             };
+            let markdown = summary
+                .markdown()
+                .expect("native text should have markdown");
             assert_eq!(markdown.read(cx).source().as_ref(), "retained ");
             markdown.clone()
         });
