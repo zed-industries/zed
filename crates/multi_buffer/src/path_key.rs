@@ -4,7 +4,7 @@ use gpui::{App, AppContext, Context, Entity};
 use itertools::Itertools;
 use language::{Buffer, BufferEditSource, BufferSnapshot};
 use rope::Point;
-use sum_tree::{Dimensions, SumTree};
+use sum_tree::{Cursor, Dimensions, SumTree};
 use text::{Bias, BufferId, Edit, OffsetRangeExt, Patch};
 use util::rel_path::RelPath;
 use ztracing::instrument;
@@ -460,6 +460,28 @@ impl MultiBuffer {
                     }
                     reused_excerpt
                 } else {
+                    let context = next_excerpt.context.to_offset(buffer_snapshot);
+                    let old_start = cursor.position.1;
+                    let new_start = new_excerpts.summary().len();
+                    let text_len = context.end - context.start;
+                    let first_char_len = buffer_snapshot
+                        .chars_at(context.start)
+                        .next()
+                        .map_or(0, char::len_utf8)
+                        .min(text_len);
+                    let last_char_len = buffer_snapshot
+                        .reversed_chars_at(context.end)
+                        .next()
+                        .map_or(0, char::len_utf8)
+                        .min(text_len);
+                    for range in [0..first_char_len, text_len - last_char_len..text_len] {
+                        patch.push_maybe_empty(Edit {
+                            old: old_start + MultiBufferOffset(range.start)
+                                ..old_start + MultiBufferOffset(range.end),
+                            new: new_start + MultiBufferOffset(range.start)
+                                ..new_start + MultiBufferOffset(range.end),
+                        });
+                    }
                     Excerpt::new(
                         path_key.clone(),
                         path_key_index,
@@ -590,6 +612,8 @@ impl MultiBuffer {
         new_excerpts.append(suffix, ());
         drop(cursor);
 
+        let edits =
+            include_preceding_separators(&snapshot.excerpts, &new_excerpts, patch.into_inner());
         snapshot.excerpts = new_excerpts;
         snapshot.buffers.insert(
             buffer_id,
@@ -618,11 +642,7 @@ impl MultiBuffer {
             snapshot.trailing_excerpt_update_count += 1;
         }
 
-        let edits = Self::sync_diff_transforms(
-            &mut snapshot,
-            patch.into_inner(),
-            DiffChangeKind::BufferEdited,
-        );
+        let edits = Self::sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
             cx.emit(Event::Edited {
@@ -795,6 +815,8 @@ impl MultiBuffer {
             );
         }
 
+        let excerpt_edits =
+            include_preceding_separators(&snapshot.excerpts, &new_excerpts, excerpt_edits);
         snapshot.excerpts = new_excerpts;
 
         let edits =
@@ -863,10 +885,12 @@ impl MultiBuffer {
             old: edit_start..edit_end,
             new: edit_start..edit_start,
         };
+        let excerpt_edits =
+            include_preceding_separators(&snapshot.excerpts, &new_excerpts, vec![edit]);
         snapshot.excerpts = new_excerpts;
 
         let edits =
-            Self::sync_diff_transforms(&mut snapshot, vec![edit], DiffChangeKind::BufferEdited);
+            Self::sync_diff_transforms(&mut snapshot, excerpt_edits, DiffChangeKind::BufferEdited);
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
@@ -877,4 +901,32 @@ impl MultiBuffer {
         });
         cx.notify();
     }
+}
+
+fn include_preceding_separators(
+    old_excerpts: &SumTree<Excerpt>,
+    new_excerpts: &SumTree<Excerpt>,
+    edits: Vec<Edit<ExcerptOffset>>,
+) -> Vec<Edit<ExcerptOffset>> {
+    let mut old_cursor = old_excerpts.cursor::<ExcerptOffset>(());
+    let mut new_cursor = new_excerpts.cursor::<ExcerptOffset>(());
+    let mut widened = Patch::empty();
+    for mut edit in edits {
+        if follows_separator(&mut old_cursor, edit.old.start)
+            && follows_separator(&mut new_cursor, edit.new.start)
+        {
+            edit.old.start.0.0 -= 1;
+            edit.new.start.0.0 -= 1;
+        }
+        widened.push_maybe_empty(edit);
+    }
+    widened.into_inner()
+}
+
+fn follows_separator(cursor: &mut Cursor<Excerpt, ExcerptOffset>, offset: ExcerptOffset) -> bool {
+    cursor.seek(&offset, Bias::Left);
+    cursor.end() == offset
+        && cursor
+            .item()
+            .is_some_and(|excerpt| excerpt.has_trailing_newline)
 }

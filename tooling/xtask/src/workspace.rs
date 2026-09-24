@@ -16,6 +16,9 @@ mod tests {
 
     use super::load_workspace;
 
+    /// Direct dependencies forbidden in workspace packages, paired with the reason shown on failure.
+    const FORBIDDEN_DIRECT_DEPENDENCIES: &[(&str, &str)] = &[("block", "use `block2` instead")];
+
     /// Crates that must not depend on each other, directly or transitively:
     /// such edges chain large UI crates one after another and serialize the
     /// build, badly hurting incremental compile times. Dev-dependencies are
@@ -34,6 +37,34 @@ mod tests {
         ("sidebar", "git_ui"),
         ("title_bar", "git_ui"),
     ];
+
+    #[test]
+    fn no_forbidden_direct_dependencies() {
+        let workspace = load_workspace().expect("failed to load cargo metadata");
+        let mut violations = Vec::new();
+
+        for package in workspace.workspace_packages() {
+            for dependency in &package.dependencies {
+                let Some((_, reason)) = FORBIDDEN_DIRECT_DEPENDENCIES
+                    .iter()
+                    .find(|(name, _)| *name == dependency.name)
+                else {
+                    continue;
+                };
+                violations.push(format!(
+                    "{} directly depends on `{}`; {reason}",
+                    package.name, dependency.name
+                ));
+            }
+        }
+
+        assert_eq!(
+            violations,
+            Vec::<String>::new(),
+            "forbidden direct dependencies:\n{}",
+            violations.join("\n"),
+        );
+    }
 
     #[test]
     fn no_forbidden_dependencies_between_feature_crates() {

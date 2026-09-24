@@ -6242,6 +6242,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "extension_suggest"
+version = "0.1.0"
+dependencies = [
+ "path",
+]
+
+[[package]]
 name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
@@ -6254,6 +6261,7 @@ dependencies = [
  "editor",
  "extension",
  "extension_host",
+ "extension_suggest",
  "fs",
  "fuzzy",
  "git",
@@ -7236,6 +7244,7 @@ dependencies = [
  "time",
  "time_format",
  "tracing",
+ "tree-sitter-md",
  "ui",
  "ui_input",
  "unindent",
@@ -7575,7 +7584,7 @@ name = "gpui_apple"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "block",
+ "block2 0.6.2",
  "cbindgen",
  "cocoa 0.26.0",
  "core-foundation 0.10.0",
@@ -9764,6 +9773,7 @@ dependencies = [
  "openai_subscribed",
  "opencode",
  "parking_lot",
+ "paths",
  "rand 0.9.4",
  "release_channel",
  "schemars 1.0.4",
@@ -12476,7 +12486,6 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "strum 0.28.0",
 ]
 
 [[package]]
@@ -22854,7 +22863,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.22.0"
+version = "1.23.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

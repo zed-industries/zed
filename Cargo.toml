@@ -73,6 +73,7 @@ members = [
     "crates/extension_api",
     "crates/extension_cli",
     "crates/extension_host",
+    "crates/extension_suggest",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feature_flags_macros",
@@ -342,6 +343,7 @@ etw_tracing = { path = "crates/etw_tracing" }
 eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
+extension_suggest = { path = "crates/extension_suggest" }
 extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feature_flags_macros = { path = "crates/feature_flags_macros" }
@@ -566,7 +568,6 @@ backtrace = "0.3"
 base64 = "0.22"
 betlang = "0.1.1"
 bitflags = "2.6.0"
-block = "0.1"
 block2 = "0.6"
 brush-parser = "0.3"
 bytes = "1.0"
