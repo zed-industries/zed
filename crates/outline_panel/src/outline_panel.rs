@@ -42,9 +42,9 @@ use std::{
     u32,
 };
 
-use outline_panel_settings::{DockSide, FolderIndicator, OutlinePanelSettings, ShowIndentGuides};
 use call_hierarchy::{Call, CallHierarchyMode, fetch_calls, make_call, render_item};
 use editor::actions::ShowCallHierarchy;
+use outline_panel_settings::{DockSide, FolderIndicator, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, Project, ProjectPath};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
@@ -2454,9 +2454,9 @@ impl OutlinePanel {
                 PanelEntry::FoldedDirs(folded_dirs) => {
                     folded_dirs.entries.last().map(|entry| entry.path.clone())
                 }
-                PanelEntry::Search(_)
-                | PanelEntry::Outline(..)
-                | PanelEntry::CallHierarchy(_) => None,
+                PanelEntry::Search(_) | PanelEntry::Outline(..) | PanelEntry::CallHierarchy(_) => {
+                    None
+                }
             })
             .map(|p| p.display(path_style).to_string())
         {
@@ -3284,10 +3284,7 @@ impl OutlinePanel {
         state.root = None;
         state.loading = true;
         state.expanding.clear();
-        let origin = state
-            .origin_buffer
-            .clone()
-            .zip(state.origin_position);
+        let origin = state.origin_buffer.clone().zip(state.origin_position);
         if let Some((buffer, position)) = origin {
             self.fetch_call_hierarchy_root(buffer, position, new_direction, window, cx);
         } else {
@@ -6151,73 +6148,66 @@ impl Render for OutlinePanel {
                         .child(Label::new(query_text)),
                 )
             })
-            .when_some(
-                call_hierarchy_direction,
-                |outline_panel, direction| {
-                    let (direction_label, direction_icon) = match direction {
-                        CallHierarchyMode::Incoming => ("Incoming Calls", IconName::ArrowDownLeft),
-                        CallHierarchyMode::Outgoing => {
-                            ("Outgoing Calls", IconName::ArrowUpRight)
-                        }
-                    };
-                    outline_panel.child(
-                        h_flex()
-                            .py_1p5()
-                            .px_2()
-                            .h(Tab::container_height(cx))
-                            .gap_1()
-                            .justify_between()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Icon::new(direction_icon)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
+            .when_some(call_hierarchy_direction, |outline_panel, direction| {
+                let (direction_label, direction_icon) = match direction {
+                    CallHierarchyMode::Incoming => ("Incoming Calls", IconName::ArrowDownLeft),
+                    CallHierarchyMode::Outgoing => ("Outgoing Calls", IconName::ArrowUpRight),
+                };
+                outline_panel.child(
+                    h_flex()
+                        .py_1p5()
+                        .px_2()
+                        .h(Tab::container_height(cx))
+                        .gap_1()
+                        .justify_between()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(direction_icon)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("Call Hierarchy").color(Color::Muted))
+                                .child(Label::new(direction_label)),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .child(
+                                    IconButton::new(
+                                        "toggle-call-hierarchy-direction",
+                                        IconName::ArrowRightLeft,
                                     )
-                                    .child(Label::new("Call Hierarchy").color(Color::Muted))
-                                    .child(Label::new(direction_label)),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .child(
-                                        IconButton::new(
-                                            "toggle-call-hierarchy-direction",
-                                            IconName::ArrowRightLeft,
-                                        )
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Toggle Incoming/Outgoing"))
+                                    .on_click(cx.listener(
+                                        |outline_panel, _, window, cx| {
+                                            outline_panel.toggle_call_hierarchy_direction(
+                                                &ToggleCallHierarchyDirection,
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    IconButton::new("exit-call-hierarchy", IconName::Close)
                                         .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Toggle Incoming/Outgoing"))
-                                        .on_click(cx.listener(
-                                            |outline_panel, _, window, cx| {
-                                                outline_panel.toggle_call_hierarchy_direction(
-                                                    &ToggleCallHierarchyDirection,
-                                                    window,
-                                                    cx,
-                                                );
-                                            },
-                                        )),
-                                    )
-                                    .child(
-                                        IconButton::new("exit-call-hierarchy", IconName::Close)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(Tooltip::text("Back to Outline"))
-                                            .on_click(cx.listener(
-                                                |outline_panel, _, window, cx| {
-                                                    outline_panel.exit_call_hierarchy(
-                                                        &ExitCallHierarchy,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                },
-                                            )),
-                                    ),
-                            ),
-                    )
-                },
-            )
+                                        .tooltip(Tooltip::text("Back to Outline"))
+                                        .on_click(cx.listener(|outline_panel, _, window, cx| {
+                                            outline_panel.exit_call_hierarchy(
+                                                &ExitCallHierarchy,
+                                                window,
+                                                cx,
+                                            );
+                                        })),
+                                ),
+                        ),
+                )
+            })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
     }
 }
