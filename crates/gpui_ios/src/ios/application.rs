@@ -1,4 +1,4 @@
-use super::window::IosWindowState;
+use super::{CallbackSlot, platform::IosPlatformState, window::IosWindowState};
 use gpui::{AppLifecyclePhase, WindowVisibility};
 use objc2::{
     ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, extern_class,
@@ -17,146 +17,155 @@ use objc2_ui_kit::{
     UIWindowSceneDelegate,
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     rc::{Rc, Weak},
 };
 
 #[derive(Default)]
-struct IosPlatformState {
-    running: bool,
-    finish_launching: Option<Box<dyn FnOnce()>>,
-    quit: Option<Box<dyn FnMut()>>,
-    open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    app_lifecycle: Option<Box<dyn FnMut(AppLifecyclePhase)>>,
-    memory_warning: Option<Box<dyn FnMut()>>,
-    scene: Option<Retained<UIWindowScene>>,
-    windows: Vec<Weak<IosWindowState>>,
+pub(super) struct IosApplicationState {
+    running: Cell<bool>,
+    finish_launching: CallbackSlot<Box<dyn FnOnce()>>,
+    pub(super) quit: CallbackSlot<Box<dyn FnMut()>>,
+    pub(super) open_urls: CallbackSlot<Box<dyn FnMut(Vec<String>)>>,
+    pub(super) app_lifecycle: CallbackSlot<Box<dyn FnMut(AppLifecyclePhase)>>,
+    pub(super) memory_warning: CallbackSlot<Box<dyn FnMut()>>,
+    scene: RefCell<Option<Retained<UIWindowScene>>>,
+    // The link retains its delegate target, which only weakly references this state.
+    display_link: RefCell<Option<Retained<CADisplayLink>>>,
+    windows: RefCell<Vec<Weak<IosWindowState>>>,
 }
 
 thread_local! {
-    static APP_STATE: RefCell<IosPlatformState> = RefCell::default();
+    // UIKit constructs delegates by class name, including on scene restoration.
+    // Only delegate initialization and the legacy status-bar setter consult this.
+    static CURRENT_PLATFORM: RefCell<Weak<IosPlatformState>> = RefCell::default();
 }
 
-pub(super) fn run(on_finish_launching: Box<dyn FnOnce()>) {
+pub(super) fn current_platform() -> Option<Rc<IosPlatformState>> {
+    CURRENT_PLATFORM.with_borrow(Weak::upgrade)
+}
+
+pub(super) fn run(platform: &Rc<IosPlatformState>, on_finish_launching: Box<dyn FnOnce()>) {
     let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
-    APP_STATE.with_borrow_mut(|state| {
-        assert!(!state.running, "the iOS application is already running");
-        state.running = true;
-        state.finish_launching = Some(on_finish_launching);
+    CURRENT_PLATFORM.with_borrow_mut(|current| {
+        assert!(
+            current.upgrade().is_none(),
+            "the iOS application is already running"
+        );
+        *current = Rc::downgrade(platform);
     });
+    assert!(
+        !platform.application.running.replace(true),
+        "the iOS application is already running"
+    );
+    platform
+        .application
+        .finish_launching
+        .set(on_finish_launching);
     // UIKit can restore a scene delegate by class name without asking for a new configuration.
     SceneDelegate::class();
     let delegate_class = NSString::from_class(AppDelegate::class());
     UIApplication::main(None, Some(&delegate_class), main_thread);
 }
 
-pub(super) fn window_scene() -> Option<Retained<UIWindowScene>> {
-    APP_STATE.with_borrow(|state| state.scene.clone())
-}
+impl IosApplicationState {
+    fn set_display_link_paused(&self, paused: bool) {
+        let display_link = self.display_link.borrow().clone();
+        if let Some(display_link) = display_link {
+            display_link.setPaused(paused);
+        }
+    }
 
-pub(super) fn register_window(window: &Rc<IosWindowState>) {
-    APP_STATE.with_borrow_mut(|state| state.windows.push(Rc::downgrade(window)));
-}
+    fn stop_display_link(&self) {
+        let display_link = self.display_link.borrow_mut().take();
+        if let Some(display_link) = display_link {
+            display_link.invalidate();
+        }
+    }
 
-pub(super) fn unregister_window(window: &Rc<IosWindowState>) {
-    let window = Rc::downgrade(window);
-    APP_STATE.with_borrow_mut(|state| state.windows.retain(|entry| !entry.ptr_eq(&window)));
-}
+    pub(super) fn window_scene(&self) -> Option<Retained<UIWindowScene>> {
+        self.scene.borrow().clone()
+    }
 
-pub(super) fn with_windows(mut callback: impl FnMut(&IosWindowState)) {
-    // Native callbacks may open or close windows. Do not hold a registry borrow
-    // across them, and skip snapshot entries that have since been unregistered.
-    let windows = APP_STATE.with_borrow(|state| state.windows.clone());
-    for window in windows {
-        if APP_STATE.with_borrow(|state| state.windows.iter().any(|entry| entry.ptr_eq(&window))) {
-            // The snapshot's Weak keeps its allocation identity from being reused.
-            // The strong guard survives synchronous closure of this window.
-            if let Some(window) = window.upgrade() {
-                callback(&window);
+    pub(super) fn register_window(&self, window: &Rc<IosWindowState>) {
+        self.windows.borrow_mut().push(Rc::downgrade(window));
+    }
+
+    pub(super) fn unregister_window(&self, window: &Rc<IosWindowState>) {
+        let window = Rc::downgrade(window);
+        self.windows
+            .borrow_mut()
+            .retain(|entry| !entry.ptr_eq(&window));
+    }
+
+    pub(super) fn with_windows(&self, mut callback: impl FnMut(&IosWindowState)) {
+        // Native callbacks may open or close windows. Do not hold a registry borrow
+        // across them, and skip snapshot entries that have since been unregistered.
+        let windows = self.windows.borrow().clone();
+        for window in windows {
+            if self
+                .windows
+                .borrow()
+                .iter()
+                .any(|entry| entry.ptr_eq(&window))
+            {
+                // The snapshot's Weak keeps its allocation identity from being reused.
+                // The strong guard survives synchronous closure of this window.
+                if let Some(window) = window.upgrade() {
+                    callback(&window);
+                }
             }
         }
     }
-}
 
-pub(super) fn set_quit_callback(callback: Box<dyn FnMut()>) {
-    APP_STATE.with_borrow_mut(|state| state.quit = Some(callback));
-}
-
-pub(super) fn set_open_urls_callback(callback: Box<dyn FnMut(Vec<String>)>) {
-    APP_STATE.with_borrow_mut(|state| state.open_urls = Some(callback));
-}
-
-pub(super) fn set_app_lifecycle_callback(callback: Box<dyn FnMut(AppLifecyclePhase)>) {
-    APP_STATE.with_borrow_mut(|state| state.app_lifecycle = Some(callback));
-}
-
-pub(super) fn set_memory_warning_callback(callback: Box<dyn FnMut()>) {
-    APP_STATE.with_borrow_mut(|state| state.memory_warning = Some(callback));
-}
-
-fn finish_launching() {
-    let callback = APP_STATE.with_borrow_mut(|state| state.finish_launching.take());
-    if let Some(callback) = callback {
-        callback();
-    }
-}
-
-fn notify_memory_warning() {
-    let callback = APP_STATE.with_borrow_mut(|state| state.memory_warning.take());
-    if let Some(mut callback) = callback {
-        callback();
-        APP_STATE.with_borrow_mut(|state| {
-            if state.memory_warning.is_none() {
-                state.memory_warning = Some(callback);
-            }
-        });
-    }
-}
-
-fn notify_app_lifecycle(phase: AppLifecyclePhase) {
-    match phase {
-        AppLifecyclePhase::Foreground => with_windows(|window| {
-            window.notify_visibility_change(WindowVisibility::Visible);
-        }),
-        AppLifecyclePhase::Active => {
-            with_windows(|window| window.notify_active_status_change(true));
-        }
-        AppLifecyclePhase::Inactive => {
-            with_windows(|window| window.notify_active_status_change(false));
-        }
-        AppLifecyclePhase::Background => {
-            with_windows(|window| window.notify_active_status_change(false));
-            // An activation observer may have closed a window; revisit the registry.
-            with_windows(|window| window.notify_visibility_change(WindowVisibility::Hidden));
+    fn finish_launching(&self) {
+        let callback = self.finish_launching.take();
+        if let Some(callback) = callback {
+            callback();
         }
     }
-    let callback = APP_STATE.with_borrow_mut(|state| state.app_lifecycle.take());
-    if let Some(mut callback) = callback {
-        callback(phase);
-        APP_STATE.with_borrow_mut(|state| {
-            if state.app_lifecycle.is_none() {
-                state.app_lifecycle = Some(callback);
+
+    fn notify_memory_warning(&self) {
+        self.memory_warning.with(|callback| callback());
+    }
+
+    fn notify_app_lifecycle(&self, phase: AppLifecyclePhase) {
+        match phase {
+            AppLifecyclePhase::Foreground => self.with_windows(|window| {
+                window.notify_visibility_change(WindowVisibility::Visible);
+            }),
+            AppLifecyclePhase::Active => {
+                self.with_windows(|window| window.notify_active_status_change(true));
             }
-        });
+            AppLifecyclePhase::Inactive => {
+                self.with_windows(|window| window.notify_active_status_change(false));
+            }
+            AppLifecyclePhase::Background | AppLifecyclePhase::Disconnected => {
+                self.with_windows(|window| window.notify_active_status_change(false));
+                // An activation observer may have closed a window; revisit the registry.
+                self.with_windows(|window| {
+                    window.notify_visibility_change(WindowVisibility::Hidden)
+                });
+            }
+        }
+        self.app_lifecycle.with(|callback| callback(phase));
+    }
+
+    fn open_urls(&self, contexts: &NSSet<UIOpenURLContext>) {
+        if contexts.is_empty() {
+            return;
+        }
+        let urls = contexts
+            .iter()
+            .filter_map(|context| context.URL().absoluteString().map(|url| url.to_string()))
+            .collect();
+        self.open_urls.with(|callback| callback(urls));
     }
 }
 
-fn open_urls(contexts: &NSSet<UIOpenURLContext>) {
-    if contexts.is_empty() {
-        return;
-    }
-    let urls = contexts
-        .iter()
-        .filter_map(|context| context.URL().absoluteString().map(|url| url.to_string()))
-        .collect();
-    let callback = APP_STATE.with_borrow_mut(|state| state.open_urls.take());
-    if let Some(mut callback) = callback {
-        callback(urls);
-        APP_STATE.with_borrow_mut(|state| {
-            if state.open_urls.is_none() {
-                state.open_urls = Some(callback);
-            }
-        });
+impl Drop for IosApplicationState {
+    fn drop(&mut self) {
+        self.stop_display_link();
     }
 }
 
@@ -179,9 +188,21 @@ define_class!(
     #[unsafe(super = NSObject)]
     #[thread_kind = MainThreadOnly]
     #[name = "GPUIIosAppDelegate"]
+    #[ivars = Weak<IosPlatformState>]
     struct AppDelegate;
 
     unsafe impl NSObjectProtocol for AppDelegate {}
+
+    impl AppDelegate {
+        #[unsafe(method_id(init))]
+        fn init(this: Allocated<Self>) -> Retained<Self> {
+            let platform = current_platform()
+                .map(|platform| Rc::downgrade(&platform))
+                .unwrap_or_default();
+            let this = this.set_ivars(platform);
+            unsafe { msg_send![super(this), init] }
+        }
+    }
 
     unsafe impl UIApplicationDelegate for AppDelegate {
         #[unsafe(method(application:didFinishLaunchingWithOptions:))]
@@ -214,29 +235,27 @@ define_class!(
 
         #[unsafe(method(applicationDidReceiveMemoryWarning:))]
         fn did_receive_memory_warning(&self, _application: &UIApplication) {
-            notify_memory_warning();
+            if let Some(platform) = self.ivars().upgrade() {
+                platform.application.notify_memory_warning();
+            }
         }
 
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _application: &UIApplication) {
-            let callback = APP_STATE.with_borrow_mut(|state| state.quit.take());
-            if let Some(mut callback) = callback {
-                callback();
+            if let Some(platform) = self.ivars().upgrade() {
+                if let Some(mut callback) = platform.application.quit.take() {
+                    callback();
+                }
             }
         }
     }
 );
 
-#[derive(Default)]
-struct SceneDelegateIvars {
-    display_link: RefCell<Option<Retained<CADisplayLink>>>,
-}
-
 define_class!(
     #[unsafe(super = NSObject)]
     #[thread_kind = MainThreadOnly]
     #[name = "GPUIIosSceneDelegate"]
-    #[ivars = SceneDelegateIvars]
+    #[ivars = Weak<IosPlatformState>]
     struct SceneDelegate;
 
     unsafe impl NSObjectProtocol for SceneDelegate {}
@@ -245,13 +264,18 @@ define_class!(
     impl SceneDelegate {
         #[unsafe(method_id(init))]
         fn init(this: Allocated<Self>) -> Retained<Self> {
-            let this = this.set_ivars(SceneDelegateIvars::default());
+            let platform = current_platform()
+                .map(|platform| Rc::downgrade(&platform))
+                .unwrap_or_default();
+            let this = this.set_ivars(platform);
             unsafe { msg_send![super(this), init] }
         }
 
         #[unsafe(method(renderFrame:))]
         fn render_frame(&self, _display_link: &CADisplayLink) {
-            with_windows(IosWindowState::request_frame);
+            if let Some(platform) = self.ivars().upgrade() {
+                platform.application.with_windows(IosWindowState::request_frame);
+            }
         }
     }
 
@@ -266,86 +290,92 @@ define_class!(
             let Some(scene) = scene.downcast_ref::<UIWindowScene>() else {
                 return;
             };
-            if window_scene().is_some() {
+            let Some(platform) = self.ivars().upgrade() else {
+                return;
+            };
+            let application = &platform.application;
+            if application.window_scene().is_some() {
                 log::error!("GPUI iOS currently supports one connected window scene");
                 return;
             }
-            APP_STATE.with_borrow_mut(|state| state.scene = Some(scene.retain()));
-            finish_launching();
+            *application.scene.borrow_mut() = Some(scene.retain());
+            application.finish_launching();
             // UIKit can reconnect a scene without restarting the Rust application.
-            with_windows(|window| window.attach_to_scene(scene));
+            application.with_windows(|window| window.attach_to_scene(scene));
             if let Some(contexts) = options.url_contexts() {
-                open_urls(&contexts);
+                application.open_urls(&contexts);
             }
 
-            self.stop_display_link();
+            application.stop_display_link();
             let display_link = unsafe {
                 let display_link =
                     CADisplayLink::displayLinkWithTarget_selector(self, sel!(renderFrame:));
+                display_link.setPaused(true);
                 display_link.addToRunLoop_forMode(
                     &NSRunLoop::mainRunLoop(),
                     NSRunLoopCommonModes,
                 );
                 display_link
             };
-            *self.ivars().display_link.borrow_mut() = Some(display_link);
+            *application.display_link.borrow_mut() = Some(display_link);
         }
 
         #[unsafe(method(sceneDidDisconnect:))]
         fn did_disconnect(&self, scene: &UIScene) {
-            self.stop_display_link();
-            if self.owns_scene(scene) {
-                notify_app_lifecycle(AppLifecyclePhase::Background);
-                APP_STATE.with_borrow_mut(|state| state.scene = None);
+            if let Some(platform) = self.platform_for_scene(scene) {
+                platform.application.stop_display_link();
+                platform.application.scene.borrow_mut().take();
+                platform.application.notify_app_lifecycle(AppLifecyclePhase::Disconnected);
             }
         }
 
         #[unsafe(method(sceneWillEnterForeground:))]
         fn will_enter_foreground(&self, scene: &UIScene) {
-            if self.owns_scene(scene) {
-                notify_app_lifecycle(AppLifecyclePhase::Foreground);
+            if let Some(platform) = self.platform_for_scene(scene) {
+                platform.application.set_display_link_paused(false);
+                platform.application.notify_app_lifecycle(AppLifecyclePhase::Foreground);
             }
         }
 
         #[unsafe(method(sceneDidBecomeActive:))]
         fn did_become_active(&self, scene: &UIScene) {
-            if self.owns_scene(scene) {
-                notify_app_lifecycle(AppLifecyclePhase::Active);
+            if let Some(platform) = self.platform_for_scene(scene) {
+                platform.application.notify_app_lifecycle(AppLifecyclePhase::Active);
             }
         }
 
         #[unsafe(method(sceneWillResignActive:))]
         fn will_resign_active(&self, scene: &UIScene) {
-            if self.owns_scene(scene) {
-                notify_app_lifecycle(AppLifecyclePhase::Inactive);
+            if let Some(platform) = self.platform_for_scene(scene) {
+                platform.application.notify_app_lifecycle(AppLifecyclePhase::Inactive);
             }
         }
 
         #[unsafe(method(sceneDidEnterBackground:))]
         fn did_enter_background(&self, scene: &UIScene) {
-            if self.owns_scene(scene) {
-                notify_app_lifecycle(AppLifecyclePhase::Background);
+            if let Some(platform) = self.platform_for_scene(scene) {
+                platform.application.set_display_link_paused(true);
+                platform.application.notify_app_lifecycle(AppLifecyclePhase::Background);
             }
         }
 
         #[unsafe(method(scene:openURLContexts:))]
         fn open_url_contexts(&self, scene: &UIScene, contexts: &NSSet<UIOpenURLContext>) {
-            if self.owns_scene(scene) {
-                open_urls(contexts);
+            if let Some(platform) = self.platform_for_scene(scene) {
+                platform.application.open_urls(contexts);
             }
         }
     }
 );
 
 impl SceneDelegate {
-    fn owns_scene(&self, scene: &UIScene) -> bool {
-        window_scene().is_some_and(|current| std::ptr::eq::<UIScene>(&**current, scene))
-    }
-
-    fn stop_display_link(&self) {
-        if let Some(display_link) = self.ivars().display_link.borrow_mut().take() {
-            display_link.invalidate();
-        }
+    fn platform_for_scene(&self, scene: &UIScene) -> Option<Rc<IosPlatformState>> {
+        let platform = self.ivars().upgrade()?;
+        let owns_scene = platform
+            .application
+            .window_scene()
+            .is_some_and(|current| std::ptr::eq::<UIScene>(&**current, scene));
+        owns_scene.then_some(platform)
     }
 }
 
@@ -356,37 +386,39 @@ mod tests {
 
     #[test]
     fn launch_callback_runs_once_and_can_register_callbacks() {
-        APP_STATE.with_borrow_mut(|state| *state = IosPlatformState::default());
+        let state = Rc::new(IosApplicationState::default());
         let launches = Rc::new(Cell::new(0));
-        APP_STATE.with_borrow_mut(|state| {
+        state.finish_launching.set(Box::new({
+            let state = Rc::downgrade(&state);
             let launches = launches.clone();
-            state.finish_launching = Some(Box::new(move || {
+            move || {
                 launches.set(launches.get() + 1);
-                set_memory_warning_callback(Box::new(|| {}));
-            }));
-        });
-        finish_launching();
-        finish_launching();
+                state.upgrade().unwrap().memory_warning.set(Box::new(|| {}));
+            }
+        }));
+        state.finish_launching();
+        state.finish_launching();
         assert_eq!(launches.get(), 1);
-        assert!(APP_STATE.with_borrow(|state| state.memory_warning.is_some()));
+        assert!(state.memory_warning.take().is_some());
     }
 
     #[test]
     fn lifecycle_callback_replacement_survives_dispatch() {
-        APP_STATE.with_borrow_mut(|state| *state = IosPlatformState::default());
+        let state = Rc::new(IosApplicationState::default());
         let events = Rc::new(RefCell::new(Vec::new()));
-        set_app_lifecycle_callback(Box::new({
+        state.app_lifecycle.set(Box::new({
+            let state = Rc::downgrade(&state);
             let events = events.clone();
             move |phase| {
                 events.borrow_mut().push((0, phase));
-                set_app_lifecycle_callback(Box::new({
+                state.upgrade().unwrap().app_lifecycle.set(Box::new({
                     let events = events.clone();
                     move |phase| events.borrow_mut().push((1, phase))
                 }));
             }
         }));
-        notify_app_lifecycle(AppLifecyclePhase::Foreground);
-        notify_app_lifecycle(AppLifecyclePhase::Active);
+        state.notify_app_lifecycle(AppLifecyclePhase::Foreground);
+        state.notify_app_lifecycle(AppLifecyclePhase::Active);
         assert_eq!(
             *events.borrow(),
             [
@@ -398,18 +430,53 @@ mod tests {
 
     #[test]
     fn memory_warning_callback_is_restored_after_dispatch() {
-        APP_STATE.with_borrow_mut(|state| *state = IosPlatformState::default());
+        let state = Rc::new(IosApplicationState::default());
         let warnings = Rc::new(Cell::new(0));
-        set_memory_warning_callback(Box::new({
+        state.memory_warning.set(Box::new({
+            let state = Rc::downgrade(&state);
             let warnings = warnings.clone();
             move || {
                 warnings.set(warnings.get() + 1);
-                set_quit_callback(Box::new(|| {}));
+                state.upgrade().unwrap().quit.set(Box::new(|| {}));
             }
         }));
-        notify_memory_warning();
-        notify_memory_warning();
+        state.notify_memory_warning();
+        state.notify_memory_warning();
         assert_eq!(warnings.get(), 2);
-        assert!(APP_STATE.with_borrow(|state| state.quit.is_some()));
+        assert!(state.quit.take().is_some());
+    }
+
+    #[test]
+    fn lifecycle_removal_survives_reentrant_dispatch() {
+        let state = Rc::new(IosApplicationState::default());
+        let events = Rc::new(RefCell::new(Vec::new()));
+        state.app_lifecycle.set(Box::new({
+            let state = Rc::downgrade(&state);
+            let events = events.clone();
+            move |phase| {
+                events.borrow_mut().push(phase);
+                let state = state.upgrade().unwrap();
+                state.app_lifecycle.take();
+                state.notify_app_lifecycle(AppLifecyclePhase::Inactive);
+            }
+        }));
+        state.notify_app_lifecycle(AppLifecyclePhase::Disconnected);
+        state.notify_app_lifecycle(AppLifecyclePhase::Foreground);
+        assert_eq!(*events.borrow(), [AppLifecyclePhase::Disconnected]);
+    }
+
+    #[test]
+    fn application_callbacks_are_not_shared_between_platforms() {
+        let first = IosApplicationState::default();
+        let second = IosApplicationState::default();
+        let warnings = Rc::new(Cell::new(0));
+        first.memory_warning.set(Box::new({
+            let warnings = warnings.clone();
+            move || warnings.set(warnings.get() + 1)
+        }));
+        second.notify_memory_warning();
+        assert_eq!(warnings.get(), 0);
+        first.notify_memory_warning();
+        assert_eq!(warnings.get(), 1);
     }
 }

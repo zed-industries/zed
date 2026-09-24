@@ -9,9 +9,9 @@
 //! The window is backed by a UIWindow containing a UIViewController
 //! whose view hosts a CAMetalLayer.
 
-use super::IosDisplay;
 use super::events::*;
 use super::text_input::TextInputView;
+use super::{CallbackSlot, IosDisplay, platform::IosPlatformState};
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, EditMenuActions,
     GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
@@ -57,8 +57,6 @@ struct KeyboardDismissTouch {
     start_position: Point<Pixels>,
 }
 
-static KEYBOARD_OBSERVERS_REGISTERED: std::sync::Once = std::sync::Once::new();
-
 /// Global storage for the current status bar style.
 /// 0 = default (dark content), 1 = light content.
 /// Accessed from the main thread only.
@@ -88,44 +86,6 @@ impl WindowReference {
                 || (action == sel!(selectAll:) && actions.select_all)
         })
         .unwrap_or(false)
-    }
-}
-
-struct CallbackSlot<T> {
-    value: RefCell<Option<T>>,
-    generation: Cell<u64>,
-}
-
-impl<T> Default for CallbackSlot<T> {
-    fn default() -> Self {
-        Self {
-            value: RefCell::new(None),
-            generation: Cell::new(0),
-        }
-    }
-}
-
-impl<T> CallbackSlot<T> {
-    fn set(&self, value: T) {
-        self.generation.set(self.generation.get().wrapping_add(1));
-        drop(self.value.replace(Some(value)));
-    }
-
-    fn take(&self) -> Option<T> {
-        // Even an empty take can mean the focused handler was withdrawn during a callback.
-        self.generation.set(self.generation.get().wrapping_add(1));
-        self.value.borrow_mut().take()
-    }
-
-    fn with<R>(&self, callback: impl FnOnce(&mut T) -> R) -> Option<R> {
-        let mut value = self.value.borrow_mut().take()?;
-        let generation = self.generation.get();
-        let result = callback(&mut value);
-        // Do not resurrect a handler that application code replaced or removed.
-        if self.generation.get() == generation {
-            drop(self.value.replace(Some(value)));
-        }
-        Some(result)
     }
 }
 
@@ -177,9 +137,13 @@ pub fn set_status_bar_style(style: crate::StatusBarContentStyle) {
     };
     STATUS_BAR_STYLE.store(value, std::sync::atomic::Ordering::Relaxed);
 
-    super::application::with_windows(|window| {
-        window.view_controller.setNeedsStatusBarAppearanceUpdate();
-    });
+    // This public free function predates explicit platform ownership.
+    // Keep its single-application behavior without making runtime events global.
+    if let Some(platform) = super::application::current_platform() {
+        platform.application.with_windows(|window| {
+            window.view_controller.setNeedsStatusBarAppearanceUpdate();
+        });
+    }
 }
 
 define_class!(
@@ -289,6 +253,9 @@ impl std::ops::Deref for IosWindow {
 
 #[allow(clippy::type_complexity)]
 pub(crate) struct IosWindowState {
+    platform: Weak<IosPlatformState>,
+    keyboard_observers:
+        RefCell<Vec<Retained<objc2::runtime::ProtocolObject<dyn NSObjectProtocol>>>>,
     /// The UIWindow object
     window: Retained<UIWindow>,
     /// The UIViewController
@@ -340,7 +307,11 @@ pub(crate) struct IosWindowState {
 
 impl IosWindow {
     #[allow(deprecated)] // Window construction can precede scene connection.
-    pub fn new(_handle: AnyWindowHandle, _params: WindowParams) -> anyhow::Result<Self> {
+    pub fn new(
+        _handle: AnyWindowHandle,
+        _params: WindowParams,
+        platform: &Rc<IosPlatformState>,
+    ) -> anyhow::Result<Self> {
         // Create the window on the main screen
         let screen = IosDisplay::main();
         let screen_bounds = screen.bounds();
@@ -349,7 +320,7 @@ impl IosWindow {
         unsafe {
             let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
             // Create UIWindow
-            let window_scene = super::application::window_scene();
+            let window_scene = platform.application.window_scene();
             let window_scene = window_scene.as_deref();
             let screen_obj = if let Some(scene) = window_scene {
                 scene.screen()
@@ -423,6 +394,8 @@ impl IosWindow {
             renderer.update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
 
             let state = IosWindowState {
+                platform: Rc::downgrade(platform),
+                keyboard_observers: RefCell::default(),
                 window,
                 view_controller,
                 view,
@@ -461,14 +434,16 @@ impl IosWindow {
     }
 
     pub(crate) fn register(&self) {
-        super::application::register_window(&self.state);
+        if let Some(platform) = self.platform.upgrade() {
+            platform.application.register_window(&self.state);
+        }
 
         let window = Rc::downgrade(&self.state);
         *self.view_controller.ivars().0.borrow_mut() = window.clone();
         *self.view.ivars().0.borrow_mut() = window.clone();
         self.text_input_view.set_window(window);
 
-        IosWindowState::register_keyboard_observers();
+        self.state.register_keyboard_observers();
     }
 }
 
@@ -479,10 +454,11 @@ impl IosWindowState {
         self.handle_layout_change();
     }
 
-    fn register_keyboard_observers() {
-        KEYBOARD_OBSERVERS_REGISTERED.call_once(|| unsafe {
+    fn register_keyboard_observers(self: &Rc<Self>) {
+        unsafe {
             let notification_center = NSNotificationCenter::defaultCenter();
 
+            let window = Rc::downgrade(self);
             let frame_change_block =
                 block2::RcBlock::new(move |notification: NonNull<NSNotification>| {
                     let Some(user_info) = notification.as_ref().userInfo() else {
@@ -496,28 +472,34 @@ impl IosWindowState {
                         return;
                     };
                     let frame = frame_value.CGRectValue();
-                    super::application::with_windows(|window| {
+                    if let Some(window) = window.upgrade() {
                         window.set_keyboard_height(frame.size.height as f32);
-                    });
+                    }
                 });
 
+            let window = Rc::downgrade(self);
             let hide_block = block2::RcBlock::new(move |_notification: NonNull<NSNotification>| {
-                super::application::with_windows(|window| window.set_keyboard_height(0.));
+                if let Some(window) = window.upgrade() {
+                    window.set_keyboard_height(0.);
+                }
             });
 
-            notification_center.addObserverForName_object_queue_usingBlock(
+            let frame_observer = notification_center.addObserverForName_object_queue_usingBlock(
                 Some(UIKeyboardWillChangeFrameNotification),
                 None,
                 None,
                 &frame_change_block,
             );
-            notification_center.addObserverForName_object_queue_usingBlock(
+            let hide_observer = notification_center.addObserverForName_object_queue_usingBlock(
                 Some(UIKeyboardWillHideNotification),
                 None,
                 None,
                 &hide_block,
             );
-        });
+            self.keyboard_observers
+                .borrow_mut()
+                .extend([frame_observer, hide_observer]);
+        }
     }
 
     /// Delivers a UIKit touch through GPUI's platform-neutral touch API.
@@ -747,7 +729,13 @@ impl IosWindowState {
 
 impl Drop for IosWindow {
     fn drop(&mut self) {
-        super::application::unregister_window(&self.state);
+        if let Some(platform) = self.platform.upgrade() {
+            platform.application.unregister_window(&self.state);
+        }
+        let observers = std::mem::take(&mut *self.keyboard_observers.borrow_mut());
+        for observer in observers {
+            unsafe { NSNotificationCenter::defaultCenter().removeObserver((&*observer).as_ref()) };
+        }
 
         *self.view_controller.ivars().0.borrow_mut() = Weak::new();
         *self.view.ivars().0.borrow_mut() = Weak::new();

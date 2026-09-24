@@ -8,6 +8,7 @@
 //! - Touch-based input instead of mouse
 //! - System keyboard handling differs significantly
 
+use super::{CallbackSlot, application::IosApplicationState};
 use super::{IosDisplay, IosWindow};
 use anyhow::{Context as _, anyhow};
 use futures::channel::oneshot;
@@ -24,7 +25,6 @@ use objc2_foundation::{NSBundle, NSDictionary, NSString, NSURL};
 use objc2_ui_kit::{
     UIApplication, UIPasteboard, UITraitEnvironment, UIUserInterfaceStyle, UIViewController,
 };
-use parking_lot::Mutex;
 use std::{
     path::{Path, PathBuf},
     ptr,
@@ -32,13 +32,14 @@ use std::{
     sync::Arc,
 };
 
-pub struct IosPlatform(Mutex<IosPlatformState>);
+pub struct IosPlatform(Rc<IosPlatformState>);
 
 pub(crate) struct IosPlatformState {
+    pub(super) application: IosApplicationState,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
-    thermal_state_callback: Option<Box<dyn FnMut()>>,
+    thermal_state_callback: CallbackSlot<Box<dyn FnMut()>>,
 }
 
 impl Default for IosPlatform {
@@ -53,16 +54,17 @@ impl IosPlatform {
 
         let text_system: Arc<dyn PlatformTextSystem> = Arc::new(super::IosTextSystem::new());
 
-        Self(Mutex::new(IosPlatformState {
+        Self(Rc::new(IosPlatformState {
+            application: IosApplicationState::default(),
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system,
-            thermal_state_callback: None,
+            thermal_state_callback: CallbackSlot::default(),
         }))
     }
 
-    fn root_view_controller() -> Option<Retained<UIViewController>> {
-        let window = if let Some(scene) = super::application::window_scene() {
+    fn root_view_controller(&self) -> Option<Retained<UIViewController>> {
+        let window = if let Some(scene) = self.0.application.window_scene() {
             let windows = scene.windows();
             windows
                 .iter()
@@ -79,16 +81,16 @@ impl IosPlatform {
         window.rootViewController()
     }
 
-    fn presented_view_controller() -> Option<Retained<UIViewController>> {
-        let mut view_controller = Self::root_view_controller()?;
+    fn presented_view_controller(&self) -> Option<Retained<UIViewController>> {
+        let mut view_controller = self.root_view_controller()?;
         while let Some(presented) = view_controller.presentedViewController() {
             view_controller = presented;
         }
         Some(view_controller)
     }
 
-    fn dismiss_presented_browser() {
-        let mut view_controller = match Self::root_view_controller() {
+    fn dismiss_presented_browser(&self) {
+        let mut view_controller = match self.root_view_controller() {
             Some(view_controller) => view_controller,
             None => return,
         };
@@ -132,19 +134,19 @@ impl PlatformKeyboardLayout for IosKeyboardLayout {
 
 impl Platform for IosPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
-        self.0.lock().background_executor.clone()
+        self.0.background_executor.clone()
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
-        self.0.lock().foreground_executor.clone()
+        self.0.foreground_executor.clone()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.0.lock().text_system.clone()
+        self.0.text_system.clone()
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
-        super::application::run(on_finish_launching);
+        super::application::run(&self.0, on_finish_launching);
     }
 
     fn quit(&self) {
@@ -159,7 +161,7 @@ impl Platform for IosPlatform {
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {
-        Self::dismiss_presented_browser();
+        self.dismiss_presented_browser();
     }
 
     fn hide(&self) {
@@ -195,14 +197,14 @@ impl Platform for IosPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
-        let window = Box::new(IosWindow::new(handle, options)?);
+        let window = Box::new(IosWindow::new(handle, options, &self.0)?);
         window.register();
         Ok(window)
     }
 
     fn window_appearance(&self) -> WindowAppearance {
         unsafe {
-            let Some(controller) = Self::root_view_controller() else {
+            let Some(controller) = self.root_view_controller() else {
                 return WindowAppearance::Light;
             };
             match controller.traitCollection().userInterfaceStyle() {
@@ -220,7 +222,7 @@ impl Platform for IosPlatform {
             };
 
             if url.starts_with("https://") || url.starts_with("http://") {
-                if let Some(view_controller) = Self::presented_view_controller() {
+                if let Some(view_controller) = self.presented_view_controller() {
                     let browser = SFSafariViewController::init_with_url(
                         SFSafariViewController::alloc(view_controller.mtm()),
                         &native_url,
@@ -235,7 +237,7 @@ impl Platform for IosPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        super::application::set_open_urls_callback(callback);
+        self.0.application.open_urls.set(callback);
     }
 
     fn register_url_scheme(&self, _url: &str) -> Task<Result<()>> {
@@ -285,7 +287,7 @@ impl Platform for IosPlatform {
     }
 
     fn on_quit(&self, mut callback: Box<dyn FnMut() -> bool>) {
-        super::application::set_quit_callback(Box::new(move || {
+        self.0.application.quit.set(Box::new(move || {
             // UIKit's termination notification cannot be vetoed.
             callback();
         }));
@@ -306,11 +308,11 @@ impl Platform for IosPlatform {
     }
 
     fn on_app_lifecycle(&self, callback: Box<dyn FnMut(AppLifecyclePhase)>) {
-        super::application::set_app_lifecycle_callback(callback);
+        self.0.application.app_lifecycle.set(callback);
     }
 
     fn on_memory_warning(&self, callback: Box<dyn FnMut()>) {
-        super::application::set_memory_warning_callback(callback);
+        self.0.application.memory_warning.set(callback);
     }
 
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {
@@ -501,7 +503,7 @@ impl Platform for IosPlatform {
     }
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().thermal_state_callback = Some(callback);
+        self.0.thermal_state_callback.set(callback);
         // In a full implementation, we would register for
         // NSProcessInfoThermalStateDidChangeNotification
     }
