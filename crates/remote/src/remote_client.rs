@@ -2,6 +2,7 @@
 use crate::transport::mock::ConnectGuard;
 use crate::{
     SshConnectionOptions,
+    command::RemoteCommand,
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
@@ -976,6 +977,16 @@ impl RemoteClient {
         connection.build_command(program, args, env, working_dir, port_forward, interactive)
     }
 
+    pub fn build_stdio_command(
+        &self,
+        command: RemoteCommand,
+    ) -> Result<(CommandTemplate, Vec<u8>)> {
+        let Some(connection) = self.remote_connection() else {
+            return Err(anyhow!("no remote connection"));
+        };
+        connection.build_stdio_command(command)
+    }
+
     pub fn build_forward_ports_command(
         &self,
         forwards: Vec<(u16, String, u16)>,
@@ -1646,6 +1657,11 @@ pub trait RemoteConnection: Send + Sync {
         port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
     ) -> Result<CommandTemplate>;
+    fn build_stdio_command(&self, _command: RemoteCommand) -> Result<(CommandTemplate, Vec<u8>)> {
+        Err(anyhow!(
+            "stdio commands are not supported by this remote connection"
+        ))
+    }
     fn build_forward_ports_command(
         &self,
         forwards: Vec<(u16, String, u16)>,

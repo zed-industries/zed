@@ -438,12 +438,11 @@ impl ShellKind {
             ShellKind::PowerShell => Some(Self::quote_powershell(arg)),
             ShellKind::Pwsh => Some(Self::quote_pwsh(arg)),
             ShellKind::Cmd => Some(Self::quote_cmd(arg)),
+            ShellKind::Csh | ShellKind::Tcsh => Self::quote_csh(arg),
+            ShellKind::Nushell => Self::quote_nushell(arg),
             ShellKind::Posix
-            | ShellKind::Csh
-            | ShellKind::Tcsh
             | ShellKind::Rc
             | ShellKind::Fish
-            | ShellKind::Nushell
             | ShellKind::Xonsh
             | ShellKind::Elvish => shlex::try_quote(arg).ok(),
         }
@@ -585,6 +584,75 @@ impl ShellKind {
         Cow::Owned(Self::escape_powershell_quotes(arg))
     }
 
+    pub fn quote_csh(arg: &str) -> Option<Cow<'_, str>> {
+        if arg.contains('\0') {
+            return None;
+        }
+        if Self::is_unquoted_safe(arg) && !arg.starts_with('%') {
+            return Some(Cow::Borrowed(arg));
+        }
+        if arg.is_empty() {
+            return Some(Cow::Borrowed("''"));
+        }
+        let mut quoted = String::with_capacity(arg.len() + 2);
+        let mut in_quotes = false;
+        for character in arg.chars() {
+            match character {
+                '\'' | '!' | '\\' => {
+                    if in_quotes {
+                        quoted.push('\'');
+                        in_quotes = false;
+                    }
+                    quoted.push('\\');
+                    quoted.push(character);
+                }
+                character => {
+                    if !in_quotes {
+                        quoted.push('\'');
+                        in_quotes = true;
+                    }
+                    if character == '\n' {
+                        quoted.push('\\');
+                    }
+                    quoted.push(character);
+                }
+            }
+        }
+        if in_quotes {
+            quoted.push('\'');
+        }
+        Some(Cow::Owned(quoted))
+    }
+
+    pub fn quote_nushell(arg: &str) -> Option<Cow<'_, str>> {
+        if arg.contains('\0') {
+            return None;
+        }
+        if Self::is_unquoted_safe(arg) {
+            return Some(Cow::Borrowed(arg));
+        }
+        if !arg.contains('\'') {
+            return Some(Cow::Owned(format!("'{arg}'")));
+        }
+        let mut quoted = String::with_capacity(arg.len() + 2);
+        quoted.push('"');
+        for character in arg.chars() {
+            if character == '\\' || character == '"' {
+                quoted.push('\\');
+            }
+            quoted.push(character);
+        }
+        quoted.push('"');
+        Some(Cow::Owned(quoted))
+    }
+
+    fn is_unquoted_safe(arg: &str) -> bool {
+        !arg.is_empty()
+            && arg
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-_./:,+@%".contains(&byte))
+    }
+
     pub fn quote_cmd(arg: &str) -> Cow<'_, str> {
         let crt_quoted = Self::quote_windows(arg, true);
 
@@ -707,6 +775,7 @@ impl ShellKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shell_builder::ShellBuilder;
 
     // Examples
     // WSL
@@ -875,7 +944,7 @@ mod tests {
         );
         assert_eq!(
             shell_kind.try_quote("^'uname'").unwrap().into_owned(),
-            "'^'\"'uname\'\"".to_string()
+            "\"^'uname'\"".to_string()
         );
         assert_eq!(
             shell_kind
@@ -897,7 +966,7 @@ mod tests {
         );
         assert_eq!(
             shell_kind.try_quote("^'uname a'").unwrap().into_owned(),
-            "'^'\"'uname a'\"".to_string()
+            "\"^'uname a'\"".to_string()
         );
         assert_eq!(
             shell_kind
@@ -917,6 +986,236 @@ mod tests {
                 .into_owned(),
             "uname".to_string()
         );
+    }
+
+    #[test]
+    fn test_try_quote_csh() {
+        for shell_kind in [ShellKind::Csh, ShellKind::Tcsh] {
+            assert_eq!(shell_kind.try_quote("plain").unwrap(), "plain");
+            assert_eq!(
+                shell_kind.try_quote("--flag=a/b.c").unwrap(),
+                "'--flag=a/b.c'"
+            );
+            assert_eq!(shell_kind.try_quote("=0").unwrap(), "'=0'");
+            assert_eq!(shell_kind.try_quote("%agent").unwrap(), "'%agent'");
+            assert_eq!(shell_kind.try_quote("50%").unwrap(), "50%");
+            assert_eq!(shell_kind.try_quote("").unwrap(), "''");
+            assert_eq!(
+                shell_kind.try_quote("/home/bang!home/x").unwrap(),
+                "'/home/bang'\\!'home/x'"
+            );
+            assert_eq!(shell_kind.try_quote("a\\!b c").unwrap(), "'a'\\\\\\!'b c'");
+            assert_eq!(
+                shell_kind.try_quote("O'Brien!").unwrap(),
+                "'O'\\''Brien'\\!"
+            );
+            assert_eq!(shell_kind.try_quote("!").unwrap(), "\\!");
+            assert_eq!(shell_kind.try_quote("\\'").unwrap(), "\\\\\\'");
+            assert_eq!(
+                shell_kind
+                    .try_quote("/tmp/a\\'; echo INJECTED; true \\'")
+                    .unwrap(),
+                "'/tmp/a'\\\\\\''; echo INJECTED; true '\\\\\\'"
+            );
+            assert_eq!(
+                shell_kind.try_quote("say \\\"hi\\\"").unwrap(),
+                "'say '\\\\'\"hi'\\\\'\"'"
+            );
+            assert_eq!(
+                shell_kind.try_quote("line\nbreak").unwrap(),
+                "'line\\\nbreak'"
+            );
+            assert_eq!(
+                shell_kind.try_quote("line\rbreak").unwrap(),
+                "'line\rbreak'"
+            );
+            assert_eq!(
+                shell_kind.try_quote("~/*$HOME `id`").unwrap(),
+                "'~/*$HOME `id`'"
+            );
+            assert_eq!(shell_kind.try_quote("nul\0byte"), None);
+        }
+    }
+
+    #[test]
+    fn test_try_quote_nushell() {
+        let shell_kind = ShellKind::Nushell;
+        assert_eq!(shell_kind.try_quote("plain").unwrap(), "plain");
+        assert_eq!(shell_kind.try_quote("").unwrap(), "''");
+        assert_eq!(shell_kind.try_quote("=").unwrap(), "'='");
+        assert_eq!(shell_kind.try_quote("=a").unwrap(), "'=a'");
+        assert_eq!(shell_kind.try_quote("+=").unwrap(), "'+='");
+        assert_eq!(
+            shell_kind.try_quote("--flag=a/b.c").unwrap(),
+            "'--flag=a/b.c'"
+        );
+        assert_eq!(
+            shell_kind
+                .try_quote("/home/a^b/.zed_server/server")
+                .unwrap(),
+            "'/home/a^b/.zed_server/server'"
+        );
+        assert_eq!(
+            shell_kind.try_quote("$env.HOME (1 + 1) `id` a\\b").unwrap(),
+            "'$env.HOME (1 + 1) `id` a\\b'"
+        );
+        assert_eq!(
+            shell_kind.try_quote("O'Brien \\ \"x\" $y").unwrap(),
+            "\"O'Brien \\\\ \\\"x\\\" $y\""
+        );
+        assert_eq!(shell_kind.try_quote("nul\0byte"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_quoted_arguments_survive_real_shells() {
+        let arguments = [
+            "SAFE; /usr/bin/printf INJECTED\r",
+            "/tmp/a\\'; /usr/bin/printf INJECTED; true \\'",
+            "a\\\\b \\\"c\\\" \\'d\\' \\$e \\!f",
+            "line\nbreak",
+            "bang!\nnew\\line",
+            "O'Brien!",
+            "a\\!b",
+            "a\\\\!b",
+            "!1x",
+            "!",
+            "!!",
+            "!$ !* !:1 !-1 !# !?x?",
+            "ending!",
+            "trailing\\",
+            "~/*$HOME `id` $(id) (1 + 1) \"quoted\"",
+            "\t tab # hash",
+            "=",
+            "=a",
+            "=0",
+            "=1",
+            "+=",
+            "-=",
+            "/=",
+            "a=b",
+            "--flag=a/b.c",
+            "1..3",
+            "/home/a^b/.zed_server/server",
+            "钥匙🔑",
+            "",
+        ];
+        let csh_settings = [
+            "",
+            "set backslash_quote\n",
+            "set histchars = ''\n",
+            "set histchars = \\!^\n",
+            "set backslash_quote\nset histchars = ''\n",
+            "set backslash_quote\nunset histchars\nset history = 100\n",
+        ];
+        let shells = [
+            ("tcsh", ShellKind::Tcsh, &["-f"][..], &csh_settings[..]),
+            ("csh", ShellKind::Csh, &["-f"][..], &csh_settings[..]),
+            (
+                "nu",
+                ShellKind::Nushell,
+                &["--no-config-file"][..],
+                &[""][..],
+            ),
+        ];
+        for (shell_name, shell_kind, shell_options, settings) in shells {
+            let Ok(shell) = which::which(shell_name) else {
+                continue;
+            };
+            let shell = shell.to_string_lossy().into_owned();
+            let separator = shell_kind.sequential_and_commands_separator();
+            let printf = shell_kind.prepend_command_prefix("/usr/bin/printf");
+            for (setting, argument) in settings
+                .iter()
+                .flat_map(|setting| arguments.iter().map(move |argument| (*setting, *argument)))
+            {
+                let quoted = shell_kind.try_quote(argument).unwrap();
+                let inner = format!("{setting}cd /{separator} {printf} %s {quoted}");
+                let mut inner_arguments = shell_options.to_vec();
+                inner_arguments.extend(["-c", &inner]);
+                let nested = format!(
+                    "{setting}{} {}",
+                    shell_kind.prepend_command_prefix(&shell),
+                    inner_arguments
+                        .iter()
+                        .map(|inner_argument| shell_kind.try_quote(inner_argument).unwrap())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
+                for script in [inner.clone(), nested] {
+                    let output = smol::block_on(
+                        smol::process::Command::new(&shell)
+                            .args(shell_options)
+                            .args(["-c", &script])
+                            .env_clear()
+                            .env("HOME", "/")
+                            .env("PATH", "/usr/bin:/bin")
+                            .output(),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        (
+                            output.status.success(),
+                            String::from_utf8_lossy(&output.stdout).into_owned(),
+                            String::from_utf8_lossy(&output.stderr).into_owned(),
+                        ),
+                        (true, argument.to_owned(), String::new()),
+                        "{shell} {script:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_quoted_csh_commands_survive_real_shells() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().unwrap();
+        let binary_directory = directory.path().join("bin");
+        std::fs::create_dir(&binary_directory).unwrap();
+        for program in ["%agent", "50%", "agent"] {
+            let script = binary_directory.join(program);
+            std::fs::write(&script, "#!/bin/sh\nprintf '%s' \"$1\"\n").unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        for (shell_name, shell_kind) in [("tcsh", ShellKind::Tcsh), ("csh", ShellKind::Csh)] {
+            let Ok(shell) = which::which(shell_name) else {
+                continue;
+            };
+            for program in ["%agent", "50%", "agent"] {
+                let (shell_program, shell_arguments) =
+                    ShellBuilder::new(&Shell::Program(shell.display().to_string()), false)
+                        .non_interactive()
+                        .literal_args()
+                        .build(Some(program.to_owned()), &[String::from("OK")]);
+                let script = shell_arguments.last().unwrap();
+                assert_eq!(
+                    script,
+                    &format!("{} OK", shell_kind.try_quote(program).unwrap())
+                );
+                let output = smol::block_on(
+                    smol::process::Command::new(&shell_program)
+                        .arg("-f")
+                        .args(&shell_arguments)
+                        .env_clear()
+                        .env("HOME", "/")
+                        .env("PATH", &binary_directory)
+                        .output(),
+                )
+                .unwrap();
+                assert_eq!(
+                    (
+                        output.status.success(),
+                        String::from_utf8_lossy(&output.stdout).into_owned(),
+                        String::from_utf8_lossy(&output.stderr).into_owned(),
+                    ),
+                    (true, String::from("OK"), String::new()),
+                    "{shell_program} {shell_arguments:?}"
+                );
+            }
+        }
     }
 
     #[test]

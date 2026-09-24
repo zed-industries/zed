@@ -1,7 +1,8 @@
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
+    command::{RemoteCommand, home_relative_path, home_stdio_launcher_command},
     remote_client::{CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions},
-    transport::{parse_platform, parse_shell},
+    transport::{HOME_DIR_ARGS, HOME_DIR_PROGRAM, parse_home_dir, parse_platform, parse_shell},
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -20,6 +21,7 @@ use semver::Version;
 pub use settings::SshPortForwardOption;
 use smol::fs;
 use std::{
+    fmt::Write as _,
     net::IpAddr,
     path::{Path, PathBuf},
     sync::{
@@ -52,6 +54,7 @@ pub(crate) struct SshRemoteConnection {
     ssh_shell: String,
     ssh_shell_kind: ShellKind,
     ssh_default_system_shell: String,
+    ssh_home_dir: Option<String>,
     _temp_dir: TempDir,
 }
 
@@ -376,6 +379,47 @@ impl RemoteConnection for SshRemoteConnection {
                 interactive,
             )
         }
+    }
+
+    fn build_stdio_command(
+        &self,
+        mut command: RemoteCommand,
+    ) -> Result<(CommandTemplate, Vec<u8>)> {
+        if self.ssh_platform.os.is_windows() {
+            let template = self.build_command(
+                Some(command.program),
+                &command.args,
+                &HashMap::default(),
+                command.working_dir,
+                None,
+                Interactive::No,
+            )?;
+            return Ok((template, Vec::new()));
+        }
+        let remote_binary_path = self
+            .remote_binary_path
+            .as_ref()
+            .context("Remote binary path not set")?;
+        command.retain_valid_env();
+        let mut exec = posix_working_dir_prefix(
+            command.working_dir.take(),
+            self.ssh_path_style,
+            self.ssh_shell_kind,
+        )?;
+        exec.push_str(&home_stdio_launcher_command(
+            self.ssh_shell_kind,
+            self.ssh_home_dir.as_deref(),
+            &remote_binary_path.display(PathStyle::Unix),
+        )?);
+        let template = ssh_command_template(
+            self.socket.ssh_command_options(),
+            None,
+            Interactive::No,
+            &self.socket.connection_options.ssh_destination(),
+            exec,
+            self.socket.envs.clone(),
+        );
+        Ok((template, command.encode()?))
     }
 
     fn build_forward_ports_command(
@@ -801,6 +845,13 @@ impl SshRemoteConnection {
         let ssh_os_version = socket.os_version(ssh_platform.os, ssh_shell_kind).await;
         log::info!("Remote OS version discovered: {:?}", ssh_os_version);
 
+        let ssh_home_dir = if is_windows {
+            None
+        } else {
+            socket.home_dir(ssh_shell_kind).await
+        };
+        log::info!("Remote home directory discovered: {:?}", ssh_home_dir);
+
         let (ssh_path_style, ssh_default_system_shell) = match ssh_platform.os {
             RemoteOs::Windows => (PathStyle::Windows, ssh_shell.clone()),
             _ => (PathStyle::Unix, String::from("/bin/sh")),
@@ -818,6 +869,7 @@ impl SshRemoteConnection {
             ssh_shell,
             ssh_shell_kind,
             ssh_default_system_shell,
+            ssh_home_dir,
         };
 
         let (release_channel, version) =
@@ -1486,6 +1538,25 @@ impl SshSocket {
         }
     }
 
+    async fn home_dir(&self, shell: ShellKind) -> Option<String> {
+        match self
+            .run_command(shell, HOME_DIR_PROGRAM, &HOME_DIR_ARGS, false)
+            .await
+        {
+            Ok(output) => {
+                let home_dir = parse_home_dir(&output);
+                if home_dir.is_none() {
+                    log::warn!("Failed to parse remote home directory from {output:?}");
+                }
+                home_dir
+            }
+            Err(error) => {
+                log::warn!("Failed to determine remote home directory: {error:#}");
+                None
+            }
+        }
+    }
+
     async fn platform_windows(&self, shell: ShellKind) -> Result<RemotePlatform> {
         let output = self
             .run_command(
@@ -1861,51 +1932,7 @@ fn build_command_posix(
     ssh_destination: &str,
     interactive: Interactive,
 ) -> Result<CommandTemplate> {
-    use std::fmt::Write as _;
-
-    let mut exec = String::new();
-    if let Some(working_dir) = working_dir {
-        let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
-
-        // For paths starting with ~/, we need $HOME to expand, but the remainder
-        // must be properly quoted to prevent command injection.
-        // Pattern: cd "$HOME"/'quoted/remainder' - $HOME expands, rest is single-quoted
-        const TILDE_PREFIX: &str = "~/";
-        if working_dir.starts_with(TILDE_PREFIX) {
-            let remainder = working_dir.trim_start_matches(TILDE_PREFIX);
-            if remainder.is_empty() {
-                write!(
-                    exec,
-                    "cd \"$HOME\" {} ",
-                    ssh_shell_kind.sequential_and_commands_separator()
-                )?;
-            } else {
-                let quoted_remainder = ssh_shell_kind
-                    .try_quote(remainder)
-                    .context("shell quoting")?;
-                write!(
-                    exec,
-                    "cd \"$HOME\"/{quoted_remainder} {} ",
-                    ssh_shell_kind.sequential_and_commands_separator()
-                )?;
-            }
-        } else {
-            let quoted_dir = ssh_shell_kind
-                .try_quote(&working_dir)
-                .context("shell quoting")?;
-            write!(
-                exec,
-                "cd {quoted_dir} {} ",
-                ssh_shell_kind.sequential_and_commands_separator()
-            )?;
-        }
-    } else {
-        write!(
-            exec,
-            "cd {} ",
-            ssh_shell_kind.sequential_and_commands_separator()
-        )?;
-    };
+    let mut exec = posix_working_dir_prefix(working_dir, ssh_path_style, ssh_shell_kind)?;
     write!(exec, "exec env ")?;
 
     for (k, v) in input_env.iter() {
@@ -1932,6 +1959,65 @@ fn build_command_posix(
         write!(exec, "{ssh_shell} -l")?;
     };
 
+    Ok(ssh_command_template(
+        ssh_options,
+        port_forward,
+        interactive,
+        ssh_destination,
+        exec,
+        ssh_env,
+    ))
+}
+
+fn posix_working_dir_prefix(
+    working_dir: Option<String>,
+    ssh_path_style: PathStyle,
+    ssh_shell_kind: ShellKind,
+) -> Result<String> {
+    let mut exec = String::new();
+    if let Some(working_dir) = working_dir {
+        let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
+
+        // For paths starting with ~/, we need $HOME to expand, but the remainder
+        // must be properly quoted to prevent command injection.
+        // Pattern: cd "$HOME"/'quoted/remainder' - $HOME expands, rest is single-quoted
+        const TILDE_PREFIX: &str = "~/";
+        if working_dir.starts_with(TILDE_PREFIX) {
+            let remainder = working_dir.trim_start_matches(TILDE_PREFIX);
+            write!(
+                exec,
+                "cd {} {} ",
+                home_relative_path(ssh_shell_kind, (!remainder.is_empty()).then_some(remainder))?,
+                ssh_shell_kind.sequential_and_commands_separator()
+            )?;
+        } else {
+            let quoted_dir = ssh_shell_kind
+                .try_quote(&working_dir)
+                .context("shell quoting")?;
+            write!(
+                exec,
+                "cd {quoted_dir} {} ",
+                ssh_shell_kind.sequential_and_commands_separator()
+            )?;
+        }
+    } else {
+        write!(
+            exec,
+            "cd {} ",
+            ssh_shell_kind.sequential_and_commands_separator()
+        )?;
+    };
+    Ok(exec)
+}
+
+fn ssh_command_template(
+    ssh_options: Vec<String>,
+    port_forward: Option<(u16, String, u16)>,
+    interactive: Interactive,
+    ssh_destination: &str,
+    exec: String,
+    ssh_env: HashMap<String, String>,
+) -> CommandTemplate {
     let mut args = Vec::new();
     args.extend(ssh_options);
 
@@ -1958,11 +2044,11 @@ fn build_command_posix(
     args.push(ssh_destination.into());
     args.push(exec);
 
-    Ok(CommandTemplate {
+    CommandTemplate {
         program: "ssh".into(),
         args,
         env: ssh_env,
-    })
+    }
 }
 
 fn build_command_windows(
@@ -2071,6 +2157,170 @@ fn build_command_windows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_build_stdio_command() -> Result<()> {
+        let mut connection = SshRemoteConnection {
+            socket: SshSocket {
+                connection_options: SshConnectionOptions {
+                    host: SshConnectionHost::from("host"),
+                    username: Some(String::from("user")),
+                    port: Some(2222),
+                    ..SshConnectionOptions::default()
+                },
+                socket_path: PathBuf::from("/tmp/zed-test.sock"),
+                envs: HashMap::from_iter([(
+                    String::from("SSH_ASKPASS_REQUIRE"),
+                    String::from("force"),
+                )]),
+            },
+            master_process: Mutex::new(None),
+            killed: AtomicBool::new(false),
+            remote_binary_path: None,
+            ssh_platform: RemotePlatform {
+                os: RemoteOs::Linux,
+                arch: RemoteArch::X86_64,
+            },
+            ssh_os_version: None,
+            ssh_path_style: PathStyle::Unix,
+            ssh_shell: String::from("/bin/bash"),
+            ssh_shell_kind: ShellKind::Posix,
+            ssh_default_system_shell: String::from("/bin/sh"),
+            ssh_home_dir: None,
+            _temp_dir: TempDir::new()?,
+        };
+        let command = |env: HashMap<String, String>, working_dir: Option<&str>| RemoteCommand {
+            program: String::from("agent"),
+            args: vec![String::from("--token=argument-secret")],
+            env,
+            working_dir: working_dir.map(str::to_owned),
+        };
+        let valid_env =
+            HashMap::from_iter([(String::from("API_KEY"), String::from("agent-secret"))]);
+        assert_eq!(
+            connection
+                .build_stdio_command(command(valid_env.clone(), Some("~/project")))
+                .unwrap_err()
+                .to_string(),
+            "Remote binary path not set"
+        );
+
+        connection.remote_binary_path = Some(Arc::from(RelPath::from_unix_str(
+            ".local/share/zed/remote server",
+        )?));
+        for (home_dir, working_dir, shell_kind, expected_exec) in [
+            (
+                None,
+                Some("~/project"),
+                ShellKind::Posix,
+                "cd \"$HOME\"/project && exec \"$HOME\"/'.local/share/zed/remote server' exec",
+            ),
+            (
+                None,
+                Some("/srv/project!"),
+                ShellKind::Tcsh,
+                "cd '/srv/project'\\! && exec \"$HOME\"/'.local/share/zed/remote server' exec",
+            ),
+            (
+                Some("/home/user/"),
+                Some("~/project"),
+                ShellKind::Posix,
+                "cd \"$HOME\"/project && exec '/home/user/.local/share/zed/remote server' exec",
+            ),
+            (
+                Some("/home/bang!user"),
+                Some("/srv/project!"),
+                ShellKind::Tcsh,
+                "cd '/srv/project'\\! && exec '/home/bang'\\!'user/.local/share/zed/remote server' exec",
+            ),
+            (
+                Some("/home/user/"),
+                Some("/srv/project 'x'"),
+                ShellKind::Fish,
+                "cd \"/srv/project 'x'\" && exec '/home/user/.local/share/zed/remote server' exec",
+            ),
+            (
+                Some("/home/user/"),
+                Some("/srv/project"),
+                ShellKind::Nushell,
+                "cd /srv/project ; exec '/home/user/.local/share/zed/remote server' exec",
+            ),
+            (
+                None,
+                Some("~/project 'x'"),
+                ShellKind::Nushell,
+                "cd ($env.HOME | path join \"project 'x'\") ; exec ($env.HOME | path join '.local/share/zed/remote server') exec",
+            ),
+            (
+                None,
+                Some("~/"),
+                ShellKind::Nushell,
+                "cd $env.HOME ; exec ($env.HOME | path join '.local/share/zed/remote server') exec",
+            ),
+            (
+                Some("/home/a^b"),
+                Some("/srv/O'Brien $x"),
+                ShellKind::Nushell,
+                "cd \"/srv/O'Brien $x\" ; exec '/home/a^b/.local/share/zed/remote server' exec",
+            ),
+            (
+                Some("/home/user/"),
+                None,
+                ShellKind::Posix,
+                "cd && exec '/home/user/.local/share/zed/remote server' exec",
+            ),
+        ] {
+            connection.ssh_home_dir = home_dir.map(String::from);
+            connection.ssh_shell_kind = shell_kind;
+            let expected_payload = command(valid_env.clone(), None).encode()?;
+            let mut env = valid_env.clone();
+            env.insert(String::from("NAME\0NUL"), String::from("dropped"));
+            let (template, payload) = connection.build_stdio_command(command(env, working_dir))?;
+            assert_eq!(template.program, "ssh");
+            assert_eq!(
+                template.args,
+                [
+                    "-p",
+                    "2222",
+                    "-o",
+                    "ControlMaster=no",
+                    "-o",
+                    "ControlPath=/tmp/zed-test.sock",
+                    "-o",
+                    "LogLevel=ERROR",
+                    "-T",
+                    "user@host",
+                    expected_exec,
+                ]
+            );
+            assert_eq!(template.env, connection.socket.envs);
+            assert_eq!(payload, expected_payload);
+        }
+
+        connection.ssh_platform.os = RemoteOs::Windows;
+        connection.ssh_path_style = PathStyle::Windows;
+        let command = RemoteCommand {
+            program: String::from("agent"),
+            args: vec![String::from("--acp")],
+            env: HashMap::from_iter([(String::from("API_KEY"), String::from("agent-secret"))]),
+            working_dir: Some(String::from(r"C:\project")),
+        };
+        let expected = connection.build_command(
+            Some(command.program.clone()),
+            &command.args,
+            &HashMap::default(),
+            command.working_dir.clone(),
+            None,
+            Interactive::No,
+        )?;
+        let (template, payload) = connection.build_stdio_command(command)?;
+        assert_eq!(template.program, expected.program);
+        assert_eq!(template.args, expected.args);
+        assert_eq!(template.env, expected.env);
+        assert_eq!(payload, Vec::<u8>::new());
+        Ok(())
+    }
 
     #[test]
     fn test_build_command() -> Result<()> {

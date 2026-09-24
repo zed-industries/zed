@@ -20,6 +20,7 @@ use editor::{
 };
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
+use futures::FutureExt as _;
 use git::{
     Oid,
     repository::{CommitData, GitCommitTemplate, RepoPath, Worktree as GitWorktree},
@@ -40,15 +41,18 @@ use lsp::{
 };
 use node_runtime::NodeRuntime;
 use project::{
-    CompletionSource, LanguageServerLogType, ProgressToken, Project, ProjectPath,
+    AgentId, CompletionSource, LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
+    context_server_store::{ContextServerStatus, ServerStatusChangedEvent},
     image_store,
     lsp_store::log_store::{
         GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
     },
     search::{SearchQuery, SearchResult},
 };
-use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
+use remote::{
+    ConnectionState, MOCK_STDIO_FRAME_HEX, RemoteClient, RemoteClientEvent, command::RemoteCommand,
+};
 use rpc::proto;
 use serde_json::json;
 use settings::{
@@ -4608,6 +4612,183 @@ async fn test_remote_external_agent_server(
     );
 }
 
+#[cfg(not(windows))]
+#[gpui::test]
+async fn test_remote_external_agent_receives_env_over_stdin(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().allow_parking();
+
+    let output_dir = tempfile::tempdir().unwrap();
+    let output_path = output_dir.path().join("launch");
+    let args = stdio_launch_args(
+        &output_path,
+        r#"{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}"#,
+    );
+    server_cx.update_global(|settings_store: &mut SettingsStore, cx| {
+        settings_store
+            .set_server_settings(
+                &json!({
+                    "agent_servers": {
+                        "foo": {
+                            "type": "custom",
+                            "command": "/bin/sh",
+                            "args": args,
+                            "env": { "AGENT_TOKEN": "agent-secret-sentinel" }
+                        }
+                    }
+                })
+                .to_string(),
+                cx,
+            )
+            .unwrap();
+    });
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    let agent_server_store =
+        project.read_with(cx, |project, _| project.agent_server_store().clone());
+    let command = agent_server_store
+        .update(cx, |store, cx| {
+            store
+                .get_external_agent(&"foo".into())
+                .unwrap()
+                .get_command(vec![], HashMap::default(), &mut cx.to_async())
+        })
+        .await
+        .unwrap();
+    let connection = agent_servers::AcpConnection::stdio(
+        AgentId::new("foo"),
+        project.clone(),
+        command,
+        agent_server_store.downgrade(),
+        None,
+        HashMap::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    let (launched, first_message) = read_stdio_launch(&output_path);
+    assert_eq!(launched.program, "/bin/sh");
+    assert_eq!(launched.args, args);
+    assert_eq!(
+        launched.env,
+        HashMap::from_iter([
+            (String::from("NO_BROWSER"), String::from("1")),
+            (
+                String::from("AGENT_TOKEN"),
+                String::from("agent-secret-sentinel")
+            ),
+        ])
+    );
+    assert_eq!(launched.working_dir.as_deref(), Some(path!("/project")));
+    assert_eq!(first_message["method"], "initialize");
+    drop(connection);
+}
+
+#[cfg(not(windows))]
+#[gpui::test]
+async fn test_remote_context_server_receives_env_over_stdin(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().allow_parking();
+
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let (status_tx, mut status_rx) = futures::channel::mpsc::unbounded();
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&store, move |_, event: &ServerStatusChangedEvent, _| {
+            status_tx.unbounded_send(event.status.clone()).ok();
+        })
+    });
+
+    let output_dir = tempfile::tempdir().unwrap();
+    let output_path = output_dir.path().join("launch");
+    let args = stdio_launch_args(
+        &output_path,
+        r#"{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"test-server","version":"1.0.0"}}"#,
+    );
+    let settings = json!({
+        "context_servers": {
+            "mcp": {
+                "source": "custom",
+                "remote": true,
+                "command": "/bin/sh",
+                "args": args,
+                "env": { "MCP_TOKEN": "mcp-secret-sentinel" }
+            }
+        }
+    })
+    .to_string();
+    server_cx.update_global(|settings_store: &mut SettingsStore, cx| {
+        settings_store.set_server_settings(&settings, cx).unwrap();
+    });
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+    cx.update_global(|settings_store: &mut SettingsStore, cx| {
+        settings_store.set_user_settings(&settings, cx).unwrap();
+    });
+
+    let statuses = async {
+        let mut statuses = Vec::new();
+        while let Some(status) = status_rx.next().await {
+            let starting = status == ContextServerStatus::Starting;
+            statuses.push(status);
+            if !starting {
+                break;
+            }
+        }
+        statuses
+    }
+    .fuse();
+    let timeout = cx
+        .background_executor
+        .timer(std::time::Duration::from_secs(30))
+        .fuse();
+    futures::pin_mut!(statuses, timeout);
+    let statuses = futures::select! {
+        statuses = statuses => statuses,
+        _ = timeout => panic!("timed out waiting for the context server status"),
+    };
+    assert_eq!(
+        statuses,
+        [ContextServerStatus::Starting, ContextServerStatus::Running]
+    );
+
+    let (launched, first_message) = read_stdio_launch(&output_path);
+    assert_eq!(launched.program, "/bin/sh");
+    assert_eq!(launched.args, args);
+    assert_eq!(
+        launched.env,
+        HashMap::from_iter([(
+            String::from("MCP_TOKEN"),
+            String::from("mcp-secret-sentinel")
+        )])
+    );
+    assert_eq!(launched.working_dir.as_deref(), Some(path!("/project")));
+    assert_eq!(first_message["method"], "initialize");
+}
+
 #[gpui::test]
 async fn test_remote_apply_code_action_skips_unadvertised_command(
     cx: &mut TestAppContext,
@@ -5687,6 +5868,39 @@ pub async fn init_test(
 
 fn init_logger() {
     zlog::init_test();
+}
+
+#[cfg(not(windows))]
+fn stdio_launch_args(output_path: &Path, initialize_result: &str) -> Vec<String> {
+    let script = format!(
+        r#"printf '%s\n' "${MOCK_STDIO_FRAME_HEX}" > "$1"
+IFS= read -r line
+printf '%s\n' "$line" >> "$1"
+id=$(printf '%s' "$line" | sed -nE 's/^\{{"jsonrpc":"2.0","id":("[^"]*"|[0-9]+),.*/\1/p')
+printf '{{"jsonrpc":"2.0","id":%s,"result":%s}}\n' "$id" "$2"
+exec cat >/dev/null"#
+    );
+    vec![
+        String::from("-c"),
+        script,
+        String::from("sh"),
+        output_path.display().to_string(),
+        String::from(initialize_result),
+    ]
+}
+
+#[cfg(not(windows))]
+fn read_stdio_launch(output_path: &Path) -> (RemoteCommand, serde_json::Value) {
+    let output = std::fs::read_to_string(output_path).unwrap();
+    let (frame_hex, first_line) = output.trim_end().split_once('\n').unwrap();
+    let frame = (0..frame_hex.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&frame_hex[index..index + 2], 16).unwrap())
+        .collect::<Vec<_>>();
+    let mut frame = &frame[..];
+    let command = RemoteCommand::read(&mut frame).unwrap();
+    assert_eq!(frame, b"");
+    (command, serde_json::from_str(first_line).unwrap())
 }
 
 fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {
