@@ -44,7 +44,7 @@ use terminal_panel::TerminalPanel;
 use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
 use ui::{
-    ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
+    ContextMenu, Divider, ScrollAxes, ScrollbarColors, Scrollbars, Tooltip, WithScrollbar,
     prelude::*,
     scrollbars::{self, ScrollbarVisibility},
 };
@@ -1466,7 +1466,7 @@ impl Render for TerminalView {
                 div()
                     .id("terminal-view-container")
                     .size_full()
-                    .bg(cx.theme().colors().editor_background)
+                    .bg(cx.theme().colors().terminal_background)
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1484,8 +1484,39 @@ impl Render for TerminalView {
                                 .show_along(ScrollAxes::Vertical)
                                 .with_stable_track_along(
                                     ScrollAxes::Vertical,
-                                    colors.editor_background,
+                                    colors
+                                        .terminal_scrollbar_track_background
+                                        .unwrap_or(colors.scrollbar_track_background),
                                 )
+                                .colors(ScrollbarColors {
+                                    thumb_background: colors
+                                        .terminal_scrollbar_thumb_background
+                                        .unwrap_or_else(|| {
+                                            colors
+                                                .terminal_background
+                                                .blend(colors.scrollbar_thumb_background)
+                                        }),
+                                    thumb_hover_background: colors
+                                        .terminal_scrollbar_thumb_hover_background
+                                        .unwrap_or_else(|| {
+                                            colors
+                                                .terminal_background
+                                                .blend(colors.scrollbar_thumb_hover_background)
+                                        }),
+                                    thumb_active_background: colors
+                                        .terminal_scrollbar_thumb_active_background
+                                        .unwrap_or_else(|| {
+                                            colors
+                                                .terminal_background
+                                                .blend(colors.scrollbar_thumb_active_background)
+                                        }),
+                                    thumb_border: colors
+                                        .terminal_scrollbar_thumb_border
+                                        .unwrap_or(gpui::transparent_black()),
+                                    track_border: colors
+                                        .terminal_scrollbar_track_border
+                                        .unwrap_or(colors.border_variant.opacity(0.6)),
+                                })
                                 .tracked_scroll_handle(&self.scroll_handle),
                             window,
                             cx,

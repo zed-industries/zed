@@ -788,6 +788,133 @@ mod tests {
         }
     }
 
+    fn terminal_scrollbar_colors(colors: &::theme::ThemeColors) -> [gpui::Hsla; 6] {
+        use ::theme::ThemeColorField;
+
+        [
+            ThemeColorField::TerminalScrollbarThumbBackground,
+            ThemeColorField::TerminalScrollbarThumbHoverBackground,
+            ThemeColorField::TerminalScrollbarThumbActiveBackground,
+            ThemeColorField::TerminalScrollbarThumbBorder,
+            ThemeColorField::TerminalScrollbarTrackBackground,
+            ThemeColorField::TerminalScrollbarTrackBorder,
+        ]
+        .map(|field| colors.color(field))
+    }
+
+    #[test]
+    fn terminal_scrollbar_colors_from_theme_survive_scrollbar_override() {
+        let magenta = gpui::rgb(0xff00ff).into();
+        let green = gpui::rgb(0x00ff00).into();
+        let mut test_theme = theme_with_colors(::settings::ThemeColorsContent {
+            terminal_scrollbar_thumb_background: Some("#ff00ff".into()),
+            terminal_scrollbar_thumb_hover_background: Some("#ff00ff".into()),
+            terminal_scrollbar_thumb_active_background: Some("#ff00ff".into()),
+            terminal_scrollbar_thumb_border: Some("#ff00ff".into()),
+            terminal_scrollbar_track_background: Some("#ff00ff".into()),
+            terminal_scrollbar_track_border: Some("#ff00ff".into()),
+            ..Default::default()
+        });
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &style_with_colors(::settings::ThemeColorsContent {
+                scrollbar_thumb_background: Some("#00ff00".into()),
+                scrollbar_thumb_hover_background: Some("#00ff00".into()),
+                scrollbar_thumb_active_background: Some("#00ff00".into()),
+                scrollbar_thumb_border: Some("#00ff00".into()),
+                scrollbar_track_background: Some("#00ff00".into()),
+                scrollbar_track_border: Some("#00ff00".into()),
+                border_variant: Some("#00ff00".into()),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(terminal_scrollbar_colors(test_theme.colors()), [magenta; 6]);
+        assert_eq!(test_theme.colors().scrollbar_thumb_background, green);
+    }
+
+    #[test]
+    fn terminal_scrollbar_colors_from_earlier_override_survive_later_scrollbar_override() {
+        let magenta = gpui::rgb(0xff00ff).into();
+        let green = gpui::rgb(0x00ff00).into();
+        let mut test_theme = theme_with_colors(Default::default());
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &style_with_colors(::settings::ThemeColorsContent {
+                terminal_scrollbar_thumb_background: Some("#ff00ff".into()),
+                terminal_scrollbar_thumb_hover_background: Some("#ff00ff".into()),
+                terminal_scrollbar_thumb_active_background: Some("#ff00ff".into()),
+                terminal_scrollbar_thumb_border: Some("#ff00ff".into()),
+                terminal_scrollbar_track_background: Some("#ff00ff".into()),
+                terminal_scrollbar_track_border: Some("#ff00ff".into()),
+                ..Default::default()
+            }),
+        );
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &style_with_colors(::settings::ThemeColorsContent {
+                scrollbar_thumb_background: Some("#00ff00".into()),
+                scrollbar_thumb_hover_background: Some("#00ff00".into()),
+                scrollbar_thumb_active_background: Some("#00ff00".into()),
+                scrollbar_thumb_border: Some("#00ff00".into()),
+                scrollbar_track_background: Some("#00ff00".into()),
+                scrollbar_track_border: Some("#00ff00".into()),
+                border_variant: Some("#00ff00".into()),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(terminal_scrollbar_colors(test_theme.colors()), [magenta; 6]);
+        assert_eq!(test_theme.colors().scrollbar_thumb_background, green);
+    }
+
+    #[test]
+    fn terminal_scrollbar_colors_follow_effective_scrollbar_colors_without_explicit_colors() {
+        let green: gpui::Hsla = gpui::rgb(0x00ff00).into();
+        let mut test_theme = theme_with_colors(Default::default());
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &style_with_colors(::settings::ThemeColorsContent {
+                scrollbar_thumb_background: Some("#00ff00".into()),
+                scrollbar_thumb_hover_background: Some("#00ff00".into()),
+                scrollbar_thumb_active_background: Some("#00ff00".into()),
+                scrollbar_thumb_border: Some("#00ff00".into()),
+                scrollbar_track_background: Some("#00ff00".into()),
+                scrollbar_track_border: Some("#00ff00".into()),
+                border_variant: Some("#00ff00".into()),
+
+                ..Default::default()
+            }),
+        );
+
+        let colors = test_theme.colors();
+        assert_eq!(
+            [
+                colors.terminal_scrollbar_thumb_background,
+                colors.terminal_scrollbar_thumb_hover_background,
+                colors.terminal_scrollbar_thumb_active_background,
+                colors.terminal_scrollbar_thumb_border,
+                colors.terminal_scrollbar_track_background,
+                colors.terminal_scrollbar_track_border,
+            ],
+            [None; 6]
+        );
+        assert_eq!(
+            terminal_scrollbar_colors(colors),
+            [
+                green,
+                green,
+                green,
+                gpui::transparent_black(),
+                green,
+                green.opacity(0.6),
+            ]
+        );
+    }
+
     #[test]
     fn code_lens_foreground_from_theme_survives_text_muted_override() {
         let magenta = ::theme::try_parse_color("#ff00ff").unwrap();
