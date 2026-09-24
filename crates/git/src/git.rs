@@ -128,6 +128,8 @@ actions!(
         ToggleFillCommitEditor,
         /// Generates a commit message using AI.
         GenerateCommitMessage,
+        /// Adds a commit message prefix based on the current branch name.
+        AddCommitMessagePrefix,
         /// Initializes a new git repository.
         Init,
         /// Opens all modified files in the editor.

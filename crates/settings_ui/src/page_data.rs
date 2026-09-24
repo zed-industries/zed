@@ -6398,7 +6398,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 18] {
+    fn git_panel_section() -> [SettingsPageItem; 22] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6701,6 +6701,98 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .commit_title_max_length = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Add Commit Message Prefix",
+                description: "Show a button in the commit box that adds a prefix generated from the current branch name.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.commit_message_prefix_enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .commit_message_prefix_enabled
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .commit_message_prefix_enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Commit Message Prefix Regex",
+                description: "Regex applied to the current branch name to generate the commit message prefix.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.commit_message_prefix_regex"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .commit_message_prefix_regex
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .commit_message_prefix_regex = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Commit Message Prefix Replacement",
+                description: "Replacement string used with the regex to generate the commit message prefix. Uses the Rust `regex` crate syntax, e.g. `$1` for the first capture group.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.commit_message_prefix_replacement"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .commit_message_prefix_replacement
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .commit_message_prefix_replacement = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Append Commit Message Prefix",
+                description: "Append the generated commit message prefix instead of prepending it.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.commit_message_prefix_is_postfix"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .commit_message_prefix_is_postfix
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .commit_message_prefix_is_postfix = value;
                     },
                 }),
                 metadata: None,
