@@ -9772,6 +9772,7 @@ dependencies = [
  "openai_subscribed",
  "opencode",
  "parking_lot",
+ "paths",
  "rand 0.9.4",
  "release_channel",
  "schemars 1.0.4",
