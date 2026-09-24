@@ -12032,6 +12032,7 @@ mod tests {
         let diff = repository.update(cx, |repository, cx| {
             repository.load_commit_diff(sha.clone(), false, cx)
         });
+        let mut by_ref = repository.update(cx, |repository, _| repository.show(sha.clone()));
         cx.run_until_parked();
 
         let details = details
@@ -12042,9 +12043,15 @@ mod tests {
         diff.now_or_never()
             .expect("load_commit_diff waited on the job queue")
             .unwrap();
+        assert!(
+            (&mut by_ref).now_or_never().is_none(),
+            "show skipped the job queue"
+        );
 
         release_tx.send(()).ok();
         held.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(by_ref.await.unwrap().unwrap().sha.as_ref(), sha);
     }
 
     #[gpui::test]
@@ -12054,7 +12061,7 @@ mod tests {
             setup_gated_blob_reads(cx, MAX_CONCURRENT_OBJECT_READS).await;
         let sha = oids[0].to_string();
 
-        let holding = oids
+        let _holding = oids
             .iter()
             .map(|oid| {
                 repository.update(cx, |repository, cx| repository.load_blob_content(*oid, cx))
@@ -12085,46 +12092,6 @@ mod tests {
 
         gate.open();
         cx.run_until_parked();
-        for read in holding {
-            read.await.unwrap();
-        }
-    }
-
-    #[gpui::test]
-    async fn test_show_by_ref_waits_on_job_queue(cx: &mut TestAppContext) {
-        init_test(cx);
-        use util::path;
-
-        let project_root = Path::new(path!("/project"));
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(project_root, json!({ ".git": {} })).await;
-        let head_sha = "1".repeat(40);
-        fs.set_head_for_repo(&project_root.join(".git"), &[], head_sha.clone());
-        let project = Project::test(fs, [project_root], cx).await;
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
-        let repository =
-            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
-
-        let (release_tx, release_rx) = oneshot::channel::<()>();
-        let held = repository.update(cx, |repository, _| {
-            repository.send_job("hold", None, move |_, _| async move {
-                release_rx.await.ok();
-            })
-        });
-
-        let mut details = repository.update(cx, |repository, _| repository.show("HEAD".into()));
-        cx.run_until_parked();
-        assert!(
-            (&mut details).now_or_never().is_none(),
-            "show by ref skipped the job queue"
-        );
-
-        release_tx.send(()).ok();
-        held.await.unwrap();
-        cx.run_until_parked();
-        assert_eq!(details.await.unwrap().unwrap().sha.as_ref(), head_sha);
     }
 
     #[gpui::test]
