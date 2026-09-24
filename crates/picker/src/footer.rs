@@ -145,7 +145,7 @@ impl<D: PickerDelegate> Picker<D> {
                     .when(preview_visible, |this| this.color(Color::Accent))
                     .key_binding(
                         KeyBinding::for_action_in(&TogglePreview, &focus_handle, cx)
-                            .size(rems_from_px(12.)),
+                            .size(rems_from_px(12_f32)),
                     )
                     .on_click(
                         cx.listener(|this, _, window, cx| this.toggle_preview_visible(window, cx)),
@@ -201,7 +201,7 @@ impl<D: PickerDelegate> Picker<D> {
                 Button::new("picker-actions-trigger", "Actions…")
                     .key_binding(
                         KeyBinding::for_action_in(&ToggleActionsMenu, &focus_handle, cx)
-                            .size(rems_from_px(12.)),
+                            .size(rems_from_px(12_f32)),
                     )
                     .selected_style(ui::ButtonStyle::Tinted(ui::TintColor::Accent)),
             )

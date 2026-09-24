@@ -46,7 +46,7 @@ impl RenderOnce for CountBadge {
             .shadow_sm()
             .child(
                 Label::new(label)
-                    .size(LabelSize::Custom(rems_from_px(9.)))
+                    .size(LabelSize::Custom(rems_from_px(9_f32)))
                     .weight(FontWeight::MEDIUM),
             )
     }

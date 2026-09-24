@@ -626,7 +626,7 @@ impl RenderOnce for ExtensionCard {
             v_flex()
                 .mt_4()
                 .w_full()
-                .h(rems_from_px(110.))
+                .h(rems_from_px(110_f32))
                 .p_3()
                 .gap_2()
                 .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
@@ -635,10 +635,14 @@ impl RenderOnce for ExtensionCard {
                 .rounded_md()
                 .child(
                     h_flex()
+                        .gap_2()
                         .justify_between()
                         .child(
                             h_flex()
                                 .flex_shrink_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
                                 .gap_2()
                                 .child(Headline::new(name).size(HeadlineSize::Small))
                                 .child(
@@ -662,7 +666,12 @@ impl RenderOnce for ExtensionCard {
                                     )
                                 }),
                         )
-                        .child(h_flex().gap_1().children(actions.into_iter().flatten())),
+                        .child(
+                            h_flex()
+                                .flex_shrink_0()
+                                .gap_1()
+                                .children(actions.into_iter().flatten()),
+                        ),
                 )
                 .child(
                     h_flex()

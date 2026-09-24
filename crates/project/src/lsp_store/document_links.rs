@@ -130,7 +130,7 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_servers = self.relevant_server_ids_for_capability_check(buffer, cx);
+        let current_servers = self.language_server_ids_for_request(buffer, &GetDocumentLinks, cx);
 
         let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
@@ -448,10 +448,17 @@ impl LspStore {
             data: cached_link.data.clone(),
         };
 
+        if !self.text_document_capability_matches_for_server(
+            buffer,
+            server_id,
+            "textDocument/documentLink",
+            |capabilities| can_resolve_link(capabilities.server_capabilities),
+            cx,
+        ) {
+            return Task::ready(None);
+        }
+
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            if !self.check_if_capable_for_proto_request(buffer, can_resolve_link, cx) {
-                return Task::ready(None);
-            }
             let request = proto::ResolveDocumentLink {
                 project_id,
                 buffer_id: buffer_id.into(),
@@ -466,9 +473,6 @@ impl LspStore {
             let Some(server) = self.language_server_for_id(server_id) else {
                 return Task::ready(None);
             };
-            if !can_resolve_link(&server.capabilities()) {
-                return Task::ready(None);
-            }
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();

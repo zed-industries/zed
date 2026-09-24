@@ -162,7 +162,7 @@ impl Render for ChannelModal {
                     .child(
                         h_flex()
                             .w_full()
-                            .h(rems_from_px(22.))
+                            .h(rems_from_px(22_f32))
                             .justify_between()
                             .line_height(rems(1.25))
                             .child(
@@ -178,7 +178,7 @@ impl Render for ChannelModal {
                                 .on_click(cx.listener(Self::set_channel_visibility)),
                             )
                             .children(
-                                Some(
+                                (visibility == ChannelVisibility::Public).then_some(
                                     Button::new("copy-link", "Copy Link")
                                         .label_size(LabelSize::Small)
                                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -192,8 +192,7 @@ impl Render for ChannelModal {
                                                 cx.write_to_clipboard(item);
                                             }
                                         })),
-                                )
-                                .filter(|_| visibility == ChannelVisibility::Public),
+                                ),
                             ),
                     )
                     .child(

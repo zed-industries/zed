@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/encoding_selector.rs"
 doctest = false
+test = false
 
 [dependencies]
 editor.workspace = true

@@ -1,6 +1,6 @@
 ---
 title: AI by Company - Zed
-description: Find the right Zed setup path for OpenAI, ChatGPT, Codex, Claude, Gemini, Copilot, Cursor, OpenCode, Pi, OpenRouter, Bedrock, local models, and other AI tools.
+description: Find the right Zed setup path for OpenAI, ChatGPT, Codex, Claude, Gemini, Copilot, Cursor, OpenCode, Pi, Poolside, OpenRouter, Bedrock, local models, and other AI tools.
 ---
 
 # AI by Company
@@ -76,6 +76,15 @@ Cursor subscriptions do not configure Zed's LLM provider settings. If you want t
 | Pi CLI/TUI      | Run in terminal | Native Pi command-line experience, where available | Owned by Pi       | [Terminal Threads](./terminal-threads.md)  |
 
 Pi is an agent harness, not a Zed LLM subscription. Pi may support provider auth such as ChatGPT, Claude, or Copilot through its own setup flow.
+
+## Poolside {#poolside}
+
+| Path                    | Support level   | What you get                         | Account / billing               | Setup                                            |
+| ----------------------- | --------------- | ------------------------------------ | ------------------------------- | ------------------------------------------------ |
+| Poolside External Agent | Hosted in Zed   | Poolside in an External Agent thread | Poolside or configured provider | [External Agents](./external-agents.md#poolside) |
+| `pool` CLI              | Run in terminal | Native Poolside Agent CLI experience | Poolside or configured provider | [Terminal Threads](./terminal-threads.md)        |
+
+Install Poolside from the ACP Registry, configure Zed with the Poolside Agent CLI, or add Poolside as a Custom Agent. See [External Agents](./external-agents.md#poolside) for setup steps and platform-specific details.
 
 ## DeepSeek {#deepseek}
 

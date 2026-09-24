@@ -217,7 +217,7 @@ async fn fetch_extensions_from_blob_store(
             .list_objects()
             .bucket(blob_store_bucket)
             .prefix("extensions/")
-            .set_marker(next_marker.clone())
+            .set_marker(next_marker.take())
             .send()
             .await?;
         let objects = list.contents.unwrap_or_default();

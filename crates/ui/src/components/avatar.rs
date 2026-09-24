@@ -89,7 +89,7 @@ impl RenderOnce for Avatar {
             })
             .child(
                 self.image
-                    .size(image_size)
+                    .size_full()
                     .rounded_full()
                     .bg(cx.theme().colors().element_disabled)
                     .with_fallback(|| {
@@ -150,8 +150,8 @@ impl RenderOnce for AvatarAudioStatusIndicator {
 
         div()
             .absolute()
-            .bottom(rems_from_px(-3.))
-            .right(rems_from_px(-6.))
+            .bottom(rems_from_px(-3.0_f32))
+            .right(rems_from_px(-6.0_f32))
             .w(width_in_px + padding_x)
             .h(icon_size.rems())
             .child(

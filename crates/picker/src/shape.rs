@@ -242,12 +242,12 @@ impl Default for SizeBounds {
             // over the lower bar so clear another 5 rems there.
             max_height: (RelativeHeight::FULL - Rems(10.0)) * 0.95,
             min_results: Size {
-                width: rems_from_px(280.),
-                height: rems_from_px(320.),
+                width: rems_from_px(280_f32),
+                height: rems_from_px(320_f32),
             },
             min_preview: Size {
-                width: rems_from_px(128.),
-                height: rems_from_px(96.),
+                width: rems_from_px(128_f32),
+                height: rems_from_px(96_f32),
             },
         }
     }

@@ -1,5 +1,5 @@
 mod components;
-mod extension_suggest;
+mod extension_suggestions;
 mod extension_version_selector;
 
 use std::sync::OnceLock;
@@ -109,11 +109,12 @@ pub fn init(cx: &mut App) {
         update_rebuild_dev_extension_visibility(&store, cx);
     })
     .detach();
+    extension_suggestions::init(cx);
 
-    cx.observe_new(move |workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
+    cx.observe_new(move |workspace: &mut Workspace, window, _cx| {
+        if window.is_none() {
             return;
-        };
+        }
         workspace
             .register_action(
                 move |workspace, action: &zed_actions::Extensions, window, cx| {
@@ -281,13 +282,6 @@ pub fn init(cx: &mut App) {
                     }
                 }
             });
-
-        cx.subscribe_in(workspace.project(), window, |_, _, event, window, cx| {
-            if let project::Event::LanguageNotFound(buffer) = event {
-                extension_suggest::suggest(buffer.clone(), window, cx);
-            }
-        })
-        .detach();
     })
     .detach();
 }
@@ -785,7 +779,7 @@ impl ExtensionsPage {
         h_flex()
             .key_context(key_context)
             .h_8()
-            .min_w(rems_from_px(384.))
+            .min_w(rems_from_px(384_f32))
             .flex_1()
             .pl_1p5()
             .pr_2()
@@ -1445,7 +1439,7 @@ impl Render for ExtensionsPage {
                                         ],
                                     )
                                     .style(ToggleButtonGroupStyle::Outlined)
-                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(30.))) // Perfectly matches the input
+                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(30_f32))) // Perfectly matches the input
                                     .label_size(LabelSize::Default)
                                     .auto_width()
                                     .selected_index(match self.filter {

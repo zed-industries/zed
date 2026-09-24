@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/buffer_diff.rs"
+doctest = false
 
 [features]
 test-support = ["settings"]
@@ -39,5 +40,5 @@ text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 zlog.workspace = true
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

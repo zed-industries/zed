@@ -1,8 +1,7 @@
-use editor::{ToOffset, movement};
+use editor::movement;
 use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use text::LineEnding;
 
 use crate::{Vim, state::Mode};
 
@@ -93,7 +92,7 @@ impl Vim {
                     // Pasting before means pasting before the whole selection.
                     let display_point = if line_mode {
                         if action.before {
-                            movement::line_beginning(&display_map, sel.start, false)
+                            movement::line_beginning(&display_map, sel.start)
                         } else {
                             if sel.start == sel.end {
                                 movement::right(
@@ -121,33 +120,16 @@ impl Vim {
                         sel.end
                     };
                     let point = display_point.to_point(&display_map);
-                    let anchor = if action.before {
-                        display_map.buffer_snapshot().anchor_after(point)
-                    } else {
-                        display_map.buffer_snapshot().anchor_before(point)
-                    };
-                    let mut to_insert = to_insert.repeat(count);
-                    // Buffer edits normalize line endings, so measure the normalized text.
-                    // Otherwise CRLF paste text can produce a selection range past the inserted text.
-                    // which can cause panics (selection offset greater than snapshot len) or invalid
-                    // selections
-                    LineEnding::normalize(&mut to_insert);
-                    new_selections.push((anchor, to_insert.len()));
-                    edits.push((point..point, to_insert));
+                    let snapshot = display_map.buffer_snapshot();
+                    new_selections
+                        .push(snapshot.anchor_before(point)..snapshot.anchor_after(point));
+                    edits.push((point..point, to_insert.repeat(count)));
                 }
 
                 editor.edit(edits, cx);
 
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges(new_selections.into_iter().map(|(anchor, len)| {
-                        let offset = anchor.to_offset(&snapshot);
-                        if action.before {
-                            offset.saturating_sub_usize(len)..offset
-                        } else {
-                            offset..(offset + len)
-                        }
-                    }));
+                    s.select_ranges(new_selections);
                 })
             });
         });
@@ -222,6 +204,30 @@ mod test {
         cx.simulate_keystrokes("p");
 
         cx.assert_state("«a\nbˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_in_expanded_deleted_hunk(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇkept\n", Mode::HelixNormal);
+        cx.set_head_text("kept\ndeleted\n");
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+        });
+
+        cx.write_to_clipboard(ClipboardItem::new_string("replacement text".to_string()));
+        cx.simulate_keystrokes("j p");
+
+        let buffer_text = cx.update_editor(|editor, _window, cx| {
+            let buffer = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("test editor should contain one buffer");
+            buffer.read(cx).snapshot().text()
+        });
+        assert_eq!(buffer_text, "kept\n");
     }
 
     #[gpui::test]
