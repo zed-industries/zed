@@ -1,5 +1,5 @@
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Cell, RefCell, RefMut},
     hash::Hash,
     os::fd::{AsRawFd, BorrowedFd},
     path::PathBuf,
@@ -9,7 +9,8 @@ use std::{
 
 use ashpd::WindowIdentifier;
 use calloop::{
-    EventLoop, LoopHandle,
+    Dispatcher, EventLoop, LoopHandle, RegistrationToken,
+    channel::Channel,
     ping::Ping,
     timer::{TimeoutAction, Timer},
 };
@@ -82,10 +83,10 @@ use super::{
 
 use crate::linux::{
     DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT,
-    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
-    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
-    modifiers_from_xkb, new_xkb_context, open_uri_internal, read_fd_with_timeout,
-    reveal_path_internal,
+    PriorityQueueCalloopReceiver, SCROLL_LINES, SystemPowerEvent, capslock_from_xkb,
+    cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
+    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
+    open_uri_internal, read_fd_with_timeout, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -100,8 +101,9 @@ use gpui::{
     FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
-    PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
-    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, profiler, px, size,
+    PlatformKeyboardLayout, PlatformWindow, Point, RunnableVariant, ScrollDelta, ScrollWheelEvent,
+    SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, profiler,
+    px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -192,16 +194,13 @@ fn set_ime_cursor_rectangle_after_done(
 /// failed-present frames, so matching the output's actual refresh rate wouldn't be observable.
 const FRAME_RETRY_INTERVAL: Duration = Duration::from_micros(16_667);
 
-fn take_startup_activation_token_from_environment() -> Option<String> {
-    let startup_activation_token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
+pub(crate) fn take_startup_activation_token_from_environment() -> Option<String> {
+    let token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
         .ok()
         .filter(|token| !token.is_empty());
-    // The token must be removed from the environment so it isn't inherited by child
-    // processes we spawn, per the xdg-activation spec: https://wayland.app/protocols/xdg-activation-v1
-    // SAFETY: This runs during Wayland platform initialization before GPUI starts
-    // concurrent environment access or spawning child processes.
+    // SAFETY: Both callers take this token before LinuxCommon starts worker threads.
     unsafe { std::env::remove_var(XDG_ACTIVATION_TOKEN_ENV_VAR) };
-    startup_activation_token
+    token
 }
 
 #[derive(Clone)]
@@ -366,7 +365,14 @@ pub(crate) struct WaylandClientState {
     pending_activation: Option<PendingActivation>,
     startup_activation_token: Option<String>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
-    pub common: LinuxCommon,
+    main_dispatcher: Option<
+        Dispatcher<'static, PriorityQueueCalloopReceiver<RunnableVariant>, WaylandClientStatePtr>,
+    >,
+    pending_runnable_idles: Rc<Cell<usize>>,
+    main_registration: RegistrationToken,
+    power_dispatcher: Option<Dispatcher<'static, Channel<SystemPowerEvent>, WaylandClientStatePtr>>,
+    power_registration: RegistrationToken,
+    pub common: Rc<RefCell<LinuxCommon>>,
     ime_enabled: Option<bool>,
 }
 
@@ -694,12 +700,21 @@ impl WaylandClientStatePtr {
             changed
         };
 
-        if changed && let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
-        {
+        let callback = changed
+            .then(|| {
+                state
+                    .common
+                    .borrow_mut()
+                    .callbacks
+                    .keyboard_layout_change
+                    .take()
+            })
+            .flatten();
+        if let Some(mut callback) = callback {
             drop(state);
             callback();
             state = client.borrow_mut();
-            state.common.callbacks.keyboard_layout_change = Some(callback);
+            state.common.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
         }
     }
 
@@ -835,7 +850,17 @@ fn wl_output_version(version: u32) -> u32 {
 
 impl WaylandClient {
     pub(crate) fn new() -> Self {
-        let startup_activation_token = take_startup_activation_token_from_environment();
+        Self::new_with_services(None, take_startup_activation_token_from_environment())
+    }
+
+    pub(crate) fn new_with_services(
+        services: Option<(
+            Rc<RefCell<LinuxCommon>>,
+            PriorityQueueCalloopReceiver<RunnableVariant>,
+            Channel<SystemPowerEvent>,
+        )>,
+        startup_activation_token: Option<String>,
+    ) -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
         let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
@@ -874,39 +899,49 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, power_receiver) = services.unwrap_or_else(|| {
+            let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
+            (Rc::new(RefCell::new(common)), main_receiver, power_receiver)
+        });
+        common.borrow_mut().signal = event_loop.get_signal();
 
         let handle = event_loop.handle();
-        handle
-            .insert_source(main_receiver, {
-                let handle = handle.clone();
-                move |event, _, _: &mut WaylandClientStatePtr| {
-                    if let calloop::channel::Event::Msg(runnable) = event {
-                        handle.insert_idle(|_| {
-                            let location = runnable.metadata().location;
-                            let spawned = runnable.metadata().spawned;
-                            profiler::update_running_task(spawned, location);
-                            runnable.run();
-                            profiler::save_task_timing();
-                        });
-                    }
+        let pending_runnable_idles = Rc::new(Cell::new(0));
+        let main_dispatcher = Dispatcher::new(main_receiver, {
+            let handle = handle.clone();
+            let pending_runnable_idles = pending_runnable_idles.clone();
+            move |event, _, _: &mut WaylandClientStatePtr| {
+                if let calloop::channel::Event::Msg(runnable) = event {
+                    pending_runnable_idles.set(pending_runnable_idles.get() + 1);
+                    let pending_runnable_idles = pending_runnable_idles.clone();
+                    handle.insert_idle(move |_| {
+                        pending_runnable_idles.set(pending_runnable_idles.get() - 1);
+                        let location = runnable.metadata().location;
+                        let spawned = runnable.metadata().spawned;
+                        profiler::update_running_task(spawned, location);
+                        runnable.run();
+                        profiler::save_task_timing();
+                    });
                 }
-            })
-            .unwrap();
+            }
+        });
+        let main_registration = handle.register_dispatcher(main_dispatcher.clone()).unwrap();
 
-        handle
-            .insert_source(
-                power_receiver,
-                |event, _, client: &mut WaylandClientStatePtr| {
-                    if let calloop::channel::Event::Msg(event) = event {
-                        client
-                            .get_client()
-                            .borrow_mut()
-                            .common
-                            .handle_system_power_event(event);
-                    }
-                },
-            )
+        let power_dispatcher = Dispatcher::new(
+            power_receiver,
+            |event, _, client: &mut WaylandClientStatePtr| {
+                if let calloop::channel::Event::Msg(event) = event {
+                    client
+                        .get_client()
+                        .borrow_mut()
+                        .common
+                        .borrow_mut()
+                        .handle_system_power_event(event);
+                }
+            },
+        );
+        let power_registration = handle
+            .register_dispatcher(power_dispatcher.clone())
             .unwrap();
 
         let compositor_gpu = detect_compositor_gpu();
@@ -923,7 +958,7 @@ impl WaylandClient {
         let seat = seat.unwrap();
         let globals = Globals::new(
             globals,
-            common.foreground_executor.clone(),
+            common.borrow().foreground_executor.clone(),
             qh.clone(),
             seat.clone(),
             frame_ping,
@@ -942,13 +977,13 @@ impl WaylandClient {
         let cursor = Cursor::new(&conn, &globals, 24);
 
         handle
-            .insert_source(XDPEventSource::new(&common.background_executor), {
+            .insert_source(XDPEventSource::new(&common.borrow().background_executor), {
                 move |event, _, client| match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
 
-                            client.common.appearance = appearance;
+                            client.common.borrow_mut().appearance = appearance;
 
                             for window in client.windows.values_mut() {
                                 window.set_appearance(appearance);
@@ -961,7 +996,7 @@ impl WaylandClient {
                                 .log_err()
                                 .unwrap_or_else(WindowButtonLayout::linux_default);
                             let mut client = client.borrow_mut();
-                            client.common.button_layout = layout;
+                            client.common.borrow_mut().button_layout = layout;
 
                             for window in client.windows.values_mut() {
                                 window.set_button_layout();
@@ -1058,6 +1093,11 @@ impl WaylandClient {
             pending_activation: None,
             startup_activation_token,
             event_loop: Some(event_loop),
+            main_dispatcher: Some(main_dispatcher),
+            pending_runnable_idles,
+            main_registration,
+            power_dispatcher: Some(power_dispatcher),
+            power_registration,
             ime_enabled: None,
         }));
 
@@ -1066,6 +1106,67 @@ impl WaylandClient {
             .unwrap();
 
         Self(state)
+    }
+
+    pub(crate) fn run_and_recover_services(
+        &self,
+    ) -> (
+        PriorityQueueCalloopReceiver<RunnableVariant>,
+        Channel<SystemPowerEvent>,
+    ) {
+        let mut event_loop = self
+            .0
+            .borrow_mut()
+            .event_loop
+            .take()
+            .expect("App is already running");
+        let mut client = WaylandClientStatePtr(Rc::downgrade(&self.0));
+
+        event_loop.run(None, &mut client, |_| {}).log_err();
+        let pending_runnable_idles = self.0.borrow().pending_runnable_idles.clone();
+        drain_pending_runnable_idles(&mut event_loop, &mut client, &pending_runnable_idles);
+
+        let (main_registration, power_registration, main_dispatcher, power_dispatcher) = {
+            let mut state = self.0.borrow_mut();
+            (
+                state.main_registration,
+                state.power_registration,
+                state
+                    .main_dispatcher
+                    .take()
+                    .expect("main source is registered"),
+                state
+                    .power_dispatcher
+                    .take()
+                    .expect("power source is registered"),
+            )
+        };
+        let handle = event_loop.handle();
+        handle.remove(main_registration);
+        handle.remove(power_registration);
+        drop(event_loop);
+
+        (
+            main_dispatcher.into_source_inner(),
+            power_dispatcher.into_source_inner(),
+        )
+    }
+
+    pub(crate) fn has_windows(&self) -> bool {
+        !self.0.borrow().windows.is_empty()
+    }
+}
+
+fn drain_pending_runnable_idles<Data>(
+    event_loop: &mut EventLoop<'_, Data>,
+    data: &mut Data,
+    pending_runnable_idles: &Cell<usize>,
+) {
+    loop {
+        event_loop.dispatch(Some(Duration::ZERO), data).log_err();
+        if pending_runnable_idles.get() == 0 {
+            break;
+        }
     }
 }
 
@@ -1168,7 +1269,7 @@ impl LinuxClient for WaylandClient {
                 .map(|(_, output)| output.clone())
         });
 
-        let appearance = state.common.appearance;
+        let appearance = state.common.borrow().appearance;
         let compositor_gpu = state.compositor_gpu.take();
 
         let (window, surface_id) = WaylandWindow::new(
@@ -1253,7 +1354,7 @@ impl LinuxClient for WaylandClient {
             token.set_surface(&window.surface());
             token.commit();
         } else {
-            let executor = state.common.background_executor.clone();
+            let executor = state.common.borrow().background_executor.clone();
             open_uri_internal(executor, uri, None);
         }
     }
@@ -1271,30 +1372,17 @@ impl LinuxClient for WaylandClient {
             token.set_surface(&window.surface());
             token.commit();
         } else {
-            let executor = state.common.background_executor.clone();
+            let executor = state.common.borrow().background_executor.clone();
             reveal_path_internal(executor, path, None);
         }
     }
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
-        f(&mut self.0.borrow_mut().common)
+        f(&mut self.0.borrow().common.borrow_mut())
     }
 
     fn run(&self) {
-        let mut event_loop = self
-            .0
-            .borrow_mut()
-            .event_loop
-            .take()
-            .expect("App is already running");
-
-        event_loop
-            .run(
-                None,
-                &mut WaylandClientStatePtr(Rc::downgrade(&self.0)),
-                |_| {},
-            )
-            .log_err();
+        self.run_and_recover_services();
     }
 
     fn write_to_primary(&self, item: gpui::ClipboardItem) {
@@ -1745,7 +1833,7 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
         let mut state = client.borrow_mut();
 
         if let xdg_activation_token_v1::Event::Done { token } = event {
-            let executor = state.common.background_executor.clone();
+            let executor = state.common.borrow().background_executor.clone();
             match state.pending_activation.take() {
                 Some(PendingActivation::Uri(uri)) => open_uri_internal(executor, &uri, Some(token)),
                 Some(PendingActivation::Path(path)) => {
@@ -2699,7 +2787,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let fd = pipe.read;
                     drop(pipe.write);
 
-                    let read_task = state.common.background_executor.spawn(async {
+                    let read_task = state.common.borrow().background_executor.spawn(async {
                         let buffer = read_fd_with_timeout(fd, PIPE_READ_TIMEOUT)?;
                         let text = String::from_utf8(buffer)?;
                         anyhow::Ok(text)
@@ -2708,7 +2796,9 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let this = this.clone();
                     state
                         .common
+                        .borrow()
                         .foreground_executor
+                        .clone()
                         .spawn(async move {
                             let file_list = match read_task.await {
                                 Ok(list) => list,
@@ -2979,6 +3069,39 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    #[test]
+    fn drains_runnable_idles_exceeding_calloop_idle_budget_before_migrating_sources() {
+        const RUNNABLE_COUNT: usize = 12;
+
+        let mut event_loop = EventLoop::<usize>::try_new().expect("event loop");
+        let handle = event_loop.handle();
+        let idle_handle = handle.clone();
+        let pending_runnable_idles = Rc::new(Cell::new(0));
+        let callback_pending_runnable_idles = pending_runnable_idles.clone();
+        let (sender, receiver) = calloop::channel::channel();
+        handle
+            .insert_source(receiver, move |event, _, _| {
+                if let calloop::channel::Event::Msg(()) = event {
+                    callback_pending_runnable_idles.set(callback_pending_runnable_idles.get() + 1);
+                    let pending_runnable_idles = callback_pending_runnable_idles.clone();
+                    idle_handle.insert_idle(move |ran| {
+                        pending_runnable_idles.set(pending_runnable_idles.get() - 1);
+                        std::thread::sleep(Duration::from_millis(2));
+                        *ran += 1;
+                    });
+                }
+            })
+            .expect("source registration");
+        for _ in 0..RUNNABLE_COUNT {
+            sender.send(()).expect("queue runnable");
+        }
+
+        let mut ran = 0;
+        drain_pending_runnable_idles(&mut event_loop, &mut ran, &pending_runnable_idles);
+
+        assert_eq!(ran, RUNNABLE_COUNT);
+    }
 
     #[derive(Clone)]
     struct FakeDataOffer {

@@ -190,6 +190,12 @@ pub trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
+    /// Switches a capable platform between graphical and headless services.
+    fn set_headless(&self, _headless: bool) -> Task<anyhow::Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "this platform cannot switch between headless and windowed modes"
+        )))
+    }
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>);
     fn activate(&self, ignoring_other_apps: bool);
     fn hide(&self);

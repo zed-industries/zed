@@ -2,6 +2,8 @@ mod dispatcher;
 mod headless;
 mod keyboard;
 mod platform;
+#[cfg(feature = "wayland")]
+mod switchable;
 mod system_notifications;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod text_system;
@@ -17,6 +19,8 @@ pub use dispatcher::*;
 pub(crate) use headless::*;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
+#[cfg(feature = "wayland")]
+pub(crate) use switchable::*;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) use text_system::*;
 #[cfg(feature = "wayland")]
@@ -57,4 +61,12 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
             r#"At least one of the "wayland" or "x11" features must be enabled on gpui_linux or gpui_platform."#
         ),
     }
+}
+
+/// Returns a platform that starts headless and can attach to Wayland later.
+#[cfg(feature = "wayland")]
+pub fn switchable_wayland_platform() -> Rc<dyn gpui::Platform> {
+    Rc::new(LinuxPlatform {
+        inner: SwitchableClient::new(),
+    })
 }

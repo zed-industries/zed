@@ -102,6 +102,14 @@ pub(crate) trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
+    fn quit(&self) {
+        self.with_common(|common| common.signal.stop());
+    }
+    fn set_headless(&self, _headless: bool) -> Task<anyhow::Result<()>> {
+        Task::ready(Err(anyhow!(
+            "this Linux client cannot switch display backends"
+        )))
+    }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     fn window_identifier(
@@ -333,7 +341,11 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     }
 
     fn quit(&self) {
-        self.inner.with_common(|common| common.signal.stop());
+        self.inner.quit();
+    }
+
+    fn set_headless(&self, headless: bool) -> Task<anyhow::Result<()>> {
+        self.inner.set_headless(headless)
     }
 
     fn compositor_name(&self) -> &'static str {

@@ -1112,6 +1112,11 @@ impl App {
         self.platform.quit();
     }
 
+    /// Switches a capable platform between graphical and headless services.
+    pub fn set_headless(&self, headless: bool) -> Task<anyhow::Result<()>> {
+        self.platform.set_headless(headless)
+    }
+
     /// Returns the current policy for hiding the cursor in response to
     /// keyboard input.
     pub fn cursor_hide_mode(&self) -> CursorHideMode {
