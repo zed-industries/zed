@@ -423,7 +423,9 @@ impl Editor {
                     .iter()
                     .all(|(range, _)| range.start.row == range.end.row)
             {
-                None
+                this.autoindent_mode
+                    .clone()
+                    .map(|_| AutoindentMode::ExplicitOutdents)
             } else {
                 this.autoindent_mode.clone()
             };

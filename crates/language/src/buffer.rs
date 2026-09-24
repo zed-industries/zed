@@ -475,6 +475,8 @@ pub trait LocalFile: File {
 pub enum AutoindentMode {
     /// Indent each line of inserted text.
     EachLine,
+    /// Only apply explicit syntax or language-rule outdents to edited lines.
+    ExplicitOutdents,
     /// Apply the same indentation adjustment to all of the lines
     /// in a given insertion.
     Block {
@@ -496,6 +498,7 @@ struct AutoindentRequest {
     before_edit: BufferSnapshot,
     entries: Vec<AutoindentRequestEntry>,
     is_block_mode: bool,
+    only_explicit_outdents: bool,
     ignore_empty_lines: bool,
 }
 
@@ -516,6 +519,7 @@ struct IndentSuggestion {
     basis_row: u32,
     delta: Ordering,
     within_error: bool,
+    explicit_outdent: bool,
 }
 
 struct BufferChunkHighlights<'a> {
@@ -2226,7 +2230,8 @@ impl Buffer {
                                     suggested_indent != *old_indentation
                                         && (!suggestion.within_error || *was_within_error)
                                 },
-                            ) {
+                            ) && (!request.only_explicit_outdents || suggestion.explicit_outdent)
+                            {
                                 indent_sizes.insert(
                                     new_row,
                                     (suggested_indent, request.ignore_empty_lines),
@@ -3061,6 +3066,7 @@ impl Buffer {
                     before_edit,
                     entries,
                     is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
+                    only_explicit_outdents: matches!(mode, AutoindentMode::ExplicitOutdents),
                     ignore_empty_lines: false,
                 }));
             }
@@ -3121,6 +3127,7 @@ impl Buffer {
             before_edit,
             entries,
             is_block_mode: false,
+            only_explicit_outdents: false,
             ignore_empty_lines: true,
         }));
         self.request_autoindent(cx, Some(Duration::from_micros(300)));
@@ -4053,24 +4060,28 @@ impl BufferSnapshot {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: true,
                 })
             } else if indent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Greater,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: false,
                 })
             } else if outdent_to_row < prev_row {
                 Some(IndentSuggestion {
                     basis_row: outdent_to_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: true,
                 })
             } else if outdent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Less,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: true,
                 })
             } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
             {
@@ -4078,6 +4089,7 @@ impl BufferSnapshot {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: false,
                 })
             } else {
                 None

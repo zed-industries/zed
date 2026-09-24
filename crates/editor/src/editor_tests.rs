@@ -6864,7 +6864,7 @@ async fn test_multicursor_input_preserves_yaml_indentation(cx: &mut TestAppConte
     let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
 
-    cx.set_state(indoc! {r#"
+    let initial_state = indoc! {r#"
         ˇcoverage:
           ˇrange: 40..60
         ˇstatus:
@@ -6875,23 +6875,21 @@ async fn test_multicursor_input_preserves_yaml_indentation(cx: &mut TestAppConte
 
         ˇ# Don't leave comments on PRs
         ˇcomment: false
-    "#});
+    "#};
 
-    cx.update_editor(|editor, window, cx| editor.handle_input("2", window, cx));
-    cx.wait_for_autoindent_applied().await;
+    for input in ["2", "#"] {
+        cx.set_state(initial_state);
+        cx.update_editor(|editor, window, cx| editor.handle_input(input, window, cx));
+        cx.wait_for_autoindent_applied().await;
+        cx.assert_editor_state(&initial_state.replace('ˇ', &format!("{input}ˇ")));
 
-    cx.assert_editor_state(indoc! {r#"
-        2ˇcoverage:
-          2ˇrange: 40..60
-        2ˇstatus:
-          2ˇpatch: off
-          2ˇproject:
-            2ˇdefault:
-              2ˇinformational: true
-
-        2ˇ# Don't leave comments on PRs
-        2ˇcomment: false
-    "#});
+        // Recreate the cursors and delete the inserted characters, as in #21334.
+        cx.update_editor(|editor, window, cx| editor.cancel(&Cancel, window, cx));
+        cx.set_selections_state(&initial_state.replace('ˇ', &format!("ˇ{input}")));
+        cx.update_editor(|editor, window, cx| editor.delete(&Delete, window, cx));
+        cx.wait_for_autoindent_applied().await;
+        cx.assert_editor_state(initial_state);
+    }
 }
 
 #[gpui::test]
@@ -40560,6 +40558,34 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
             if i == 2:
                 return
             else:ˇ
+    "});
+
+    // Completing `else:` at multiple cursors must still trigger syntax outdents.
+    cx.set_state(indoc! {"
+        def f():
+            if True:
+                pass
+                elseˇ
+                pass
+        def g():
+            if True:
+                pass
+                elseˇ
+                pass
+    "});
+    cx.update_editor(|editor, window, cx| editor.handle_input(":", window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        def f():
+            if True:
+                pass
+            else:ˇ
+                pass
+        def g():
+            if True:
+                pass
+            else:ˇ
+                pass
     "});
 
     // test `except` auto outdents when typed inside `try` block
