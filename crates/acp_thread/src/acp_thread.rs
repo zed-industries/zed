@@ -4,7 +4,7 @@ mod mention;
 mod terminal;
 pub use ::terminal::HeadlessTerminal;
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
+use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
@@ -67,7 +67,7 @@ impl std::error::Error for MaxOutputTokensError {}
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
 
 /// Extracts a tool name from the legacy ACP metadata field.
-pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+pub fn tool_name_from_meta(meta: &Option<acp_v1::Meta>) -> Option<SharedString> {
     meta.as_ref()
         .and_then(|meta| meta.get(TOOL_NAME_META_KEY))
         .and_then(|value| value.as_str())
@@ -75,8 +75,8 @@ pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
 }
 
 /// Creates ACP metadata containing the legacy tool-name field.
-pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
-    acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
+pub fn meta_with_tool_name(tool_name: &str) -> acp_v1::Meta {
+    acp_v1::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
 }
 
 /// Key used in ACP `AvailableCommand` meta to record which source produced a
@@ -111,11 +111,11 @@ impl CommandCategory {
     }
 }
 
-pub fn meta_with_command_category(category: CommandCategory) -> acp::Meta {
-    acp::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
+pub fn meta_with_command_category(category: CommandCategory) -> acp_v1::Meta {
+    acp_v1::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
 }
 
-pub fn command_category_from_meta(meta: &Option<acp::Meta>) -> Option<CommandCategory> {
+pub fn command_category_from_meta(meta: &Option<acp_v1::Meta>) -> Option<CommandCategory> {
     meta.as_ref()
         .and_then(|m| m.get(COMMAND_CATEGORY_META_KEY))
         .and_then(|v| v.as_str())
@@ -195,15 +195,15 @@ pub struct SandboxAuthorizationDetails {
     pub reason: String,
 }
 
-pub fn meta_with_sandbox_authorization(details: SandboxAuthorizationDetails) -> acp::Meta {
-    acp::Meta::from_iter([(
+pub fn meta_with_sandbox_authorization(details: SandboxAuthorizationDetails) -> acp_v1::Meta {
+    acp_v1::Meta::from_iter([(
         SANDBOX_AUTHORIZATION_META_KEY.into(),
         serde_json::to_value(details).unwrap_or_default(),
     )])
 }
 
 pub fn sandbox_authorization_details_from_meta(
-    meta: &Option<acp::Meta>,
+    meta: &Option<acp_v1::Meta>,
 ) -> Option<SandboxAuthorizationDetails> {
     meta.as_ref()
         .and_then(|m| m.get(SANDBOX_AUTHORIZATION_META_KEY))
@@ -239,15 +239,15 @@ pub struct SandboxFallbackAuthorizationDetails {
 
 pub fn meta_with_sandbox_fallback_authorization(
     details: SandboxFallbackAuthorizationDetails,
-) -> acp::Meta {
-    acp::Meta::from_iter([(
+) -> acp_v1::Meta {
+    acp_v1::Meta::from_iter([(
         SANDBOX_FALLBACK_AUTHORIZATION_META_KEY.into(),
         serde_json::to_value(details).unwrap_or_default(),
     )])
 }
 
 pub fn sandbox_fallback_authorization_details_from_meta(
-    meta: &Option<acp::Meta>,
+    meta: &Option<acp_v1::Meta>,
 ) -> Option<SandboxFallbackAuthorizationDetails> {
     meta.as_ref()
         .and_then(|m| m.get(SANDBOX_FALLBACK_AUTHORIZATION_META_KEY))
@@ -260,14 +260,16 @@ pub fn sandbox_fallback_authorization_details_from_meta(
 /// used to explain the situation to both the user and the agent.
 pub const SANDBOX_NOT_APPLIED_META_KEY: &str = "sandbox_not_applied";
 
-pub fn meta_with_sandbox_not_applied(reason: &SandboxNotAppliedReason) -> acp::Meta {
-    acp::Meta::from_iter([(
+pub fn meta_with_sandbox_not_applied(reason: &SandboxNotAppliedReason) -> acp_v1::Meta {
+    acp_v1::Meta::from_iter([(
         SANDBOX_NOT_APPLIED_META_KEY.into(),
         serde_json::to_value(reason).unwrap_or_default(),
     )])
 }
 
-pub fn sandbox_not_applied_from_meta(meta: &Option<acp::Meta>) -> Option<SandboxNotAppliedReason> {
+pub fn sandbox_not_applied_from_meta(
+    meta: &Option<acp_v1::Meta>,
+) -> Option<SandboxNotAppliedReason> {
     meta.as_ref()
         .and_then(|m| m.get(SANDBOX_NOT_APPLIED_META_KEY))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -276,7 +278,7 @@ pub fn sandbox_not_applied_from_meta(meta: &Option<acp::Meta>) -> Option<Sandbox
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SubagentSessionInfo {
     /// The session id of the subagent sessiont that was spawned
-    pub session_id: acp::SessionId,
+    pub session_id: acp_v1::SessionId,
     /// The index of the message of the start of the "turn" run by this tool call
     pub message_start_index: usize,
     /// The index of the output of the message that the subagent has returned
@@ -285,7 +287,7 @@ pub struct SubagentSessionInfo {
 }
 
 /// Helper to extract subagent session id from ACP meta
-pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<SubagentSessionInfo> {
+pub fn subagent_session_info_from_meta(meta: &Option<acp_v1::Meta>) -> Option<SubagentSessionInfo> {
     meta.as_ref()
         .and_then(|m| m.get(SUBAGENT_SESSION_INFO_META_KEY))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -293,7 +295,7 @@ pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<Subag
 
 #[derive(Debug)]
 pub struct UserMessage {
-    pub protocol_id: Option<acp::MessageId>,
+    pub protocol_id: Option<acp_v1::MessageId>,
     pub client_id: Option<ClientUserMessageId>,
     pub is_optimistic: bool,
     pub content: MessageContent,
@@ -348,11 +350,11 @@ impl AssistantMessage {
 #[derive(Debug, PartialEq)]
 pub enum AssistantMessageChunk {
     Message {
-        id: Option<acp::MessageId>,
+        id: Option<acp_v1::MessageId>,
         block: MessageContent,
     },
     Thought {
-        id: Option<acp::MessageId>,
+        id: Option<acp_v1::MessageId>,
         block: MessageContent,
     },
 }
@@ -381,8 +383,8 @@ impl AssistantMessageChunk {
 }
 
 fn can_merge_message_chunks(
-    existing: Option<&acp::MessageId>,
-    incoming: Option<&acp::MessageId>,
+    existing: Option<&acp_v1::MessageId>,
+    incoming: Option<&acp_v1::MessageId>,
 ) -> bool {
     match (existing, incoming) {
         (Some(existing), Some(incoming)) => existing == incoming,
@@ -406,14 +408,14 @@ pub struct ElicitationEntryId(pub Arc<str>);
 #[derive(Debug)]
 pub struct Elicitation {
     pub id: ElicitationEntryId,
-    pub request: acp::CreateElicitationRequest,
+    pub request: acp_v1::CreateElicitationRequest,
     pub status: ElicitationStatus,
 }
 
 #[derive(Debug)]
 pub enum ElicitationStatus {
     Pending {
-        respond_tx: oneshot::Sender<acp::CreateElicitationResponse>,
+        respond_tx: oneshot::Sender<acp_v1::CreateElicitationResponse>,
     },
     Accepted,
     Declined,
@@ -446,19 +448,19 @@ impl ElicitationStore {
         &self.elicitations
     }
 
-    fn validate_request(request: &acp::CreateElicitationRequest) -> Result<(), acp::Error> {
+    fn validate_request(request: &acp_v1::CreateElicitationRequest) -> Result<(), acp_v1::Error> {
         match &request.mode {
-            acp::ElicitationMode::Form(_) => {}
-            acp::ElicitationMode::Url(mode) => {
+            acp_v1::ElicitationMode::Form(_) => {}
+            acp_v1::ElicitationMode::Url(mode) => {
                 let url = url::Url::parse(&mode.url)
-                    .map_err(|_| acp::Error::invalid_params().data("invalid elicitation URL"))?;
+                    .map_err(|_| acp_v1::Error::invalid_params().data("invalid elicitation URL"))?;
                 if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-                    return Err(acp::Error::invalid_params()
+                    return Err(acp_v1::Error::invalid_params()
                         .data("elicitation URL must use HTTP or HTTPS and include a host"));
                 }
             }
             _ => {
-                return Err(acp::Error::invalid_params().data("unsupported elicitation mode"));
+                return Err(acp_v1::Error::invalid_params().data("unsupported elicitation mode"));
             }
         }
 
@@ -467,10 +469,10 @@ impl ElicitationStore {
 
     fn insert_pending_elicitation(
         &mut self,
-        request: acp::CreateElicitationRequest,
+        request: acp_v1::CreateElicitationRequest,
     ) -> (
         ElicitationEntryId,
-        oneshot::Receiver<acp::CreateElicitationResponse>,
+        oneshot::Receiver<acp_v1::CreateElicitationResponse>,
     ) {
         let (respond_tx, response_rx) = oneshot::channel();
         let id = ElicitationEntryId(Uuid::new_v4().to_string().into());
@@ -483,12 +485,12 @@ impl ElicitationStore {
     }
 
     fn response_task(
-        response_rx: oneshot::Receiver<acp::CreateElicitationResponse>,
+        response_rx: oneshot::Receiver<acp_v1::CreateElicitationResponse>,
         cx: &App,
-    ) -> Task<acp::CreateElicitationResponse> {
+    ) -> Task<acp_v1::CreateElicitationResponse> {
         cx.foreground_executor().spawn(async move {
             response_rx.await.unwrap_or_else(|oneshot::Canceled| {
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Cancel)
             })
         })
     }
@@ -502,7 +504,7 @@ impl ElicitationStore {
 
     fn respond_to_elicitation_entry(
         elicitation: &mut Elicitation,
-        response: acp::CreateElicitationResponse,
+        response: acp_v1::CreateElicitationResponse,
     ) -> bool {
         if !matches!(elicitation.status, ElicitationStatus::Pending { .. }) {
             return false;
@@ -537,8 +539,8 @@ impl ElicitationStore {
         match mem::replace(&mut elicitation.status, ElicitationStatus::Canceled) {
             ElicitationStatus::Pending { respond_tx } => {
                 if respond_tx
-                    .send(acp::CreateElicitationResponse::new(
-                        acp::ElicitationAction::Cancel,
+                    .send(acp_v1::CreateElicitationResponse::new(
+                        acp_v1::ElicitationAction::Cancel,
                     ))
                     .is_err()
                 {
@@ -547,7 +549,7 @@ impl ElicitationStore {
                 Some(ElicitationChange::Responded)
             }
             ElicitationStatus::Accepted
-                if matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
+                if matches!(&elicitation.request.mode, acp_v1::ElicitationMode::Url(_)) =>
             {
                 Some(ElicitationChange::Updated)
             }
@@ -561,7 +563,7 @@ impl ElicitationStore {
     fn respond_to_elicitation_by_id(
         &mut self,
         id: &ElicitationEntryId,
-        response: acp::CreateElicitationResponse,
+        response: acp_v1::CreateElicitationResponse,
     ) -> bool {
         let Some((_, elicitation)) = self.elicitation_mut(id) else {
             return false;
@@ -583,18 +585,18 @@ impl ElicitationStore {
 
     pub fn request_elicitation(
         &mut self,
-        request: acp::CreateElicitationRequest,
+        request: acp_v1::CreateElicitationRequest,
         cx: &mut Context<Self>,
-    ) -> Result<Task<acp::CreateElicitationResponse>, acp::Error> {
+    ) -> Result<Task<acp_v1::CreateElicitationResponse>, acp_v1::Error> {
         self.request_elicitation_with_id(request, cx)
             .map(|(_, task)| task)
     }
 
     pub fn request_elicitation_with_id(
         &mut self,
-        request: acp::CreateElicitationRequest,
+        request: acp_v1::CreateElicitationRequest,
         cx: &mut Context<Self>,
-    ) -> Result<(ElicitationEntryId, Task<acp::CreateElicitationResponse>), acp::Error> {
+    ) -> Result<(ElicitationEntryId, Task<acp_v1::CreateElicitationResponse>), acp_v1::Error> {
         Self::validate_request(&request)?;
         let (id, response_rx) = self.insert_pending_elicitation(request);
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
@@ -607,7 +609,7 @@ impl ElicitationStore {
     pub fn respond_to_elicitation(
         &mut self,
         id: &ElicitationEntryId,
-        response: acp::CreateElicitationResponse,
+        response: acp_v1::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
         if !self.respond_to_elicitation_by_id(id, response) {
@@ -620,7 +622,7 @@ impl ElicitationStore {
 
     pub fn complete_url_elicitation(
         &mut self,
-        elicitation_id: &acp::ElicitationId,
+        elicitation_id: &acp_v1::ElicitationId,
         cx: &mut Context<Self>,
     ) {
         let Some(entry_id) = self.entry_id_for_url_elicitation(elicitation_id) else {
@@ -665,7 +667,7 @@ impl ElicitationStore {
             let keep = matches!(
                 (&elicitation.status, &elicitation.request.mode),
                 (ElicitationStatus::Pending { .. }, _)
-                    | (ElicitationStatus::Accepted, acp::ElicitationMode::Url(_))
+                    | (ElicitationStatus::Accepted, acp_v1::ElicitationMode::Url(_))
             );
             if !keep {
                 cleared_ids.push(elicitation.id.clone());
@@ -683,11 +685,11 @@ impl ElicitationStore {
         cleared_ids
     }
 
-    pub fn cancel_request(&mut self, request_id: &acp::RequestId, cx: &mut Context<Self>) {
+    pub fn cancel_request(&mut self, request_id: &acp_v1::RequestId, cx: &mut Context<Self>) {
         let changes = self.cancel_pending(|elicitation| {
             matches!(
                 elicitation.request.scope(),
-                acp::ElicitationScope::Request(scope) if &scope.request_id == request_id
+                acp_v1::ElicitationScope::Request(scope) if &scope.request_id == request_id
             )
         });
         for (id, change) in changes {
@@ -708,10 +710,10 @@ impl ElicitationStore {
 
     fn entry_id_for_url_elicitation(
         &self,
-        elicitation_id: &acp::ElicitationId,
+        elicitation_id: &acp_v1::ElicitationId,
     ) -> Option<ElicitationEntryId> {
         self.elicitations.iter().rev().find_map(|elicitation| {
-            if let acp::ElicitationMode::Url(mode) = &elicitation.request.mode
+            if let acp_v1::ElicitationMode::Url(mode) = &elicitation.request.mode
                 && &mode.elicitation_id == elicitation_id
             {
                 Some(elicitation.id.clone())
@@ -759,14 +761,14 @@ pub enum ContextCompactionStatus {
     Other(Arc<str>),
 }
 
-impl From<acp::CompactionStatus> for ContextCompactionStatus {
-    fn from(status: acp::CompactionStatus) -> Self {
+impl From<acp_v1::CompactionStatus> for ContextCompactionStatus {
+    fn from(status: acp_v1::CompactionStatus) -> Self {
         match status {
-            acp::CompactionStatus::InProgress => Self::InProgress,
-            acp::CompactionStatus::Completed => Self::Completed,
-            acp::CompactionStatus::Failed => Self::Failed,
-            acp::CompactionStatus::Cancelled => Self::Canceled,
-            acp::CompactionStatus::Other(status) => Self::Other(status.into()),
+            acp_v1::CompactionStatus::InProgress => Self::InProgress,
+            acp_v1::CompactionStatus::Completed => Self::Completed,
+            acp_v1::CompactionStatus::Failed => Self::Failed,
+            acp_v1::CompactionStatus::Cancelled => Self::Canceled,
+            acp_v1::CompactionStatus::Other(status) => Self::Other(status.into()),
             _ => Self::Other("unknown".into()),
         }
     }
@@ -790,7 +792,7 @@ impl ContextCompaction {
 
     fn apply_update(
         &mut self,
-        update: acp::CompactionUpdate,
+        update: acp_v1::CompactionUpdate,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
@@ -820,11 +822,11 @@ impl ContextCompaction {
 
     fn append_summary(
         &mut self,
-        content: acp::ContentBlock,
+        content: acp_v1::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
-        if let acp::ContentBlock::Text(text) = &content
+        if let acp_v1::ContentBlock::Text(text) = &content
             && let Some(markdown) = self.summary.last().and_then(ContentBlock::plain_markdown)
         {
             markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
@@ -916,7 +918,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn location(&self, ix: usize) -> Option<(acp::ToolCallLocation, AgentLocation)> {
+    pub fn location(&self, ix: usize) -> Option<(acp_v1::ToolCallLocation, AgentLocation)> {
         if let AgentThreadEntry::ToolCall(ToolCall {
             locations,
             resolved_locations,
@@ -935,13 +937,13 @@ impl AgentThreadEntry {
 
 #[derive(Debug)]
 pub struct ToolCall {
-    pub id: acp::ToolCallId,
+    pub id: acp_v1::ToolCallId,
     pub label: Entity<Markdown>,
     title: Option<SharedString>,
-    pub kind: acp::ToolKind,
+    pub kind: acp_v1::ToolKind,
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
-    pub locations: Vec<acp::ToolCallLocation>,
+    pub locations: Vec<acp_v1::ToolCallLocation>,
     pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
     pub raw_input_markdown: Option<Entity<Markdown>>,
@@ -958,10 +960,10 @@ pub struct ToolCall {
 
 impl ToolCall {
     fn from_acp(
-        tool_call: acp::ToolCall,
+        tool_call: acp_v1::ToolCall,
         status: ToolCallStatus,
         language_registry: Arc<LanguageRegistry>,
-        terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
         let title =
@@ -1024,7 +1026,7 @@ impl ToolCall {
     fn label_text(
         title: Option<&SharedString>,
         tool_name: Option<&SharedString>,
-        kind: acp::ToolKind,
+        kind: acp_v1::ToolKind,
     ) -> SharedString {
         let Some(title) = title else {
             return tool_name
@@ -1033,9 +1035,9 @@ impl ToolCall {
                 .unwrap_or_else(|| "Tool call".into());
         };
 
-        if kind == acp::ToolKind::Execute {
+        if kind == acp_v1::ToolKind::Execute {
             title.clone()
-        } else if kind == acp::ToolKind::Edit {
+        } else if kind == acp_v1::ToolKind::Edit {
             MarkdownEscaped(title).to_string().into()
         } else if let Some((first_line, _)) = title.split_once('\n') {
             (first_line.to_owned() + "…").into()
@@ -1047,13 +1049,13 @@ impl ToolCall {
     fn new_label(
         title: Option<&SharedString>,
         tool_name: Option<&SharedString>,
-        kind: acp::ToolKind,
+        kind: acp_v1::ToolKind,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Entity<Markdown> {
         let text = Self::label_text(title, tool_name, kind);
         cx.new(|cx| {
-            if title.is_none() || kind == acp::ToolKind::Execute {
+            if title.is_none() || kind == acp_v1::ToolKind::Execute {
                 Markdown::new_text(text, cx)
             } else {
                 Markdown::new(text, Some(language_registry), None, cx)
@@ -1063,13 +1065,13 @@ impl ToolCall {
 
     fn update_fields(
         &mut self,
-        fields: acp::ToolCallUpdateFields,
-        meta: Option<acp::Meta>,
+        fields: acp_v1::ToolCallUpdateFields,
+        meta: Option<acp_v1::Meta>,
         language_registry: Arc<LanguageRegistry>,
-        terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
-        let acp::ToolCallUpdateFields {
+        let acp_v1::ToolCallUpdateFields {
             kind,
             status,
             title,
@@ -1081,7 +1083,7 @@ impl ToolCall {
             ..
         } = fields;
 
-        let was_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
+        let was_plain_text = self.title.is_none() || self.kind == acp_v1::ToolKind::Execute;
         let mut label_changed = title.is_some() || kind.is_some();
         if let Some(kind) = kind {
             self.kind = kind;
@@ -1120,7 +1122,7 @@ impl ToolCall {
 
         if let Some(title) = title {
             self.title = Some(SharedString::from(title)).filter(|title| !title.trim().is_empty());
-            if self.kind == acp::ToolKind::Execute
+            if self.kind == acp_v1::ToolKind::Execute
                 && let Some(title) = &self.title
             {
                 // A missing tool title must not overwrite an actual terminal command.
@@ -1132,7 +1134,7 @@ impl ToolCall {
             }
         }
         if label_changed {
-            let is_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
+            let is_plain_text = self.title.is_none() || self.kind == acp_v1::ToolKind::Execute;
             if was_plain_text != is_plain_text {
                 self.label = Self::new_label(
                     self.title.as_ref(),
@@ -1199,21 +1201,23 @@ impl ToolCall {
 
     fn update_status(&mut self, status: ToolCallStatus) {
         match status {
-            ToolCallStatus::Pending => self.update_acp_status(acp::ToolCallStatus::Pending),
-            ToolCallStatus::InProgress => self.update_acp_status(acp::ToolCallStatus::InProgress),
-            ToolCallStatus::Completed => self.update_acp_status(acp::ToolCallStatus::Completed),
-            ToolCallStatus::Failed => self.update_acp_status(acp::ToolCallStatus::Failed),
+            ToolCallStatus::Pending => self.update_acp_status(acp_v1::ToolCallStatus::Pending),
+            ToolCallStatus::InProgress => {
+                self.update_acp_status(acp_v1::ToolCallStatus::InProgress)
+            }
+            ToolCallStatus::Completed => self.update_acp_status(acp_v1::ToolCallStatus::Completed),
+            ToolCallStatus::Failed => self.update_acp_status(acp_v1::ToolCallStatus::Failed),
             status @ (ToolCallStatus::WaitingForConfirmation { .. }
             | ToolCallStatus::Rejected
             | ToolCallStatus::Canceled) => self.status = status,
         }
     }
 
-    fn update_acp_status(&mut self, status: acp::ToolCallStatus) {
+    fn update_acp_status(&mut self, status: acp_v1::ToolCallStatus) {
         if let ToolCallStatus::WaitingForConfirmation { current_status, .. } = &mut self.status
             && matches!(
                 status,
-                acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
+                acp_v1::ToolCallStatus::Pending | acp_v1::ToolCallStatus::InProgress
             )
         {
             *current_status = status;
@@ -1259,7 +1263,7 @@ impl ToolCall {
     }
 
     async fn resolve_location(
-        location: acp::ToolCallLocation,
+        location: acp_v1::ToolCallLocation,
         project: WeakEntity<Project>,
         cx: &mut AsyncApp,
     ) -> Option<ResolvedLocation> {
@@ -1334,13 +1338,16 @@ pub enum SelectedPermissionParams {
 
 #[derive(Debug, Clone)]
 pub struct SelectedPermissionOutcome {
-    pub option_id: acp::PermissionOptionId,
-    pub option_kind: acp::PermissionOptionKind,
+    pub option_id: acp_v1::PermissionOptionId,
+    pub option_kind: acp_v1::PermissionOptionKind,
     pub params: Option<SelectedPermissionParams>,
 }
 
 impl SelectedPermissionOutcome {
-    pub fn new(option_id: acp::PermissionOptionId, option_kind: acp::PermissionOptionKind) -> Self {
+    pub fn new(
+        option_id: acp_v1::PermissionOptionId,
+        option_kind: acp_v1::PermissionOptionKind,
+    ) -> Self {
         Self {
             option_id,
             option_kind,
@@ -1354,7 +1361,7 @@ impl SelectedPermissionOutcome {
     }
 }
 
-impl From<SelectedPermissionOutcome> for acp::SelectedPermissionOutcome {
+impl From<SelectedPermissionOutcome> for acp_v1::SelectedPermissionOutcome {
     fn from(value: SelectedPermissionOutcome) -> Self {
         Self::new(value.option_id)
     }
@@ -1367,7 +1374,7 @@ pub enum RequestPermissionOutcome {
     Selected(SelectedPermissionOutcome),
 }
 
-impl From<RequestPermissionOutcome> for acp::RequestPermissionOutcome {
+impl From<RequestPermissionOutcome> for acp_v1::RequestPermissionOutcome {
     fn from(value: RequestPermissionOutcome) -> Self {
         match value {
             RequestPermissionOutcome::Cancelled
@@ -1400,7 +1407,7 @@ pub enum ToolCallStatus {
     Pending,
     /// The tool call is waiting for confirmation from the user.
     WaitingForConfirmation {
-        current_status: acp::ToolCallStatus,
+        current_status: acp_v1::ToolCallStatus,
         options: PermissionOptions,
         respond_tx: oneshot::Sender<RequestPermissionOutcome>,
         kind: AuthorizationKind,
@@ -1417,31 +1424,31 @@ pub enum ToolCallStatus {
     Canceled,
 }
 
-impl From<acp::ToolCallStatus> for ToolCallStatus {
-    fn from(status: acp::ToolCallStatus) -> Self {
+impl From<acp_v1::ToolCallStatus> for ToolCallStatus {
+    fn from(status: acp_v1::ToolCallStatus) -> Self {
         match status {
-            acp::ToolCallStatus::Pending => Self::Pending,
-            acp::ToolCallStatus::InProgress => Self::InProgress,
-            acp::ToolCallStatus::Completed => Self::Completed,
-            acp::ToolCallStatus::Failed => Self::Failed,
+            acp_v1::ToolCallStatus::Pending => Self::Pending,
+            acp_v1::ToolCallStatus::InProgress => Self::InProgress,
+            acp_v1::ToolCallStatus::Completed => Self::Completed,
+            acp_v1::ToolCallStatus::Failed => Self::Failed,
             _ => Self::Pending,
         }
     }
 }
 
 impl ToolCallStatus {
-    fn as_acp_status(&self) -> Option<acp::ToolCallStatus> {
+    fn as_acp_status(&self) -> Option<acp_v1::ToolCallStatus> {
         match self {
-            ToolCallStatus::Pending => Some(acp::ToolCallStatus::Pending),
+            ToolCallStatus::Pending => Some(acp_v1::ToolCallStatus::Pending),
             ToolCallStatus::WaitingForConfirmation { current_status, .. } => Some(*current_status),
-            ToolCallStatus::InProgress => Some(acp::ToolCallStatus::InProgress),
-            ToolCallStatus::Completed => Some(acp::ToolCallStatus::Completed),
-            ToolCallStatus::Failed => Some(acp::ToolCallStatus::Failed),
+            ToolCallStatus::InProgress => Some(acp_v1::ToolCallStatus::InProgress),
+            ToolCallStatus::Completed => Some(acp_v1::ToolCallStatus::Completed),
+            ToolCallStatus::Failed => Some(acp_v1::ToolCallStatus::Failed),
             ToolCallStatus::Rejected | ToolCallStatus::Canceled => None,
         }
     }
 
-    fn status_after_permission_grant(status: acp::ToolCallStatus) -> ToolCallStatus {
+    fn status_after_permission_grant(status: acp_v1::ToolCallStatus) -> ToolCallStatus {
         match ToolCallStatus::from(status) {
             ToolCallStatus::Pending => ToolCallStatus::InProgress,
             status => status,
@@ -1467,18 +1474,20 @@ impl Display for ToolCallStatus {
     }
 }
 
-fn elicitation_status_for_response(response: &acp::CreateElicitationResponse) -> ElicitationStatus {
+fn elicitation_status_for_response(
+    response: &acp_v1::CreateElicitationResponse,
+) -> ElicitationStatus {
     match &response.action {
-        acp::ElicitationAction::Accept(_) => ElicitationStatus::Accepted,
-        acp::ElicitationAction::Decline => ElicitationStatus::Declined,
-        acp::ElicitationAction::Cancel => ElicitationStatus::Canceled,
+        acp_v1::ElicitationAction::Accept(_) => ElicitationStatus::Accepted,
+        acp_v1::ElicitationAction::Decline => ElicitationStatus::Declined,
+        acp_v1::ElicitationAction::Cancel => ElicitationStatus::Canceled,
         _ => ElicitationStatus::Canceled,
     }
 }
 
 #[derive(Debug, Default, PartialEq)]
 pub struct MessageContent {
-    source_blocks: Vec<acp::ContentBlock>,
+    source_blocks: Vec<acp_v1::ContentBlock>,
     blocks: Vec<RenderedMessageBlock>,
 }
 
@@ -1490,7 +1499,7 @@ struct RenderedMessageBlock {
 
 impl MessageContent {
     pub fn new(
-        block: acp::ContentBlock,
+        block: acp_v1::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         path_style: PathStyle,
         cx: &mut App,
@@ -1501,7 +1510,7 @@ impl MessageContent {
     }
 
     /// Original content blocks, including text not yet revealed by streaming.
-    pub fn source_blocks(&self) -> &[acp::ContentBlock] {
+    pub fn source_blocks(&self) -> &[acp_v1::ContentBlock] {
         &self.source_blocks
     }
 
@@ -1542,7 +1551,7 @@ impl MessageContent {
 
     pub fn append(
         &mut self,
-        block: acp::ContentBlock,
+        block: acp_v1::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         path_style: PathStyle,
         cx: &mut App,
@@ -1553,14 +1562,14 @@ impl MessageContent {
 
     fn append_rendered(
         &mut self,
-        block: &acp::ContentBlock,
+        block: &acp_v1::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         path_style: PathStyle,
         cx: &mut App,
     ) {
         match block {
-            acp::ContentBlock::Text(text) => self.append_text(&text.text, language_registry, cx),
-            acp::ContentBlock::ResourceLink(resource) => {
+            acp_v1::ContentBlock::Text(text) => self.append_text(&text.text, language_registry, cx),
+            acp_v1::ContentBlock::ResourceLink(resource) => {
                 let mut text = ContentBlock::resource_link_md(&resource.uri, path_style);
                 if self.blocks.is_empty() {
                     // Legacy leading links separated the next chunk. Include that separator
@@ -1599,15 +1608,15 @@ impl MessageContent {
         }
     }
 
-    fn append_deferred_text(&mut self, text: acp::TextContent) -> usize {
+    fn append_deferred_text(&mut self, text: acp_v1::TextContent) -> usize {
         let index = self.source_blocks.len();
-        self.source_blocks.push(acp::ContentBlock::Text(text));
+        self.source_blocks.push(acp_v1::ContentBlock::Text(text));
         index
     }
 
     fn append_prompt(
         &mut self,
-        block: acp::ContentBlock,
+        block: acp_v1::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         path_style: PathStyle,
         cx: &mut App,
@@ -1615,10 +1624,10 @@ impl MessageContent {
         // Prompt text resources are mentions, not output previews. Keep their text
         // inline while retaining the original payloads in the source blocks.
         match &block {
-            acp::ContentBlock::Resource(resource)
+            acp_v1::ContentBlock::Resource(resource)
                 if matches!(
                     resource.resource,
-                    acp::EmbeddedResourceResource::TextResourceContents(_)
+                    acp_v1::EmbeddedResourceResource::TextResourceContents(_)
                 ) =>
             {
                 let text = ContentBlock::embedded_resource_string_contents(resource, path_style);
@@ -1633,7 +1642,7 @@ impl MessageContent {
 #[derive(Debug, PartialEq, Clone)]
 pub struct ContentBlock {
     render: RenderBlock,
-    source: Option<acp::ContentBlock>,
+    source: Option<acp_v1::ContentBlock>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -1657,7 +1666,7 @@ enum RenderBlock {
 #[derive(Clone, Copy)]
 pub struct ContentBlockView<'a> {
     render: &'a RenderBlock,
-    source: Option<&'a acp::ContentBlock>,
+    source: Option<&'a acp_v1::ContentBlock>,
 }
 
 impl ContentBlock {
@@ -1676,17 +1685,17 @@ impl ContentBlock {
     }
 
     #[cfg(test)]
-    fn unsupported_content(&self) -> Option<&acp::ContentBlock> {
+    fn unsupported_content(&self) -> Option<&acp_v1::ContentBlock> {
         self.as_view().unsupported_content()
     }
 
     pub fn new_output(
-        block: acp::ContentBlock,
+        block: acp_v1::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
         match block {
-            acp::ContentBlock::Text(text) => {
+            acp_v1::ContentBlock::Text(text) => {
                 Self::create_markdown_block(text.text, language_registry, cx)
             }
             block => {
@@ -1703,19 +1712,19 @@ impl ContentBlock {
     }
 
     fn render_from_source(
-        block: &acp::ContentBlock,
+        block: &acp_v1::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> RenderBlock {
         match block {
-            acp::ContentBlock::Resource(resource) => {
+            acp_v1::ContentBlock::Resource(resource) => {
                 if let Some((image, dimensions)) = Self::decode_embedded_resource_image(resource) {
                     return RenderBlock::Image { image, dimensions };
                 }
                 if matches!(
                     &resource.resource,
-                    acp::EmbeddedResourceResource::TextResourceContents(_)
-                        | acp::EmbeddedResourceResource::BlobResourceContents(_)
+                    acp_v1::EmbeddedResourceResource::TextResourceContents(_)
+                        | acp_v1::EmbeddedResourceResource::BlobResourceContents(_)
                 ) {
                     let markdown =
                         Self::embedded_resource_markdown(resource, language_registry, cx);
@@ -1724,7 +1733,7 @@ impl ContentBlock {
                     Self::unsupported(block, language_registry, cx)
                 }
             }
-            acp::ContentBlock::Image(image) => {
+            acp_v1::ContentBlock::Image(image) => {
                 if let Some((image, dimensions)) = Self::decode_image(image) {
                     RenderBlock::Image { image, dimensions }
                 } else {
@@ -1737,8 +1746,8 @@ impl ContentBlock {
                     }
                 }
             }
-            acp::ContentBlock::ResourceLink(_) => RenderBlock::ResourceLink,
-            acp::ContentBlock::Text(text) => RenderBlock::Markdown {
+            acp_v1::ContentBlock::ResourceLink(_) => RenderBlock::ResourceLink,
+            acp_v1::ContentBlock::Text(text) => RenderBlock::Markdown {
                 markdown: Self::create_markdown(text.text.clone(), language_registry, cx),
             },
             _ => Self::unsupported(block, language_registry, cx),
@@ -1746,11 +1755,11 @@ impl ContentBlock {
     }
 
     fn unsupported(
-        content: &acp::ContentBlock,
+        content: &acp_v1::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> RenderBlock {
-        let description = if matches!(content, acp::ContentBlock::Audio(_)) {
+        let description = if matches!(content, acp_v1::ContentBlock::Audio(_)) {
             "Audio content is not supported."
         } else {
             "This content is not supported."
@@ -1768,11 +1777,11 @@ impl ContentBlock {
     ///
     /// Recreating the entity on every streamed snapshot causes the rendered
     /// element to tear down and rebuild, which flickers badly.
-    pub fn update_text_in_place(&mut self, block: &acp::ContentBlock, cx: &mut App) -> bool {
+    pub fn update_text_in_place(&mut self, block: &acp_v1::ContentBlock, cx: &mut App) -> bool {
         let RenderBlock::Markdown { markdown } = &self.render else {
             return false;
         };
-        let acp::ContentBlock::Text(text_content) = block else {
+        let acp_v1::ContentBlock::Text(text_content) = block else {
             return false;
         };
         let new_content = &text_content.text;
@@ -1788,15 +1797,16 @@ impl ContentBlock {
     }
 
     fn decode_image(
-        image_content: &acp::ImageContent,
+        image_content: &acp_v1::ImageContent,
     ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         Self::decode_image_data(&image_content.data, &image_content.mime_type)
     }
 
     fn decode_embedded_resource_image(
-        resource: &acp::EmbeddedResource,
+        resource: &acp_v1::EmbeddedResource,
     ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
-        let acp::EmbeddedResourceResource::BlobResourceContents(blob) = &resource.resource else {
+        let acp_v1::EmbeddedResourceResource::BlobResourceContents(blob) = &resource.resource
+        else {
             return None;
         };
         let mime_type = blob.mime_type.as_deref()?;
@@ -1870,20 +1880,20 @@ impl ContentBlock {
     }
 
     fn embedded_resource_markdown(
-        resource: &acp::EmbeddedResource,
+        resource: &acp_v1::EmbeddedResource,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Option<Entity<Markdown>> {
         match &resource.resource {
-            acp::EmbeddedResourceResource::TextResourceContents(text) => Some(
+            acp_v1::EmbeddedResourceResource::TextResourceContents(text) => Some(
                 Self::create_markdown(Self::text_resource_markdown(text), language_registry, cx),
             ),
-            acp::EmbeddedResourceResource::BlobResourceContents(_) => None,
+            acp_v1::EmbeddedResourceResource::BlobResourceContents(_) => None,
             _ => None,
         }
     }
 
-    fn text_resource_markdown(resource: &acp::TextResourceContents) -> String {
+    fn text_resource_markdown(resource: &acp_v1::TextResourceContents) -> String {
         match text_resource_render_mode(resource.mime_type.as_deref()) {
             TextResourceRenderMode::Markdown => resource.text.clone(),
             TextResourceRenderMode::CodeBlock(language) => {
@@ -1930,7 +1940,7 @@ impl ContentBlock {
 
 impl<'a> ContentBlockView<'a> {
     #[cfg(test)]
-    fn unsupported_content(&self) -> Option<&'a acp::ContentBlock> {
+    fn unsupported_content(&self) -> Option<&'a acp_v1::ContentBlock> {
         match self.render {
             RenderBlock::Unsupported { .. } => self.source,
             _ => None,
@@ -1945,7 +1955,7 @@ impl<'a> ContentBlockView<'a> {
             RenderBlock::EmbeddedResource { .. } => {
                 self.embedded_resource()
                     .and_then(|(resource, _)| match &resource.resource {
-                        acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                        acp_v1::EmbeddedResourceResource::TextResourceContents(text) => {
                             Some(text.text.as_str())
                         }
                         _ => None,
@@ -1983,32 +1993,32 @@ impl ContentBlock {
     }
 
     fn embedded_resource_string_contents(
-        resource: &acp::EmbeddedResource,
+        resource: &acp_v1::EmbeddedResource,
         path_style: PathStyle,
     ) -> String {
         match &resource.resource {
-            acp::EmbeddedResourceResource::TextResourceContents(text) => {
+            acp_v1::EmbeddedResourceResource::TextResourceContents(text) => {
                 Self::resource_link_md(&text.uri, path_style)
             }
-            acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+            acp_v1::EmbeddedResourceResource::BlobResourceContents(blob) => {
                 Self::resource_link_md(&blob.uri, path_style)
             }
             _ => String::new(),
         }
     }
 
-    fn embedded_resource_text(resource: &acp::EmbeddedResource) -> &str {
+    fn embedded_resource_text(resource: &acp_v1::EmbeddedResource) -> &str {
         match &resource.resource {
-            acp::EmbeddedResourceResource::TextResourceContents(text) => &text.text,
-            acp::EmbeddedResourceResource::BlobResourceContents(blob) => &blob.uri,
+            acp_v1::EmbeddedResourceResource::TextResourceContents(text) => &text.text,
+            acp_v1::EmbeddedResourceResource::BlobResourceContents(blob) => &blob.uri,
             _ => "",
         }
     }
 
-    fn embedded_resource_label(resource: &acp::EmbeddedResource) -> &str {
+    fn embedded_resource_label(resource: &acp_v1::EmbeddedResource) -> &str {
         match &resource.resource {
-            acp::EmbeddedResourceResource::TextResourceContents(text) => &text.uri,
-            acp::EmbeddedResourceResource::BlobResourceContents(blob) => &blob.uri,
+            acp_v1::EmbeddedResourceResource::TextResourceContents(text) => &text.uri,
+            acp_v1::EmbeddedResourceResource::BlobResourceContents(blob) => &blob.uri,
             _ => "",
         }
     }
@@ -2017,10 +2027,12 @@ impl ContentBlock {
 impl<'a> ContentBlockView<'a> {
     pub fn embedded_resource(
         &self,
-    ) -> Option<(&'a acp::EmbeddedResource, Option<&'a Entity<Markdown>>)> {
+    ) -> Option<(&'a acp_v1::EmbeddedResource, Option<&'a Entity<Markdown>>)> {
         match &self.render {
             RenderBlock::EmbeddedResource { markdown } => match self.source {
-                Some(acp::ContentBlock::Resource(resource)) => Some((resource, markdown.as_ref())),
+                Some(acp_v1::ContentBlock::Resource(resource)) => {
+                    Some((resource, markdown.as_ref()))
+                }
                 _ => None,
             },
             _ => None,
@@ -2059,7 +2071,7 @@ impl<'a> ContentBlockView<'a> {
                 }
             }
             RenderBlock::ResourceLink => match self.source {
-                Some(acp::ContentBlock::ResourceLink(resource_link)) => &resource_link.uri,
+                Some(acp_v1::ContentBlock::ResourceLink(resource_link)) => &resource_link.uri,
                 _ => "",
             },
             RenderBlock::Image { .. } => "`Image`",
@@ -2076,10 +2088,10 @@ impl<'a> ContentBlockView<'a> {
         }
     }
 
-    pub fn resource_link(&self) -> Option<&'a acp::ResourceLink> {
+    pub fn resource_link(&self) -> Option<&'a acp_v1::ResourceLink> {
         match &self.render {
             RenderBlock::ResourceLink => match self.source {
-                Some(acp::ContentBlock::ResourceLink(resource_link)) => Some(resource_link),
+                Some(acp_v1::ContentBlock::ResourceLink(resource_link)) => Some(resource_link),
                 _ => None,
             },
             _ => None,
@@ -2158,16 +2170,16 @@ pub enum ToolCallContent {
 
 impl ToolCallContent {
     pub fn from_acp(
-        content: acp::ToolCallContent,
+        content: acp_v1::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
-        terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Option<Self>> {
         match content {
-            acp::ToolCallContent::Content(acp::Content { content, .. }) => Ok(Some(
+            acp_v1::ToolCallContent::Content(acp_v1::Content { content, .. }) => Ok(Some(
                 Self::ContentBlock(ContentBlock::new_output(content, &language_registry, cx)),
             )),
-            acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
+            acp_v1::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
                     diff.path.to_string_lossy().into_owned(),
                     diff.old_text,
@@ -2176,7 +2188,7 @@ impl ToolCallContent {
                     cx,
                 )
             })))),
-            acp::ToolCallContent::Terminal(acp::Terminal { terminal_id, .. }) => terminals
+            acp_v1::ToolCallContent::Terminal(acp_v1::Terminal { terminal_id, .. }) => terminals
                 .get(&terminal_id)
                 .cloned()
                 .map(|terminal| Some(Self::Terminal(terminal)))
@@ -2187,16 +2199,16 @@ impl ToolCallContent {
 
     pub fn update_from_acp(
         &mut self,
-        new: acp::ToolCallContent,
+        new: acp_v1::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
-        terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<bool> {
         // Update streaming text in place so the rendered markdown element is
         // reused across snapshots instead of being recreated (which flickers).
         if let (
             Self::ContentBlock(block),
-            acp::ToolCallContent::Content(acp::Content { content, .. }),
+            acp_v1::ToolCallContent::Content(acp_v1::Content { content, .. }),
         ) = (&mut *self, &new)
             && block.update_text_in_place(content, cx)
         {
@@ -2204,7 +2216,7 @@ impl ToolCallContent {
         }
 
         let needs_update = match (&self, &new) {
-            (Self::Diff(old_diff), acp::ToolCallContent::Diff(new_diff)) => {
+            (Self::Diff(old_diff), acp_v1::ToolCallContent::Diff(new_diff)) => {
                 old_diff.read(cx).needs_update(
                     new_diff.old_text.as_deref().unwrap_or(""),
                     &new_diff.new_text,
@@ -2242,13 +2254,13 @@ impl ToolCallContent {
 
 #[derive(Debug, PartialEq)]
 pub enum ToolCallUpdate {
-    UpdateFields(acp::ToolCallUpdate),
+    UpdateFields(acp_v1::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
 }
 
 impl ToolCallUpdate {
-    fn id(&self) -> &acp::ToolCallId {
+    fn id(&self) -> &acp_v1::ToolCallId {
         match self {
             Self::UpdateFields(update) => &update.tool_call_id,
             Self::UpdateDiff(diff) => &diff.id,
@@ -2257,8 +2269,8 @@ impl ToolCallUpdate {
     }
 }
 
-impl From<acp::ToolCallUpdate> for ToolCallUpdate {
-    fn from(update: acp::ToolCallUpdate) -> Self {
+impl From<acp_v1::ToolCallUpdate> for ToolCallUpdate {
+    fn from(update: acp_v1::ToolCallUpdate) -> Self {
         Self::UpdateFields(update)
     }
 }
@@ -2271,7 +2283,7 @@ impl From<ToolCallUpdateDiff> for ToolCallUpdate {
 
 #[derive(Debug, PartialEq)]
 pub struct ToolCallUpdateDiff {
-    pub id: acp::ToolCallId,
+    pub id: acp_v1::ToolCallId,
     pub diff: Entity<Diff>,
 }
 
@@ -2283,7 +2295,7 @@ impl From<ToolCallUpdateTerminal> for ToolCallUpdate {
 
 #[derive(Debug, PartialEq)]
 pub struct ToolCallUpdateTerminal {
-    pub id: acp::ToolCallId,
+    pub id: acp_v1::ToolCallId,
     pub terminal: Entity<Terminal>,
 }
 
@@ -2313,14 +2325,14 @@ impl Plan {
 
         for entry in &self.entries {
             match &entry.status {
-                acp::PlanEntryStatus::Pending => {
+                acp_v1::PlanEntryStatus::Pending => {
                     stats.pending += 1;
                 }
-                acp::PlanEntryStatus::InProgress => {
+                acp_v1::PlanEntryStatus::InProgress => {
                     stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
                     stats.pending += 1;
                 }
-                acp::PlanEntryStatus::Completed => {
+                acp_v1::PlanEntryStatus::Completed => {
                     stats.completed += 1;
                 }
                 _ => {}
@@ -2334,12 +2346,12 @@ impl Plan {
 #[derive(Debug)]
 pub struct PlanEntry {
     pub content: Entity<Markdown>,
-    pub priority: acp::PlanEntryPriority,
-    pub status: acp::PlanEntryStatus,
+    pub priority: acp_v1::PlanEntryPriority,
+    pub status: acp_v1::PlanEntryStatus,
 }
 
 impl PlanEntry {
-    pub fn from_acp(entry: acp::PlanEntry, cx: &mut App) -> Self {
+    pub fn from_acp(entry: acp_v1::PlanEntry, cx: &mut App) -> Self {
         Self {
             content: cx.new(|cx| Markdown::new(entry.content.into(), None, None, cx)),
             priority: entry.priority,
@@ -2403,16 +2415,16 @@ pub struct RetryStatus {
     pub max_attempts: usize,
     pub started_at: Instant,
     pub duration: Duration,
-    pub meta: Option<acp::Meta>,
+    pub meta: Option<acp_v1::Meta>,
 }
 
 pub const REFUSAL_FALLBACK_MODEL_META_KEY: &str = "refusal_fallback_model";
 
-pub fn meta_with_refusal_fallback(model_name: &str) -> acp::Meta {
-    acp::Meta::from_iter([(REFUSAL_FALLBACK_MODEL_META_KEY.into(), model_name.into())])
+pub fn meta_with_refusal_fallback(model_name: &str) -> acp_v1::Meta {
+    acp_v1::Meta::from_iter([(REFUSAL_FALLBACK_MODEL_META_KEY.into(), model_name.into())])
 }
 
-pub fn refusal_fallback_model_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+pub fn refusal_fallback_model_from_meta(meta: &Option<acp_v1::Meta>) -> Option<SharedString> {
     meta.as_ref()
         .and_then(|m| m.get(REFUSAL_FALLBACK_MODEL_META_KEY))
         .and_then(|v| v.as_str())
@@ -2426,14 +2438,14 @@ struct RunningTurn {
 }
 
 pub struct AcpThread {
-    session_id: acp::SessionId,
+    session_id: acp_v1::SessionId,
     work_dirs: Option<PathList>,
-    parent_session_id: Option<acp::SessionId>,
+    parent_session_id: Option<acp_v1::SessionId>,
     title: Option<SharedString>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     // Notices stay with the live session, but never enter conversation history or exports.
-    notices: Vec<(usize, acp::Notice)>,
+    notices: Vec<(usize, acp_v1::Notice)>,
     next_notice_id: usize,
     elicitations: ElicitationStore,
     plan: Plan,
@@ -2447,16 +2459,16 @@ pub struct AcpThread {
     connection: Rc<dyn AgentConnection>,
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
-    prompt_capabilities: acp::PromptCapabilities,
-    available_commands: Vec<acp::AvailableCommand>,
+    prompt_capabilities: acp_v1::PromptCapabilities,
+    available_commands: Vec<acp_v1::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
     _idle_sleep_subscriptions: Vec<Subscription>,
-    terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
-    pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
-    pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
+    terminals: HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+    pending_terminal_output: HashMap<acp_v1::TerminalId, Vec<Vec<u8>>>,
+    pending_terminal_exit: HashMap<acp_v1::TerminalId, acp_v1::TerminalExitStatus>,
     had_error: bool,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
-    draft_prompt: Option<Vec<acp::ContentBlock>>,
+    draft_prompt: Option<Vec<acp_v1::ContentBlock>>,
     /// The initial scroll position for the thread view, set during session registration.
     ui_scroll_position: Option<gpui::ListOffset>,
     /// A cursor over retained source, rather than a second text store, lets the UI
@@ -2480,11 +2492,11 @@ struct TextCursor {
 }
 
 impl TextCursor {
-    fn take(&mut self, sources: &[acp::ContentBlock], max_bytes: usize) -> Option<String> {
+    fn take(&mut self, sources: &[acp_v1::ContentBlock], max_bytes: usize) -> Option<String> {
         let max_bytes = max_bytes.min(self.pending_bytes);
         let mut revealed = String::with_capacity(max_bytes);
         while revealed.len() < max_bytes {
-            let acp::ContentBlock::Text(text) = sources.get(self.source_index)? else {
+            let acp_v1::ContentBlock::Text(text) = sources.get(self.source_index)? else {
                 return None;
             };
             let pending = text.text.get(self.byte_offset..)?;
@@ -2571,21 +2583,21 @@ pub enum AcpThreadEvent {
     TokenUsageUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
-    ToolAuthorizationRequested(acp::ToolCallId),
-    ToolAuthorizationReceived(acp::ToolCallId),
+    ToolAuthorizationRequested(acp_v1::ToolCallId),
+    ToolAuthorizationReceived(acp_v1::ToolCallId),
     ElicitationRequested(ElicitationEntryId),
     /// The request left `Pending`; this does not imply delivery to its response waiter.
     ElicitationResponded(ElicitationEntryId),
     Retry(RetryStatus),
-    SubagentSpawned(acp::SessionId),
-    Stopped(acp::StopReason),
+    SubagentSpawned(acp_v1::SessionId),
+    Stopped(acp_v1::StopReason),
     Error,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
     Refusal,
-    AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
-    ModeUpdated(acp::SessionModeId),
-    ConfigOptionsUpdated(Vec<acp::SessionConfigOption>),
+    AvailableCommandsUpdated(Vec<acp_v1::AvailableCommand>),
+    ModeUpdated(acp_v1::SessionModeId),
+    ConfigOptionsUpdated(Vec<acp_v1::SessionConfigOption>),
     WorkingDirectoriesUpdated,
 }
 
@@ -2594,39 +2606,39 @@ impl EventEmitter<AcpThreadEvent> for AcpThread {}
 #[derive(Debug, Clone)]
 pub enum TerminalProviderEvent {
     Created {
-        terminal_id: acp::TerminalId,
+        terminal_id: acp_v1::TerminalId,
         label: String,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         terminal: Entity<::terminal::Terminal>,
     },
     Output {
-        terminal_id: acp::TerminalId,
+        terminal_id: acp_v1::TerminalId,
         data: Vec<u8>,
     },
     TitleChanged {
-        terminal_id: acp::TerminalId,
+        terminal_id: acp_v1::TerminalId,
         title: String,
     },
     Exit {
-        terminal_id: acp::TerminalId,
-        status: acp::TerminalExitStatus,
+        terminal_id: acp_v1::TerminalId,
+        status: acp_v1::TerminalExitStatus,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum TerminalProviderCommand {
     WriteInput {
-        terminal_id: acp::TerminalId,
+        terminal_id: acp_v1::TerminalId,
         bytes: Vec<u8>,
     },
     Resize {
-        terminal_id: acp::TerminalId,
+        terminal_id: acp_v1::TerminalId,
         cols: u16,
         rows: u16,
     },
     Close {
-        terminal_id: acp::TerminalId,
+        terminal_id: acp_v1::TerminalId,
     },
 }
 
@@ -2675,14 +2687,14 @@ impl Error for LoadError {}
 
 impl AcpThread {
     pub fn new(
-        parent_session_id: Option<acp::SessionId>,
+        parent_session_id: Option<acp_v1::SessionId>,
         title: Option<SharedString>,
         work_dirs: Option<PathList>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
-        session_id: acp::SessionId,
-        mut prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
+        session_id: acp_v1::SessionId,
+        mut prompt_capabilities_rx: watch::Receiver<acp_v1::PromptCapabilities>,
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = prompt_capabilities_rx.borrow().clone();
@@ -2779,15 +2791,15 @@ impl AcpThread {
         }
     }
 
-    pub fn parent_session_id(&self) -> Option<&acp::SessionId> {
+    pub fn parent_session_id(&self) -> Option<&acp_v1::SessionId> {
         self.parent_session_id.as_ref()
     }
 
-    pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
+    pub fn prompt_capabilities(&self) -> acp_v1::PromptCapabilities {
         self.prompt_capabilities.clone()
     }
 
-    pub fn available_commands(&self) -> &[acp::AvailableCommand] {
+    pub fn available_commands(&self) -> &[acp_v1::AvailableCommand] {
         &self.available_commands
     }
 
@@ -2795,13 +2807,13 @@ impl AcpThread {
         self.entries().is_empty()
     }
 
-    pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
+    pub fn draft_prompt(&self) -> Option<&[acp_v1::ContentBlock]> {
         self.draft_prompt.as_deref()
     }
 
     pub fn set_draft_prompt(
         &mut self,
-        prompt: Option<Vec<acp::ContentBlock>>,
+        prompt: Option<Vec<acp_v1::ContentBlock>>,
         cx: &mut Context<Self>,
     ) {
         cx.emit(AcpThreadEvent::PromptUpdated);
@@ -2842,7 +2854,7 @@ impl AcpThread {
         &self.entries
     }
 
-    pub fn notices(&self) -> &[(usize, acp::Notice)] {
+    pub fn notices(&self) -> &[(usize, acp_v1::Notice)] {
         &self.notices
     }
 
@@ -2884,7 +2896,7 @@ impl AcpThread {
         }
     }
 
-    pub fn session_id(&self) -> &acp::SessionId {
+    pub fn session_id(&self) -> &acp_v1::SessionId {
         &self.session_id
     }
 
@@ -3009,11 +3021,11 @@ impl AcpThread {
 
     pub fn handle_session_update(
         &mut self,
-        update: acp::SessionUpdate,
+        update: acp_v1::SessionUpdate,
         cx: &mut Context<Self>,
-    ) -> Result<(), acp::Error> {
+    ) -> Result<(), acp_v1::Error> {
         match update {
-            acp::SessionUpdate::UserMessageChunk(acp::ContentChunk {
+            acp_v1::SessionUpdate::UserMessageChunk(acp_v1::ContentChunk {
                 content,
                 message_id,
                 ..
@@ -3044,7 +3056,7 @@ impl AcpThread {
                     self.push_user_content_block_from_agent(message_id, content, cx);
                 }
             }
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk {
                 content,
                 message_id,
                 ..
@@ -3053,7 +3065,7 @@ impl AcpThread {
                     message_id, content, false, false, cx,
                 );
             }
-            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk {
+            acp_v1::SessionUpdate::AgentThoughtChunk(acp_v1::ContentChunk {
                 content,
                 message_id,
                 ..
@@ -3062,29 +3074,29 @@ impl AcpThread {
                     message_id, content, true, false, cx,
                 );
             }
-            acp::SessionUpdate::ToolCall(tool_call) => {
+            acp_v1::SessionUpdate::ToolCall(tool_call) => {
                 self.upsert_tool_call(tool_call, cx)?;
             }
-            acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
+            acp_v1::SessionUpdate::ToolCallUpdate(tool_call_update) => {
                 self.update_tool_call(tool_call_update, cx)?;
             }
-            acp::SessionUpdate::CompactionUpdate(compaction_update) => {
+            acp_v1::SessionUpdate::CompactionUpdate(compaction_update) => {
                 self.upsert_context_compaction_update(compaction_update, cx);
             }
-            acp::SessionUpdate::CompactionSummaryChunk(summary_chunk) => {
+            acp_v1::SessionUpdate::CompactionSummaryChunk(summary_chunk) => {
                 self.append_context_compaction_summary(summary_chunk, cx);
             }
-            acp::SessionUpdate::Plan(plan) => {
+            acp_v1::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
             }
-            acp::SessionUpdate::Notice(notice) => {
+            acp_v1::SessionUpdate::Notice(notice) => {
                 let notice_id = self.next_notice_id;
                 self.next_notice_id += 1;
                 self.notices.push((notice_id, notice));
                 cx.emit(AcpThreadEvent::NoticesUpdated);
                 cx.notify();
             }
-            acp::SessionUpdate::SessionInfoUpdate(info_update) => {
+            acp_v1::SessionUpdate::SessionInfoUpdate(info_update) => {
                 if let MaybeUndefined::Value(title) = info_update.title {
                     let had_provisional = self.provisional_title.take().is_some();
                     let title: SharedString = title.into();
@@ -3096,22 +3108,22 @@ impl AcpThread {
                     }
                 }
             }
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate {
+            acp_v1::SessionUpdate::AvailableCommandsUpdate(acp_v1::AvailableCommandsUpdate {
                 available_commands,
                 ..
             }) => {
                 self.available_commands = available_commands.clone();
                 cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands));
             }
-            acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
+            acp_v1::SessionUpdate::CurrentModeUpdate(acp_v1::CurrentModeUpdate {
                 current_mode_id,
                 ..
             }) => cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id)),
-            acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate {
+            acp_v1::SessionUpdate::ConfigOptionUpdate(acp_v1::ConfigOptionUpdate {
                 config_options,
                 ..
             }) => cx.emit(AcpThreadEvent::ConfigOptionsUpdated(config_options)),
-            acp::SessionUpdate::UsageUpdate(update) => {
+            acp_v1::SessionUpdate::UsageUpdate(update) => {
                 let usage = self.token_usage.get_or_insert_with(Default::default);
                 usage.max_tokens = update.size;
                 usage.used_tokens = update.used;
@@ -3131,7 +3143,7 @@ impl AcpThread {
     pub fn push_user_content_block(
         &mut self,
         client_id: Option<ClientUserMessageId>,
-        chunk: acp::ContentBlock,
+        chunk: acp_v1::ContentBlock,
         cx: &mut Context<Self>,
     ) {
         self.push_user_content_block_with_indent(client_id, chunk, false, cx)
@@ -3140,7 +3152,7 @@ impl AcpThread {
     pub fn push_user_content_block_with_indent(
         &mut self,
         client_id: Option<ClientUserMessageId>,
-        chunk: acp::ContentBlock,
+        chunk: acp_v1::ContentBlock,
         indented: bool,
         cx: &mut Context<Self>,
     ) {
@@ -3156,8 +3168,8 @@ impl AcpThread {
 
     fn push_user_content_block_from_agent(
         &mut self,
-        id: Option<acp::MessageId>,
-        chunk: acp::ContentBlock,
+        id: Option<acp_v1::MessageId>,
+        chunk: acp_v1::ContentBlock,
         cx: &mut Context<Self>,
     ) {
         self.push_user_content_block_with_protocol_id(None, false, id, chunk, false, cx)
@@ -3167,8 +3179,8 @@ impl AcpThread {
         &mut self,
         incoming_client_id: Option<ClientUserMessageId>,
         is_optimistic: bool,
-        protocol_id: Option<acp::MessageId>,
-        chunk: acp::ContentBlock,
+        protocol_id: Option<acp_v1::MessageId>,
+        chunk: acp_v1::ContentBlock,
         indented: bool,
         cx: &mut Context<Self>,
     ) {
@@ -3222,7 +3234,7 @@ impl AcpThread {
 
     pub fn push_assistant_content_block(
         &mut self,
-        chunk: acp::ContentBlock,
+        chunk: acp_v1::ContentBlock,
         is_thought: bool,
         cx: &mut Context<Self>,
     ) {
@@ -3231,7 +3243,7 @@ impl AcpThread {
 
     pub fn push_assistant_content_block_with_indent(
         &mut self,
-        chunk: acp::ContentBlock,
+        chunk: acp_v1::ContentBlock,
         is_thought: bool,
         indented: bool,
         cx: &mut Context<Self>,
@@ -3241,8 +3253,8 @@ impl AcpThread {
 
     fn push_assistant_content_block_with_message_id(
         &mut self,
-        message_id: Option<acp::MessageId>,
-        chunk: acp::ContentBlock,
+        message_id: Option<acp_v1::MessageId>,
+        chunk: acp_v1::ContentBlock,
         is_thought: bool,
         indented: bool,
         cx: &mut Context<Self>,
@@ -3252,7 +3264,7 @@ impl AcpThread {
         // For text chunks going to an existing Markdown block, buffer for smooth
         // streaming instead of appending all at once which may feel more choppy.
         let chunk = match chunk {
-            acp::ContentBlock::Text(text) => {
+            acp_v1::ContentBlock::Text(text) => {
                 if let Some((content, target)) =
                     self.streaming_content_target(message_id.as_ref(), is_thought, indented)
                 {
@@ -3262,7 +3274,7 @@ impl AcpThread {
                     self.buffer_streaming_text(target, source_index, text_len, cx);
                     return;
                 }
-                acp::ContentBlock::Text(text)
+                acp_v1::ContentBlock::Text(text)
             }
             chunk => chunk,
         };
@@ -3342,7 +3354,7 @@ impl AcpThread {
 
     fn streaming_content_target(
         &mut self,
-        message_id: Option<&acp::MessageId>,
+        message_id: Option<&acp_v1::MessageId>,
         is_thought: bool,
         indented: bool,
     ) -> Option<(&mut MessageContent, StreamingTextTarget)> {
@@ -3510,7 +3522,7 @@ impl AcpThread {
 
     fn upsert_context_compaction_update(
         &mut self,
-        update: acp::CompactionUpdate,
+        update: acp_v1::CompactionUpdate,
         cx: &mut Context<Self>,
     ) {
         let id = ContextCompactionId(update.compaction_id.0.clone());
@@ -3545,7 +3557,7 @@ impl AcpThread {
 
     fn append_context_compaction_summary(
         &mut self,
-        chunk: acp::CompactionSummaryChunk,
+        chunk: acp_v1::CompactionSummaryChunk,
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
@@ -3590,7 +3602,7 @@ impl AcpThread {
 
         if !update.summary_delta.is_empty() {
             compaction.append_summary(
-                acp::ContentBlock::Text(acp::TextContent::new(update.summary_delta)),
+                acp_v1::ContentBlock::Text(acp_v1::TextContent::new(update.summary_delta)),
                 &language_registry,
                 cx,
             );
@@ -3631,7 +3643,7 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::TitleUpdated);
     }
 
-    pub fn subagent_spawned(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
+    pub fn subagent_spawned(&mut self, session_id: acp_v1::SessionId, cx: &mut Context<Self>) {
         cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
     }
 
@@ -3663,7 +3675,7 @@ impl AcpThread {
                     id: update.id().clone(),
                     label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
                     title: Some("Tool call not found".into()),
-                    kind: acp::ToolKind::Fetch,
+                    kind: acp_v1::ToolKind::Fetch,
                     content: vec![ToolCallContent::ContentBlock(ContentBlock::new_output(
                         "Tool call not found".into(),
                         &languages,
@@ -3721,9 +3733,9 @@ impl AcpThread {
     /// Updates a tool call if id matches an existing entry, otherwise inserts a new one.
     pub fn upsert_tool_call(
         &mut self,
-        tool_call: acp::ToolCall,
+        tool_call: acp_v1::ToolCall,
         cx: &mut Context<Self>,
-    ) -> Result<(), acp::Error> {
+    ) -> Result<(), acp_v1::Error> {
         let status = tool_call.status.into();
         self.upsert_tool_call_inner(tool_call.into(), status, cx)
     }
@@ -3731,10 +3743,10 @@ impl AcpThread {
     /// Fails if id does not match an existing entry.
     pub fn upsert_tool_call_inner(
         &mut self,
-        update: acp::ToolCallUpdate,
+        update: acp_v1::ToolCallUpdate,
         status: ToolCallStatus,
         cx: &mut Context<Self>,
-    ) -> Result<(), acp::Error> {
+    ) -> Result<(), acp_v1::Error> {
         let language_registry = self.project.read(cx).languages().clone();
         let id = update.tool_call_id.clone();
 
@@ -3769,7 +3781,7 @@ impl AcpThread {
                 cx,
             ) {
                 cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                return Err(acp::Error::from(error));
+                return Err(acp_v1::Error::from(error));
             }
             call.update_status(status);
 
@@ -3789,7 +3801,7 @@ impl AcpThread {
         Ok(())
     }
 
-    fn index_for_tool_call(&self, id: &acp::ToolCallId) -> Option<usize> {
+    fn index_for_tool_call(&self, id: &acp_v1::ToolCallId) -> Option<usize> {
         self.entries
             .iter()
             .enumerate()
@@ -3805,7 +3817,7 @@ impl AcpThread {
             })
     }
 
-    fn tool_call_mut(&mut self, id: &acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
+    fn tool_call_mut(&mut self, id: &acp_v1::ToolCallId) -> Option<(usize, &mut ToolCall)> {
         // The tool call we are looking for is typically the last one, or very close to the end.
         // At the moment, it doesn't seem like a hashmap would be a good fit for this use case.
         self.entries
@@ -3823,7 +3835,7 @@ impl AcpThread {
             })
     }
 
-    pub fn tool_call(&self, id: &acp::ToolCallId) -> Option<(usize, &ToolCall)> {
+    pub fn tool_call(&self, id: &acp_v1::ToolCallId) -> Option<(usize, &ToolCall)> {
         self.entries
             .iter()
             .enumerate()
@@ -3839,7 +3851,7 @@ impl AcpThread {
             })
     }
 
-    pub fn tool_call_for_subagent(&self, session_id: &acp::SessionId) -> Option<&ToolCall> {
+    pub fn tool_call_for_subagent(&self, session_id: &acp_v1::SessionId) -> Option<&ToolCall> {
         self.entries.iter().find_map(|entry| match entry {
             AgentThreadEntry::ToolCall(tool_call) => {
                 if let Some(subagent_session_info) = &tool_call.subagent_session_info
@@ -3854,7 +3866,7 @@ impl AcpThread {
         })
     }
 
-    pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
+    pub fn resolve_locations(&mut self, id: acp_v1::ToolCallId, cx: &mut Context<Self>) {
         let project = self.project.clone();
         let should_update_agent_location = self.parent_session_id.is_none();
         let Some((_, tool_call)) = self.tool_call_mut(&id) else {
@@ -3914,7 +3926,7 @@ impl AcpThread {
 
     pub fn request_tool_call_authorization(
         &mut self,
-        tool_call: acp::ToolCallUpdate,
+        tool_call: acp_v1::ToolCallUpdate,
         options: PermissionOptions,
         kind: AuthorizationKind,
         cx: &mut Context<Self>,
@@ -3925,7 +3937,7 @@ impl AcpThread {
             .tool_call(&tool_call.tool_call_id)
             .and_then(|(_, tool_call)| tool_call.status.as_acp_status())
             .or(tool_call.fields.status)
-            .unwrap_or(acp::ToolCallStatus::Pending);
+            .unwrap_or(acp_v1::ToolCallStatus::Pending);
         let status = ToolCallStatus::WaitingForConfirmation {
             current_status,
             options,
@@ -3949,7 +3961,11 @@ impl AcpThread {
         }))
     }
 
-    pub fn cancel_tool_call_authorization(&mut self, id: &acp::ToolCallId, cx: &mut Context<Self>) {
+    pub fn cancel_tool_call_authorization(
+        &mut self,
+        id: &acp_v1::ToolCallId,
+        cx: &mut Context<Self>,
+    ) {
         let Some((ix, call)) = self.tool_call_mut(id) else {
             return;
         };
@@ -3964,7 +3980,7 @@ impl AcpThread {
 
     pub fn authorize_tool_call(
         &mut self,
-        id: acp::ToolCallId,
+        id: acp_v1::ToolCallId,
         outcome: SelectedPermissionOutcome,
         cx: &mut Context<Self>,
     ) {
@@ -3972,31 +3988,30 @@ impl AcpThread {
             return;
         };
 
-        let new_status =
-            match &call.status {
-                ToolCallStatus::WaitingForConfirmation {
-                    kind: AuthorizationKind::ActionChoice,
-                    ..
-                } => ToolCallStatus::InProgress,
-                ToolCallStatus::WaitingForConfirmation { current_status, .. } => {
-                    match outcome.option_kind {
-                        acp::PermissionOptionKind::RejectOnce
-                        | acp::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
-                        acp::PermissionOptionKind::AllowOnce
-                        | acp::PermissionOptionKind::AllowAlways => {
-                            ToolCallStatus::status_after_permission_grant(*current_status)
-                        }
-                        _ => ToolCallStatus::status_after_permission_grant(*current_status),
+        let new_status = match &call.status {
+            ToolCallStatus::WaitingForConfirmation {
+                kind: AuthorizationKind::ActionChoice,
+                ..
+            } => ToolCallStatus::InProgress,
+            ToolCallStatus::WaitingForConfirmation { current_status, .. } => {
+                match outcome.option_kind {
+                    acp_v1::PermissionOptionKind::RejectOnce
+                    | acp_v1::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
+                    acp_v1::PermissionOptionKind::AllowOnce
+                    | acp_v1::PermissionOptionKind::AllowAlways => {
+                        ToolCallStatus::status_after_permission_grant(*current_status)
                     }
+                    _ => ToolCallStatus::status_after_permission_grant(*current_status),
                 }
-                _ => match outcome.option_kind {
-                    acp::PermissionOptionKind::RejectOnce
-                    | acp::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
-                    acp::PermissionOptionKind::AllowOnce
-                    | acp::PermissionOptionKind::AllowAlways => ToolCallStatus::InProgress,
-                    _ => ToolCallStatus::InProgress,
-                },
-            };
+            }
+            _ => match outcome.option_kind {
+                acp_v1::PermissionOptionKind::RejectOnce
+                | acp_v1::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
+                acp_v1::PermissionOptionKind::AllowOnce
+                | acp_v1::PermissionOptionKind::AllowAlways => ToolCallStatus::InProgress,
+                _ => ToolCallStatus::InProgress,
+            },
+        };
 
         let curr_status = mem::replace(&mut call.status, new_status);
 
@@ -4011,18 +4026,18 @@ impl AcpThread {
 
     pub fn request_elicitation(
         &mut self,
-        request: acp::CreateElicitationRequest,
+        request: acp_v1::CreateElicitationRequest,
         cx: &mut Context<Self>,
-    ) -> Result<Task<acp::CreateElicitationResponse>, acp::Error> {
+    ) -> Result<Task<acp_v1::CreateElicitationResponse>, acp_v1::Error> {
         self.request_elicitation_with_id(request, cx)
             .map(|(_, task)| task)
     }
 
     pub fn request_elicitation_with_id(
         &mut self,
-        request: acp::CreateElicitationRequest,
+        request: acp_v1::CreateElicitationRequest,
         cx: &mut Context<Self>,
-    ) -> Result<(ElicitationEntryId, Task<acp::CreateElicitationResponse>), acp::Error> {
+    ) -> Result<(ElicitationEntryId, Task<acp_v1::CreateElicitationResponse>), acp_v1::Error> {
         ElicitationStore::validate_request(&request)?;
 
         let (id, response_rx) = self.elicitations.insert_pending_elicitation(request);
@@ -4048,7 +4063,7 @@ impl AcpThread {
     pub fn respond_to_elicitation(
         &mut self,
         id: &ElicitationEntryId,
-        response: acp::CreateElicitationResponse,
+        response: acp_v1::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
         let Some(ix) = self.elicitation_entry_ix(id) else {
@@ -4063,7 +4078,7 @@ impl AcpThread {
 
     pub fn complete_url_elicitation(
         &mut self,
-        elicitation_id: &acp::ElicitationId,
+        elicitation_id: &acp_v1::ElicitationId,
         cx: &mut Context<Self>,
     ) {
         let Some(entry_id) = self
@@ -4114,7 +4129,7 @@ impl AcpThread {
         &self.plan
     }
 
-    pub fn update_plan(&mut self, request: acp::Plan, cx: &mut Context<Self>) {
+    pub fn update_plan(&mut self, request: acp_v1::Plan, cx: &mut Context<Self>) {
         let new_entries_len = request.entries.len();
         let mut new_entries = request.entries.into_iter();
 
@@ -4149,7 +4164,7 @@ impl AcpThread {
     fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
         self.plan
             .entries
-            .retain(|entry| !matches!(entry.status, acp::PlanEntryStatus::Completed));
+            .retain(|entry| !matches!(entry.status, acp_v1::PlanEntryStatus::Completed));
         cx.notify();
     }
 
@@ -4163,15 +4178,15 @@ impl AcpThread {
         &mut self,
         message: &str,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+    ) -> BoxFuture<'static, Result<Option<acp_v1::PromptResponse>>> {
         self.send(vec![message.into()], cx)
     }
 
     pub fn send(
         &mut self,
-        message: Vec<acp::ContentBlock>,
+        message: Vec<acp_v1::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+    ) -> BoxFuture<'static, Result<Option<acp_v1::PromptResponse>>> {
         self.send_inner(message, true, cx)
     }
 
@@ -4181,25 +4196,25 @@ impl AcpThread {
     /// typed command isn't sent to the model as an ordinary user turn.
     pub fn send_command(
         &mut self,
-        message: Vec<acp::ContentBlock>,
+        message: Vec<acp_v1::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+    ) -> BoxFuture<'static, Result<Option<acp_v1::PromptResponse>>> {
         self.send_inner(message, false, cx)
     }
 
     fn send_inner(
         &mut self,
-        message: Vec<acp::ContentBlock>,
+        message: Vec<acp_v1::ContentBlock>,
         push_user_message: bool,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+    ) -> BoxFuture<'static, Result<Option<acp_v1::PromptResponse>>> {
         let language_registry = self.project.read(cx).languages().clone();
         let path_style = self.project.read(cx).path_style(cx);
         let mut block = MessageContent::default();
         for chunk in &message {
             block.append_prompt(chunk.clone(), &language_registry, path_style, cx);
         }
-        let request = acp::PromptRequest::new(self.session_id.clone(), message);
+        let request = acp_v1::PromptRequest::new(self.session_id.clone(), message);
         let git_store = self.project.read(cx).git_store().clone();
 
         let client_user_message_ids = self.connection.client_user_message_ids(cx);
@@ -4258,7 +4273,7 @@ impl AcpThread {
     pub fn retry(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+    ) -> BoxFuture<'static, Result<Option<acp_v1::PromptResponse>>> {
         self.run_turn(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
                 this.connection
@@ -4273,8 +4288,8 @@ impl AcpThread {
     fn run_turn(
         &mut self,
         cx: &mut Context<Self>,
-        f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+        f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp_v1::PromptResponse>,
+    ) -> BoxFuture<'static, Result<Option<acp_v1::PromptResponse>>> {
         self.clear_completed_plan_entries(cx);
         self.had_error = false;
 
@@ -4348,7 +4363,7 @@ impl AcpThread {
                     Ok(r) => {
                         this.flush_streaming_text(cx);
 
-                        if r.stop_reason == acp::StopReason::MaxTokens {
+                        if r.stop_reason == acp_v1::StopReason::MaxTokens {
                             if is_same_turn {
                                 cx.emit(AcpThreadEvent::StatusChanged);
                             }
@@ -4376,7 +4391,7 @@ impl AcpThread {
                             return Err(anyhow!(MaxOutputTokensError));
                         }
 
-                        let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
+                        let canceled = matches!(r.stop_reason, acp_v1::StopReason::Cancelled);
                         if canceled && is_same_turn {
                             this.cancel_pending_turn_entries(cx);
                         }
@@ -4386,7 +4401,7 @@ impl AcpThread {
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
-                        if let acp::StopReason::Refusal = r.stop_reason {
+                        if let acp_v1::StopReason::Refusal = r.stop_reason {
                             this.had_error = true;
                             if let Some((user_msg_ix, _)) = this.last_user_message() {
                                 // Check if there's a completed tool call with results after the last user message
@@ -4624,7 +4639,7 @@ impl AcpThread {
                 this.flush_streaming_text(cx);
                 if let Some((ix, _)) = this.user_message_mut(&client_id) {
                     // Collect all terminals from entries that will be removed
-                    let terminals_to_remove: Vec<acp::TerminalId> = this.entries[ix..]
+                    let terminals_to_remove: Vec<acp_v1::TerminalId> = this.entries[ix..]
                         .iter()
                         .flat_map(|entry| entry.terminals())
                         .filter_map(|terminal| terminal.read(cx).id().clone().into())
@@ -4809,7 +4824,7 @@ impl AcpThread {
         limit: Option<u32>,
         reuse_shared_snapshot: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<String, acp::Error>> {
+    ) -> Task<Result<String, acp_v1::Error>> {
         // Args are 1-based, move to 0-based
         let line = line.unwrap_or_default().saturating_sub(1);
         let limit = limit.unwrap_or(u32::MAX);
@@ -4821,9 +4836,9 @@ impl AcpThread {
                 let path = project
                     .project_path_for_absolute_path(&path, cx)
                     .ok_or_else(|| {
-                        acp::Error::resource_not_found(Some(path.display().to_string()))
+                        acp_v1::Error::resource_not_found(Some(path.display().to_string()))
                     })?;
-                Ok::<_, acp::Error>(project.open_buffer(path, cx))
+                Ok::<_, acp_v1::Error>(project.open_buffer(path, cx))
             })?;
 
             let buffer = load.await?;
@@ -4856,7 +4871,7 @@ impl AcpThread {
             let start_position = Point::new(line, 0);
 
             if start_position > max_point {
-                return Err(acp::Error::invalid_params().data(format!(
+                return Err(acp_v1::Error::invalid_params().data(format!(
                     "Attempting to read beyond the end of the file, line {}:{}",
                     max_point.row + 1,
                     max_point.column
@@ -4981,7 +4996,7 @@ impl AcpThread {
         &self,
         command: String,
         args: Vec<String>,
-        extra_env: Vec<acp::EnvVariable>,
+        extra_env: Vec<acp_v1::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<SandboxWrap>,
@@ -5014,7 +5029,7 @@ impl AcpThread {
         // without a PTY in that case.
         let headless = HeadlessTerminal::is_enabled(cx);
 
-        let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
+        let terminal_id = acp_v1::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
@@ -5135,7 +5150,7 @@ impl AcpThread {
 
     pub fn kill_terminal(
         &mut self,
-        terminal_id: acp::TerminalId,
+        terminal_id: acp_v1::TerminalId,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.terminals
@@ -5150,7 +5165,7 @@ impl AcpThread {
 
     pub fn release_terminal(
         &mut self,
-        terminal_id: acp::TerminalId,
+        terminal_id: acp_v1::TerminalId,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.terminals
@@ -5163,7 +5178,7 @@ impl AcpThread {
         Ok(())
     }
 
-    pub fn terminal(&self, terminal_id: acp::TerminalId) -> Result<Entity<Terminal>> {
+    pub fn terminal(&self, terminal_id: acp_v1::TerminalId) -> Result<Entity<Terminal>> {
         self.terminals
             .get(&terminal_id)
             .context("Terminal not found")
@@ -5192,7 +5207,7 @@ impl AcpThread {
 
     pub fn register_terminal_created(
         &mut self,
-        terminal_id: acp::TerminalId,
+        terminal_id: acp_v1::TerminalId,
         command_label: String,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<u64>,
@@ -5394,7 +5409,8 @@ mod tests {
 
     #[test]
     fn test_text_cursor_reads_source_on_utf8_boundaries() {
-        let sources = ["visible", "", "aé", "", "🦀b", "", "日本語"].map(acp::ContentBlock::from);
+        let sources =
+            ["visible", "", "aé", "", "🦀b", "", "日本語"].map(acp_v1::ContentBlock::from);
         let whole = "aé🦀b日本語";
         for max_bytes in 1..=whole.len() + 1 {
             let mut cursor = TextCursor {
@@ -5514,7 +5530,7 @@ mod tests {
         // Absent meta and unknown categories both decode to `None`.
         assert_eq!(command_category_from_meta(&None), None);
         let unknown =
-            acp::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), "future-category".into())]);
+            acp_v1::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), "future-category".into())]);
         assert_eq!(command_category_from_meta(&Some(unknown)), None);
     }
 
@@ -5563,8 +5579,8 @@ mod tests {
         });
     }
 
-    fn message_test_image() -> acp::ContentBlock {
-        acp::ContentBlock::Image(acp::ImageContent::new(
+    fn message_test_image() -> acp_v1::ContentBlock {
+        acp_v1::ContentBlock::Image(acp_v1::ImageContent::new(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
             "image/png",
         ))
@@ -5575,35 +5591,38 @@ mod tests {
         init_test(cx);
         cx.update(|cx| {
             let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-            let annotations = acp::Annotations::new().priority(0.5);
+            let annotations = acp_v1::Annotations::new().priority(0.5);
             let blocks = vec![
-                acp::ContentBlock::Text(
-                    acp::TextContent::new("")
+                acp_v1::ContentBlock::Text(
+                    acp_v1::TextContent::new("")
                         .annotations(annotations.clone())
-                        .meta(acp::Meta::from_iter([("empty".into(), json!(true))])),
+                        .meta(acp_v1::Meta::from_iter([("empty".into(), json!(true))])),
                 ),
-                acp::ContentBlock::Text(
-                    acp::TextContent::new("hello ")
-                        .meta(acp::Meta::from_iter([("part".into(), json!(1))])),
+                acp_v1::ContentBlock::Text(
+                    acp_v1::TextContent::new("hello ")
+                        .meta(acp_v1::Meta::from_iter([("part".into(), json!(1))])),
                 ),
-                acp::ContentBlock::Text(
-                    acp::TextContent::new("world")
-                        .meta(acp::Meta::from_iter([("part".into(), json!(2))])),
+                acp_v1::ContentBlock::Text(
+                    acp_v1::TextContent::new("world")
+                        .meta(acp_v1::Meta::from_iter([("part".into(), json!(2))])),
                 ),
                 match message_test_image() {
-                    acp::ContentBlock::Image(image) => acp::ContentBlock::Image(
+                    acp_v1::ContentBlock::Image(image) => acp_v1::ContentBlock::Image(
                         image
                             .uri("file:///original.png".to_string())
                             .annotations(annotations)
-                            .meta(acp::Meta::from_iter([("image".into(), json!(42))])),
+                            .meta(acp_v1::Meta::from_iter([("image".into(), json!(42))])),
                     ),
                     _ => unreachable!("fixture is an image"),
                 },
-                acp::ContentBlock::ResourceLink(
-                    acp::ResourceLink::new("original name", "https://example.com/file")
+                acp_v1::ContentBlock::ResourceLink(
+                    acp_v1::ResourceLink::new("original name", "https://example.com/file")
                         .description("original description".to_string())
                         .title("original title".to_string())
-                        .meta(acp::Meta::from_iter([("link".into(), json!("original"))])),
+                        .meta(acp_v1::Meta::from_iter([(
+                            "link".into(),
+                            json!("original"),
+                        )])),
                 ),
             ];
             let mut content = MessageContent::default();
@@ -5686,22 +5705,28 @@ mod tests {
             let mut content = MessageContent::default();
             for chunk in [
                 "before".into(),
-                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                    acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents::new("resource text", "tool://preview"),
+                acp_v1::ContentBlock::Resource(acp_v1::EmbeddedResource::new(
+                    acp_v1::EmbeddedResourceResource::TextResourceContents(
+                        acp_v1::TextResourceContents::new("resource text", "tool://preview"),
                     ),
                 )),
-                acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                acp_v1::ContentBlock::ResourceLink(acp_v1::ResourceLink::new(
                     "link",
                     "https://example.com/resource",
                 )),
-                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                    acp::EmbeddedResourceResource::BlobResourceContents(
-                        acp::BlobResourceContents::new("private-blob-data", "tool://archive.bin"),
+                acp_v1::ContentBlock::Resource(acp_v1::EmbeddedResource::new(
+                    acp_v1::EmbeddedResourceResource::BlobResourceContents(
+                        acp_v1::BlobResourceContents::new(
+                            "private-blob-data",
+                            "tool://archive.bin",
+                        ),
                     ),
                 )),
-                acp::ContentBlock::Image(acp::ImageContent::new("not-base64", "image/png")),
-                acp::ContentBlock::Audio(acp::AudioContent::new("private-audio-data", "audio/wav")),
+                acp_v1::ContentBlock::Image(acp_v1::ImageContent::new("not-base64", "image/png")),
+                acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new(
+                    "private-audio-data",
+                    "audio/wav",
+                )),
                 "after".into(),
             ] {
                 content.append(chunk, &language_registry, PathStyle::local(), cx);
@@ -5777,15 +5802,15 @@ mod tests {
 
         let source_blocks = [
             "before".into(),
-            acp::ContentBlock::Text(
-                acp::TextContent::new(" image")
-                    .meta(acp::Meta::from_iter([("sequence".into(), json!(2))])),
+            acp_v1::ContentBlock::Text(
+                acp_v1::TextContent::new(" image")
+                    .meta(acp_v1::Meta::from_iter([("sequence".into(), json!(2))])),
             ),
             message_test_image(),
             "after".into(),
-            acp::ContentBlock::Text(
-                acp::TextContent::new(" image")
-                    .meta(acp::Meta::from_iter([("sequence".into(), json!(5))])),
+            acp_v1::ContentBlock::Text(
+                acp_v1::TextContent::new(" image")
+                    .meta(acp_v1::Meta::from_iter([("sequence".into(), json!(5))])),
             ),
         ];
         let (before, after, image) = thread.update(cx, |thread, cx| {
@@ -5888,16 +5913,19 @@ mod tests {
 
         for (content, preview) in [
             (
-                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                    acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents::new("Resource preview", "tool://preview")
+                acp_v1::ContentBlock::Resource(acp_v1::EmbeddedResource::new(
+                    acp_v1::EmbeddedResourceResource::TextResourceContents(
+                        acp_v1::TextResourceContents::new("Resource preview", "tool://preview")
                             .mime_type("text/markdown".to_string()),
                     ),
                 )),
                 "Resource preview",
             ),
             (
-                acp::ContentBlock::Audio(acp::AudioContent::new("private-audio-data", "audio/wav")),
+                acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new(
+                    "private-audio-data",
+                    "audio/wav",
+                )),
                 "Audio content is not supported.",
             ),
         ] {
@@ -5939,7 +5967,7 @@ mod tests {
             let path_style = thread.project.read(cx).path_style(cx);
             let languages = thread.project.read(cx).languages().clone();
             let uri = "file:///project/report.md";
-            let link = acp::ContentBlock::ResourceLink(acp::ResourceLink::new("report", uri));
+            let link = acp_v1::ContentBlock::ResourceLink(acp_v1::ResourceLink::new("report", uri));
             let expected = format!(
                 "{}\n## Details\n",
                 ContentBlock::resource_link_md(uri, path_style),
@@ -5988,16 +6016,16 @@ mod tests {
             .expect("session should be created");
         let chunks = vec![
             "read ".into(),
-            acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                acp::EmbeddedResourceResource::TextResourceContents(
-                    acp::TextResourceContents::new(
+            acp_v1::ContentBlock::Resource(acp_v1::EmbeddedResource::new(
+                acp_v1::EmbeddedResourceResource::TextResourceContents(
+                    acp_v1::TextResourceContents::new(
                         "attached file contents",
                         "https://example.com/file",
                     ),
                 ),
             )),
             " and ".into(),
-            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+            acp_v1::ContentBlock::ResourceLink(acp_v1::ResourceLink::new(
                 "link",
                 "https://example.com/link",
             )),
@@ -6038,35 +6066,37 @@ mod tests {
 
     #[test]
     fn text_resource_markdown_uses_mime_type_for_code_blocks() {
-        let shell = acp::TextResourceContents::new("echo 'hello from exec test'", "tool://preview")
-            .mime_type("text/x-shellscript".to_string());
+        let shell =
+            acp_v1::TextResourceContents::new("echo 'hello from exec test'", "tool://preview")
+                .mime_type("text/x-shellscript".to_string());
         assert_eq!(
             ContentBlock::text_resource_markdown(&shell),
             "```sh\necho 'hello from exec test'\n```"
         );
 
-        let markdown = acp::TextResourceContents::new("**approval** requested", "tool://preview")
-            .mime_type("text/markdown".to_string());
+        let markdown =
+            acp_v1::TextResourceContents::new("**approval** requested", "tool://preview")
+                .mime_type("text/markdown".to_string());
         assert_eq!(
             ContentBlock::text_resource_markdown(&markdown),
             "**approval** requested"
         );
 
-        let plain = acp::TextResourceContents::new("plain preview", "tool://preview")
+        let plain = acp_v1::TextResourceContents::new("plain preview", "tool://preview")
             .mime_type("text/plain".to_string());
         assert_eq!(
             ContentBlock::text_resource_markdown(&plain),
             "```\nplain preview\n```"
         );
 
-        let cpp = acp::TextResourceContents::new("int main() {}", "tool://preview")
+        let cpp = acp_v1::TextResourceContents::new("int main() {}", "tool://preview")
             .mime_type("text/x-c++; charset=utf-8".to_string());
         assert_eq!(
             ContentBlock::text_resource_markdown(&cpp),
             "```cpp\nint main() {}\n```"
         );
 
-        let untyped = acp::TextResourceContents::new("# plain preview", "tool://preview");
+        let untyped = acp_v1::TextResourceContents::new("# plain preview", "tool://preview");
         assert_eq!(
             ContentBlock::text_resource_markdown(&untyped),
             "```\n# plain preview\n```"
@@ -6082,10 +6112,13 @@ mod tests {
         cx.update(|cx| {
             let language_registry =
                 Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-            let content = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                acp::EmbeddedResourceResource::TextResourceContents(
-                    acp::TextResourceContents::new("echo 'hello from exec test'", "tool://preview")
-                        .mime_type("text/x-shellscript".to_string()),
+            let content = acp_v1::ContentBlock::Resource(acp_v1::EmbeddedResource::new(
+                acp_v1::EmbeddedResourceResource::TextResourceContents(
+                    acp_v1::TextResourceContents::new(
+                        "echo 'hello from exec test'",
+                        "tool://preview",
+                    )
+                    .mime_type("text/x-shellscript".to_string()),
                 ),
             ));
 
@@ -6095,7 +6128,7 @@ mod tests {
                 panic!("expected embedded resource block, got {block:?}");
             };
             match &resource.resource {
-                acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                acp_v1::EmbeddedResourceResource::TextResourceContents(text) => {
                     assert_eq!(text.text, "echo 'hello from exec test'");
                     assert_eq!(text.uri, "tool://preview");
                     assert_eq!(text.mime_type.as_deref(), Some("text/x-shellscript"));
@@ -6117,9 +6150,9 @@ mod tests {
             assert_eq!(block.text_content(cx), Some("echo 'hello from exec test'"));
 
             let untyped = ContentBlock::new_output(
-                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                    acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents::new("# plain preview", "tool://preview"),
+                acp_v1::ContentBlock::Resource(acp_v1::EmbeddedResource::new(
+                    acp_v1::EmbeddedResourceResource::TextResourceContents(
+                        acp_v1::TextResourceContents::new("# plain preview", "tool://preview"),
                     ),
                 )),
                 &language_registry,
@@ -6139,9 +6172,9 @@ mod tests {
         cx.update(|cx| {
             let language_registry =
                 Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-            let image_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                acp::EmbeddedResourceResource::BlobResourceContents(
-                    acp::BlobResourceContents::new(
+            let image_blob = acp_v1::ContentBlock::Resource(acp_v1::EmbeddedResource::new(
+                acp_v1::EmbeddedResourceResource::BlobResourceContents(
+                    acp_v1::BlobResourceContents::new(
                         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
                         "tool://preview.png",
                     )
@@ -6177,9 +6210,9 @@ mod tests {
         cx.update(|cx| {
             let language_registry =
                 Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-            let archive_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                acp::EmbeddedResourceResource::BlobResourceContents(
-                    acp::BlobResourceContents::new("not an image", "tool://archive.bin")
+            let archive_blob = acp_v1::ContentBlock::Resource(acp_v1::EmbeddedResource::new(
+                acp_v1::EmbeddedResourceResource::BlobResourceContents(
+                    acp_v1::BlobResourceContents::new("not an image", "tool://archive.bin")
                         .mime_type("application/octet-stream".to_string()),
                 ),
             ));
@@ -6191,7 +6224,7 @@ mod tests {
             };
             assert!(markdown.is_none());
             match &resource.resource {
-                acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                acp_v1::EmbeddedResourceResource::BlobResourceContents(blob) => {
                     assert_eq!(blob.uri, "tool://archive.bin");
                     assert_eq!(blob.mime_type.as_deref(), Some("application/octet-stream"));
                 }
@@ -6200,9 +6233,9 @@ mod tests {
             assert_eq!(block.to_markdown(cx), "tool://archive.bin");
             assert_eq!(block.text_content(cx), None);
 
-            let invalid_image_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                acp::EmbeddedResourceResource::BlobResourceContents(
-                    acp::BlobResourceContents::new("not-base64", "tool://preview.png")
+            let invalid_image_blob = acp_v1::ContentBlock::Resource(acp_v1::EmbeddedResource::new(
+                acp_v1::EmbeddedResourceResource::BlobResourceContents(
+                    acp_v1::BlobResourceContents::new("not-base64", "tool://preview.png")
                         .mime_type("image/png".to_string()),
                 ),
             ));
@@ -6252,7 +6285,7 @@ mod tests {
             .await
             .unwrap();
 
-        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        let terminal_id = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
 
         // Send Output BEFORE Created - should be buffered by acp_thread
         thread.update(cx, |thread, cx| {
@@ -6321,7 +6354,7 @@ mod tests {
             .await
             .unwrap();
 
-        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        let terminal_id = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
                 ::terminal::terminal_settings::CursorShape::default(),
@@ -6391,7 +6424,7 @@ mod tests {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
-                    status: acp::TerminalExitStatus::new().exit_code(7),
+                    status: acp_v1::TerminalExitStatus::new().exit_code(7),
                 },
                 cx,
             );
@@ -6443,7 +6476,7 @@ mod tests {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
-                    status: acp::TerminalExitStatus::new().signal("SIGTERM"),
+                    status: acp_v1::TerminalExitStatus::new().signal("SIGTERM"),
                 },
                 cx,
             );
@@ -6495,7 +6528,7 @@ mod tests {
             .await
             .unwrap();
 
-        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        let terminal_id = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
 
         // Send Output BEFORE Created
         thread.update(cx, |thread, cx| {
@@ -6513,14 +6546,14 @@ mod tests {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
-                    status: acp::TerminalExitStatus::new().signal("SIGTERM"),
+                    status: acp_v1::TerminalExitStatus::new().signal("SIGTERM"),
                 },
                 cx,
             );
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
-                    status: acp::TerminalExitStatus::new().exit_code(0),
+                    status: acp_v1::TerminalExitStatus::new().exit_code(0),
                 },
                 cx,
             );
@@ -6620,7 +6653,7 @@ mod tests {
             .await
             .unwrap();
 
-        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        let terminal_id = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
 
         // We use printf instead of echo and chain with && sleep to ensure proper execution
         let (program, args) = ShellBuilder::new(&Shell::System, false).build(
@@ -6849,40 +6882,40 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UserMessageChunk(
-                        acp::ContentChunk::new("First ".into()).message_id("msg_user_1"),
+                    acp_v1::SessionUpdate::UserMessageChunk(
+                        acp_v1::ContentChunk::new("First ".into()).message_id("msg_user_1"),
                     ),
                     cx,
                 )
                 .unwrap();
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UserMessageChunk(
-                        acp::ContentChunk::new("message".into()).message_id("msg_user_1"),
+                    acp_v1::SessionUpdate::UserMessageChunk(
+                        acp_v1::ContentChunk::new("message".into()).message_id("msg_user_1"),
                     ),
                     cx,
                 )
                 .unwrap();
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UserMessageChunk(
-                        acp::ContentChunk::new("Second message".into()).message_id("msg_user_2"),
+                    acp_v1::SessionUpdate::UserMessageChunk(
+                        acp_v1::ContentChunk::new("Second message".into()).message_id("msg_user_2"),
                     ),
                     cx,
                 )
                 .unwrap();
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UserMessageChunk(
-                        acp::ContentChunk::new("Echo".into()).message_id("msg_user_3"),
+                    acp_v1::SessionUpdate::UserMessageChunk(
+                        acp_v1::ContentChunk::new("Echo".into()).message_id("msg_user_3"),
                     ),
                     cx,
                 )
                 .unwrap();
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UserMessageChunk(
-                        acp::ContentChunk::new("Echo".into()).message_id("msg_user_3"),
+                    acp_v1::SessionUpdate::UserMessageChunk(
+                        acp_v1::ContentChunk::new("Echo".into()).message_id("msg_user_3"),
                     ),
                     cx,
                 )
@@ -6960,8 +6993,8 @@ mod tests {
             );
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UserMessageChunk(
-                        acp::ContentChunk::new("Agent user chunk".into())
+                    acp_v1::SessionUpdate::UserMessageChunk(
+                        acp_v1::ContentChunk::new("Agent user chunk".into())
                             .message_id("agent_user_chunk"),
                     ),
                     cx,
@@ -7015,24 +7048,24 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::AgentThoughtChunk(
-                        acp::ContentChunk::new("Thinking ".into()).message_id("msg_thought_1"),
+                    acp_v1::SessionUpdate::AgentThoughtChunk(
+                        acp_v1::ContentChunk::new("Thinking ".into()).message_id("msg_thought_1"),
                     ),
                     cx,
                 )
                 .unwrap();
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::AgentThoughtChunk(
-                        acp::ContentChunk::new("hard".into()).message_id("msg_thought_1"),
+                    acp_v1::SessionUpdate::AgentThoughtChunk(
+                        acp_v1::ContentChunk::new("hard".into()).message_id("msg_thought_1"),
                     ),
                     cx,
                 )
                 .unwrap();
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::AgentThoughtChunk(
-                        acp::ContentChunk::new("A separate thought".into())
+                    acp_v1::SessionUpdate::AgentThoughtChunk(
+                        acp_v1::ContentChunk::new("A separate thought".into())
                             .message_id("msg_thought_2"),
                     ),
                     cx,
@@ -7040,24 +7073,24 @@ mod tests {
                 .unwrap();
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::AgentMessageChunk(
-                        acp::ContentChunk::new("Answer ".into()).message_id("msg_agent_1"),
+                    acp_v1::SessionUpdate::AgentMessageChunk(
+                        acp_v1::ContentChunk::new("Answer ".into()).message_id("msg_agent_1"),
                     ),
                     cx,
                 )
                 .unwrap();
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::AgentMessageChunk(
-                        acp::ContentChunk::new("done".into()).message_id("msg_agent_1"),
+                    acp_v1::SessionUpdate::AgentMessageChunk(
+                        acp_v1::ContentChunk::new("done".into()).message_id("msg_agent_1"),
                     ),
                     cx,
                 )
                 .unwrap();
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::AgentMessageChunk(
-                        acp::ContentChunk::new("Follow-up".into()).message_id("msg_agent_2"),
+                    acp_v1::SessionUpdate::AgentMessageChunk(
+                        acp_v1::ContentChunk::new("Follow-up".into()).message_id("msg_agent_2"),
                     ),
                     cx,
                 )
@@ -7121,22 +7154,22 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
-                                    "Thinking ".into(),
-                                )),
+                                acp_v1::SessionUpdate::AgentThoughtChunk(
+                                    acp_v1::ContentChunk::new("Thinking ".into()),
+                                ),
                                 cx,
                             )
                             .unwrap();
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
-                                    "hard!".into(),
-                                )),
+                                acp_v1::SessionUpdate::AgentThoughtChunk(
+                                    acp_v1::ContentChunk::new("hard!".into()),
+                                ),
                                 cx,
                             )
                             .unwrap();
                     })?;
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             },
@@ -7188,7 +7221,7 @@ mod tests {
             move |request, thread, mut cx| {
                 let received_prompt = received_prompt.clone();
                 async move {
-                    if let Some(acp::ContentBlock::Text(text)) = request.prompt.first() {
+                    if let Some(acp_v1::ContentBlock::Text(text)) = request.prompt.first() {
                         *received_prompt.borrow_mut() = Some(text.text.clone());
                     }
                     // Simulate a native command producing its own thread entry
@@ -7204,7 +7237,7 @@ mod tests {
                             cx,
                         );
                     })?;
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             }
@@ -7265,15 +7298,15 @@ mod tests {
                         thread.update(&mut cx, |thread, cx| {
                             thread
                                 .handle_session_update(
-                                    acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
-                                        prompt,
-                                    )),
+                                    acp_v1::SessionUpdate::UserMessageChunk(
+                                        acp_v1::ContentChunk::new(prompt),
+                                    ),
                                     cx,
                                 )
                                 .unwrap();
                         })?;
 
-                        Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                        Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                     }
                     .boxed_local()
                 }),
@@ -7337,7 +7370,7 @@ mod tests {
                         .unwrap()
                         .await
                         .unwrap();
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             },
@@ -7567,7 +7600,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert_eq!(err.code, acp::ErrorCode::ResourceNotFound);
+        assert_eq!(err.code, acp_v1::ErrorCode::ResourceNotFound);
     }
 
     #[gpui::test]
@@ -7576,7 +7609,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let id = acp::ToolCallId::new("test");
+        let id = acp_v1::ToolCallId::new("test");
 
         let connection = Rc::new(FakeAgentConnection::new().on_user_message({
             let id = id.clone();
@@ -7586,17 +7619,17 @@ mod tests {
                     thread
                         .update(&mut cx, |thread, cx| {
                             thread.handle_session_update(
-                                acp::SessionUpdate::ToolCall(
-                                    acp::ToolCall::new(id.clone(), "Label")
-                                        .kind(acp::ToolKind::Fetch)
-                                        .status(acp::ToolCallStatus::InProgress),
+                                acp_v1::SessionUpdate::ToolCall(
+                                    acp_v1::ToolCall::new(id.clone(), "Label")
+                                        .kind(acp_v1::ToolKind::Fetch)
+                                        .status(acp_v1::ToolCallStatus::InProgress),
                                 ),
                                 cx,
                             )
                         })
                         .unwrap()
                         .unwrap();
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             }
@@ -7640,9 +7673,10 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
                         id,
-                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
+                        acp_v1::ToolCallUpdateFields::new()
+                            .status(acp_v1::ToolCallStatus::Completed),
                     )),
                     cx,
                 )
@@ -7680,13 +7714,13 @@ mod tests {
             for summary in ["retained context", "replacement summary"] {
                 thread
                     .handle_session_update(
-                        acp::SessionUpdate::CompactionUpdate(
-                            acp::CompactionUpdate::new(
+                        acp_v1::SessionUpdate::CompactionUpdate(
+                            acp_v1::CompactionUpdate::new(
                                 "compaction",
-                                acp::CompactionStatus::Completed,
+                                acp_v1::CompactionStatus::Completed,
                             )
-                            .summary(vec![acp::ContentBlock::Text(
-                                acp::TextContent::new(summary),
+                            .summary(vec![acp_v1::ContentBlock::Text(
+                                acp_v1::TextContent::new(summary),
                             )]),
                         ),
                         cx,
@@ -7713,10 +7747,13 @@ mod tests {
 
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::CompactionUpdate(
-                        acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
-                            .summary(None::<Vec<acp::ContentBlock>>)
-                            .error("model unavailable"),
+                    acp_v1::SessionUpdate::CompactionUpdate(
+                        acp_v1::CompactionUpdate::new(
+                            "compaction",
+                            acp_v1::CompactionStatus::Failed,
+                        )
+                        .summary(None::<Vec<acp_v1::ContentBlock>>)
+                        .error("model unavailable"),
                     ),
                     cx,
                 )
@@ -7751,9 +7788,12 @@ mod tests {
                 };
                 thread
                     .handle_session_update(
-                        acp::SessionUpdate::CompactionUpdate(
-                            acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
-                                .error(error),
+                        acp_v1::SessionUpdate::CompactionUpdate(
+                            acp_v1::CompactionUpdate::new(
+                                "compaction",
+                                acp_v1::CompactionStatus::Failed,
+                            )
+                            .error(error),
                         ),
                         cx,
                     )
@@ -7779,16 +7819,16 @@ mod tests {
             }
 
             for summary in [
-                vec![acp::ContentBlock::Text(acp::TextContent::new(""))],
+                vec![acp_v1::ContentBlock::Text(acp_v1::TextContent::new(""))],
                 Vec::new(),
             ] {
                 let expected_length = summary.len();
                 thread
                     .handle_session_update(
-                        acp::SessionUpdate::CompactionUpdate(
-                            acp::CompactionUpdate::new(
+                        acp_v1::SessionUpdate::CompactionUpdate(
+                            acp_v1::CompactionUpdate::new(
                                 "compaction",
-                                acp::CompactionStatus::Completed,
+                                acp_v1::CompactionStatus::Completed,
                             )
                             .summary(summary),
                         ),
@@ -7817,35 +7857,35 @@ mod tests {
             .expect("failed to create ACP thread");
         let image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
         let text_resource =
-            acp::EmbeddedResource::new(acp::EmbeddedResourceResource::TextResourceContents(
-                acp::TextResourceContents::new("Retained resource text", "summary://context")
+            acp_v1::EmbeddedResource::new(acp_v1::EmbeddedResourceResource::TextResourceContents(
+                acp_v1::TextResourceContents::new("Retained resource text", "summary://context")
                     .mime_type("text/markdown".to_string()),
             ));
         let blob_resource =
-            acp::EmbeddedResource::new(acp::EmbeddedResourceResource::BlobResourceContents(
-                acp::BlobResourceContents::new("c3VtbWFyeQ==", "summary://attachment")
+            acp_v1::EmbeddedResource::new(acp_v1::EmbeddedResourceResource::BlobResourceContents(
+                acp_v1::BlobResourceContents::new("c3VtbWFyeQ==", "summary://attachment")
                     .mime_type("application/octet-stream".to_string()),
             ));
-        let audio = acp::ContentBlock::Audio(acp::AudioContent::new("YXVkaW8=", "audio/wav"));
+        let audio = acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new("YXVkaW8=", "audio/wav"));
         let blocks = vec![
-            acp::ContentBlock::Text(acp::TextContent::new("retained ")),
-            acp::ContentBlock::Text(acp::TextContent::new("context")),
-            acp::ContentBlock::Resource(text_resource.clone()),
-            acp::ContentBlock::Image(acp::ImageContent::new(image_data, "image/png")),
-            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+            acp_v1::ContentBlock::Text(acp_v1::TextContent::new("retained ")),
+            acp_v1::ContentBlock::Text(acp_v1::TextContent::new("context")),
+            acp_v1::ContentBlock::Resource(text_resource.clone()),
+            acp_v1::ContentBlock::Image(acp_v1::ImageContent::new(image_data, "image/png")),
+            acp_v1::ContentBlock::ResourceLink(acp_v1::ResourceLink::new(
                 "Reference",
                 "https://example.com/context",
             )),
             audio.clone(),
-            acp::ContentBlock::Resource(blob_resource.clone()),
+            acp_v1::ContentBlock::Resource(blob_resource.clone()),
         ];
 
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    acp_v1::SessionUpdate::CompactionUpdate(acp_v1::CompactionUpdate::new(
                         "compaction",
-                        acp::CompactionStatus::InProgress,
+                        acp_v1::CompactionStatus::InProgress,
                     )),
                     cx,
                 )
@@ -7853,8 +7893,8 @@ mod tests {
             for block in &blocks {
                 thread
                     .handle_session_update(
-                        acp::SessionUpdate::CompactionSummaryChunk(
-                            acp::CompactionSummaryChunk::new("compaction", block.clone()),
+                        acp_v1::SessionUpdate::CompactionSummaryChunk(
+                            acp_v1::CompactionSummaryChunk::new("compaction", block.clone()),
                         ),
                         cx,
                     )
@@ -7864,13 +7904,15 @@ mod tests {
 
         for replace_summary in [false, true] {
             thread.update(cx, |thread, cx| {
-                let mut update =
-                    acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Completed);
+                let mut update = acp_v1::CompactionUpdate::new(
+                    "compaction",
+                    acp_v1::CompactionStatus::Completed,
+                );
                 if replace_summary {
                     update = update.summary(blocks.clone());
                 }
                 thread
-                    .handle_session_update(acp::SessionUpdate::CompactionUpdate(update), cx)
+                    .handle_session_update(acp_v1::SessionUpdate::CompactionUpdate(update), cx)
                     .expect("failed to complete compaction");
             });
             thread.read_with(cx, |thread, cx| {
@@ -7933,9 +7975,12 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::CompactionUpdate(
-                        acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Completed)
-                            .summary(vec![audio.clone()]),
+                    acp_v1::SessionUpdate::CompactionUpdate(
+                        acp_v1::CompactionUpdate::new(
+                            "compaction",
+                            acp_v1::CompactionStatus::Completed,
+                        )
+                        .summary(vec![audio.clone()]),
                     ),
                     cx,
                 )
@@ -7983,22 +8028,22 @@ mod tests {
 
         thread.update(cx, |thread, cx| {
             for update in [
-                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                acp_v1::SessionUpdate::CompactionUpdate(acp_v1::CompactionUpdate::new(
                     "first",
-                    acp::CompactionStatus::InProgress,
+                    acp_v1::CompactionStatus::InProgress,
                 )),
-                acp::SessionUpdate::ToolCall(acp::ToolCall::new("tool", "Unrelated tool")),
-                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                acp_v1::SessionUpdate::ToolCall(acp_v1::ToolCall::new("tool", "Unrelated tool")),
+                acp_v1::SessionUpdate::CompactionUpdate(acp_v1::CompactionUpdate::new(
                     "second",
-                    acp::CompactionStatus::InProgress,
+                    acp_v1::CompactionStatus::InProgress,
                 )),
-                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                acp_v1::SessionUpdate::CompactionUpdate(acp_v1::CompactionUpdate::new(
                     "second",
-                    acp::CompactionStatus::Completed,
+                    acp_v1::CompactionStatus::Completed,
                 )),
-                acp::SessionUpdate::CompactionSummaryChunk(acp::CompactionSummaryChunk::new(
+                acp_v1::SessionUpdate::CompactionSummaryChunk(acp_v1::CompactionSummaryChunk::new(
                     "first",
-                    acp::ContentBlock::Text(acp::TextContent::new("partial summary")),
+                    acp_v1::ContentBlock::Text(acp_v1::TextContent::new("partial summary")),
                 )),
             ] {
                 thread
@@ -8012,9 +8057,9 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    acp_v1::SessionUpdate::CompactionUpdate(acp_v1::CompactionUpdate::new(
                         "first",
-                        acp::CompactionStatus::Cancelled,
+                        acp_v1::CompactionStatus::Cancelled,
                     )),
                     cx,
                 )
@@ -8055,37 +8100,37 @@ mod tests {
             cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
         for (call, expected, has_strong_text) in [
             (
-                acp::ToolCall::new("tool", "Reading **file**").name("read_file"),
+                acp_v1::ToolCall::new("tool", "Reading **file**").name("read_file"),
                 "Reading **file**",
                 true,
             ),
-            (acp::ToolCall::new("tool", ""), "Tool call", false),
+            (acp_v1::ToolCall::new("tool", ""), "Tool call", false),
             (
-                acp::ToolCall::new("tool", "\n\t ").name(" \t"),
+                acp_v1::ToolCall::new("tool", "\n\t ").name(" \t"),
                 "Tool call",
                 false,
             ),
             (
-                acp::ToolCall::new("tool", "").name("**mcp__tool**"),
+                acp_v1::ToolCall::new("tool", "").name("**mcp__tool**"),
                 "**mcp__tool**",
                 false,
             ),
             (
-                acp::ToolCall::new("tool", "\n\t ")
+                acp_v1::ToolCall::new("tool", "\n\t ")
                     .name("**mcp__tool**")
-                    .kind(acp::ToolKind::Edit),
+                    .kind(acp_v1::ToolKind::Edit),
                 "**mcp__tool**",
                 false,
             ),
             (
-                acp::ToolCall::new("tool", "")
+                acp_v1::ToolCall::new("tool", "")
                     .name("**mcp__tool**")
-                    .kind(acp::ToolKind::Execute),
+                    .kind(acp_v1::ToolKind::Execute),
                 "**mcp__tool**",
                 false,
             ),
             (
-                acp::ToolCall::new("tool", "").meta(meta_with_tool_name("legacy_tool")),
+                acp_v1::ToolCall::new("tool", "").meta(meta_with_tool_name("legacy_tool")),
                 "legacy_tool",
                 false,
             ),
@@ -8132,7 +8177,7 @@ mod tests {
             cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
         let mut call = cx.update(|cx| {
             ToolCall::from_acp(
-                acp::ToolCall::new("tool", ""),
+                acp_v1::ToolCall::new("tool", ""),
                 ToolCallStatus::Pending,
                 languages.clone(),
                 &HashMap::default(),
@@ -8142,49 +8187,49 @@ mod tests {
         });
         for (update, expected, has_strong_text) in [
             (
-                acp::ToolCallUpdateFields::new().name("**tool_name**"),
+                acp_v1::ToolCallUpdateFields::new().name("**tool_name**"),
                 "**tool_name**",
                 false,
             ),
             (
-                acp::ToolCallUpdateFields::new().title("**Readable title**"),
+                acp_v1::ToolCallUpdateFields::new().title("**Readable title**"),
                 "**Readable title**",
                 true,
             ),
             (
-                acp::ToolCallUpdateFields::new().name("renamed_tool"),
+                acp_v1::ToolCallUpdateFields::new().name("renamed_tool"),
                 "**Readable title**",
                 true,
             ),
             (
-                acp::ToolCallUpdateFields::new().kind(acp::ToolKind::Execute),
+                acp_v1::ToolCallUpdateFields::new().kind(acp_v1::ToolKind::Execute),
                 "**Readable title**",
                 false,
             ),
             (
-                acp::ToolCallUpdateFields::new().kind(acp::ToolKind::Read),
+                acp_v1::ToolCallUpdateFields::new().kind(acp_v1::ToolKind::Read),
                 "**Readable title**",
                 true,
             ),
             (
-                acp::ToolCallUpdateFields::new().title("\n\t "),
+                acp_v1::ToolCallUpdateFields::new().title("\n\t "),
                 "renamed_tool",
                 false,
             ),
             (
-                acp::ToolCallUpdateFields::new().name(" \t"),
+                acp_v1::ToolCallUpdateFields::new().name(" \t"),
                 "Tool call",
                 false,
             ),
             (
-                acp::ToolCallUpdateFields::new()
+                acp_v1::ToolCallUpdateFields::new()
                     .title("**same_name**")
                     .name("**same_name**"),
                 "**same_name**",
                 true,
             ),
             (
-                acp::ToolCallUpdateFields::new().name("different_name"),
+                acp_v1::ToolCallUpdateFields::new().name("different_name"),
                 "**same_name**",
                 true,
             ),
@@ -8224,8 +8269,8 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCall(
-                        acp::ToolCall::new("tool-call", "Tool call")
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new("tool-call", "Tool call")
                             .name("first_class")
                             .meta(meta_with_tool_name("legacy")),
                     ),
@@ -8244,8 +8289,8 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCall(
-                        acp::ToolCall::new("legacy-tool-call", "Legacy tool call")
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new("legacy-tool-call", "Legacy tool call")
                             .meta(meta_with_tool_name("legacy")),
                     ),
                     cx,
@@ -8263,9 +8308,12 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCallUpdate(
-                        acp::ToolCallUpdate::new("tool-call", acp::ToolCallUpdateFields::new())
-                            .meta(meta_with_tool_name("legacy_update")),
+                    acp_v1::SessionUpdate::ToolCallUpdate(
+                        acp_v1::ToolCallUpdate::new(
+                            "tool-call",
+                            acp_v1::ToolCallUpdateFields::new(),
+                        )
+                        .meta(meta_with_tool_name("legacy_update")),
                     ),
                     cx,
                 )
@@ -8275,7 +8323,7 @@ mod tests {
         thread.read_with(cx, |thread, _| {
             let Some(tool_call) = thread.entries.iter().find_map(|entry| match entry {
                 AgentThreadEntry::ToolCall(tool_call)
-                    if tool_call.id == acp::ToolCallId::new("tool-call") =>
+                    if tool_call.id == acp_v1::ToolCallId::new("tool-call") =>
                 {
                     Some(tool_call)
                 }
@@ -8289,10 +8337,10 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCallUpdate(
-                        acp::ToolCallUpdate::new(
+                    acp_v1::SessionUpdate::ToolCallUpdate(
+                        acp_v1::ToolCallUpdate::new(
                             "legacy-tool-call",
-                            acp::ToolCallUpdateFields::new().name("first_class_update"),
+                            acp_v1::ToolCallUpdateFields::new().name("first_class_update"),
                         )
                         .meta(meta_with_tool_name("ignored_legacy_update")),
                     ),
@@ -8304,7 +8352,7 @@ mod tests {
         thread.read_with(cx, |thread, _| {
             let Some(tool_call) = thread.entries.iter().find_map(|entry| match entry {
                 AgentThreadEntry::ToolCall(tool_call)
-                    if tool_call.id == acp::ToolCallId::new("legacy-tool-call") =>
+                    if tool_call.id == acp_v1::ToolCallId::new("legacy-tool-call") =>
                 {
                     Some(tool_call)
                 }
@@ -8318,7 +8366,7 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCall(acp::ToolCall::new(
+                    acp_v1::SessionUpdate::ToolCall(acp_v1::ToolCall::new(
                         "late-legacy-tool-call",
                         "Late legacy tool call",
                     )),
@@ -8329,10 +8377,10 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCallUpdate(
-                        acp::ToolCallUpdate::new(
+                    acp_v1::SessionUpdate::ToolCallUpdate(
+                        acp_v1::ToolCallUpdate::new(
                             "late-legacy-tool-call",
-                            acp::ToolCallUpdateFields::new(),
+                            acp_v1::ToolCallUpdateFields::new(),
                         )
                         .meta(meta_with_tool_name("late_legacy")),
                     ),
@@ -8352,12 +8400,12 @@ mod tests {
     #[gpui::test]
     fn test_context_compaction_exports_status(cx: &mut App) {
         for (status, expected_label) in [
-            (acp::CompactionStatus::InProgress, "In Progress"),
-            (acp::CompactionStatus::Completed, "Completed"),
-            (acp::CompactionStatus::Failed, "Failed"),
-            (acp::CompactionStatus::Cancelled, "Canceled"),
+            (acp_v1::CompactionStatus::InProgress, "In Progress"),
+            (acp_v1::CompactionStatus::Completed, "Completed"),
+            (acp_v1::CompactionStatus::Failed, "Failed"),
+            (acp_v1::CompactionStatus::Cancelled, "Canceled"),
             (
-                acp::CompactionStatus::Other("interrupted".into()),
+                acp_v1::CompactionStatus::Other("interrupted".into()),
                 "interrupted",
             ),
         ] {
@@ -8397,11 +8445,11 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCall(
-                        acp::ToolCall::new("write_file", "Write SKILL.md")
-                            .kind(acp::ToolKind::Edit)
-                            .status(acp::ToolCallStatus::Completed)
-                            .locations(vec![acp::ToolCallLocation::new(skill_path.clone())]),
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new("write_file", "Write SKILL.md")
+                            .kind(acp_v1::ToolKind::Edit)
+                            .status(acp_v1::ToolCallStatus::Completed)
+                            .locations(vec![acp_v1::ToolCallLocation::new(skill_path.clone())]),
                     ),
                     cx,
                 )
@@ -8440,20 +8488,20 @@ mod tests {
             .await
             .unwrap();
 
-        let tool_call_id = acp::ToolCallId::new("toolu_01duplicate");
-        let allow_option_id = acp::PermissionOptionId::new("allow");
+        let tool_call_id = acp_v1::ToolCallId::new("toolu_01duplicate");
+        let allow_option_id = acp_v1::PermissionOptionId::new("allow");
         let permission_task = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
-                    acp::ToolCall::new(tool_call_id.clone(), "Original title")
-                        .kind(acp::ToolKind::Execute)
-                        .status(acp::ToolCallStatus::Pending)
+                    acp_v1::ToolCall::new(tool_call_id.clone(), "Original title")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Pending)
                         .content(vec!["original content".into()])
                         .into(),
-                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
                         allow_option_id.clone(),
                         "Allow",
-                        acp::PermissionOptionKind::AllowOnce,
+                        acp_v1::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -8464,10 +8512,10 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCall(
-                        acp::ToolCall::new(tool_call_id.clone(), "Updated title")
-                            .kind(acp::ToolKind::Execute)
-                            .status(acp::ToolCallStatus::Pending)
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new(tool_call_id.clone(), "Updated title")
+                            .kind(acp_v1::ToolKind::Execute)
+                            .status(acp_v1::ToolCallStatus::Pending)
                             .content(vec!["updated content".into()]),
                     ),
                     cx,
@@ -8491,10 +8539,10 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
                         tool_call_id.clone(),
-                        acp::ToolCallUpdateFields::new()
-                            .status(acp::ToolCallStatus::InProgress)
+                        acp_v1::ToolCallUpdateFields::new()
+                            .status(acp_v1::ToolCallStatus::InProgress)
                             .title("Updated again")
                             .content(vec!["updated again".into()]),
                     )),
@@ -8518,7 +8566,7 @@ mod tests {
 
         let selected_outcome = SelectedPermissionOutcome::new(
             allow_option_id.clone(),
-            acp::PermissionOptionKind::AllowOnce,
+            acp_v1::PermissionOptionKind::AllowOnce,
         );
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(tool_call_id.clone(), selected_outcome, cx);
@@ -8534,7 +8582,7 @@ mod tests {
         match permission_task.await {
             RequestPermissionOutcome::Selected(outcome) => {
                 assert_eq!(outcome.option_id, allow_option_id);
-                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+                assert_eq!(outcome.option_kind, acp_v1::PermissionOptionKind::AllowOnce);
             }
             RequestPermissionOutcome::Cancelled
             | RequestPermissionOutcome::InterruptedByFollowUp => {
@@ -8545,10 +8593,10 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
                         tool_call_id.clone(),
-                        acp::ToolCallUpdateFields::new()
-                            .status(acp::ToolCallStatus::Completed)
+                        acp_v1::ToolCallUpdateFields::new()
+                            .status(acp_v1::ToolCallStatus::Completed)
                             .title("Completed")
                             .content(vec!["done".into()]),
                     )),
@@ -8582,18 +8630,18 @@ mod tests {
             .await
             .unwrap();
 
-        let tool_call_id = acp::ToolCallId::new("toolu_01auto_resolve");
+        let tool_call_id = acp_v1::ToolCallId::new("toolu_01auto_resolve");
         let permission_task = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
-                    acp::ToolCall::new(tool_call_id.clone(), "Original title")
-                        .kind(acp::ToolKind::Execute)
-                        .status(acp::ToolCallStatus::Pending)
+                    acp_v1::ToolCall::new(tool_call_id.clone(), "Original title")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Pending)
                         .into(),
-                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
-                        acp::PermissionOptionId::new("allow"),
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        acp_v1::PermissionOptionId::new("allow"),
                         "Allow",
-                        acp::PermissionOptionKind::AllowOnce,
+                        acp_v1::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -8604,9 +8652,10 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
                         tool_call_id.clone(),
-                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+                        acp_v1::ToolCallUpdateFields::new()
+                            .status(acp_v1::ToolCallStatus::InProgress),
                     )),
                     cx,
                 )
@@ -8620,7 +8669,7 @@ mod tests {
             assert!(matches!(
                 tool_call.status,
                 ToolCallStatus::WaitingForConfirmation {
-                    current_status: acp::ToolCallStatus::InProgress,
+                    current_status: acp_v1::ToolCallStatus::InProgress,
                     ..
                 }
             ));
@@ -8630,8 +8679,8 @@ mod tests {
             thread.authorize_tool_call(
                 tool_call_id.clone(),
                 SelectedPermissionOutcome::new(
-                    acp::PermissionOptionId::new("allow"),
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v1::PermissionOptionId::new("allow"),
+                    acp_v1::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -8646,8 +8695,8 @@ mod tests {
 
         match permission_task.await {
             RequestPermissionOutcome::Selected(outcome) => {
-                assert_eq!(outcome.option_id, acp::PermissionOptionId::new("allow"));
-                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+                assert_eq!(outcome.option_id, acp_v1::PermissionOptionId::new("allow"));
+                assert_eq!(outcome.option_kind, acp_v1::PermissionOptionKind::AllowOnce);
             }
             RequestPermissionOutcome::Cancelled
             | RequestPermissionOutcome::InterruptedByFollowUp => {
@@ -8672,14 +8721,14 @@ mod tests {
             .await
             .unwrap();
 
-        let tool_call_id = acp::ToolCallId::new("toolu_01existing_permission");
+        let tool_call_id = acp_v1::ToolCallId::new("toolu_01existing_permission");
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCall(
-                        acp::ToolCall::new(tool_call_id.clone(), "Running title")
-                            .kind(acp::ToolKind::Execute)
-                            .status(acp::ToolCallStatus::InProgress),
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new(tool_call_id.clone(), "Running title")
+                            .kind(acp_v1::ToolKind::Execute)
+                            .status(acp_v1::ToolCallStatus::InProgress),
                     ),
                     cx,
                 )
@@ -8689,14 +8738,14 @@ mod tests {
         let permission_task = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
-                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
-                        .kind(acp::ToolKind::Execute)
-                        .status(acp::ToolCallStatus::Pending)
+                    acp_v1::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Pending)
                         .into(),
-                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
-                        acp::PermissionOptionId::new("allow"),
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        acp_v1::PermissionOptionId::new("allow"),
                         "Allow",
-                        acp::PermissionOptionKind::AllowOnce,
+                        acp_v1::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -8712,7 +8761,7 @@ mod tests {
             assert!(matches!(
                 tool_call.status,
                 ToolCallStatus::WaitingForConfirmation {
-                    current_status: acp::ToolCallStatus::InProgress,
+                    current_status: acp_v1::ToolCallStatus::InProgress,
                     ..
                 }
             ));
@@ -8722,8 +8771,8 @@ mod tests {
             thread.authorize_tool_call(
                 tool_call_id.clone(),
                 SelectedPermissionOutcome::new(
-                    acp::PermissionOptionId::new("allow"),
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v1::PermissionOptionId::new("allow"),
+                    acp_v1::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -8731,8 +8780,8 @@ mod tests {
 
         match permission_task.await {
             RequestPermissionOutcome::Selected(outcome) => {
-                assert_eq!(outcome.option_id, acp::PermissionOptionId::new("allow"));
-                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+                assert_eq!(outcome.option_id, acp_v1::PermissionOptionId::new("allow"));
+                assert_eq!(outcome.option_kind, acp_v1::PermissionOptionKind::AllowOnce);
             }
             RequestPermissionOutcome::Cancelled
             | RequestPermissionOutcome::InterruptedByFollowUp => {
@@ -8757,18 +8806,18 @@ mod tests {
             .await
             .unwrap();
 
-        let tool_call_id = acp::ToolCallId::new("toolu_01cancelled_permission");
+        let tool_call_id = acp_v1::ToolCallId::new("toolu_01cancelled_permission");
         let permission_task = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
-                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
-                        .kind(acp::ToolKind::Execute)
-                        .status(acp::ToolCallStatus::Pending)
+                    acp_v1::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Pending)
                         .into(),
-                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
-                        acp::PermissionOptionId::new("allow"),
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        acp_v1::PermissionOptionId::new("allow"),
                         "Allow",
-                        acp::PermissionOptionKind::AllowOnce,
+                        acp_v1::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -8812,18 +8861,18 @@ mod tests {
             .await
             .unwrap();
 
-        let tool_call_id = acp::ToolCallId::new("toolu_01completed_while_waiting");
+        let tool_call_id = acp_v1::ToolCallId::new("toolu_01completed_while_waiting");
         let permission_task = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
-                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
-                        .kind(acp::ToolKind::Execute)
-                        .status(acp::ToolCallStatus::Pending)
+                    acp_v1::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Pending)
                         .into(),
-                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
-                        acp::PermissionOptionId::new("allow"),
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        acp_v1::PermissionOptionId::new("allow"),
                         "Allow",
-                        acp::PermissionOptionKind::AllowOnce,
+                        acp_v1::PermissionOptionKind::AllowOnce,
                     )]),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -8834,9 +8883,10 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
                         tool_call_id.clone(),
-                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
+                        acp_v1::ToolCallUpdateFields::new()
+                            .status(acp_v1::ToolCallStatus::Completed),
                     )),
                     cx,
                 )
@@ -8872,21 +8922,20 @@ mod tests {
                     thread
                         .update(&mut cx, |thread, cx| {
                             thread.handle_session_update(
-                                acp::SessionUpdate::ToolCall(
-                                    acp::ToolCall::new("test", "Label")
-                                        .kind(acp::ToolKind::Edit)
-                                        .status(acp::ToolCallStatus::Completed)
-                                        .content(vec![acp::ToolCallContent::Diff(acp::Diff::new(
-                                            "/test/test.txt",
-                                            "foo",
-                                        ))]),
+                                acp_v1::SessionUpdate::ToolCall(
+                                    acp_v1::ToolCall::new("test", "Label")
+                                        .kind(acp_v1::ToolKind::Edit)
+                                        .status(acp_v1::ToolCallStatus::Completed)
+                                        .content(vec![acp_v1::ToolCallContent::Diff(
+                                            acp_v1::Diff::new("/test/test.txt", "foo"),
+                                        )]),
                                 ),
                                 cx,
                             )
                         })
                         .unwrap()
                         .unwrap();
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             }
@@ -8935,20 +8984,20 @@ mod tests {
                         fs.write(Path::new(&filename), b"").await?;
                     }
 
-                    let acp::ContentBlock::Text(content) = &request.prompt[0] else {
+                    let acp_v1::ContentBlock::Text(content) = &request.prompt[0] else {
                         panic!("expected text content block");
                     };
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                                    content.text.to_uppercase().into(),
-                                )),
+                                acp_v1::SessionUpdate::AgentMessageChunk(
+                                    acp_v1::ContentChunk::new(content.text.to_uppercase().into()),
+                                ),
                                 cx,
                             )
                             .unwrap();
                     })?;
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             }
@@ -9145,7 +9194,7 @@ mod tests {
                         finish_response_rx.await.ok();
                     }
 
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             }
@@ -9219,10 +9268,10 @@ mod tests {
                         thread.update(&mut cx, |thread, cx| {
                             thread
                                 .handle_session_update(
-                                    acp::SessionUpdate::ToolCall(
-                                        acp::ToolCall::new("tool1", "Test Tool")
-                                            .kind(acp::ToolKind::Fetch)
-                                            .status(acp::ToolCallStatus::Completed)
+                                    acp_v1::SessionUpdate::ToolCall(
+                                        acp_v1::ToolCall::new("tool1", "Test Tool")
+                                            .kind(acp_v1::ToolKind::Fetch)
+                                            .status(acp_v1::ToolCallStatus::Completed)
                                             .raw_input(serde_json::json!({"query": "test"}))
                                             .raw_output(serde_json::json!({"result": "inappropriate content"})),
                                     ),
@@ -9232,9 +9281,9 @@ mod tests {
                         })?;
 
                         // Now return refusal because of the tool result
-                        Ok(acp::PromptResponse::new(acp::StopReason::Refusal))
+                        Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Refusal))
                     } else {
-                        Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                        Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                     }
                 }
                 .boxed_local()
@@ -9310,10 +9359,10 @@ mod tests {
             let refuse_next = refuse_next.clone();
             move |_request, _thread, _cx| {
                 if refuse_next.load(SeqCst) {
-                    async move { Ok(acp::PromptResponse::new(acp::StopReason::Refusal)) }
+                    async move { Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Refusal)) }
                         .boxed_local()
                 } else {
-                    async move { Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)) }
+                    async move { Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)) }
                         .boxed_local()
                 }
             }
@@ -9373,23 +9422,23 @@ mod tests {
                 let refuse_next = refuse_next.clone();
                 async move {
                     if refuse_next.load(SeqCst) {
-                        return Ok(acp::PromptResponse::new(acp::StopReason::Refusal));
+                        return Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Refusal));
                     }
 
-                    let acp::ContentBlock::Text(content) = &request.prompt[0] else {
+                    let acp_v1::ContentBlock::Text(content) = &request.prompt[0] else {
                         panic!("expected text content block");
                     };
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                                    content.text.to_uppercase().into(),
-                                )),
+                                acp_v1::SessionUpdate::AgentMessageChunk(
+                                    acp_v1::ContentChunk::new(content.text.to_uppercase().into()),
+                                ),
                                 cx,
                             )
                             .unwrap();
                     })?;
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             }
@@ -9489,10 +9538,10 @@ mod tests {
 
         let result = thread.update(cx, |thread, cx| {
             thread.request_elicitation(
-                acp::CreateElicitationRequest::new(
-                    acp::ElicitationFormMode::new(
-                        acp::ElicitationSessionScope::new(session_id),
-                        acp::ElicitationSchema::new().string("name", true),
+                acp_v1::CreateElicitationRequest::new(
+                    acp_v1::ElicitationFormMode::new(
+                        acp_v1::ElicitationSessionScope::new(session_id),
+                        acp_v1::ElicitationSchema::new().string("name", true),
                     ),
                     "Provide a name",
                 ),
@@ -9515,16 +9564,16 @@ mod tests {
         enable_acp_beta(cx);
         let thread = new_test_thread(cx).await;
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let tool_call_id = acp::ToolCallId::new("tool-1");
+        let tool_call_id = acp_v1::ToolCallId::new("tool-1");
 
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(session_id.clone())
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id.clone())
                                 .tool_call_id(tool_call_id.clone()),
-                            acp::ElicitationSchema::new().string("name", true),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -9535,7 +9584,7 @@ mod tests {
 
         let elicitation_id = thread.read_with(cx, |thread, _| {
             let (elicitation_id, elicitation) = only_thread_elicitation(thread);
-            let acp::ElicitationScope::Session(scope) = elicitation.request.scope() else {
+            let acp_v1::ElicitationScope::Session(scope) = elicitation.request.scope() else {
                 panic!("expected session-scoped elicitation");
             };
             assert_eq!(scope.tool_call_id.as_ref(), Some(&tool_call_id));
@@ -9544,13 +9593,13 @@ mod tests {
 
         let expected_content = std::collections::BTreeMap::from([(
             "name".to_string(),
-            acp::ElicitationContentValue::from("Ada"),
+            acp_v1::ElicitationContentValue::from("Ada"),
         )]);
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new().content(expected_content.clone()),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new().content(expected_content.clone()),
                 )),
                 cx,
             );
@@ -9559,8 +9608,8 @@ mod tests {
         let response = response_task.await;
         assert_eq!(
             response.action,
-            acp::ElicitationAction::Accept(
-                acp::ElicitationAcceptAction::new().content(expected_content)
+            acp_v1::ElicitationAction::Accept(
+                acp_v1::ElicitationAcceptAction::new().content(expected_content)
             )
         );
         thread.read_with(cx, |thread, _| {
@@ -9577,14 +9626,14 @@ mod tests {
         enable_acp_beta(cx);
         let thread = new_test_thread(cx).await;
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
 
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationUrlMode::new(
-                            acp::ElicitationSessionScope::new(session_id),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationUrlMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -9615,15 +9664,15 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &entry_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp::ElicitationAction::Accept(_)
+            acp_v1::ElicitationAction::Accept(_)
         ));
         thread.update(cx, |thread, cx| {
             thread.complete_url_elicitation(&url_elicitation_id, cx);
@@ -9642,14 +9691,14 @@ mod tests {
         enable_acp_beta(cx);
         let thread = new_test_thread(cx).await;
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
 
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationUrlMode::new(
-                            acp::ElicitationSessionScope::new(session_id),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationUrlMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -9668,15 +9717,15 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &entry_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp::ElicitationAction::Accept(_)
+            acp_v1::ElicitationAction::Accept(_)
         ));
 
         thread.update(cx, |thread, cx| {
@@ -9706,14 +9755,14 @@ mod tests {
         enable_acp_beta(cx);
         let thread = new_test_thread(cx).await;
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
 
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationUrlMode::new(
-                            acp::ElicitationSessionScope::new(session_id),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationUrlMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -9732,15 +9781,15 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &entry_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp::ElicitationAction::Accept(_)
+            acp_v1::ElicitationAction::Accept(_)
         ));
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
@@ -9785,15 +9834,15 @@ mod tests {
                 let stop_reason = {
                     let mut prompt_count = prompt_count.borrow_mut();
                     let stop_reason = if *prompt_count == 0 {
-                        acp::StopReason::EndTurn
+                        acp_v1::StopReason::EndTurn
                     } else {
-                        acp::StopReason::Cancelled
+                        acp_v1::StopReason::Cancelled
                     };
                     *prompt_count += 1;
                     stop_reason
                 };
 
-                async move { Ok(acp::PromptResponse::new(stop_reason)) }.boxed_local()
+                async move { Ok(acp_v1::PromptResponse::new(stop_reason)) }.boxed_local()
             }
         }));
         let thread = cx
@@ -9808,16 +9857,16 @@ mod tests {
             .await
             .expect("first turn should succeed")
             .expect("first turn should return a response");
-        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+        assert_eq!(response.stop_reason, acp_v1::StopReason::EndTurn);
 
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationUrlMode::new(
-                            acp::ElicitationSessionScope::new(session_id),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationUrlMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -9836,15 +9885,15 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &entry_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp::ElicitationAction::Accept(_)
+            acp_v1::ElicitationAction::Accept(_)
         ));
 
         let response = thread
@@ -9852,7 +9901,7 @@ mod tests {
             .await
             .expect("second turn should succeed")
             .expect("second turn should return a response");
-        assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+        assert_eq!(response.stop_reason, acp_v1::StopReason::Cancelled);
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
                 panic!("missing elicitation entry");
@@ -9880,10 +9929,10 @@ mod tests {
         let response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -9899,22 +9948,25 @@ mod tests {
                     store.elicitations()
                 );
             };
-            let acp::ElicitationScope::Request(scope) = elicitation.request.scope() else {
+            let acp_v1::ElicitationScope::Request(scope) = elicitation.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
-            assert_eq!(scope.request_id, acp::RequestId::Number(1));
+            assert_eq!(scope.request_id, acp_v1::RequestId::Number(1));
             elicitation.id.clone()
         });
 
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
                 cx,
             );
         });
 
-        assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        assert_eq!(
+            response_task.await.action,
+            acp_v1::ElicitationAction::Decline
+        );
         store.read_with(cx, |store, _| {
             let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
@@ -9941,10 +9993,10 @@ mod tests {
         let response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -9966,19 +10018,22 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
                 cx,
             );
             store.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
 
-        assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        assert_eq!(
+            response_task.await.action,
+            acp_v1::ElicitationAction::Decline
+        );
         assert_eq!(
             responded_ids.borrow().as_slice(),
             std::slice::from_ref(&elicitation_id)
@@ -10001,10 +10056,10 @@ mod tests {
         let (elicitation_id, response_task) = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation_with_id(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(session_id),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10017,7 +10072,10 @@ mod tests {
             thread.cancel_elicitation(&elicitation_id, cx);
         });
 
-        assert_eq!(response_task.await.action, acp::ElicitationAction::Cancel);
+        assert_eq!(
+            response_task.await.action,
+            acp_v1::ElicitationAction::Cancel
+        );
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
@@ -10036,10 +10094,10 @@ mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(session_id),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10057,7 +10115,10 @@ mod tests {
             thread.cancel(cx).detach();
         });
 
-        assert_eq!(response_task.await.action, acp::ElicitationAction::Cancel);
+        assert_eq!(
+            response_task.await.action,
+            acp_v1::ElicitationAction::Cancel
+        );
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
@@ -10068,16 +10129,16 @@ mod tests {
 
     fn request_test_session_elicitation(
         thread: WeakEntity<AcpThread>,
-        session_id: acp::SessionId,
+        session_id: acp_v1::SessionId,
         cx: &mut AsyncApp,
-    ) -> Result<Task<acp::CreateElicitationResponse>> {
+    ) -> Result<Task<acp_v1::CreateElicitationResponse>> {
         thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(session_id),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10127,7 +10188,7 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             *elicitation_action.borrow(),
-            Some(acp::ElicitationAction::Cancel)
+            Some(acp_v1::ElicitationAction::Cancel)
         );
         thread.read_with(cx, |thread, _| {
             let Some(elicitation) = thread.entries().iter().find_map(|entry| match entry {
@@ -10162,7 +10223,7 @@ mod tests {
                     })
                     .detach();
 
-                    Ok(acp::PromptResponse::new(acp::StopReason::MaxTokens))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::MaxTokens))
                 }
                 .boxed_local()
             }
@@ -10182,7 +10243,7 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             *elicitation_action.borrow(),
-            Some(acp::ElicitationAction::Cancel)
+            Some(acp_v1::ElicitationAction::Cancel)
         );
         thread.read_with(cx, |thread, _| {
             let Some(elicitation) = thread.entries().iter().find_map(|entry| match entry {
@@ -10206,10 +10267,10 @@ mod tests {
         let (elicitation_id, response_task) = store.update(cx, |store, cx| {
             store
                 .request_elicitation_with_id(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10222,7 +10283,10 @@ mod tests {
             store.cancel_elicitation(&elicitation_id, cx);
         });
 
-        assert_eq!(response_task.await.action, acp::ElicitationAction::Cancel);
+        assert_eq!(
+            response_task.await.action,
+            acp_v1::ElicitationAction::Cancel
+        );
         store.read_with(cx, |store, _| {
             let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
@@ -10247,14 +10311,14 @@ mod tests {
             })
         });
 
-        let request_id = acp::RequestId::Number(1);
+        let request_id = acp_v1::RequestId::Number(1);
         let (elicitation_id, response_task) = store.update(cx, |store, cx| {
             store
                 .request_elicitation_with_id(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(request_id.clone()),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationRequestScope::new(request_id.clone()),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10287,10 +10351,10 @@ mod tests {
         let response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10303,7 +10367,10 @@ mod tests {
             store.cancel_all(cx);
         });
 
-        assert_eq!(response_task.await.action, acp::ElicitationAction::Cancel);
+        assert_eq!(
+            response_task.await.action,
+            acp_v1::ElicitationAction::Cancel
+        );
     }
 
     #[gpui::test]
@@ -10317,10 +10384,10 @@ mod tests {
         let first_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10331,10 +10398,10 @@ mod tests {
         let second_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(2)),
-                            acp::ElicitationSchema::new().string("account", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
+                            acp_v1::ElicitationSchema::new().string("account", true),
                         ),
                         "Provide an account",
                     ),
@@ -10353,7 +10420,7 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &first_elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
                 cx,
             );
             store.clear(cx);
@@ -10361,11 +10428,11 @@ mod tests {
 
         assert_eq!(
             first_response_task.await.action,
-            acp::ElicitationAction::Decline
+            acp_v1::ElicitationAction::Decline
         );
         assert_eq!(
             second_response_task.await.action,
-            acp::ElicitationAction::Cancel
+            acp_v1::ElicitationAction::Cancel
         );
         store.read_with(cx, |store, _| assert!(store.elicitations().is_empty()));
     }
@@ -10377,15 +10444,15 @@ mod tests {
         init_test(cx);
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
-        let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
 
         let accepted_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10396,10 +10463,10 @@ mod tests {
         let pending_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(2)),
-                            acp::ElicitationSchema::new().string("account", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
+                            acp_v1::ElicitationSchema::new().string("account", true),
                         ),
                         "Provide an account",
                     ),
@@ -10410,9 +10477,9 @@ mod tests {
         let accepted_url_response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationUrlMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(3)),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationUrlMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(3)),
                             url_elicitation_id,
                             "https://example.com/complete",
                         ),
@@ -10440,26 +10507,26 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &accepted_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
             store.respond_to_elicitation(
                 &accepted_url_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             accepted_response_task.await.action,
-            acp::ElicitationAction::Accept(_)
+            acp_v1::ElicitationAction::Accept(_)
         ));
         assert!(matches!(
             accepted_url_response_task.await.action,
-            acp::ElicitationAction::Accept(_)
+            acp_v1::ElicitationAction::Accept(_)
         ));
 
         let cleared_ids = store.update(cx, |store, cx| store.clear_resolved(cx));
@@ -10480,7 +10547,7 @@ mod tests {
         store.update(cx, |store, cx| store.clear(cx));
         assert_eq!(
             pending_response_task.await.action,
-            acp::ElicitationAction::Cancel
+            acp_v1::ElicitationAction::Cancel
         );
     }
 
@@ -10489,14 +10556,14 @@ mod tests {
         init_test(cx);
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
-        let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
 
         let response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationUrlMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationUrlMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -10532,15 +10599,15 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &entry_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp::ElicitationAction::Accept(_)
+            acp_v1::ElicitationAction::Accept(_)
         ));
         store.update(cx, |store, cx| {
             store.complete_url_elicitation(&url_elicitation_id, cx);
@@ -10560,7 +10627,7 @@ mod tests {
         init_test(cx);
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
-        let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let url_elicitation_id = acp_v1::ElicitationId::new("url-1");
         let responded_ids = Rc::new(RefCell::new(Vec::new()));
         let _subscription = cx.update(|cx| {
             let responded_ids = responded_ids.clone();
@@ -10574,9 +10641,9 @@ mod tests {
         let response_task = store.update(cx, |store, cx| {
             store
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationUrlMode::new(
-                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationUrlMode::new(
+                            acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -10600,15 +10667,15 @@ mod tests {
         store.update(cx, |store, cx| {
             store.respond_to_elicitation(
                 &entry_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
         assert!(matches!(
             response_task.await.action,
-            acp::ElicitationAction::Accept(_)
+            acp_v1::ElicitationAction::Accept(_)
         ));
         assert_eq!(
             responded_ids.borrow().as_slice(),
@@ -10651,10 +10718,10 @@ mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(session_id),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10671,13 +10738,16 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
                 cx,
             );
             thread.cancel(cx).detach();
         });
 
-        assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        assert_eq!(
+            response_task.await.action,
+            acp_v1::ElicitationAction::Decline
+        );
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
@@ -10696,10 +10766,10 @@ mod tests {
         let response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(session_id),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -10716,19 +10786,22 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
                 cx,
             );
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
         });
 
-        assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        assert_eq!(
+            response_task.await.action,
+            acp_v1::ElicitationAction::Decline
+        );
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
@@ -10753,9 +10826,9 @@ mod tests {
         ] {
             let result = thread.update(cx, |thread, cx| {
                 thread.request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationUrlMode::new(
-                            acp::ElicitationSessionScope::new(session_id.clone()),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationUrlMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id.clone()),
                             "url-1",
                             invalid_url,
                         ),
@@ -10768,7 +10841,7 @@ mod tests {
             let Err(error) = result else {
                 panic!("{invalid_url} should not be accepted for URL elicitation");
             };
-            assert_eq!(error.code, acp::ErrorCode::InvalidParams);
+            assert_eq!(error.code, acp_v1::ErrorCode::InvalidParams);
         }
         thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
     }
@@ -10781,10 +10854,10 @@ mod tests {
 
         let result = thread.update(cx, |thread, cx| {
             thread.request_elicitation(
-                acp::CreateElicitationRequest::new(
-                    acp::OtherElicitationMode::new(
+                acp_v1::CreateElicitationRequest::new(
+                    acp_v1::OtherElicitationMode::new(
                         "future",
-                        acp::ElicitationSessionScope::new(session_id),
+                        acp_v1::ElicitationSessionScope::new(session_id),
                         std::collections::BTreeMap::new(),
                     ),
                     "Use a future input mode",
@@ -10796,7 +10869,7 @@ mod tests {
         let Err(error) = result else {
             panic!("unadvertised elicitation mode should be rejected");
         };
-        assert_eq!(error.code, acp::ErrorCode::InvalidParams);
+        assert_eq!(error.code, acp_v1::ErrorCode::InvalidParams);
         thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
     }
 
@@ -10807,10 +10880,10 @@ mod tests {
 
         let result = store.update(cx, |store, cx| {
             store.request_elicitation(
-                acp::CreateElicitationRequest::new(
-                    acp::OtherElicitationMode::new(
+                acp_v1::CreateElicitationRequest::new(
+                    acp_v1::OtherElicitationMode::new(
                         "future",
-                        acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                        acp_v1::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
                         std::collections::BTreeMap::new(),
                     ),
                     "Use a future input mode",
@@ -10822,7 +10895,7 @@ mod tests {
         let Err(error) = result else {
             panic!("unadvertised elicitation mode should be rejected");
         };
-        assert_eq!(error.code, acp::ErrorCode::InvalidParams);
+        assert_eq!(error.code, acp_v1::ErrorCode::InvalidParams);
         store.read_with(cx, |store, _| assert!(store.elicitations().is_empty()));
     }
 
@@ -10855,17 +10928,18 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct FakeAgentConnection {
-        auth_methods: Vec<acp::AuthMethod>,
+        auth_methods: Vec<acp_v1::AuthMethod>,
         supports_truncate: bool,
-        sessions: Arc<parking_lot::Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        sessions: Arc<parking_lot::Mutex<HashMap<acp_v1::SessionId, WeakEntity<AcpThread>>>>,
         set_title_calls: Rc<RefCell<Vec<SharedString>>>,
         on_user_message: Option<
             Rc<
                 dyn Fn(
-                        acp::PromptRequest,
+                        acp_v1::PromptRequest,
                         WeakEntity<AcpThread>,
                         AsyncApp,
-                    ) -> LocalBoxFuture<'static, Result<acp::PromptResponse>>
+                    )
+                        -> LocalBoxFuture<'static, Result<acp_v1::PromptResponse>>
                     + 'static,
             >,
         >,
@@ -10888,7 +10962,7 @@ mod tests {
         }
 
         #[expect(unused)]
-        fn with_auth_methods(mut self, auth_methods: Vec<acp::AuthMethod>) -> Self {
+        fn with_auth_methods(mut self, auth_methods: Vec<acp_v1::AuthMethod>) -> Self {
             self.auth_methods = auth_methods;
             self
         }
@@ -10896,10 +10970,10 @@ mod tests {
         fn on_user_message(
             mut self,
             handler: impl Fn(
-                acp::PromptRequest,
+                acp_v1::PromptRequest,
                 WeakEntity<AcpThread>,
                 AsyncApp,
-            ) -> LocalBoxFuture<'static, Result<acp::PromptResponse>>
+            ) -> LocalBoxFuture<'static, Result<acp_v1::PromptResponse>>
             + 'static,
         ) -> Self {
             self.on_user_message.replace(Rc::new(handler));
@@ -10916,7 +10990,7 @@ mod tests {
             "fake".into()
         }
 
-        fn auth_methods(&self) -> &[acp::AuthMethod] {
+        fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
             &self.auth_methods
         }
 
@@ -10926,7 +11000,7 @@ mod tests {
             work_dirs: PathList,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let session_id = acp::SessionId::new(
+            let session_id = acp_v1::SessionId::new(
                 rand::rng()
                     .sample_iter(&distr::Alphanumeric)
                     .take(7)
@@ -10944,7 +11018,7 @@ mod tests {
                     action_log,
                     session_id.clone(),
                     watch::Receiver::constant(
-                        acp::PromptCapabilities::new()
+                        acp_v1::PromptCapabilities::new()
                             .image(true)
                             .audio(true)
                             .embedded_context(true),
@@ -10956,7 +11030,11 @@ mod tests {
             Task::ready(Ok(thread))
         }
 
-        fn authenticate(&self, method: acp::AuthMethodId, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn authenticate(
+            &self,
+            method: acp_v1::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
             if self.auth_methods().iter().any(|m| m.id() == &method) {
                 Task::ready(Ok(()))
             } else {
@@ -10966,9 +11044,9 @@ mod tests {
 
         fn prompt(
             &self,
-            params: acp::PromptRequest,
+            params: acp_v1::PromptRequest,
             cx: &mut App,
-        ) -> Task<gpui::Result<acp::PromptResponse>> {
+        ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
             let sessions = self.sessions.lock();
             let thread = sessions.get(&params.session_id).unwrap();
             if let Some(handler) = &self.on_user_message {
@@ -10976,7 +11054,7 @@ mod tests {
                 let thread = thread.clone();
                 cx.spawn(async move |cx| handler(params, thread, cx.clone()).await)
             } else {
-                Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             }
         }
 
@@ -10991,11 +11069,11 @@ mod tests {
             })
         }
 
-        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v1::SessionId, _cx: &mut App) {}
 
         fn truncate(
             &self,
-            session_id: &acp::SessionId,
+            session_id: &acp_v1::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             self.supports_truncate.then(|| {
@@ -11007,7 +11085,7 @@ mod tests {
 
         fn set_title(
             &self,
-            _session_id: &acp::SessionId,
+            _session_id: &acp_v1::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionSetTitle>> {
             Some(Rc::new(FakeAgentSessionSetTitle {
@@ -11032,7 +11110,7 @@ mod tests {
     }
 
     struct FakeAgentSessionEditor {
-        _session_id: acp::SessionId,
+        _session_id: acp_v1::SessionId,
     }
 
     impl AgentSessionTruncate for FakeAgentSessionEditor {
@@ -11053,9 +11131,9 @@ mod tests {
         fn prompt(
             &self,
             _client_user_message_id: ClientUserMessageId,
-            params: acp::PromptRequest,
+            params: acp_v1::PromptRequest,
             cx: &mut App,
-        ) -> Task<Result<acp::PromptResponse>> {
+        ) -> Task<Result<acp_v1::PromptResponse>> {
             self.connection.prompt(params, cx)
         }
     }
@@ -11075,12 +11153,12 @@ mod tests {
             .unwrap();
 
         // Try to update a tool call that doesn't exist
-        let nonexistent_id = acp::ToolCallId::new("nonexistent-tool-call");
+        let nonexistent_id = acp_v1::ToolCallId::new("nonexistent-tool-call");
         thread.update(cx, |thread, cx| {
             let result = thread.handle_session_update(
-                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
                     nonexistent_id.clone(),
-                    acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
+                    acp_v1::ToolCallUpdateFields::new().status(acp_v1::ToolCallStatus::Completed),
                 )),
                 cx,
             );
@@ -11095,7 +11173,7 @@ mod tests {
             if let AgentThreadEntry::ToolCall(tool_call) = &thread.entries[0] {
                 assert_eq!(tool_call.id, nonexistent_id);
                 assert!(matches!(tool_call.status, ToolCallStatus::Failed));
-                assert_eq!(tool_call.kind, acp::ToolKind::Fetch);
+                assert_eq!(tool_call.kind, acp_v1::ToolKind::Fetch);
 
                 // Check that the content contains the error message
                 assert_eq!(tool_call.content.len(), 1);
@@ -11150,7 +11228,7 @@ mod tests {
         .unwrap();
 
         // Create 2 terminals BEFORE the checkpoint that have completed running
-        let terminal_id_1 = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        let terminal_id_1 = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
         let mock_terminal_1 = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
                 ::terminal::terminal_settings::CursorShape::default(),
@@ -11190,13 +11268,13 @@ mod tests {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id_1.clone(),
-                    status: acp::TerminalExitStatus::new().exit_code(0),
+                    status: acp_v1::TerminalExitStatus::new().exit_code(0),
                 },
                 cx,
             );
         });
 
-        let terminal_id_2 = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        let terminal_id_2 = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
         let mock_terminal_2 = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
                 ::terminal::terminal_settings::CursorShape::default(),
@@ -11236,7 +11314,7 @@ mod tests {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id_2.clone(),
-                    status: acp::TerminalExitStatus::new().exit_code(0),
+                    status: acp_v1::TerminalExitStatus::new().exit_code(0),
                 },
                 cx,
             );
@@ -11256,7 +11334,7 @@ mod tests {
 
         // Create a terminal AFTER the checkpoint we'll restore to.
         // This simulates the AI agent starting a long-running terminal command.
-        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        let terminal_id = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
         let mock_terminal = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
                 ::terminal::terminal_settings::CursorShape::default(),
@@ -11299,13 +11377,13 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::ToolCall(
-                        acp::ToolCall::new("terminal-tool-1", "Running command")
-                            .kind(acp::ToolKind::Execute)
-                            .status(acp::ToolCallStatus::InProgress)
-                            .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
-                                terminal_id.clone(),
-                            ))])
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new("terminal-tool-1", "Running command")
+                            .kind(acp_v1::ToolKind::Execute)
+                            .status(acp_v1::ToolCallStatus::InProgress)
+                            .content(vec![acp_v1::ToolCallContent::Terminal(
+                                acp_v1::Terminal::new(terminal_id.clone()),
+                            )])
                             .raw_input(serde_json::json!({"command": "sleep 1000", "cd": "/test"})),
                     ),
                     cx,
@@ -11432,7 +11510,8 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new().on_user_message(
             move |_, _thread, _cx| {
                 handler_done_clone.store(true, SeqCst);
-                async move { Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)) }.boxed_local()
+                async move { Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)) }
+                    .boxed_local()
             },
         ));
 
@@ -11511,7 +11590,7 @@ mod tests {
                     if let Some(rx) = complete_rx {
                         rx.await.ok();
                     }
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             },
@@ -11583,10 +11662,9 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new().on_user_message({
             move |params, _thread, _cx| {
                 let first_complete_rx = first_complete_rx.borrow_mut().take();
-                let is_first = params
-                    .prompt
-                    .iter()
-                    .any(|c| matches!(c, acp::ContentBlock::Text(t) if t.text.contains("first")));
+                let is_first = params.prompt.iter().any(
+                    |c| matches!(c, acp_v1::ContentBlock::Text(t) if t.text.contains("first")),
+                );
                 let second_complete_rx = if is_first {
                     None
                 } else {
@@ -11604,7 +11682,7 @@ mod tests {
                             .expect("second completion receiver should be available")
                             .await?;
                     }
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             }
@@ -11625,7 +11703,7 @@ mod tests {
         let permission_task = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
-                    acp::ToolCall::new("permission", "Needs permission").into(),
+                    acp_v1::ToolCall::new("permission", "Needs permission").into(),
                     PermissionOptions::Flat(Vec::new()),
                     AuthorizationKind::PermissionGrant,
                     cx,
@@ -11705,7 +11783,7 @@ mod tests {
         }
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("turn should still be running");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -11734,7 +11812,7 @@ mod tests {
             move |params, thread, mut cx| {
                 let first_complete_rx = first_complete_rx.borrow_mut().take();
                 let is_first = params.prompt.iter().any(|content| {
-                    matches!(content, acp::ContentBlock::Text(text) if text.text.contains("first"))
+                    matches!(content, acp_v1::ContentBlock::Text(text) if text.text.contains("first"))
                 });
                 let compaction_id = compaction_id.clone();
 
@@ -11757,9 +11835,9 @@ mod tests {
                             );
                         })?;
 
-                        Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                        Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Cancelled))
                     } else {
-                        Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                        Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                     }
                 }
                 .boxed_local()
@@ -11787,7 +11865,7 @@ mod tests {
             .await
             .expect("first request should complete")
             .expect("first request should have response");
-        assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+        assert_eq!(response.stop_reason, acp_v1::StopReason::Cancelled);
 
         thread.read_with(cx, |thread, _| {
             let compaction = thread
@@ -11860,13 +11938,13 @@ mod tests {
                     thread
                         .update(&mut cx, |thread, cx| {
                             thread.handle_session_update(
-                                acp::SessionUpdate::ToolCall(
-                                    acp::ToolCall::new(
-                                        acp::ToolCallId::new("test-tool"),
+                                acp_v1::SessionUpdate::ToolCall(
+                                    acp_v1::ToolCall::new(
+                                        acp_v1::ToolCallId::new("test-tool"),
                                         "Test Tool",
                                     )
-                                    .kind(acp::ToolKind::Fetch)
-                                    .status(acp::ToolCallStatus::InProgress),
+                                    .kind(acp_v1::ToolKind::Fetch)
+                                    .status(acp_v1::ToolCallStatus::InProgress),
                                 ),
                                 cx,
                             )
@@ -11874,7 +11952,7 @@ mod tests {
                         .unwrap()
                         .unwrap();
 
-                    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Cancelled))
                 }
                 .boxed_local()
             },
@@ -11896,7 +11974,7 @@ mod tests {
             .expect("should have response");
         assert_eq!(
             response.stop_reason,
-            acp::StopReason::Cancelled,
+            acp_v1::StopReason::Cancelled,
             "response should have Cancelled stop_reason"
         );
 
@@ -12025,8 +12103,8 @@ mod tests {
 
         let result = thread.update(cx, |thread, cx| {
             thread.handle_session_update(
-                acp::SessionUpdate::SessionInfoUpdate(
-                    acp::SessionInfoUpdate::new().title("Helping with Rust question"),
+                acp_v1::SessionUpdate::SessionInfoUpdate(
+                    acp_v1::SessionInfoUpdate::new().title("Helping with Rust question"),
                 ),
                 cx,
             )
@@ -12080,28 +12158,29 @@ mod tests {
             })
         });
 
-        let warning = acp::Notice::new(acp::NoticeSeverity::Warning, "MCP server unavailable")
-            .description("Continuing without it.");
+        let warning =
+            acp_v1::Notice::new(acp_v1::NoticeSeverity::Warning, "MCP server unavailable")
+                .description("Continuing without it.");
         let notices = vec![
-            acp::Notice::new(acp::NoticeSeverity::Info, "Using default configuration"),
+            acp_v1::Notice::new(acp_v1::NoticeSeverity::Info, "Using default configuration"),
             warning.clone(),
             warning.clone(),
-            acp::Notice::new(acp::NoticeSeverity::Error, "Optional integration failed"),
-            acp::Notice::new(
-                acp::NoticeSeverity::Other("critical".into()),
+            acp_v1::Notice::new(acp_v1::NoticeSeverity::Error, "Optional integration failed"),
+            acp_v1::Notice::new(
+                acp_v1::NoticeSeverity::Other("critical".into()),
                 "Future severity",
             ),
-            acp::Notice::new(
-                acp::NoticeSeverity::Other("_custom".into()),
+            acp_v1::Notice::new(
+                acp_v1::NoticeSeverity::Other("_custom".into()),
                 "**Plain text**, not Markdown",
             )
-            .meta(acp::Meta::from_iter([("source".into(), "test".into())])),
+            .meta(acp_v1::Meta::from_iter([("source".into(), "test".into())])),
         ];
 
         thread.update(cx, |thread, cx| {
             for notice in &notices {
                 thread
-                    .handle_session_update(acp::SessionUpdate::Notice(notice.clone()), cx)
+                    .handle_session_update(acp_v1::SessionUpdate::Notice(notice.clone()), cx)
                     .expect("notice should be accepted");
             }
             assert_eq!(
@@ -12141,7 +12220,7 @@ mod tests {
             }
             assert!(thread.notices().is_empty());
             thread
-                .handle_session_update(acp::SessionUpdate::Notice(warning.clone()), cx)
+                .handle_session_update(acp_v1::SessionUpdate::Notice(warning.clone()), cx)
                 .expect("a repeated notice is a new live event");
             thread.dismiss_notice(1, cx);
             assert_eq!(thread.notices(), &[(notices.len(), warning)]);
@@ -12165,9 +12244,9 @@ mod tests {
                         let history_before_notice = thread.to_markdown(cx);
                         let entry_count = thread.entries().len();
                         thread.handle_session_update(
-                            acp::SessionUpdate::Notice(
-                                acp::Notice::new(
-                                    acp::NoticeSeverity::Error,
+                            acp_v1::SessionUpdate::Notice(
+                                acp_v1::Notice::new(
+                                    acp_v1::NoticeSeverity::Error,
                                     "Optional integration failed",
                                 )
                                 .description("Work will continue without the integration."),
@@ -12179,13 +12258,13 @@ mod tests {
                         assert_eq!(thread.entries().len(), entry_count);
                         assert_eq!(thread.to_markdown(cx), history_before_notice);
                         thread.handle_session_update(
-                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
                                 "The response continues.".into(),
                             )),
                             cx,
                         )
                     })??;
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
                 .boxed_local()
             },
@@ -12233,8 +12312,8 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UsageUpdate(
-                        acp::UsageUpdate::new(5000, 10000).cost(acp::Cost::new(0.42, "USD")),
+                    acp_v1::SessionUpdate::UsageUpdate(
+                        acp_v1::UsageUpdate::new(5000, 10000).cost(acp_v1::Cost::new(0.42, "USD")),
                     ),
                     cx,
                 )
@@ -12269,8 +12348,8 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UsageUpdate(
-                        acp::UsageUpdate::new(5000, 10000).cost(acp::Cost::new(0.42, "USD")),
+                    acp_v1::SessionUpdate::UsageUpdate(
+                        acp_v1::UsageUpdate::new(5000, 10000).cost(acp_v1::Cost::new(0.42, "USD")),
                     ),
                     cx,
                 )
@@ -12303,7 +12382,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(1000, 10000)),
+                    acp_v1::SessionUpdate::UsageUpdate(acp_v1::UsageUpdate::new(1000, 10000)),
                     cx,
                 )
                 .unwrap();
@@ -12335,8 +12414,8 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UsageUpdate(
-                        acp::UsageUpdate::new(1000, 10000).cost(acp::Cost::new(0.10, "USD")),
+                    acp_v1::SessionUpdate::UsageUpdate(
+                        acp_v1::UsageUpdate::new(1000, 10000).cost(acp_v1::Cost::new(0.10, "USD")),
                     ),
                     cx,
                 )
@@ -12344,7 +12423,7 @@ mod tests {
 
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(2000, 10000)),
+                    acp_v1::SessionUpdate::UsageUpdate(acp_v1::UsageUpdate::new(2000, 10000)),
                     cx,
                 )
                 .unwrap();
@@ -12371,16 +12450,16 @@ mod tests {
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
-                                acp::SessionUpdate::UsageUpdate(
-                                    acp::UsageUpdate::new(3000, 10000)
-                                        .cost(acp::Cost::new(0.05, "EUR")),
+                                acp_v1::SessionUpdate::UsageUpdate(
+                                    acp_v1::UsageUpdate::new(3000, 10000)
+                                        .cost(acp_v1::Cost::new(0.05, "EUR")),
                                 ),
                                 cx,
                             )
                             .unwrap();
                     })?;
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)
-                        .usage(acp::Usage::new(500, 200, 300)))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)
+                        .usage(acp_v1::Usage::new(500, 200, 300)))
                 }
                 .boxed_local()
             },
@@ -12431,8 +12510,8 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .handle_session_update(
-                    acp::SessionUpdate::UsageUpdate(
-                        acp::UsageUpdate::new(1000, 10000).cost(acp::Cost::new(0.25, "USD")),
+                    acp_v1::SessionUpdate::UsageUpdate(
+                        acp_v1::UsageUpdate::new(1000, 10000).cost(acp_v1::Cost::new(0.25, "USD")),
                     ),
                     cx,
                 )
@@ -12468,7 +12547,7 @@ mod tests {
         // `f(this, cx).await` with `tx` still alive but unsent.
         let connection = Rc::new(FakeAgentConnection::new().on_user_message(
             |_params, _thread, _cx| {
-                async move { futures::future::pending::<Result<acp::PromptResponse>>().await }
+                async move { futures::future::pending::<Result<acp_v1::PromptResponse>>().await }
                     .boxed_local()
             },
         ));
@@ -12535,7 +12614,7 @@ mod tests {
                 async move |_, _| {
                     completion.await?;
                     backend_finished.store(true, SeqCst);
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
                 }
             })
         });
@@ -12577,22 +12656,22 @@ mod tests {
             cx.set_idle_sleep_prevention_delay(delay);
             for (backend_result, expected_result, expected_had_error) in [
                 (
-                    Ok(acp::StopReason::EndTurn),
-                    Ok(acp::StopReason::EndTurn),
+                    Ok(acp_v1::StopReason::EndTurn),
+                    Ok(acp_v1::StopReason::EndTurn),
                     false,
                 ),
                 (
-                    Ok(acp::StopReason::Cancelled),
-                    Ok(acp::StopReason::Cancelled),
+                    Ok(acp_v1::StopReason::Cancelled),
+                    Ok(acp_v1::StopReason::Cancelled),
                     false,
                 ),
                 (
-                    Ok(acp::StopReason::Refusal),
-                    Ok(acp::StopReason::Refusal),
+                    Ok(acp_v1::StopReason::Refusal),
+                    Ok(acp_v1::StopReason::Refusal),
                     true,
                 ),
                 (
-                    Ok(acp::StopReason::MaxTokens),
+                    Ok(acp_v1::StopReason::MaxTokens),
                     Err("output token limit reached"),
                     true,
                 ),
@@ -12608,7 +12687,7 @@ mod tests {
                 assert!(!thread.read_with(cx, |thread, _| thread.had_error()));
 
                 complete
-                    .send(backend_result.map(acp::PromptResponse::new))
+                    .send(backend_result.map(acp_v1::PromptResponse::new))
                     .expect("turn should still be running");
                 let result = request
                     .await
@@ -12652,8 +12731,8 @@ mod tests {
                     connection,
                     project,
                     action_log,
-                    acp::SessionId::new("subagent"),
-                    watch::Receiver::constant(acp::PromptCapabilities::new()),
+                    acp_v1::SessionId::new("subagent"),
+                    watch::Receiver::constant(acp_v1::PromptCapabilities::new()),
                     cx,
                 )
             })
@@ -12675,14 +12754,16 @@ mod tests {
         let parent_cancel = parent.update(cx, |thread, cx| thread.cancel(cx));
         assert_eq!(cx.active_idle_sleep_preventions(), 2);
         parent_complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .send(Ok(acp_v1::PromptResponse::new(
+                acp_v1::StopReason::Cancelled,
+            )))
             .expect("parent backend should still be running");
         parent_cancel.await;
         parent_request.await.expect("parent turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 2);
 
         independent_complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("independent turn should still be running");
         independent_request
             .await
@@ -12694,7 +12775,7 @@ mod tests {
         );
 
         subagent_complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("subagent should still be running");
         subagent_request
             .await
@@ -12736,7 +12817,7 @@ mod tests {
             });
 
             complete
-                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("backend should still be running");
             cancel.await;
             request.await.expect("turn should complete");
@@ -12782,7 +12863,7 @@ mod tests {
         });
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("turn should still be running");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -12817,7 +12898,9 @@ mod tests {
         });
 
         first_complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .send(Ok(acp_v1::PromptResponse::new(
+                acp_v1::StopReason::Cancelled,
+            )))
             .expect("first backend should still be running");
         first_request.await.expect("first turn should complete");
         cx.run_until_parked();
@@ -12831,7 +12914,7 @@ mod tests {
         });
 
         second_complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("second backend should still be running");
         second_request.await.expect("second turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -12913,7 +12996,7 @@ mod tests {
             });
 
             complete
-                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("turn should still be running");
             request.await.expect("turn should complete");
             assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -12947,7 +13030,7 @@ mod tests {
                 None
             };
             complete
-                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("backend should still be running");
             if let Some(cancel) = cancel {
                 cancel.await;
@@ -12967,7 +13050,7 @@ mod tests {
             cx.run_until_parked();
             assert_eq!(cx.active_idle_sleep_preventions(), 1);
             complete
-                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("next turn should still be running");
             request.await.expect("next turn should complete");
             assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -12982,8 +13065,8 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
-        let first_id = acp::ToolCallId::new("first-permission");
-        let second_id = acp::ToolCallId::new("second-permission");
+        let first_id = acp_v1::ToolCallId::new("first-permission");
+        let second_id = acp_v1::ToolCallId::new("second-permission");
         let first_permission = request_test_permission(&thread, first_id.clone(), cx);
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
         let second_permission = request_test_permission(&thread, second_id.clone(), cx);
@@ -12999,9 +13082,10 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread
                 .update_tool_call(
-                    acp::ToolCallUpdate::new(
+                    acp_v1::ToolCallUpdate::new(
                         first_id.clone(),
-                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+                        acp_v1::ToolCallUpdateFields::new()
+                            .status(acp_v1::ToolCallStatus::InProgress),
                     ),
                     cx,
                 )
@@ -13009,8 +13093,8 @@ mod tests {
             thread.authorize_tool_call(
                 second_id,
                 SelectedPermissionOutcome::new(
-                    acp::PermissionOptionId::new("reject"),
-                    acp::PermissionOptionKind::RejectOnce,
+                    acp_v1::PermissionOptionId::new("reject"),
+                    acp_v1::PermissionOptionKind::RejectOnce,
                 ),
                 cx,
             );
@@ -13018,7 +13102,7 @@ mod tests {
         assert!(matches!(
             second_permission.await,
             RequestPermissionOutcome::Selected(outcome)
-                if outcome.option_kind == acp::PermissionOptionKind::RejectOnce
+                if outcome.option_kind == acp_v1::PermissionOptionKind::RejectOnce
         ));
         cx.run_until_parked();
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -13026,13 +13110,13 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Decline),
                 cx,
             );
         });
         assert_eq!(
             elicitation_response.await.action,
-            acp::ElicitationAction::Decline
+            acp_v1::ElicitationAction::Decline
         );
         cx.run_until_parked();
         assert!(thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
@@ -13042,8 +13126,8 @@ mod tests {
             thread.authorize_tool_call(
                 first_id,
                 SelectedPermissionOutcome::new(
-                    acp::PermissionOptionId::new("allow"),
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v1::PermissionOptionId::new("allow"),
+                    acp_v1::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -13051,14 +13135,14 @@ mod tests {
         assert!(matches!(
             first_permission.await,
             RequestPermissionOutcome::Selected(outcome)
-                if outcome.option_kind == acp::PermissionOptionKind::AllowOnce
+                if outcome.option_kind == acp_v1::PermissionOptionKind::AllowOnce
         ));
         cx.run_until_parked();
         assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("turn should still be running");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -13071,14 +13155,14 @@ mod tests {
         init_test(cx);
         for status in [
             None,
-            Some(acp::ToolCallStatus::Completed),
-            Some(acp::ToolCallStatus::Failed),
+            Some(acp_v1::ToolCallStatus::Completed),
+            Some(acp_v1::ToolCallStatus::Failed),
         ] {
             let thread = new_test_thread(cx).await;
             let (complete, request) = start_test_turn(&thread, cx);
             cx.run_until_parked();
             assert_eq!(cx.active_idle_sleep_preventions(), 1);
-            let tool_call_id = acp::ToolCallId::new("permission");
+            let tool_call_id = acp_v1::ToolCallId::new("permission");
             let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
             cx.run_until_parked();
             assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -13087,9 +13171,9 @@ mod tests {
                 if let Some(status) = status {
                     thread
                         .handle_session_update(
-                            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                            acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
                                 tool_call_id,
-                                acp::ToolCallUpdateFields::new().status(status),
+                                acp_v1::ToolCallUpdateFields::new().status(status),
                             )),
                             cx,
                         )
@@ -13107,7 +13191,7 @@ mod tests {
             assert_eq!(cx.active_idle_sleep_preventions(), 1, "status: {status:?}");
 
             complete
-                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("turn should still be running");
             request.await.expect("turn should complete");
             assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -13122,7 +13206,7 @@ mod tests {
         let (complete, request) = start_test_turn(&thread, cx);
         cx.run_until_parked();
         cx.executor().advance_clock(Duration::from_secs(1));
-        let tool_call_id = acp::ToolCallId::new("permission");
+        let tool_call_id = acp_v1::ToolCallId::new("permission");
         let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
         cx.run_until_parked();
         cx.executor().advance_clock(Duration::from_secs(1));
@@ -13140,8 +13224,8 @@ mod tests {
             thread.authorize_tool_call(
                 tool_call_id,
                 SelectedPermissionOutcome::new(
-                    acp::PermissionOptionId::new("allow"),
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v1::PermissionOptionId::new("allow"),
+                    acp_v1::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
@@ -13159,7 +13243,7 @@ mod tests {
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("turn should still be running");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -13198,7 +13282,7 @@ mod tests {
         );
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("turn should still be running");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -13213,9 +13297,9 @@ mod tests {
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         for action in [
-            acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
-            acp::ElicitationAction::Decline,
-            acp::ElicitationAction::Cancel,
+            acp_v1::ElicitationAction::Accept(acp_v1::ElicitationAcceptAction::new()),
+            acp_v1::ElicitationAction::Decline,
+            acp_v1::ElicitationAction::Cancel,
         ] {
             let (elicitation_id, response) = request_test_form_elicitation(&thread, cx);
             cx.run_until_parked();
@@ -13228,7 +13312,7 @@ mod tests {
             thread.update(cx, |thread, cx| {
                 thread.respond_to_elicitation(
                     &elicitation_id,
-                    acp::CreateElicitationResponse::new(action.clone()),
+                    acp_v1::CreateElicitationResponse::new(action.clone()),
                     cx,
                 );
             });
@@ -13240,7 +13324,7 @@ mod tests {
             thread.update(cx, |thread, cx| {
                 thread.respond_to_elicitation(
                     &elicitation_id,
-                    acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+                    acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Cancel),
                     cx,
                 );
             });
@@ -13249,7 +13333,7 @@ mod tests {
         }
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("turn should still be running");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -13264,13 +13348,13 @@ mod tests {
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         for (url_id, accept) in [("accepted", true), ("canceled", false)] {
-            let url_id = acp::ElicitationId::new(url_id);
+            let url_id = acp_v1::ElicitationId::new(url_id);
             let (entry_id, response) = thread.update(cx, |thread, cx| {
                 thread
                     .request_elicitation_with_id(
-                        acp::CreateElicitationRequest::new(
-                            acp::ElicitationUrlMode::new(
-                                acp::ElicitationSessionScope::new(thread.session_id().clone()),
+                        acp_v1::CreateElicitationRequest::new(
+                            acp_v1::ElicitationUrlMode::new(
+                                acp_v1::ElicitationSessionScope::new(thread.session_id().clone()),
                                 url_id.clone(),
                                 "https://example.com/complete",
                             ),
@@ -13289,15 +13373,15 @@ mod tests {
             assert_eq!(cx.active_idle_sleep_preventions(), 0);
 
             let expected_action = if accept {
-                acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new())
+                acp_v1::ElicitationAction::Accept(acp_v1::ElicitationAcceptAction::new())
             } else {
-                acp::ElicitationAction::Cancel
+                acp_v1::ElicitationAction::Cancel
             };
             thread.update(cx, |thread, cx| {
                 if accept {
                     thread.respond_to_elicitation(
                         &entry_id,
-                        acp::CreateElicitationResponse::new(expected_action.clone()),
+                        acp_v1::CreateElicitationResponse::new(expected_action.clone()),
                         cx,
                     );
                 } else {
@@ -13317,7 +13401,7 @@ mod tests {
         }
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("turn should still be running");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -13332,7 +13416,7 @@ mod tests {
         let (complete, request) = start_test_turn(&thread, cx);
         cx.run_until_parked();
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
-        let tool_call_id = acp::ToolCallId::new("permission");
+        let tool_call_id = acp_v1::ToolCallId::new("permission");
         let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
         let (elicitation_id, elicitation_response) = request_test_form_elicitation(&thread, cx);
         cx.run_until_parked();
@@ -13345,21 +13429,21 @@ mod tests {
         ));
         assert_eq!(
             elicitation_response.await.action,
-            acp::ElicitationAction::Cancel
+            acp_v1::ElicitationAction::Cancel
         );
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(
                 tool_call_id,
                 SelectedPermissionOutcome::new(
-                    acp::PermissionOptionId::new("allow"),
-                    acp::PermissionOptionKind::AllowOnce,
+                    acp_v1::PermissionOptionId::new("allow"),
+                    acp_v1::PermissionOptionKind::AllowOnce,
                 ),
                 cx,
             );
             thread.respond_to_elicitation(
                 &elicitation_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                    acp::ElicitationAcceptAction::new(),
+                acp_v1::CreateElicitationResponse::new(acp_v1::ElicitationAction::Accept(
+                    acp_v1::ElicitationAcceptAction::new(),
                 )),
                 cx,
             );
@@ -13372,7 +13456,9 @@ mod tests {
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .send(Ok(acp_v1::PromptResponse::new(
+                acp_v1::StopReason::Cancelled,
+            )))
             .expect("backend should still be running");
         cancel.await;
         request.await.expect("turn should complete");
@@ -13381,7 +13467,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_stale_refusal_does_not_affect_follow_up_turn(cx: &mut TestAppContext) {
-        assert_stale_completion_does_not_affect_follow_up_turn(Ok(acp::StopReason::Refusal), cx)
+        assert_stale_completion_does_not_affect_follow_up_turn(Ok(acp_v1::StopReason::Refusal), cx)
             .await;
     }
 
@@ -13396,9 +13482,9 @@ mod tests {
     ) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
-        let text = acp::ContentBlock::Text(
-            acp::TextContent::new("before")
-                .meta(acp::Meta::from_iter([("sequence".into(), json!(1))])),
+        let text = acp_v1::ContentBlock::Text(
+            acp_v1::TextContent::new("before")
+                .meta(acp_v1::Meta::from_iter([("sequence".into(), json!(1))])),
         );
         let image = message_test_image();
 
@@ -13442,7 +13528,7 @@ mod tests {
         });
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("turn should still be running");
         request.await.expect("turn should complete");
         thread.read_with(cx, |thread, cx| {
@@ -13543,7 +13629,9 @@ mod tests {
             );
         });
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .send(Ok(acp_v1::PromptResponse::new(
+                acp_v1::StopReason::Cancelled,
+            )))
             .expect("backend should still be running");
         cancel.await;
         request.await.expect("turn should complete");
@@ -13591,10 +13679,10 @@ mod tests {
         thread: &Entity<AcpThread>,
         cx: &mut TestAppContext,
     ) -> (
-        oneshot::Sender<Result<acp::PromptResponse>>,
-        BoxFuture<'static, Result<Option<acp::PromptResponse>>>,
+        oneshot::Sender<Result<acp_v1::PromptResponse>>,
+        BoxFuture<'static, Result<Option<acp_v1::PromptResponse>>>,
     ) {
-        let (complete, completion) = oneshot::channel::<Result<acp::PromptResponse>>();
+        let (complete, completion) = oneshot::channel::<Result<acp_v1::PromptResponse>>();
         let request = thread.update(cx, |thread, cx| {
             thread.run_turn(cx, async move |_, _| completion.await?)
         });
@@ -13603,23 +13691,23 @@ mod tests {
 
     fn request_test_permission(
         thread: &Entity<AcpThread>,
-        tool_call_id: acp::ToolCallId,
+        tool_call_id: acp_v1::ToolCallId,
         cx: &mut TestAppContext,
     ) -> Task<RequestPermissionOutcome> {
         thread.update(cx, |thread, cx| {
             thread
                 .request_tool_call_authorization(
-                    acp::ToolCall::new(tool_call_id, "Needs permission").into(),
+                    acp_v1::ToolCall::new(tool_call_id, "Needs permission").into(),
                     PermissionOptions::Flat(vec![
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("allow"),
+                        acp_v1::PermissionOption::new(
+                            acp_v1::PermissionOptionId::new("allow"),
                             "Allow",
-                            acp::PermissionOptionKind::AllowOnce,
+                            acp_v1::PermissionOptionKind::AllowOnce,
                         ),
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("reject"),
+                        acp_v1::PermissionOption::new(
+                            acp_v1::PermissionOptionId::new("reject"),
                             "Reject",
-                            acp::PermissionOptionKind::RejectOnce,
+                            acp_v1::PermissionOptionKind::RejectOnce,
                         ),
                     ]),
                     AuthorizationKind::PermissionGrant,
@@ -13632,14 +13720,14 @@ mod tests {
     fn request_test_form_elicitation(
         thread: &Entity<AcpThread>,
         cx: &mut TestAppContext,
-    ) -> (ElicitationEntryId, Task<acp::CreateElicitationResponse>) {
+    ) -> (ElicitationEntryId, Task<acp_v1::CreateElicitationResponse>) {
         thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation_with_id(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(thread.session_id().clone()),
-                            acp::ElicitationSchema::new().string("name", false),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(thread.session_id().clone()),
+                            acp_v1::ElicitationSchema::new().string("name", false),
                         ),
                         "Provide a name",
                     ),
@@ -13660,7 +13748,7 @@ mod tests {
     }
 
     async fn assert_stale_completion_does_not_affect_follow_up_turn(
-        backend_result: Result<acp::StopReason, &'static str>,
+        backend_result: Result<acp_v1::StopReason, &'static str>,
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -13683,7 +13771,7 @@ mod tests {
             first_complete
                 .send(
                     backend_result
-                        .map(acp::PromptResponse::new)
+                        .map(acp_v1::PromptResponse::new)
                         .map_err(|message| anyhow!(message)),
                 )
                 .expect("first backend should still be running");
@@ -13757,7 +13845,7 @@ mod tests {
             assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
             second_complete
-                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("second backend should still be running");
             second_request.await.expect("second turn should complete");
             assert_eq!(cx.active_idle_sleep_preventions(), 0);
@@ -13773,20 +13861,20 @@ mod tests {
         let (complete, request) = start_test_turn(&thread, cx);
         cx.run_until_parked();
         assert_eq!(cx.active_idle_sleep_preventions(), 1);
-        let tool_call_id = acp::ToolCallId::new("permission");
+        let tool_call_id = acp_v1::ToolCallId::new("permission");
         let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
         cx.run_until_parked();
         assert!(thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
 
         thread.update(cx, |thread, cx| {
-            let update = acp::ToolCallUpdate::new(
+            let update = acp_v1::ToolCallUpdate::new(
                 tool_call_id.clone(),
-                acp::ToolCallUpdateFields::new()
-                    .status(acp::ToolCallStatus::Completed)
-                    .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
-                        acp::TerminalId::new("unknown-terminal"),
-                    ))]),
+                acp_v1::ToolCallUpdateFields::new()
+                    .status(acp_v1::ToolCallStatus::Completed)
+                    .content(vec![acp_v1::ToolCallContent::Terminal(
+                        acp_v1::Terminal::new(acp_v1::TerminalId::new("unknown-terminal")),
+                    )]),
             );
             if upsert {
                 assert!(
@@ -13811,7 +13899,7 @@ mod tests {
                     .1
                     .status
                     .as_acp_status(),
-                Some(acp::ToolCallStatus::Completed)
+                Some(acp_v1::ToolCallStatus::Completed)
             );
             assert!(!thread.is_waiting_for_confirmation());
         });
@@ -13832,7 +13920,7 @@ mod tests {
         });
 
         complete
-            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
             .expect("backend should still be running");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);

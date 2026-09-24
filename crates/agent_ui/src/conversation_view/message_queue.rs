@@ -7,7 +7,7 @@ pub struct QueueEntryId(usize);
 
 pub struct QueueEntry {
     pub id: QueueEntryId,
-    pub content: Vec<acp::ContentBlock>,
+    pub content: Vec<acp_v1::ContentBlock>,
     pub tracked_buffers: Vec<Entity<Buffer>>,
     /// When true, this message interrupts the agent at the next turn boundary
     /// instead of waiting for generation to fully complete. Only the front

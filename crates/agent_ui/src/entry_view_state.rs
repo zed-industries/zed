@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk};
 use agent::ThreadStore;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v1 as acp_v1;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -47,7 +47,7 @@ pub struct EntryViewState {
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
     expanded_compactions: HashSet<usize>,
-    expanded_tool_calls: HashSet<acp::ToolCallId>,
+    expanded_tool_calls: HashSet<acp_v1::ToolCallId>,
 }
 
 impl EntryViewState {
@@ -73,19 +73,19 @@ impl EntryViewState {
         }
     }
 
-    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp::ToolCallId) -> bool {
+    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
         self.expanded_tool_calls.contains(tool_call_id)
     }
 
-    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId) {
+    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v1::ToolCallId) {
         self.expanded_tool_calls.insert(tool_call_id);
     }
 
-    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp::ToolCallId) {
+    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp_v1::ToolCallId) {
         self.expanded_tool_calls.remove(tool_call_id);
     }
 
-    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp::ToolCallId) {
+    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp_v1::ToolCallId) {
         if !self.expanded_tool_calls.remove(tool_call_id) {
             self.expanded_tool_calls.insert(tool_call_id.clone());
         }
@@ -497,9 +497,9 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(acp::ToolCallId),
-    NewTerminal(acp::ToolCallId),
-    TerminalMovedToBackground(acp::ToolCallId),
+    NewDiff(acp_v1::ToolCallId),
+    NewTerminal(acp_v1::ToolCallId),
+    TerminalMovedToBackground(acp_v1::ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
     OpenDiffLocation {
         path: String,
@@ -716,7 +716,7 @@ mod tests {
     use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::schema::v1 as acp_v1;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
@@ -767,10 +767,10 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-        let tool_call = acp::ToolCall::new("tool", "Tool call")
-            .status(acp::ToolCallStatus::InProgress)
-            .content(vec![acp::ToolCallContent::Diff(
-                acp::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
+        let tool_call = acp_v1::ToolCall::new("tool", "Tool call")
+            .status(acp_v1::ToolCallStatus::InProgress)
+            .content(vec![acp_v1::ToolCallContent::Diff(
+                acp_v1::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
             )]);
         let connection = Rc::new(StubAgentConnection::new());
         let thread = cx
@@ -786,7 +786,7 @@ mod tests {
         let session_id = thread.update(cx, |thread, _| thread.session_id().clone());
 
         cx.update(|_, cx| {
-            connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
+            connection.send_update(session_id, acp_v1::SessionUpdate::ToolCall(tool_call), cx)
         });
 
         let thread_store = None;
@@ -883,10 +883,10 @@ mod tests {
         let _response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(session_id.clone()),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id.clone()),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -897,8 +897,8 @@ mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id,
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                    acp::ContentBlock::Text(acp::TextContent::new("hello")),
+                acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                    acp_v1::ContentBlock::Text(acp_v1::TextContent::new("hello")),
                 )),
                 cx,
             );
