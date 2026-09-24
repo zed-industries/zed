@@ -4978,6 +4978,122 @@ impl Project {
         })
     }
 
+    pub fn resolve_abs_file_link(
+        &self,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<ResolvedPath>>> {
+        let resolve_task = self.resolve_abs_file_path_canonical(path, cx);
+        let path = if self.is_local() {
+            shellexpand::tilde(path).into_owned()
+        } else {
+            path.to_owned()
+        };
+        cx.spawn(async move |project, cx| {
+            let Some(resolved_path) = resolve_task.await? else {
+                return Ok(None);
+            };
+            let path = if path.starts_with("~") {
+                let Ok(task) =
+                    project.update(cx, |project, cx| project.resolve_abs_path(&path, cx))
+                else {
+                    return Ok(None);
+                };
+                let Some(path) = task.await.and_then(ResolvedPath::into_abs_path) else {
+                    return Ok(Some(resolved_path));
+                };
+                path
+            } else {
+                path
+            };
+            let Ok(candidate) = project.update(cx, |project, cx| {
+                let lexical_path = project.path_style(cx).normalize(&path);
+                let project_path =
+                    project.project_path_for_absolute_path(Path::new(&lexical_path), cx)?;
+                let abs_path = project.absolute_path(&project_path, cx)?;
+                let task = project.resolve_abs_file_path_canonical(abs_path.to_str()?, cx);
+                Some((project_path, abs_path, task))
+            }) else {
+                return Ok(None);
+            };
+            let Some((project_path, abs_path, task)) = candidate else {
+                return Ok(Some(resolved_path));
+            };
+            let canonical_candidate = task
+                .await
+                .with_context(|| format!("validating file link alias {abs_path:?}"))
+                .log_err()
+                .flatten();
+            let Ok(alias_unchanged) = project.read_with(cx, |project, cx| {
+                project.absolute_path(&project_path, cx).as_deref() == Some(abs_path.as_path())
+            }) else {
+                return Ok(None);
+            };
+            if alias_unchanged
+                && canonical_candidate
+                    .is_some_and(|candidate| candidate.abs_path() == resolved_path.abs_path())
+            {
+                Ok(Some(ResolvedPath::ProjectPath {
+                    project_path,
+                    is_dir: false,
+                }))
+            } else {
+                Ok(Some(resolved_path))
+            }
+        })
+    }
+
+    pub fn resolve_abs_file_path_canonical(
+        &self,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<ResolvedPath>>> {
+        if self.is_local() {
+            let expanded = PathBuf::from(shellexpand::tilde(path).into_owned());
+            let fs = self.fs.clone();
+            cx.background_spawn(async move {
+                if fs
+                    .metadata(&expanded)
+                    .await?
+                    .is_none_or(|metadata| metadata.is_dir)
+                {
+                    return Ok(None);
+                }
+                let path = fs.canonicalize(&expanded).await?;
+                let path = path
+                    .to_str()
+                    .context("canonical file path is not valid UTF-8")?
+                    .to_owned();
+                Ok(Some(ResolvedPath::AbsPath {
+                    path,
+                    is_dir: false,
+                }))
+            })
+        } else if let Some(ssh_client) = self.remote_client.as_ref() {
+            let request = ssh_client
+                .read(cx)
+                .proto_client()
+                .request(proto::GetPathMetadata {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    path: path.into(),
+                    canonicalize: true,
+                });
+            cx.background_spawn(async move {
+                let response = request.await?;
+                if response.exists && !response.is_dir {
+                    Ok(Some(ResolvedPath::AbsPath {
+                        path: response.path,
+                        is_dir: false,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            })
+        } else {
+            Task::ready(Ok(None))
+        }
+    }
+
     pub fn resolve_abs_path(&self, path: &str, cx: &App) -> Task<Option<ResolvedPath>> {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
@@ -4997,6 +5113,7 @@ impl Project {
                 .request(proto::GetPathMetadata {
                     project_id: REMOTE_SERVER_PROJECT_ID,
                     path: path.into(),
+                    canonicalize: false,
                 });
             cx.background_spawn(async move {
                 let response = request.await.log_err()?;

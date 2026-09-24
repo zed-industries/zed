@@ -43,8 +43,9 @@ use std::sync::Arc;
 use ::ui::IconName;
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
+use anyhow::Context as _;
 use command_palette_hooks::CommandPaletteFilter;
-use editor::{Editor, SelectionEffects, scroll::Autoscroll};
+use editor::{Editor, scroll::Autoscroll};
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
@@ -58,7 +59,7 @@ use language::{
 use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
-use project::{AgentId, DisableAiSettings};
+use project::{AgentId, DisableAiSettings, Project, ProjectPath};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
 use rope::Point;
 use schemars::JsonSchema;
@@ -66,7 +67,11 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
-use workspace::{OpenOptions, Workspace};
+use util::{
+    paths::SanitizedPath,
+    rel_path::{RelPath, RelPathBuf},
+};
+use workspace::Workspace;
 
 use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
@@ -119,6 +124,72 @@ pub(crate) fn resolve_agent_image(
     None
 }
 
+pub(crate) fn project_path_for_file_link(
+    project: &Project,
+    path: &Path,
+    cx: &App,
+) -> Option<ProjectPath> {
+    let path_style = project.path_style(cx);
+    let validate_path = |project_path: ProjectPath, relative_path: &str| {
+        if project.get_open_buffer(&project_path, cx).is_none()
+            && !project.entry_for_path(&project_path, cx)?.is_file()
+        {
+            return None;
+        }
+        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+        let worktree = worktree.read(cx);
+        let mut prefix = RelPathBuf::new();
+        for component in relative_path.split(path_style.separators_ch()) {
+            match component {
+                "" | "." => {}
+                ".." => {
+                    let entry = worktree.entry_for_path(&prefix)?;
+                    if !entry.is_dir() || entry.canonical_path.is_some() || !prefix.pop() {
+                        return None;
+                    }
+                }
+                component => prefix.push_component(component).ok()?,
+            }
+        }
+        Some(project_path)
+    };
+    let path = SanitizedPath::new(path).as_path();
+    if path_style.is_absolute(path.to_str()?) {
+        let project_path = project.project_path_for_absolute_path(path, cx)?;
+        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+        let root = worktree.read(cx).abs_path();
+        let root_length = root
+            .to_str()?
+            .trim_end_matches(path_style.separators_ch())
+            .len();
+        let relative_path = path
+            .to_str()?
+            .get(root_length..)?
+            .trim_start_matches(path_style.separators_ch());
+        validate_path(project_path, relative_path)
+    } else {
+        project.visible_worktrees(cx).find_map(|worktree| {
+            let worktree = worktree.read(cx);
+            [
+                path.strip_prefix(worktree.root_name().as_std_path()).ok(),
+                Some(path),
+            ]
+            .into_iter()
+            .flatten()
+            .find_map(|relative_path| {
+                let path = RelPath::new(relative_path, path_style).ok()?.into_arc();
+                validate_path(
+                    ProjectPath {
+                        worktree_id: worktree.id(),
+                        path,
+                    },
+                    relative_path.to_str()?,
+                )
+            })
+        })
+    }
+}
+
 /// Opens `abs_path` in the workspace, moving the cursor to `point` when one
 /// is given. Paths outside every worktree are only opened when a file exists
 /// there, so broken agent links don't create empty buffers.
@@ -129,39 +200,47 @@ pub(crate) fn open_abs_path_at_point(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let project_path = workspace
-        .project()
-        .update(cx, |project, cx| project.find_project_path(&abs_path, cx));
-    let fs = workspace.project().read(cx).fs().clone();
+    let project_path = workspace.project().read_with(cx, |project, cx| {
+        project_path_for_file_link(project, &abs_path, cx)
+    });
+    let project = workspace.project().downgrade();
     let workspace = cx.weak_entity();
     window
         .spawn(cx, async move |cx| {
-            let item = if let Some(project_path) = project_path {
+            let task = if let Some(project_path) = project_path {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.open_path(project_path, None, true, window, cx)
-                    })?
-                    .await?
+                    })
+                    .ok()
             } else {
-                let metadata = fs.metadata(&abs_path).await?;
-                anyhow::ensure!(
-                    metadata.is_some_and(|metadata| !metadata.is_dir),
-                    "no file found at path {abs_path:?}"
-                );
+                let path = abs_path
+                    .to_str()
+                    .context("file link path is not valid UTF-8")?;
+                let Ok(task) =
+                    project.update(cx, |project, cx| project.resolve_abs_file_link(path, cx))
+                else {
+                    return Ok(());
+                };
+                let Some(resolved_path) = task
+                    .await
+                    .with_context(|| format!("resolving agent file link {abs_path:?}"))?
+                else {
+                    log::warn!(
+                        "Could not resolve agent file link to {abs_path:?}: no matching file"
+                    );
+                    return Ok(());
+                };
                 workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.open_abs_path(
-                            abs_path,
-                            OpenOptions {
-                                focus: Some(true),
-                                ..Default::default()
-                            },
-                            window,
-                            cx,
-                        )
-                    })?
-                    .await?
+                        workspace.open_resolved_path(resolved_path, window, cx)
+                    })
+                    .ok()
             };
+            let Some(task) = task else {
+                return Ok(());
+            };
+            let item = task.await?;
             let Some(point) = point else {
                 return Ok(());
             };
@@ -170,12 +249,14 @@ pub(crate) fn open_abs_path_at_point(
             };
             editor
                 .update_in(cx, |editor, window, cx| {
-                    editor.change_selections(
-                        SelectionEffects::scroll(Autoscroll::center()),
-                        window,
-                        cx,
-                        |selections| selections.select_ranges([point..point]),
-                    );
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        let point = buffer
+                            .read(cx)
+                            .snapshot()
+                            .point_from_external_input(point.row, point.column);
+                        editor.go_to_singleton_buffer_point(point, window, cx);
+                        editor.request_autoscroll(Autoscroll::center(), cx);
+                    }
                 })
                 .ok();
             anyhow::Ok(())

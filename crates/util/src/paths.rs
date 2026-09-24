@@ -653,17 +653,17 @@ impl PathWithPosition {
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
         match SUFFIX_RE
             .captures(maybe_file_name_with_row_col)
-            .map(|caps| caps.extract())
-        {
-            Some((_, [file_name, maybe_row, maybe_column])) => {
+            .and_then(|captures| {
+                let file_name_end = captures.iter().skip(1).flatten().next()?.end();
+                let (_, [_, row, column]) = captures.extract();
+                Some((file_name_end, row, column))
+            }) {
+            Some((file_name_end, maybe_row, maybe_column)) => {
                 let row = maybe_row.parse::<u32>().ok();
                 let column = maybe_column.parse::<u32>().ok();
 
-                let (_, suffix) = trimmed.split_once(file_name).unwrap();
-                let path_without_suffix = &trimmed[..trimmed.len() - suffix.len()];
-
                 Self {
-                    path: Path::new(path_without_suffix).to_path_buf(),
+                    path: path.with_file_name(&maybe_file_name_with_row_col[..file_name_end]),
                     row,
                     column,
                 }
@@ -672,8 +672,12 @@ impl PathWithPosition {
                 // The `ROW_COL_CAPTURE_REGEX` deals with separated digits only,
                 // but in reality there could be `foo/bar.py:22:in` inputs which we want to match too.
                 // The regex mentioned is not very extendable with "digit or random string" checks, so do this here instead.
+                let path = Path::new(s);
+                let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                    return Self::from_path(path.to_path_buf());
+                };
                 let delimiter = ':';
-                let mut path_parts = s
+                let mut path_parts = file_name
                     .rsplitn(3, delimiter)
                     .collect::<Vec<_>>()
                     .into_iter()
@@ -702,7 +706,11 @@ impl PathWithPosition {
                 }
 
                 Self {
-                    path: PathBuf::from(path_string),
+                    path: if row.is_some() {
+                        path.with_file_name(path_string)
+                    } else {
+                        path.to_path_buf()
+                    },
                     row,
                     column,
                 }
@@ -2355,6 +2363,74 @@ mod tests {
                 rel_path_entry("\u{00C9}something.txt", true),
             ]
         );
+    }
+
+    #[test]
+    fn path_with_position_preserves_paths_without_positions() {
+        for input in [
+            "",
+            "/",
+            "thf/",
+            "/test/cool/",
+            "/test/Ῥόδος/",
+            "parent//file.rs",
+            "parent/./file.rs",
+            "parent/file.rs/.",
+            "parent:12:3/file.rs/",
+            "file.rs:invalid/",
+            " parent/file.rs ",
+            r"C:\test\cool\",
+            r"C:\test\Ῥόδος\",
+            r"\\server\share\cool\",
+        ] {
+            let parsed = PathWithPosition::parse_str(input);
+            assert_eq!(parsed.path.as_os_str(), Path::new(input).as_os_str());
+            assert_eq!(parsed.row, None, "{input}");
+            assert_eq!(parsed.column, None, "{input}");
+        }
+    }
+
+    #[test]
+    fn path_with_position_preserves_repeated_filename() {
+        for (input, expected_path) in [
+            ("file.rs/file.rs:12:3", "file.rs/file.rs"),
+            ("file.rs-backups/file.rs(12,3)", "file.rs-backups/file.rs"),
+            ("😀.rs/😀.rs:12:3", "😀.rs/😀.rs"),
+            ("parent/a(b).rs(12,3)", "parent/a(b).rs"),
+            ("parent/😀(b).rs(12,3)", "parent/😀(b).rs"),
+            ("parent/a(b).rs:(12,3)", "parent/a(b).rs"),
+            (r"src\file.rs\file.rs:12:3", r"src\file.rs\file.rs"),
+        ] {
+            assert_eq!(
+                PathWithPosition::parse_str(input),
+                PathWithPosition {
+                    path: PathBuf::from(expected_path),
+                    row: Some(12),
+                    column: Some(3),
+                },
+                "{input}",
+            );
+        }
+    }
+
+    #[test]
+    fn path_with_position_preserves_parent_position_like_components() {
+        for (input, expected_path, row) in [
+            ("parent:12:3/file.rs", "parent:12:3/file.rs", None),
+            ("parent:12:3/file.rs:4:in", "parent:12:3/file.rs", Some(4)),
+            (" parent/file.rs ", " parent/file.rs ", None),
+            (" parent/file.rs:4:in ", " parent/file.rs", Some(4)),
+        ] {
+            assert_eq!(
+                PathWithPosition::parse_str(input),
+                PathWithPosition {
+                    path: PathBuf::from(expected_path),
+                    row,
+                    column: None,
+                },
+                "{input}",
+            );
+        }
     }
 
     #[perf]
