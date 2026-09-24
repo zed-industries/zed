@@ -23,7 +23,9 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
     uniform_list,
 };
-use language::{Anchor, BufferId, BufferSnapshot, DiskState, OffsetRangeExt, OutlineItem};
+use language::{
+    Anchor, BufferId, BufferSnapshot, DiskState, OffsetRangeExt, OutlineItem, ToPoint, ToPointUtf16,
+};
 use language::{LanguageAwareStyling, language_settings::LanguageSettings};
 
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -41,6 +43,8 @@ use std::{
 };
 
 use outline_panel_settings::{DockSide, FolderIndicator, OutlinePanelSettings, ShowIndentGuides};
+use call_hierarchy::{Call, CallHierarchyMode, fetch_calls, make_call, render_item};
+use editor::actions::ShowCallHierarchy;
 use project::{File, Fs, Project, ProjectPath};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
@@ -96,6 +100,10 @@ actions!(
         ToggleActiveEditorPin,
         /// Toggles showing symbols, excerpts and search matches for multi-buffer views.
         ToggleSymbols,
+        /// Toggles the call hierarchy view between incoming and outgoing calls.
+        ToggleCallHierarchyDirection,
+        /// Exits the call hierarchy view and returns to the document outline.
+        ExitCallHierarchy,
         /// Unfolds the selected directory.
         UnfoldDirectory,
         /// Toggles the outline panel.
@@ -155,6 +163,101 @@ pub struct OutlinePanel {
 enum ItemsDisplayMode {
     Search(SearchState),
     Outline,
+    CallHierarchy(CallHierarchyState),
+}
+
+static NEXT_CALL_NODE_ID: atomic::AtomicU64 = atomic::AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CallNodeId(u64);
+
+impl CallNodeId {
+    fn next() -> Self {
+        Self(NEXT_CALL_NODE_ID.fetch_add(1, atomic::Ordering::Relaxed))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallNodeState {
+    /// Children have not been fetched yet.
+    Unknown,
+    /// Children are currently being fetched.
+    Loading,
+    /// The node has no callers/callees.
+    Leaf,
+    Collapsed,
+    Expanded,
+}
+
+/// A node in the lazily-fetched call hierarchy tree.
+#[derive(Debug, Clone)]
+struct CallHierarchyNode {
+    id: CallNodeId,
+    call: Call,
+    state: CallNodeState,
+    children: Option<Vec<CallHierarchyNode>>,
+}
+
+impl CallHierarchyNode {
+    fn find_mut(&mut self, id: CallNodeId) -> Option<&mut CallHierarchyNode> {
+        if self.id == id {
+            return Some(self);
+        }
+        self.children
+            .as_mut()?
+            .iter_mut()
+            .find_map(|child| child.find_mut(id))
+    }
+
+    fn flatten<'a>(&'a self, depth: usize, out: &mut Vec<(usize, &'a CallHierarchyNode)>) {
+        out.push((depth, self));
+        if self.state == CallNodeState::Expanded
+            && let Some(children) = &self.children
+        {
+            for child in children {
+                child.flatten(depth + 1, out);
+            }
+        }
+    }
+}
+
+/// State backing [`ItemsDisplayMode::CallHierarchy`].
+struct CallHierarchyState {
+    direction: CallHierarchyMode,
+    root: Option<CallHierarchyNode>,
+    /// The buffer/position the hierarchy was invoked from, used to re-seed on direction changes.
+    origin_buffer: Option<Entity<language::Buffer>>,
+    origin_position: Option<language::PointUtf16>,
+    loading: bool,
+    fetch_task: Task<()>,
+    expanding: HashMap<CallNodeId, Task<()>>,
+}
+
+impl std::fmt::Debug for CallHierarchyState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallHierarchyState")
+            .field("direction", &self.direction)
+            .field("root", &self.root)
+            .field("loading", &self.loading)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A single rendered row in call hierarchy mode.
+#[derive(Clone, Debug)]
+struct CallHierarchyRow {
+    id: CallNodeId,
+    call: Call,
+    state: CallNodeState,
+}
+
+fn call_into_node(call: Call) -> CallHierarchyNode {
+    CallHierarchyNode {
+        id: CallNodeId::next(),
+        call,
+        state: CallNodeState::Unknown,
+        children: None,
+    }
 }
 
 #[derive(Debug)]
@@ -673,6 +776,7 @@ enum PanelEntry {
     FoldedDirs(FoldedDirsEntry),
     Outline(OutlineEntry),
     Search(SearchEntry),
+    CallHierarchy(CallHierarchyRow),
 }
 
 #[derive(Clone, Debug)]
@@ -722,6 +826,7 @@ impl PartialEq for PanelEntry {
                     ..
                 }),
             ) => match_range_a == match_range_b && kind_a == kind_b,
+            (Self::CallHierarchy(a), Self::CallHierarchy(b)) => a.id == b.id,
             _ => false,
         }
     }
@@ -1022,6 +1127,7 @@ pub fn init(cx: &mut App) {
                 });
             }
         });
+        workspace.register_action(OutlinePanel::show_call_hierarchy);
     })
     .detach();
 }
@@ -1461,6 +1567,15 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<OutlinePanel>,
     ) {
+        // Call hierarchy navigation opens the target's own buffer and does not
+        // depend on the panel's active editor (which may have been closed while
+        // navigating between call sites), so handle it before that guard.
+        if let PanelEntry::CallHierarchy(row) = entry {
+            let call = row.call.clone();
+            self.select_entry(entry.clone(), true, window, cx);
+            self.open_call_target(&call, window, cx);
+            return;
+        }
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -1505,6 +1620,8 @@ impl OutlinePanel {
                 multi_buffer_snapshot.anchor_in_excerpt(excerpt.context.start)
             }
             PanelEntry::Search(search_entry) => Some(search_entry.match_range.start),
+            // Handled above, before the active-editor guard.
+            PanelEntry::CallHierarchy(_) => None,
         };
 
         if let Some(anchor) = scroll_target {
@@ -1721,6 +1838,7 @@ impl OutlinePanel {
                 PanelEntry::Search(_) => {
                     previous_entries.find(|entry| !matches!(entry, PanelEntry::Search(_)))
                 }
+                PanelEntry::CallHierarchy(_) => None,
             }
         }) {
             self.select_entry(entry_to_select.clone(), true, window, cx);
@@ -1785,7 +1903,7 @@ impl OutlinePanel {
                 .first()
                 .is_some_and(|entry| entry.path.is_empty()),
             PanelEntry::Fs(FsEntry::ExternalFile(_)) => false,
-            PanelEntry::Outline(_) | PanelEntry::Search(_) => {
+            PanelEntry::Outline(_) | PanelEntry::Search(_) | PanelEntry::CallHierarchy(_) => {
                 cx.notify();
                 return;
             }
@@ -1864,6 +1982,12 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(PanelEntry::CallHierarchy(row)) = self.selected_entry().cloned() {
+            if row.state != CallNodeState::Expanded {
+                self.toggle_call_node(row.id, window, cx);
+            }
+            return;
+        }
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -1904,6 +2028,8 @@ impl OutlinePanel {
             PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
                 Some(CollapsedEntry::Outline(outline.range.clone()))
             }
+            // Handled above, before the active-editor guard.
+            PanelEntry::CallHierarchy(_) => return,
             PanelEntry::Search(_) => return,
         };
         let Some(collapsed_entry) = entry_to_expand else {
@@ -1932,6 +2058,12 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(PanelEntry::CallHierarchy(row)) = self.selected_entry().cloned() {
+            if row.state == CallNodeState::Expanded {
+                self.toggle_call_node(row.id, window, cx);
+            }
+            return;
+        }
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -2000,6 +2132,8 @@ impl OutlinePanel {
             PanelEntry::Outline(OutlineEntry::Outline(outline)) => self
                 .collapsed_entries
                 .insert(CollapsedEntry::Outline(outline.range.clone())),
+            // Handled above, before the active-editor guard.
+            PanelEntry::CallHierarchy(_) => return,
             PanelEntry::Search(_) => false,
         };
 
@@ -2148,7 +2282,7 @@ impl OutlinePanel {
                     PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
                         Some(CollapsedEntry::Outline(outline.range.clone()))
                     }
-                    PanelEntry::Search(_) => None,
+                    PanelEntry::Search(_) | PanelEntry::CallHierarchy(_) => None,
                 },
             ));
 
@@ -2164,6 +2298,12 @@ impl OutlinePanel {
     }
 
     fn toggle_expanded(&mut self, entry: &PanelEntry, window: &mut Window, cx: &mut Context<Self>) {
+        // Call hierarchy expansion is independent of the panel's active editor,
+        // which may have been closed while navigating between call sites.
+        if let PanelEntry::CallHierarchy(row) = entry {
+            self.toggle_call_node(row.id, window, cx);
+            return;
+        }
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -2231,6 +2371,8 @@ impl OutlinePanel {
                     self.collapsed_entries.insert(collapsed_entry);
                 }
             }
+            // Handled above, before the active-editor guard.
+            PanelEntry::CallHierarchy(_) => return,
             PanelEntry::Search(_) => return,
         }
 
@@ -2312,7 +2454,9 @@ impl OutlinePanel {
                 PanelEntry::FoldedDirs(folded_dirs) => {
                     folded_dirs.entries.last().map(|entry| entry.path.clone())
                 }
-                PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
+                PanelEntry::Search(_)
+                | PanelEntry::Outline(..)
+                | PanelEntry::CallHierarchy(_) => None,
             })
             .map(|p| p.display(path_style).to_string())
         {
@@ -2396,7 +2540,7 @@ impl OutlinePanel {
                         .snapshot(cx)
                         .anchor_to_buffer_anchor(search.match_range.start)
                         .map(|(anchor, _)| anchor.buffer_id),
-                    PanelEntry::FoldedDirs(_) => None,
+                    PanelEntry::FoldedDirs(_) | PanelEntry::CallHierarchy(_) => None,
                 };
                 let Some(buffer_id) = buffer_id else { return };
                 let collapsed_count = outline_panel.collapsed_entries.len();
@@ -2961,6 +3105,334 @@ impl OutlinePanel {
             )
     }
 
+    // ===== Call hierarchy mode =====
+
+    /// Workspace action handler: enters call hierarchy mode in the outline panel,
+    /// seeded from the symbol under the cursor in the active editor.
+    pub fn show_call_hierarchy(
+        workspace: &mut Workspace,
+        _: &ShowCallHierarchy,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(editor) = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+        else {
+            return;
+        };
+        let Some(panel) = workspace.panel::<OutlinePanel>(cx) else {
+            return;
+        };
+        workspace.focus_panel::<OutlinePanel>(window, cx);
+        panel.update(cx, |panel, cx| {
+            panel.start_call_hierarchy(editor, CallHierarchyMode::Incoming, window, cx);
+        });
+    }
+
+    fn start_call_hierarchy(
+        &mut self,
+        editor: Entity<Editor>,
+        direction: CallHierarchyMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
+            return;
+        };
+        let position = editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            editor
+                .selections
+                .newest::<language::Point>(&snapshot)
+                .head()
+        });
+        let position_utf16 = position.to_point_utf16(&buffer.read(cx).snapshot());
+
+        self.mode = ItemsDisplayMode::CallHierarchy(CallHierarchyState {
+            direction,
+            root: None,
+            origin_buffer: Some(buffer.clone()),
+            origin_position: Some(position_utf16),
+            loading: true,
+            fetch_task: Task::ready(()),
+            expanding: HashMap::default(),
+        });
+        self.fetch_call_hierarchy_root(buffer, position_utf16, direction, window, cx);
+    }
+
+    fn fetch_call_hierarchy_root(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        position: language::PointUtf16,
+        direction: CallHierarchyMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prepare_task = self.project.update(cx, |project, cx| {
+            project.prepare_call_hierarchy(&buffer, position, cx)
+        });
+        let project = self.project.clone();
+        let task = cx.spawn_in(window, async move |panel, cx| {
+            let root_item = match prepare_task.await {
+                Ok(Some(items)) => items.into_iter().next(),
+                _ => None,
+            };
+            let Some(root_item) = root_item else {
+                panel
+                    .update_in(cx, |panel, window, cx| {
+                        if let ItemsDisplayMode::CallHierarchy(state) = &mut panel.mode {
+                            state.loading = false;
+                            state.root = None;
+                        }
+                        panel.update_cached_entries(None, window, cx);
+                    })
+                    .ok();
+                return;
+            };
+            let children = fetch_calls(&root_item, &project, direction, cx).await;
+            let root_call = make_call(root_item, &project, cx).await;
+            panel
+                .update_in(cx, |panel, window, cx| {
+                    if let ItemsDisplayMode::CallHierarchy(state) = &mut panel.mode {
+                        let child_nodes: Vec<CallHierarchyNode> =
+                            children.into_iter().map(call_into_node).collect();
+                        let root_state = if child_nodes.is_empty() {
+                            CallNodeState::Leaf
+                        } else {
+                            CallNodeState::Expanded
+                        };
+                        state.root = Some(CallHierarchyNode {
+                            id: CallNodeId::next(),
+                            call: root_call,
+                            state: root_state,
+                            children: Some(child_nodes),
+                        });
+                        state.loading = false;
+                    }
+                    panel.update_cached_entries(None, window, cx);
+                })
+                .ok();
+        });
+        if let ItemsDisplayMode::CallHierarchy(state) = &mut self.mode {
+            state.fetch_task = task;
+        }
+        self.update_cached_entries(None, window, cx);
+    }
+
+    fn toggle_call_node(&mut self, id: CallNodeId, window: &mut Window, cx: &mut Context<Self>) {
+        let ItemsDisplayMode::CallHierarchy(state) = &mut self.mode else {
+            return;
+        };
+        let direction = state.direction;
+        let Some(node) = state.root.as_mut().and_then(|root| root.find_mut(id)) else {
+            return;
+        };
+        match node.state {
+            CallNodeState::Expanded => node.state = CallNodeState::Collapsed,
+            CallNodeState::Collapsed => node.state = CallNodeState::Expanded,
+            CallNodeState::Leaf | CallNodeState::Loading => return,
+            CallNodeState::Unknown => {
+                let item = node.call.item.clone();
+                node.state = CallNodeState::Loading;
+                let project = self.project.clone();
+                let task = cx.spawn_in(window, async move |panel, cx| {
+                    let children = fetch_calls(&item, &project, direction, cx).await;
+                    panel
+                        .update_in(cx, |panel, window, cx| {
+                            if let ItemsDisplayMode::CallHierarchy(state) = &mut panel.mode {
+                                if let Some(node) =
+                                    state.root.as_mut().and_then(|root| root.find_mut(id))
+                                {
+                                    let child_nodes: Vec<CallHierarchyNode> =
+                                        children.into_iter().map(call_into_node).collect();
+                                    node.state = if child_nodes.is_empty() {
+                                        CallNodeState::Leaf
+                                    } else {
+                                        CallNodeState::Expanded
+                                    };
+                                    node.children = Some(child_nodes);
+                                }
+                                state.expanding.remove(&id);
+                            }
+                            panel.update_cached_entries(None, window, cx);
+                        })
+                        .ok();
+                });
+                if let ItemsDisplayMode::CallHierarchy(state) = &mut self.mode {
+                    state.expanding.insert(id, task);
+                }
+            }
+        }
+        self.update_cached_entries(None, window, cx);
+    }
+
+    fn toggle_call_hierarchy_direction(
+        &mut self,
+        _: &ToggleCallHierarchyDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ItemsDisplayMode::CallHierarchy(state) = &mut self.mode else {
+            return;
+        };
+        let new_direction = match state.direction {
+            CallHierarchyMode::Incoming => CallHierarchyMode::Outgoing,
+            CallHierarchyMode::Outgoing => CallHierarchyMode::Incoming,
+        };
+        state.direction = new_direction;
+        state.root = None;
+        state.loading = true;
+        state.expanding.clear();
+        let origin = state
+            .origin_buffer
+            .clone()
+            .zip(state.origin_position);
+        if let Some((buffer, position)) = origin {
+            self.fetch_call_hierarchy_root(buffer, position, new_direction, window, cx);
+        } else {
+            self.update_cached_entries(None, window, cx);
+        }
+    }
+
+    fn exit_call_hierarchy(
+        &mut self,
+        _: &ExitCallHierarchy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(self.mode, ItemsDisplayMode::CallHierarchy(_)) {
+            return;
+        }
+        self.mode = ItemsDisplayMode::Outline;
+        // Navigating call sites may have changed the active editor while we
+        // ignored those changes; re-sync to it now so the outline reflects the
+        // file the user actually ended up in.
+        if let Some((active_item, active_editor)) = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
+        {
+            self.replace_active_editor(active_item, active_editor, window, cx);
+        } else {
+            self.update_contents(None, window, cx);
+        }
+    }
+
+    fn open_call_target(&mut self, call: &Call, window: &mut Window, cx: &mut Context<Self>) {
+        let buffer = call.target.buffer.clone();
+        let target = call.target.range.start;
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let position = target.to_point(&buffer.read(cx).snapshot());
+                let pane = workspace.active_pane().clone();
+                let editor = workspace.open_project_item::<Editor>(
+                    Some(pane),
+                    buffer,
+                    true,
+                    true,
+                    true,
+                    true,
+                    window,
+                    cx,
+                );
+                editor.update(cx, |editor, cx| {
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::center()),
+                        window,
+                        cx,
+                        |s| s.select_ranges([position..position]),
+                    );
+                });
+            })
+            .ok();
+    }
+
+    fn call_hierarchy_cached_entries(&self, query: Option<&str>) -> Vec<CachedEntry> {
+        let ItemsDisplayMode::CallHierarchy(state) = &self.mode else {
+            return Vec::new();
+        };
+        let Some(root) = &state.root else {
+            return Vec::new();
+        };
+        let mut flat = Vec::new();
+        root.flatten(0, &mut flat);
+        let query = query.map(|query| query.to_lowercase());
+        flat.into_iter()
+            .filter(|(_, node)| {
+                query.as_ref().is_none_or(|query| {
+                    node.call
+                        .display
+                        .name
+                        .to_lowercase()
+                        .contains(query.as_str())
+                })
+            })
+            .map(|(depth, node)| CachedEntry {
+                depth,
+                string_match: None,
+                entry: PanelEntry::CallHierarchy(CallHierarchyRow {
+                    id: node.id,
+                    call: node.call.clone(),
+                    state: node.state,
+                }),
+            })
+            .collect()
+    }
+
+    fn render_call_hierarchy_row(
+        &self,
+        row: &CallHierarchyRow,
+        depth: usize,
+        string_match: Option<&StringMatch>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let item_id = ElementId::from(SharedString::from(format!("call-hierarchy-{}", row.id.0)));
+        let (name_element, detail_element) = render_item(
+            &row.call,
+            string_match
+                .map(|string_match| string_match.ranges().collect::<Vec<_>>())
+                .unwrap_or_default(),
+            cx,
+        );
+        let is_active = matches!(
+            self.selected_entry(),
+            Some(PanelEntry::CallHierarchy(selected)) if selected.id == row.id
+        );
+        let icon = match row.state {
+            CallNodeState::Loading => Icon::new(IconName::ArrowCircle)
+                .color(Color::Muted)
+                .into_any_element(),
+            CallNodeState::Leaf => empty_icon(),
+            CallNodeState::Unknown | CallNodeState::Collapsed | CallNodeState::Expanded => {
+                let is_expanded = row.state == CallNodeState::Expanded;
+                FileIcons::get_chevron_icon(is_expanded, cx)
+                    .map(|icon_path| {
+                        Icon::from_path(icon_path)
+                            .color(entry_label_color(is_active))
+                            .into_any_element()
+                    })
+                    .unwrap_or_else(empty_icon)
+            }
+        };
+        let label = h_flex()
+            .gap_1()
+            .child(name_element)
+            .when_some(detail_element, |this, detail| this.child(detail))
+            .into_any_element();
+        self.entry_element(
+            PanelEntry::CallHierarchy(row.clone()),
+            item_id,
+            depth,
+            icon,
+            is_active,
+            label,
+            window,
+            cx,
+        )
+    }
+
     fn entry_name(&self, worktree_id: &WorktreeId, entry: &FsEntryPath, cx: &App) -> String {
         match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
             Some(worktree) => file_name(&worktree.read(cx).absolutize(&entry.path)),
@@ -3448,6 +3920,7 @@ impl OutlinePanel {
                 selection_display_point,
                 cx,
             ),
+            ItemsDisplayMode::CallHierarchy(_) => None,
         }
     }
 
@@ -3791,7 +4264,8 @@ impl OutlinePanel {
                         .map(|(anchor, _)| anchor.buffer_id)
                 })
             }
-            Some(PanelEntry::Fs(_) | PanelEntry::FoldedDirs(_)) | None => None,
+            Some(PanelEntry::Fs(_) | PanelEntry::FoldedDirs(_) | PanelEntry::CallHierarchy(_))
+            | None => None,
         };
         let Some(buffer_id) = buffer_id else {
             return;
@@ -3898,7 +4372,7 @@ impl OutlinePanel {
                     .worktree_for_id(*worktree_id, cx)
                     .map(|worktree| worktree.read(cx).absolutize(&entry.path))
             }),
-            PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
+            PanelEntry::Search(_) | PanelEntry::Outline(..) | PanelEntry::CallHierarchy(_) => None,
         }
     }
 
@@ -4087,6 +4561,10 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<(Vec<CachedEntry>, Option<usize>)> {
+        if matches!(self.mode, ItemsDisplayMode::CallHierarchy(_)) {
+            let entries = self.call_hierarchy_cached_entries(query.as_deref());
+            return Task::ready((entries, None));
+        }
         let Some(active_editor) = self.active_editor() else {
             return Task::ready((Vec::new(), None));
         };
@@ -4440,6 +4918,9 @@ impl OutlinePanel {
                                     );
                                 }
                             }
+                            // Call hierarchy mode builds its entries via the early return in
+                            // `generate_cached_entries`, so it should never reach here.
+                            ItemsDisplayMode::CallHierarchy(_) => {}
                         }
                     }
 
@@ -4593,6 +5074,8 @@ impl OutlinePanel {
                             .push(StringMatchCandidate::new(id, &search_data.context_text));
                     }
                 }
+                // Call hierarchy mode bypasses `push_entry`; nothing to index here.
+                PanelEntry::CallHierarchy(_) => {}
             }
         }
 
@@ -4742,7 +5225,7 @@ impl OutlinePanel {
                             .zip(&new_search_matches)
                             .any(|((existing, _), incoming)| existing != incoming)
                 }
-                ItemsDisplayMode::Outline => true,
+                ItemsDisplayMode::Outline | ItemsDisplayMode::CallHierarchy(_) => true,
             };
             if changed {
                 let previous_matches = match &mut self.mode {
@@ -5006,6 +5489,12 @@ impl OutlinePanel {
     }
 
     fn should_replace_active_item(&self, new_active_item: &dyn ItemHandle) -> bool {
+        // While showing a call hierarchy, navigating to a call site opens other
+        // files. Re-attaching to them would drop us back into the document
+        // outline, so keep the hierarchy pinned until the user exits the mode.
+        if matches!(self.mode, ItemsDisplayMode::CallHierarchy(_)) {
+            return false;
+        }
         self.active_item().is_none_or(|active_item| {
             !self.pinned && active_item.item_id() != new_active_item.item_id()
         })
@@ -5108,6 +5597,7 @@ impl OutlinePanel {
                 .get()
                 .map(|data| data.context_text.len())
                 .unwrap_or_default(),
+            PanelEntry::CallHierarchy(row) => row.call.display.name.len(),
         };
 
         (item_text_chars + depth) as u64
@@ -5175,7 +5665,7 @@ impl OutlinePanel {
                     ItemsDisplayMode::Search(_) => self
                         .active_editor()
                         .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx)),
-                    ItemsDisplayMode::Outline => None,
+                    ItemsDisplayMode::Outline | ItemsDisplayMode::CallHierarchy(_) => None,
                 };
                 uniform_list(
                     "entries",
@@ -5236,6 +5726,15 @@ impl OutlinePanel {
                                     window,
                                     cx,
                                 ),
+                                PanelEntry::CallHierarchy(row) => {
+                                    Some(outline_panel.render_call_hierarchy_row(
+                                        &row,
+                                        cached_entry.depth,
+                                        cached_entry.string_match.as_ref(),
+                                        window,
+                                        cx,
+                                    ))
+                                }
                             })
                             .collect()
                     }),
@@ -5579,6 +6078,11 @@ impl Render for OutlinePanel {
 
         let search_query_text = search_query.map(|sq| sq.query.to_string());
 
+        let call_hierarchy_direction = match &self.mode {
+            ItemsDisplayMode::CallHierarchy(state) => Some(state.direction),
+            _ => None,
+        };
+
         v_flex()
             .id("outline-panel")
             .size_full()
@@ -5605,6 +6109,8 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::copy_relative_path))
             .on_action(cx.listener(Self::toggle_active_editor_pin))
             .on_action(cx.listener(Self::toggle_symbols))
+            .on_action(cx.listener(Self::toggle_call_hierarchy_direction))
+            .on_action(cx.listener(Self::exit_call_hierarchy))
             .on_action(cx.listener(Self::unfold_directory))
             .on_action(cx.listener(Self::fold_directory))
             .on_action(cx.listener(Self::open_excerpts))
@@ -5645,6 +6151,73 @@ impl Render for OutlinePanel {
                         .child(Label::new(query_text)),
                 )
             })
+            .when_some(
+                call_hierarchy_direction,
+                |outline_panel, direction| {
+                    let (direction_label, direction_icon) = match direction {
+                        CallHierarchyMode::Incoming => ("Incoming Calls", IconName::ArrowDownLeft),
+                        CallHierarchyMode::Outgoing => {
+                            ("Outgoing Calls", IconName::ArrowUpRight)
+                        }
+                    };
+                    outline_panel.child(
+                        h_flex()
+                            .py_1p5()
+                            .px_2()
+                            .h(Tab::container_height(cx))
+                            .gap_1()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(direction_icon)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(Label::new("Call Hierarchy").color(Color::Muted))
+                                    .child(Label::new(direction_label)),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        IconButton::new(
+                                            "toggle-call-hierarchy-direction",
+                                            IconName::ArrowRightLeft,
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Toggle Incoming/Outgoing"))
+                                        .on_click(cx.listener(
+                                            |outline_panel, _, window, cx| {
+                                                outline_panel.toggle_call_hierarchy_direction(
+                                                    &ToggleCallHierarchyDirection,
+                                                    window,
+                                                    cx,
+                                                );
+                                            },
+                                        )),
+                                    )
+                                    .child(
+                                        IconButton::new("exit-call-hierarchy", IconName::Close)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Back to Outline"))
+                                            .on_click(cx.listener(
+                                                |outline_panel, _, window, cx| {
+                                                    outline_panel.exit_call_hierarchy(
+                                                        &ExitCallHierarchy,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            )),
+                                    ),
+                            ),
+                    )
+                },
+            )
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
     }
 }
@@ -9973,6 +10546,9 @@ outline: struct OutlineEntryExcerpt
                     search_result.push_str(&search_data.context_text[last_end..]);
 
                     format!("search: {search_result}")
+                }
+                PanelEntry::CallHierarchy(row) => {
+                    format!("call: {}", row.call.display.name)
                 }
             };
 

@@ -153,6 +153,30 @@ pub async fn fetch_calls(
     calls
 }
 
+/// Builds a single [`Call`] for the given item, resolving its label and display
+/// metadata. Used to construct the root node of a call hierarchy tree, whose
+/// target is the item's own definition site.
+pub async fn make_call(
+    item: CallHierarchyItem,
+    project: &Entity<Project>,
+    cx: &mut AsyncWindowContext,
+) -> Call {
+    let target = item_location(&item);
+    let mut call = Call {
+        item,
+        target,
+        site_count: 1,
+        label: None,
+        display: CallDisplay::default(),
+    };
+    attach_labels(std::slice::from_mut(&mut call), project, cx).await;
+    cx.update(|_, cx| {
+        call.display = compute_call_display(&call, cx);
+    })
+    .ok();
+    call
+}
+
 pub fn init(cx: &mut App) {
     cx.observe_new(CallHierarchyView::register).detach();
 }
@@ -1179,7 +1203,7 @@ fn shaped_width(
         .width
 }
 
-fn render_item(
+pub fn render_item(
     call_item: &Call,
     match_ranges: impl IntoIterator<Item = Range<usize>>,
     cx: &App,
