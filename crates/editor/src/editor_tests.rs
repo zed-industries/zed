@@ -6890,6 +6890,25 @@ async fn test_multicursor_input_preserves_yaml_indentation(cx: &mut TestAppConte
         cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(initial_state);
     }
+
+    // A multiline replacement must not reindent the other single-line edits.
+    cx.set_state(indoc! {"
+        ˇroot:
+          ˇchild:
+            ˇleaf: 1
+        replacement:
+        «    first: 1
+            second: 2ˇ»
+    "});
+    cx.update_editor(|editor, window, cx| editor.handle_input("2", window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        2ˇroot:
+          2ˇchild:
+            2ˇleaf: 1
+        replacement:
+            2ˇ
+    "});
 }
 
 #[gpui::test]

@@ -417,15 +417,10 @@ impl Editor {
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
-            let autoindent_mode = if has_multiple_selections
-                && !text.contains('\n')
-                && edits
-                    .iter()
-                    .all(|(range, _)| range.start.row == range.end.row)
-            {
+            let autoindent_mode = if has_multiple_selections {
                 this.autoindent_mode
                     .clone()
-                    .map(|_| AutoindentMode::ExplicitOutdents)
+                    .map(|_| AutoindentMode::PreserveSingleLine)
             } else {
                 this.autoindent_mode.clone()
             };

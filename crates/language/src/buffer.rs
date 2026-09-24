@@ -475,8 +475,8 @@ pub trait LocalFile: File {
 pub enum AutoindentMode {
     /// Indent each line of inserted text.
     EachLine,
-    /// Only apply explicit syntax or language-rule outdents to edited lines.
-    ExplicitOutdents,
+    /// Autoindent multiline edits, but only apply syntax-triggered outdents to single-line edits.
+    PreserveSingleLine,
     /// Apply the same indentation adjustment to all of the lines
     /// in a given insertion.
     Block {
@@ -498,7 +498,6 @@ struct AutoindentRequest {
     before_edit: BufferSnapshot,
     entries: Vec<AutoindentRequestEntry>,
     is_block_mode: bool,
-    only_explicit_outdents: bool,
     ignore_empty_lines: bool,
 }
 
@@ -512,6 +511,7 @@ struct AutoindentRequestEntry {
     old_row: Option<u32>,
     indent_size: IndentSize,
     original_indent_column: Option<u32>,
+    only_explicit_outdents: bool,
 }
 
 #[derive(Debug)]
@@ -2142,7 +2142,11 @@ impl Buffer {
                     if let Some(old_row) = entry.old_row {
                         old_to_new_rows.insert(old_row, new_row);
                     }
-                    row_ranges.push((new_row..new_end_row, entry.original_indent_column));
+                    row_ranges.push((
+                        new_row..new_end_row,
+                        entry.original_indent_column,
+                        entry.only_explicit_outdents,
+                    ));
                 }
 
                 // Build a map containing the suggested indentation for each of the edited lines
@@ -2194,7 +2198,7 @@ impl Buffer {
                 // if they differ from the old suggestion for that line.
                 let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
                 let mut language_indent_size = IndentSize::default();
-                for (row_range, original_indent_column) in row_ranges {
+                for (row_range, original_indent_column, only_explicit_outdents) in row_ranges {
                     let new_edited_row_range = if request.is_block_mode {
                         row_range.start..row_range.start + 1
                     } else {
@@ -2230,7 +2234,7 @@ impl Buffer {
                                     suggested_indent != *old_indentation
                                         && (!suggestion.within_error || *was_within_error)
                                 },
-                            ) && (!request.only_explicit_outdents || suggestion.explicit_outdent)
+                            ) && (!only_explicit_outdents || suggestion.explicit_outdent)
                             {
                                 indent_sizes.insert(
                                     new_row,
@@ -3048,6 +3052,9 @@ impl Buffer {
                     }
 
                     AutoindentRequestEntry {
+                        only_explicit_outdents: matches!(mode, AutoindentMode::PreserveSingleLine)
+                            && old_start.row == old_end.row
+                            && !new_text.contains('\n'),
                         original_indent_column,
                         old_row: if first_line_is_new {
                             None
@@ -3066,7 +3073,6 @@ impl Buffer {
                     before_edit,
                     entries,
                     is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
-                    only_explicit_outdents: matches!(mode, AutoindentMode::ExplicitOutdents),
                     ignore_empty_lines: false,
                 }));
             }
@@ -3121,13 +3127,13 @@ impl Buffer {
                 old_row: None,
                 indent_size: before_edit.language_indent_size_at(range.start, cx),
                 original_indent_column: None,
+                only_explicit_outdents: false,
             })
             .collect();
         self.autoindent_requests.push(Arc::new(AutoindentRequest {
             before_edit,
             entries,
             is_block_mode: false,
-            only_explicit_outdents: false,
             ignore_empty_lines: true,
         }));
         self.request_autoindent(cx, Some(Duration::from_micros(300)));
