@@ -918,9 +918,6 @@ fn collect_markdowns(
                 );
             }
         }
-        AgentThreadEntry::CompletedPlan(entries) => {
-            out.extend(entries.iter().map(|e| e.content.clone()))
-        }
         AgentThreadEntry::ContextCompaction(compaction) => out.extend(compaction_markdowns(
             compaction,
             entry_view_state.is_compaction_expanded(entry_ix),
