@@ -4,6 +4,7 @@ use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
+use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
@@ -11,7 +12,6 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, ProviderSettingsView, RateLimiter, env_var,
 };
-use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
@@ -271,7 +271,7 @@ fn x_ai_reasoning_efforts(model: &x_ai::Model) -> &'static [open_ai::ReasoningEf
             open_ai::ReasoningEffort::Medium,
             open_ai::ReasoningEffort::High,
         ],
-        x_ai::Model::Grok46 => &[
+        x_ai::Model::Grok46 | x_ai::Model::Grok47 => &[
             open_ai::ReasoningEffort::Low,
             open_ai::ReasoningEffort::Medium,
             open_ai::ReasoningEffort::High,
@@ -284,7 +284,9 @@ fn x_ai_reasoning_efforts(model: &x_ai::Model) -> &'static [open_ai::ReasoningEf
 fn default_thinking_reasoning_effort(model: &x_ai::Model) -> Option<open_ai::ReasoningEffort> {
     match model {
         x_ai::Model::Grok43 => Some(open_ai::ReasoningEffort::Low),
-        x_ai::Model::Grok45 | x_ai::Model::Grok46 => Some(open_ai::ReasoningEffort::High),
+        x_ai::Model::Grok45 | x_ai::Model::Grok46 | x_ai::Model::Grok47 => {
+            Some(open_ai::ReasoningEffort::High)
+        }
         _ => None,
     }
 }
@@ -430,7 +432,7 @@ impl LanguageModel for XAiLanguageModel {
         let completions = self.stream_completion(request, cx);
         let executor = cx.background_executor().clone();
         async move {
-            let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
+            let mapper = ChatCompletionEventMapper::new();
             Ok(language_model::stream_in_background(
                 mapper.map_stream(completions.await?).boxed(),
                 executor,

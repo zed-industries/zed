@@ -1,13 +1,18 @@
 use anyhow::{Context as _, Result};
 use collections::{BTreeMap, BTreeSet, HashSet};
-use ec4rs::{ConfigParser, PropertiesSource, Section};
+use ec4rs::{
+    ConfigParser, PropertyKey as _, Section,
+    property::{
+        EndOfLine, FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs,
+    },
+};
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{Context, EventEmitter, Task};
 use paths::EDITORCONFIG_NAME;
 use smallvec::SmallVec;
 use std::{path::Path, str::FromStr, sync::Arc};
-use util::{ResultExt as _, rel_path::RelPath};
+use util::rel_path::RelPath;
 
 use crate::{InvalidSettingsError, LocalSettingsPath, WorktreeId, watch_config_file};
 
@@ -323,8 +328,14 @@ impl EditorconfigStore {
         for_worktree: WorktreeId,
         for_path: &RelPath,
     ) -> Option<EditorconfigProperties> {
-        let mut properties = EditorconfigProperties::new();
         let state = self.worktree_state.get(&for_worktree);
+        let has_internal_configs = state.is_some_and(|state| !state.internal_configs.is_empty());
+        let has_external_configs = self.external_configs(for_worktree).next().is_some();
+        if !has_internal_configs && !has_external_configs {
+            return None;
+        }
+
+        let mut properties = EditorconfigProperties::new();
         let internal_root_config_is_root = state
             .and_then(|state| state.internal_configs.get(RelPath::empty()))
             .and_then(|data| data.1.as_ref())
@@ -339,7 +350,7 @@ impl EditorconfigStore {
                         properties = EditorconfigProperties::new();
                     }
                     for section in &parsed_editorconfig.sections {
-                        section.apply_to(&mut properties, std_path).log_err()?;
+                        apply_relevant_properties(section, std_path, &mut properties);
                     }
                 }
             }
@@ -363,13 +374,37 @@ impl EditorconfigStore {
                     properties = EditorconfigProperties::new();
                 }
                 for section in &config.sections {
-                    section.apply_to(&mut properties, std_path).log_err()?;
+                    apply_relevant_properties(section, std_path, &mut properties);
                 }
             }
         }
 
         properties.use_fallbacks();
         Some(properties)
+    }
+}
+
+fn apply_relevant_properties(
+    section: &Section,
+    std_path: &Path,
+    properties: &mut EditorconfigProperties,
+) {
+    if !section.applies_to(std_path) {
+        return;
+    }
+    let relevant_keys = [
+        IndentStyle::key(),
+        IndentSize::key(),
+        TabWidth::key(),
+        EndOfLine::key(),
+        MaxLineLen::key(),
+        FinalNewline::key(),
+        TrimTrailingWs::key(),
+    ];
+    for (key, value) in section.props().iter() {
+        if relevant_keys.contains(&key) {
+            properties.insert_raw_for_key(key, value.clone());
+        }
     }
 }
 
@@ -391,5 +426,115 @@ impl EditorconfigStore {
             .get(&worktree_id)
             .map(|state| state.external_config_paths.iter().cloned().collect())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_properties_resolution_and_updates() {
+        let mut store = EditorconfigStore::default();
+        let worktree_id = WorktreeId::from_usize(1);
+        let root = LocalSettingsPath::InWorktree(Arc::from(RelPath::empty()));
+        let file_path = RelPath::from_unix_str("src/main.rs").unwrap();
+
+        assert_eq!(store.properties(worktree_id, file_path), None);
+
+        store
+            .set_configs(
+                worktree_id,
+                root.clone(),
+                Some("root = true\n\n[*]\nindent_size = 4\n"),
+            )
+            .unwrap();
+        let properties = store.properties(worktree_id, file_path).unwrap();
+        assert_eq!(
+            properties.get::<IndentSize>().ok(),
+            Some(IndentSize::Value(4))
+        );
+
+        store
+            .set_configs(
+                worktree_id,
+                root.clone(),
+                Some("root = true\n\n[*]\nindent_size = 8\n"),
+            )
+            .unwrap();
+        let properties = store.properties(worktree_id, file_path).unwrap();
+        assert_eq!(
+            properties.get::<IndentSize>().ok(),
+            Some(IndentSize::Value(8))
+        );
+
+        store.set_configs(worktree_id, root, None).unwrap();
+        assert_eq!(store.properties(worktree_id, file_path), None);
+    }
+
+    #[test]
+    fn test_nested_config_overrides_and_irrelevant_keys() {
+        let mut store = EditorconfigStore::default();
+        let worktree_id = WorktreeId::from_usize(1);
+        let file_path = RelPath::from_unix_str("src/main.rs").unwrap();
+
+        store
+            .set_configs(
+                worktree_id,
+                LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                Some(
+                    "root = true\n\n[*]\nindent_size = 4\nmax_line_length = 100\ncurly_bracket_next_line = true\n",
+                ),
+            )
+            .unwrap();
+        store
+            .set_configs(
+                worktree_id,
+                LocalSettingsPath::InWorktree(Arc::from(RelPath::from_unix_str("src").unwrap())),
+                Some("[*.rs]\nindent_size = 2\n"),
+            )
+            .unwrap();
+
+        let properties = store.properties(worktree_id, file_path).unwrap();
+        assert_eq!(
+            properties.get::<IndentSize>().ok(),
+            Some(IndentSize::Value(2))
+        );
+        assert_eq!(
+            properties.get::<MaxLineLen>().ok(),
+            Some(MaxLineLen::Value(100))
+        );
+        assert_eq!(
+            properties
+                .get_raw_for_key("curly_bracket_next_line")
+                .into_option(),
+            None
+        );
+
+        let other_file = RelPath::from_unix_str("src/main.js").unwrap();
+        let properties = store.properties(worktree_id, other_file).unwrap();
+        assert_eq!(
+            properties.get::<IndentSize>().ok(),
+            Some(IndentSize::Value(4))
+        );
+    }
+
+    #[test]
+    fn test_no_properties_after_worktree_removal() {
+        let mut store = EditorconfigStore::default();
+        let worktree_id = WorktreeId::from_usize(1);
+        let file_path = RelPath::from_unix_str("src/main.rs").unwrap();
+
+        store
+            .set_configs(
+                worktree_id,
+                LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                Some("root = true\n\n[*]\nindent_size = 4\n"),
+            )
+            .unwrap();
+        assert!(store.properties(worktree_id, file_path).is_some());
+
+        store.remove_for_worktree(worktree_id);
+        assert_eq!(store.properties(worktree_id, file_path), None);
     }
 }

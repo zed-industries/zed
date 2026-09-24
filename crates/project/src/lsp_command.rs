@@ -6,14 +6,13 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse, ProjectPath,
     ProjectTransaction, PulledDiagnostics, ResolveState,
-    lsp_store::{LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
+    lsp_store::{LanguageServerToQuery, LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashMap;
-use futures::future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, TaskExt, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
@@ -99,29 +98,19 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
         None
     }
 
-    fn to_lsp_params_or_response(
-        &self,
-        path: &Path,
-        buffer: &Buffer,
-        language_server: &Arc<LanguageServer>,
-        cx: &App,
-    ) -> Result<
-        LspParamsOrResponse<<Self::LspRequest as lsp::request::Request>::Params, Self::Response>,
-    > {
-        if self.check_capabilities(language_server.adapter_server_capabilities()) {
-            Ok(LspParamsOrResponse::Params(self.to_lsp(
-                path,
-                buffer,
-                language_server,
-                cx,
-            )?))
-        } else {
-            Ok(LspParamsOrResponse::Response(Default::default()))
-        }
+    fn language_server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::FirstCapable
     }
 
-    /// When false, `to_lsp_params_or_response` default implementation will return the default response.
-    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool;
+    /// Returns whether the given static or dynamic capability supports this request.
+    fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool;
+
+    fn response_without_request<'a, I>(&self, _applicable_capabilities: I) -> Option<Self::Response>
+    where
+        I: Iterator<Item = AdapterServerCapabilities<'a>>,
+    {
+        None
+    }
 
     fn to_lsp(
         &self,
@@ -168,11 +157,6 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId>;
 }
 
-pub enum LspParamsOrResponse<P, R> {
-    Params(P),
-    Response(R),
-}
-
 #[derive(Debug)]
 pub(crate) struct PrepareRename {
     pub position: PointUtf16,
@@ -183,6 +167,7 @@ pub(crate) struct PerformRename {
     pub position: PointUtf16,
     pub new_name: String,
     pub push_to_history: bool,
+    pub language_server_id: Option<LanguageServerId>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -688,23 +673,18 @@ impl LspCommand for GetIncomingCalls {
         "Get incoming calls"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        capabilities
-            .server_capabilities
-            .call_hierarchy_provider
-            .as_ref()
-            .is_some_and(|capability| match capability {
-                lsp::CallHierarchyServerCapability::Simple(supported) => *supported,
-                lsp::CallHierarchyServerCapability::Options(_) => true,
-            })
+    /// Follow-up requests operate on a server-issued item, so the server's support is
+    /// already proven and no capability gate applies.
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
         &self,
         path: &Path,
         buffer: &Buffer,
-        _language_server: &Arc<LanguageServer>,
-        _cx: &App,
+        _: &Arc<LanguageServer>,
+        _: &App,
     ) -> Result<lsp::CallHierarchyIncomingCallsParams> {
         Ok(lsp::CallHierarchyIncomingCallsParams {
             item: call_hierarchy_item_to_lsp(&self.item, path, buffer)?,
@@ -835,23 +815,18 @@ impl LspCommand for GetOutgoingCalls {
         "Get outgoing calls"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        capabilities
-            .server_capabilities
-            .call_hierarchy_provider
-            .as_ref()
-            .is_some_and(|capability| match capability {
-                lsp::CallHierarchyServerCapability::Simple(supported) => *supported,
-                lsp::CallHierarchyServerCapability::Options(_) => true,
-            })
+    /// Follow-up requests operate on a server-issued item, so the server's support is
+    /// already proven and no capability gate applies.
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
         &self,
         path: &Path,
         buffer: &Buffer,
-        _language_server: &Arc<LanguageServer>,
-        _cx: &App,
+        _: &Arc<LanguageServer>,
+        _: &App,
     ) -> Result<lsp::CallHierarchyOutgoingCallsParams> {
         Ok(lsp::CallHierarchyOutgoingCallsParams {
             item: call_hierarchy_item_to_lsp(&self.item, path, buffer)?,
@@ -973,45 +948,34 @@ impl LspCommand for PrepareRename {
         "Prepare rename"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .rename_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                OneOf::Left(enabled) => enabled,
-                OneOf::Right(options) => options.prepare_provider.unwrap_or(false),
+                OneOf::Left(enabled) => *enabled,
+                OneOf::Right(_) => true,
             })
     }
 
-    fn to_lsp_params_or_response(
+    fn response_without_request<'a, I>(
         &self,
-        path: &Path,
-        buffer: &Buffer,
-        language_server: &Arc<LanguageServer>,
-        cx: &App,
-    ) -> Result<LspParamsOrResponse<lsp::TextDocumentPositionParams, PrepareRenameResponse>> {
-        let rename_provider = language_server
-            .adapter_server_capabilities()
-            .server_capabilities
-            .rename_provider;
-        match rename_provider {
-            Some(lsp::OneOf::Right(RenameOptions {
-                prepare_provider: Some(true),
-                ..
-            })) => Ok(LspParamsOrResponse::Params(self.to_lsp(
-                path,
-                buffer,
-                language_server,
-                cx,
-            )?)),
-            Some(lsp::OneOf::Right(_)) => Ok(LspParamsOrResponse::Response(
-                PrepareRenameResponse::OnlyUnpreparedRenameSupported,
-            )),
-            Some(lsp::OneOf::Left(true)) => Ok(LspParamsOrResponse::Response(
-                PrepareRenameResponse::OnlyUnpreparedRenameSupported,
-            )),
-            _ => anyhow::bail!("Rename not supported"),
-        }
+        mut applicable_capabilities: I,
+    ) -> Option<Self::Response>
+    where
+        I: Iterator<Item = AdapterServerCapabilities<'a>>,
+    {
+        (!applicable_capabilities.any(|capabilities| {
+            matches!(
+                capabilities.server_capabilities.rename_provider.as_ref(),
+                Some(lsp::OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    ..
+                }))
+            )
+        }))
+        .then_some(PrepareRenameResponse::OnlyUnpreparedRenameSupported)
     }
 
     fn to_lsp(
@@ -1029,7 +993,7 @@ impl LspCommand for PrepareRename {
         message: Option<lsp::PrepareRenameResponse>,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        _: LanguageServerId,
+        server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<PrepareRenameResponse> {
         buffer.read_with(&cx, |buffer, _| match message {
@@ -1039,9 +1003,10 @@ impl LspCommand for PrepareRename {
                 if buffer.clip_point_utf16(start, Bias::Left) == start.0
                     && buffer.clip_point_utf16(end, Bias::Left) == end.0
                 {
-                    Ok(PrepareRenameResponse::Success(
-                        buffer.anchor_after(start)..buffer.anchor_before(end),
-                    ))
+                    Ok(PrepareRenameResponse::Success {
+                        range: buffer.anchor_after(start)..buffer.anchor_before(end),
+                        language_server_id: Some(server_id),
+                    })
                 } else {
                     Ok(PrepareRenameResponse::InvalidPosition)
                 }
@@ -1050,7 +1015,10 @@ impl LspCommand for PrepareRename {
                 let snapshot = buffer.snapshot();
                 let (range, _) = snapshot.surrounding_word(self.position, None);
                 let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
-                Ok(PrepareRenameResponse::Success(range))
+                Ok(PrepareRenameResponse::Success {
+                    range,
+                    language_server_id: Some(server_id),
+                })
             }
             None => Ok(PrepareRenameResponse::InvalidPosition),
         })
@@ -1096,12 +1064,16 @@ impl LspCommand for PrepareRename {
         _: &mut App,
     ) -> proto::PrepareRenameResponse {
         match response {
-            PrepareRenameResponse::Success(range) => proto::PrepareRenameResponse {
+            PrepareRenameResponse::Success {
+                range,
+                language_server_id,
+            } => proto::PrepareRenameResponse {
                 can_rename: true,
                 only_unprepared_rename_supported: false,
                 start: Some(language::proto::serialize_anchor(&range.start)),
                 end: Some(language::proto::serialize_anchor(&range.end)),
                 version: serialize_version(buffer_version),
+                language_server_id: language_server_id.map(LanguageServerId::to_proto),
             },
             PrepareRenameResponse::OnlyUnpreparedRenameSupported => proto::PrepareRenameResponse {
                 can_rename: false,
@@ -1109,6 +1081,7 @@ impl LspCommand for PrepareRename {
                 start: None,
                 end: None,
                 version: vec![],
+                language_server_id: None,
             },
             PrepareRenameResponse::InvalidPosition => proto::PrepareRenameResponse {
                 can_rename: false,
@@ -1116,6 +1089,7 @@ impl LspCommand for PrepareRename {
                 start: None,
                 end: None,
                 version: vec![],
+                language_server_id: None,
             },
         }
     }
@@ -1137,7 +1111,12 @@ impl LspCommand for PrepareRename {
                 message.start.and_then(deserialize_anchor),
                 message.end.and_then(deserialize_anchor),
             ) {
-                Ok(PrepareRenameResponse::Success(start..end))
+                Ok(PrepareRenameResponse::Success {
+                    range: start..end,
+                    language_server_id: message
+                        .language_server_id
+                        .map(LanguageServerId::from_proto),
+                })
             } else {
                 anyhow::bail!(
                     "Missing start or end position in remote project PrepareRenameResponse"
@@ -1165,12 +1144,13 @@ impl LspCommand for PerformRename {
         "Rename"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .rename_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                OneOf::Left(enabled) => enabled,
+                OneOf::Left(enabled) => *enabled,
                 OneOf::Right(_) => true,
             })
     }
@@ -1222,12 +1202,13 @@ impl LspCommand for PerformRename {
             )),
             new_name: self.new_name.clone(),
             version: serialize_version(&buffer.version()),
+            language_server_id: self.language_server_id.map(LanguageServerId::to_proto),
         }
     }
 
     async fn from_proto(
         message: proto::PerformRename,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> Result<Self> {
@@ -1240,11 +1221,25 @@ impl LspCommand for PerformRename {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })
             .await?;
-        Ok(Self {
+        let mut request = Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
             new_name: message.new_name,
             push_to_history: false,
-        })
+            language_server_id: message.language_server_id.map(LanguageServerId::from_proto),
+        };
+        if let Some(server_id) = request.language_server_id {
+            // Only a store that runs the servers can judge the id; non-local stores forward
+            // the request upstream, where the authoritative store re-validates.
+            let server_is_capable = lsp_store.update(&mut cx, |lsp_store, cx| {
+                lsp_store.as_local().is_none()
+                    || lsp_store
+                        .language_server_capable_of_lsp_request(&buffer, server_id, &request, cx)
+            });
+            if !server_is_capable {
+                request.language_server_id = None;
+            }
+        }
+        Ok(request)
     }
 
     fn response_to_proto(
@@ -1294,12 +1289,13 @@ impl LspCommand for GetDefinitions {
         "Get definition"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .definition_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                OneOf::Left(supported) => supported,
+                OneOf::Left(supported) => *supported,
                 OneOf::Right(_options) => true,
             })
     }
@@ -1396,12 +1392,13 @@ impl LspCommand for GetEditPredictionDefinitions {
         "Get edit prediction definition"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .definition_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                OneOf::Left(supported) => supported,
+                OneOf::Left(supported) => *supported,
                 OneOf::Right(_options) => true,
             })
     }
@@ -1496,12 +1493,13 @@ impl LspCommand for GetDeclarations {
         "Get declaration"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .declaration_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                lsp::DeclarationCapability::Simple(supported) => supported,
+                lsp::DeclarationCapability::Simple(supported) => *supported,
                 lsp::DeclarationCapability::RegistrationOptions(..) => true,
                 lsp::DeclarationCapability::Options(..) => true,
             })
@@ -1599,12 +1597,13 @@ impl LspCommand for GetImplementations {
         "Get implementation"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .implementation_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                lsp::ImplementationProviderCapability::Simple(enabled) => enabled,
+                lsp::ImplementationProviderCapability::Simple(enabled) => *enabled,
                 lsp::ImplementationProviderCapability::Options(_options) => true,
             })
     }
@@ -1701,7 +1700,7 @@ impl LspCommand for GetTypeDefinitions {
         "Get type definition"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         !matches!(
             &capabilities.server_capabilities.type_definition_provider,
             None | Some(lsp::TypeDefinitionProviderCapability::Simple(false))
@@ -1800,7 +1799,7 @@ impl LspCommand for GetEditPredictionTypeDefinitions {
         "Get edit prediction type definition"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         !matches!(
             &capabilities.server_capabilities.type_definition_provider,
             None | Some(lsp::TypeDefinitionProviderCapability::Simple(false))
@@ -2276,7 +2275,7 @@ impl LspCommand for GetReferences {
         Some("Finding references...".to_owned())
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         match &capabilities.server_capabilities.references_provider {
             Some(OneOf::Left(has_support)) => *has_support,
             Some(OneOf::Right(_)) => true,
@@ -2450,12 +2449,13 @@ impl LspCommand for GetDocumentHighlights {
         "Get document highlights"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .document_highlight_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                OneOf::Left(supported) => supported,
+                OneOf::Left(supported) => *supported,
                 OneOf::Right(_options) => true,
             })
     }
@@ -2605,12 +2605,13 @@ impl LspCommand for GetDocumentSymbols {
         "Get document symbols"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .document_symbol_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                OneOf::Left(supported) => supported,
+                OneOf::Left(supported) => *supported,
                 OneOf::Right(_options) => true,
             })
     }
@@ -2802,7 +2803,7 @@ impl LspCommand for GetSignatureHelp {
         "Get signature help"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .signature_help_provider
@@ -2926,9 +2927,9 @@ impl LspCommand for GetHover {
         "Get hover"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        match capabilities.server_capabilities.hover_provider {
-            Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
+        match capabilities.server_capabilities.hover_provider.as_ref() {
+            Some(lsp::HoverProviderCapability::Simple(enabled)) => *enabled,
             Some(lsp::HoverProviderCapability::Options(_)) => true,
             None => false,
         }
@@ -3166,7 +3167,7 @@ impl LspCommand for GetCompletions {
         "Get completion"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .completion_provider
@@ -3275,45 +3276,21 @@ impl LspCommand for GetCompletions {
                             return false;
                         }
 
-                        let default_edit_range = lsp_defaults.as_ref().and_then(|lsp_defaults| {
-                            lsp_defaults
-                                .edit_range
-                                .as_ref()
-                                .and_then(|range| match range {
-                                    CompletionListItemDefaultsEditRange::Range(r) => Some(r),
-                                    _ => None,
-                                })
-                        });
+                        let range = range_for_token
+                            .get_or_insert_with(|| {
+                                let offset = self.position.to_offset(&snapshot);
+                                let (range, kind) = snapshot
+                                    .surrounding_word(offset, Some(CharScopeContext::Completion));
+                                let range = if kind == Some(CharKind::Word) {
+                                    range
+                                } else {
+                                    offset..offset
+                                };
 
-                        let range = if let Some(range) = default_edit_range {
-                            let range = range_from_lsp(*range);
-                            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                            if start != range.start.0 || end != range.end.0 {
-                                log::info!("completion out of expected range");
-                                return false;
-                            }
-
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end)
-                        } else {
-                            range_for_token
-                                .get_or_insert_with(|| {
-                                    let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot.surrounding_word(
-                                        offset,
-                                        Some(CharScopeContext::Completion),
-                                    );
-                                    let range = if kind == Some(CharKind::Word) {
-                                        range
-                                    } else {
-                                        offset..offset
-                                    };
-
-                                    snapshot.anchor_before(range.start)
-                                        ..snapshot.anchor_after(range.end)
-                                })
-                                .clone()
-                        };
+                                snapshot.anchor_before(range.start)
+                                    ..snapshot.anchor_after(range.end)
+                            })
+                            .clone();
 
                         // We already know text_edit is None here
                         let text = lsp_completion
@@ -3322,9 +3299,10 @@ impl LspCommand for GetCompletions {
                             .unwrap_or(&lsp_completion.label)
                             .clone();
 
+                        let insert_range = Some(range.start..snapshot.anchor_after(self.position));
                         ParsedCompletionEdit {
                             replace_range: range,
-                            insert_range: None,
+                            insert_range,
                             new_text: text,
                         }
                     }
@@ -3530,7 +3508,7 @@ impl LspCommand for GetCodeActions {
         "Get code actions"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         match &capabilities.server_capabilities.code_action_provider {
             None => false,
             Some(lsp::CodeActionProviderCapability::Simple(false)) => false,
@@ -3582,27 +3560,6 @@ impl LspCommand for GetCodeActions {
             relevant_diagnostics.push(diagnostic);
         }
 
-        let only = if let Some(requested) = &self.kinds {
-            if let Some(supported_kinds) =
-                Self::supported_code_action_kinds(language_server.adapter_server_capabilities())
-            {
-                let filtered = requested
-                    .iter()
-                    .filter(|requested_kind| {
-                        supported_kinds.iter().any(|supported_kind| {
-                            code_action_kind_matches(requested_kind, supported_kind)
-                        })
-                    })
-                    .cloned()
-                    .collect();
-                Some(filtered)
-            } else {
-                Some(requested.clone())
-            }
-        } else {
-            None
-        };
-
         Ok(lsp::CodeActionParams {
             text_document: make_text_document_identifier(path)?,
             range: range_to_lsp(self.range.to_point_utf16(buffer))?,
@@ -3610,7 +3567,7 @@ impl LspCommand for GetCodeActions {
             partial_result_params: Default::default(),
             context: lsp::CodeActionContext {
                 diagnostics: relevant_diagnostics,
-                only,
+                only: self.kinds.clone(),
                 ..lsp::CodeActionContext::default()
             },
         })
@@ -3758,10 +3715,14 @@ impl LspCommand for GetCodeActions {
 }
 
 impl GetCodeActions {
-    fn supported_code_action_kinds(
-        capabilities: AdapterServerCapabilities,
-    ) -> Option<Vec<CodeActionKind>> {
-        match capabilities.server_capabilities.code_action_provider {
+    fn supported_code_action_kinds<'a>(
+        capabilities: AdapterServerCapabilities<'a>,
+    ) -> Option<&'a [CodeActionKind]> {
+        match capabilities
+            .server_capabilities
+            .code_action_provider
+            .as_ref()
+        {
             Some(lsp::CodeActionProviderCapability::Options(CodeActionOptions {
                 code_action_kinds: Some(supported_action_kinds),
                 ..
@@ -3809,7 +3770,7 @@ impl LspCommand for OnTypeFormatting {
         "Formatting on typing"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         Self::supports_on_type_formatting(&self.trigger, &capabilities.server_capabilities)
     }
 
@@ -3925,38 +3886,34 @@ impl LspCommand for OnTypeFormatting {
 }
 
 impl InlayHints {
-    pub async fn lsp_to_project_hint(
+    pub fn lsp_to_project_hint(
         lsp_hint: lsp::InlayHint,
-        buffer_handle: &Entity<Buffer>,
+        snapshot: &BufferSnapshot,
         server_id: LanguageServerId,
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
-        cx: &mut AsyncApp,
-    ) -> anyhow::Result<InlayHint> {
+    ) -> InlayHint {
         let kind = lsp_hint.kind.and_then(|kind| match kind {
             lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
             lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
             _ => None,
         });
 
-        let position = buffer_handle.read_with(cx, |buffer, _| {
-            let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
-            if kind == Some(InlayHintKind::Parameter) {
-                buffer.anchor_before(position)
-            } else {
-                buffer.anchor_after(position)
-            }
-        });
-        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id)
-            .await
-            .context("lsp to project inlay hint conversion")?;
+        let position = snapshot.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
+        let position = if kind == Some(InlayHintKind::Parameter) {
+            snapshot.anchor_before(position)
+        } else {
+            snapshot.anchor_after(position)
+        };
+
+        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id);
         let padding_left = if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
             false
         } else {
             lsp_hint.padding_left.unwrap_or(false)
         };
 
-        Ok(InlayHint {
+        InlayHint {
             position,
             padding_left,
             padding_right: lsp_hint.padding_right.unwrap_or(false),
@@ -3975,13 +3932,13 @@ impl InlayHints {
                 }
             }),
             resolve_state,
-        })
+        }
     }
 
-    async fn lsp_inlay_label_to_project(
+    fn lsp_inlay_label_to_project(
         lsp_label: lsp::InlayHintLabel,
         server_id: LanguageServerId,
-    ) -> anyhow::Result<InlayHintLabel> {
+    ) -> InlayHintLabel {
         let label = match lsp_label {
             lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
             lsp::InlayHintLabel::LabelParts(lsp_parts) => {
@@ -4004,16 +3961,18 @@ impl InlayHints {
                             }
                         }),
                         location: Some(server_id).zip(lsp_part.location),
+                        command: Some(server_id).zip(lsp_part.command),
                     });
                 }
                 InlayHintLabel::LabelParts(parts)
             }
         };
 
-        Ok(label)
+        label
     }
 
     pub fn project_to_proto_hint(response_hint: InlayHint) -> proto::InlayHint {
+        let position = response_hint.position;
         let (state, lsp_resolve_state) = match response_hint.resolve_state {
             ResolveState::Resolved => (0, None),
             ResolveState::CanResolve(server_id, resolve_data) => (
@@ -4061,6 +4020,12 @@ impl InlayHints {
                                 location_range_start,
                                 location_range_end,
                                 language_server_id: label_part.location.as_ref().map(|(server_id, _)| server_id.0 as u64),
+                                command: label_part.command.map(|(server_id, command)| LspStore::serialize_code_action(&CodeAction {
+                                    server_id,
+                                    range: position..position,
+                                    lsp_action: LspAction::Command(command),
+                                    resolved: true,
+                                })),
                             }}).collect()
                         })
                     }
@@ -4179,6 +4144,23 @@ impl InlayHints {
                                     None => None,
                                 }
                             },
+                            command: match part.command {
+                                Some(command) => {
+                                    let action = LspStore::deserialize_code_action(command)
+                                        .context("invalid command in inlay hint label part")?;
+                                    match action.lsp_action {
+                                        LspAction::Command(command) => {
+                                            Some((action.server_id, command))
+                                        }
+                                        LspAction::Action(_) | LspAction::CodeLens(_) => {
+                                            anyhow::bail!(
+                                                "unexpected non-command action in inlay hint label part"
+                                            )
+                                        }
+                                    }
+                                }
+                                None => None,
+                            },
                         });
                     }
 
@@ -4264,7 +4246,7 @@ impl InlayHints {
                                 })
                             }),
                             location: part.location.map(|(_, location)| location),
-                            command: None,
+                            command: part.command.map(|(_, command)| command),
                         })
                         .collect(),
                 ),
@@ -4315,7 +4297,7 @@ impl LspCommand for InlayHints {
         "Inlay hints"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         Self::check_capabilities(&capabilities.server_capabilities)
     }
 
@@ -4354,32 +4336,40 @@ impl LspCommand for InlayHints {
         // Hence let's use a heuristic first to handle the most awkward case and look for more.
         let force_no_type_left_padding =
             lsp_adapter.name.0.as_ref() == "typescript-language-server";
+        let can_resolve = lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.text_document_capability_matches_for_server(
+                &buffer,
+                server_id,
+                "textDocument/inlayHint",
+                |capabilities| InlayHints::can_resolve_inlays(capabilities.server_capabilities),
+                cx,
+            )
+        });
 
-        let hints = message.unwrap_or_default().into_iter().map(|lsp_hint| {
-            let resolve_state = if InlayHints::can_resolve_inlays(&lsp_server.capabilities()) {
-                ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
-            } else {
-                ResolveState::Resolved
-            };
+        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+        let last_row = snapshot.max_point().row;
+        let hints = message
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|lsp_hint| lsp_hint.position.line <= last_row)
+            .map(|lsp_hint| {
+                let resolve_state = if can_resolve {
+                    ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
+                } else {
+                    ResolveState::Resolved
+                };
 
-            let buffer = buffer.clone();
-            cx.spawn(async move |cx| {
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
-                    &buffer,
+                    &snapshot,
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
-                    cx,
                 )
-                .await
             })
-        });
-        future::join_all(hints)
-            .await
-            .into_iter()
-            .collect::<anyhow::Result<_>>()
-            .context("lsp to project inlay hints conversion")
+            .collect();
+
+        Ok(hints)
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {
@@ -4467,7 +4457,7 @@ impl LspCommand for SemanticTokensFull {
         "Semantic tokens full"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .semantic_tokens_provider
@@ -4618,7 +4608,7 @@ impl LspCommand for SemanticTokensDelta {
         "Semantic tokens delta"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .semantic_tokens_provider
@@ -4771,7 +4761,7 @@ impl LspCommand for GetCodeLens {
         "Code Lens"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .code_lens_provider
@@ -4887,8 +4877,9 @@ impl LspCommand for GetCodeLens {
 }
 
 impl LinkedEditingRange {
-    pub fn check_server_capabilities(capabilities: ServerCapabilities) -> bool {
-        let Some(linked_editing_options) = capabilities.linked_editing_range_provider else {
+    pub fn check_server_capabilities(capabilities: &ServerCapabilities) -> bool {
+        let Some(linked_editing_options) = capabilities.linked_editing_range_provider.as_ref()
+        else {
             return false;
         };
         if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
@@ -4908,8 +4899,8 @@ impl LspCommand for LinkedEditingRange {
         "Linked editing range"
     }
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        Self::check_server_capabilities(capabilities.server_capabilities)
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
+        Self::check_server_capabilities(&capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -5359,8 +5350,11 @@ impl LspCommand for GetDocumentDiagnostics {
         "Get diagnostics"
     }
 
-    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
-        true
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
+        capabilities
+            .server_capabilities
+            .diagnostic_provider
+            .is_some()
     }
 
     fn to_lsp(
@@ -5548,7 +5542,7 @@ impl LspCommand for GetDocumentColor {
         "Document color"
     }
 
-    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities<'_>) -> bool {
         server_capabilities
             .server_capabilities
             .color_provider
@@ -5691,7 +5685,7 @@ impl LspCommand for GetFoldingRanges {
         "Folding ranges"
     }
 
-    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities<'_>) -> bool {
         server_capabilities
             .server_capabilities
             .folding_range_provider
@@ -5847,7 +5841,7 @@ impl LspCommand for GetDocumentLinks {
         "Document links"
     }
 
-    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities<'_>) -> bool {
         server_capabilities
             .server_capabilities
             .document_link_provider

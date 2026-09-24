@@ -102,9 +102,14 @@ fn test_remote(cx: &mut App) {
         let ops = cx
             .foreground_executor()
             .block_on(host_buffer.read(cx).serialize_ops(None, cx));
-        let mut buffer =
-            Buffer::from_proto(ReplicaId::REMOTE_SERVER, Capability::ReadWrite, state, None)
-                .unwrap();
+        let mut buffer = Buffer::from_proto(
+            ReplicaId::REMOTE_SERVER,
+            Capability::ReadWrite,
+            state,
+            None,
+            cx,
+        )
+        .unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| language::proto::deserialize_operation(op).unwrap()),
@@ -1166,6 +1171,76 @@ fn test_remove_excerpts_for_paths(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_ordered_buffer_anchor_ranges_to_anchor_ranges(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local(sample_text(12, 3, 'a'), cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer, cx),
+            buffer.clone(),
+            [
+                Point::new(1, 0)..Point::new(1, 3),
+                Point::new(5, 0)..Point::new(5, 3),
+                Point::new(9, 0)..Point::new(9, 3),
+            ],
+            0,
+            cx,
+        );
+    });
+
+    let buffer_snapshot = buffer.read(cx).snapshot();
+    let ranges = [
+        buffer_snapshot.anchor_before(Point::new(1, 0))
+            ..buffer_snapshot.anchor_before(Point::new(1, 0)),
+        buffer_snapshot.anchor_before(Point::new(1, 1))
+            ..buffer_snapshot.anchor_after(Point::new(1, 2)),
+        buffer_snapshot.anchor_before(Point::new(3, 0))
+            ..buffer_snapshot.anchor_after(Point::new(3, 2)),
+        buffer_snapshot.anchor_before(Point::new(5, 0))
+            ..buffer_snapshot.anchor_after(Point::new(5, 3)),
+        buffer_snapshot.anchor_before(Point::new(9, 1))
+            ..buffer_snapshot.anchor_after(Point::new(9, 2)),
+    ];
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let expected = ranges
+        .iter()
+        .cloned()
+        .map(|range| snapshot.buffer_anchor_range_to_anchor_range(range))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        snapshot.ordered_buffer_anchor_ranges_to_anchor_ranges(ranges.clone()),
+        expected
+    );
+
+    let unordered_ranges = ranges.clone().into_iter().rev().collect::<Vec<_>>();
+    let expected = unordered_ranges
+        .iter()
+        .cloned()
+        .map(|range| snapshot.buffer_anchor_range_to_anchor_range(range))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        snapshot.ordered_buffer_anchor_ranges_to_anchor_ranges(unordered_ranges),
+        expected
+    );
+
+    let other_buffer = cx.new(|cx| Buffer::local("other", cx));
+    let other_snapshot = other_buffer.read(cx).snapshot();
+    let mixed_buffer_ranges = vec![
+        other_snapshot.anchor_before(Point::zero())..other_snapshot.anchor_after(Point::new(0, 5)),
+        ranges[0].clone(),
+    ];
+    let expected = mixed_buffer_ranges
+        .iter()
+        .cloned()
+        .map(|range| snapshot.buffer_anchor_range_to_anchor_range(range))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        snapshot.ordered_buffer_anchor_ranges_to_anchor_ranges(mixed_buffer_ranges),
+        expected
+    );
+}
+
+#[gpui::test]
 fn test_expand_excerpts(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
@@ -1245,6 +1320,45 @@ fn test_expand_excerpts(cx: &mut App) {
             "rrr",   // End of excerpt
         )
     );
+}
+
+#[gpui::test]
+fn test_expand_excerpts_with_anchor_for_removed_path(cx: &mut App) {
+    let buffer_a = cx.new(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
+    let buffer_b = cx.new(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a,
+            vec![Point::new(3, 0)..Point::new(3, 3)],
+            1,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_b,
+            vec![Point::new(3, 0)..Point::new(3, 3)],
+            1,
+            cx,
+        );
+    });
+
+    let anchor_in_a = multibuffer
+        .read(cx)
+        .snapshot(cx)
+        .anchor_before(Point::new(1, 0));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(0), cx);
+    });
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "ccc\nddd\neee");
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_excerpts([anchor_in_a], 1, ExpandExcerptDirection::UpAndDown, cx);
+    });
+
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "ccc\nddd\neee");
 }
 
 #[gpui::test(iterations = 100)]
@@ -6188,6 +6302,24 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
         "Should include trailing empty excerpts"
     );
     assert_eq!(ranges_half_open_max[1].1, BufferOffset(0)..BufferOffset(0));
+
+    for snapshot in [&snapshot, &snapshot_trailing] {
+        for start in 0..=snapshot.len().0 {
+            for end in start..=snapshot.len().0 {
+                let range = MultiBufferOffset(start)..MultiBufferOffset(end);
+                let expected = snapshot
+                    .range_to_buffer_ranges(range.clone())
+                    .into_iter()
+                    .map(|(buffer, range, _)| (buffer.remote_id(), range, None))
+                    .collect::<Vec<_>>();
+                let actual = snapshot
+                    .range_to_buffer_ranges_with_deleted_hunks(range.clone())
+                    .map(|(buffer, range, anchor)| (buffer.remote_id(), range, anchor))
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected, "{range:?}");
+            }
+        }
+    }
 }
 
 #[gpui::test]

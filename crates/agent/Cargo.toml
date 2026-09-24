@@ -7,6 +7,7 @@ license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/agent.rs"
+doctest = false
 
 [features]
 test-support = ["db/test-support"]
@@ -55,7 +56,6 @@ prompt_store.workspace = true
 quick-xml.workspace = true
 rand.workspace = true
 regex.workspace = true
-rust-embed.workspace = true
 sandbox.workspace = true
 schemars.workspace = true
 serde.workspace = true
