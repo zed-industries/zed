@@ -120,8 +120,12 @@ impl TableView {
     /// Replace the data shown by the grid. Recomputes filter menus and column widths, kicks off the
     /// display-to-data recomputation, and clears the loading state.
     pub fn set_contents(&mut self, contents: TableLikeContent, cx: &mut Context<Self>) {
-        self.engine.contents = std::sync::Arc::new(contents);
-        self.engine.calculate_available_filters();
+        self.engine.set_contents(contents);
+        // The old mapping may reference rows removed by this change. Clear it immediately
+        // rather than leaving the list showing stale rows until the background task below
+        // recomputes the mapping.
+        self.list_state
+            .reset_with_uniform_height(0, self.row_height);
         self.sync_column_widths(cx);
         self.is_loading = false;
         self.apply_filter_sort(cx);

@@ -15,7 +15,7 @@ impl TableView {
         current_widths: &Entity<ResizableColumnsState>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let row_count = self.engine.contents.rows.len();
+        let row_count = self.engine.d2d_mapping().visible_row_count();
         let cols = current_widths.read(cx).cols();
         let mut headers = Vec::with_capacity(cols);
 
@@ -150,6 +150,7 @@ impl TableView {
                                     format!("Pos {so}(L{slv})-{eo}(L{elv})")
                                 }
                                 TableCell::Virtual => "Virtual cell".into(),
+                                TableCell::Generated(_) => "Generated cell".into(),
                             },
                         ))
                     })
