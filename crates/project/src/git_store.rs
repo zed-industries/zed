@@ -12048,6 +12048,86 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_commit_reads_share_object_read_limit(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (gate, repository, oids) =
+            setup_gated_blob_reads(cx, MAX_CONCURRENT_OBJECT_READS).await;
+        let sha = oids[0].to_string();
+
+        let holding = oids
+            .iter()
+            .map(|oid| {
+                repository.update(cx, |repository, cx| repository.load_blob_content(*oid, cx))
+            })
+            .collect::<Vec<_>>();
+        cx.run_until_parked();
+        assert_eq!(gate.waiting(), MAX_CONCURRENT_OBJECT_READS);
+
+        let mut details =
+            repository.update(cx, |repository, cx| repository.show_commit(sha.clone(), cx));
+        let mut diff = repository.update(cx, |repository, cx| {
+            repository.load_commit_diff(sha, false, cx)
+        });
+        cx.run_until_parked();
+        assert!(
+            (&mut details).now_or_never().is_none(),
+            "show_commit skipped the object read limit"
+        );
+        assert!(
+            (&mut diff).now_or_never().is_none(),
+            "load_commit_diff skipped the object read limit"
+        );
+
+        gate.release(oids[0]);
+        cx.run_until_parked();
+        details.await.unwrap();
+        diff.await.unwrap();
+
+        gate.open();
+        cx.run_until_parked();
+        for read in holding {
+            read.await.unwrap();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_show_by_ref_waits_on_job_queue(cx: &mut TestAppContext) {
+        init_test(cx);
+        use util::path;
+
+        let project_root = Path::new(path!("/project"));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(project_root, json!({ ".git": {} })).await;
+        let head_sha = "1".repeat(40);
+        fs.set_head_for_repo(&project_root.join(".git"), &[], head_sha.clone());
+        let project = Project::test(fs, [project_root], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+        let held = repository.update(cx, |repository, _| {
+            repository.send_job("hold", None, move |_, _| async move {
+                release_rx.await.ok();
+            })
+        });
+
+        let mut details = repository.update(cx, |repository, _| repository.show("HEAD".into()));
+        cx.run_until_parked();
+        assert!(
+            (&mut details).now_or_never().is_none(),
+            "show by ref skipped the job queue"
+        );
+
+        release_tx.send(()).ok();
+        held.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(details.await.unwrap().unwrap().sha.as_ref(), head_sha);
+    }
+
+    #[gpui::test]
     async fn test_append_pattern_to_ignore_file_creates_and_deduplicates(cx: &mut TestAppContext) {
         let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
         let path = PathBuf::from("/root/.gitignore");
