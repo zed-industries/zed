@@ -21,7 +21,7 @@ use gpui::{
 };
 use project::{
     ProjectPath,
-    git_store::{CommitDataState, MAX_CONCURRENT_BLOB_READS, Repository},
+    git_store::{CommitDataState, MAX_CONCURRENT_OBJECT_READS, Repository},
 };
 use rand::{SeedableRng, rngs::StdRng};
 use serde_json::json;
@@ -465,7 +465,7 @@ async fn test_blob_read_rpcs_are_bounded_on_host(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    const FILE_COUNT: usize = MAX_CONCURRENT_BLOB_READS + 4;
+    const FILE_COUNT: usize = MAX_CONCURRENT_OBJECT_READS + 4;
     let names = (0..FILE_COUNT)
         .map(|index| format!("f{index:02}.txt"))
         .collect::<Vec<_>>();
@@ -521,7 +521,7 @@ async fn test_blob_read_rpcs_are_bounded_on_host(
     }
     executor.run_until_parked();
 
-    assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_BLOB_READS);
+    assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_OBJECT_READS);
 
     gate.open();
     executor.run_until_parked();

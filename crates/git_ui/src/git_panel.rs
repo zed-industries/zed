@@ -8025,10 +8025,7 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
-        repo.update(cx, |repo, cx| {
-            let show = repo.show(sha);
-            cx.spawn(async move |_, _| show.await?)
-        })
+        repo.update(cx, |repo, cx| repo.show_commit(sha, cx))
     }
 
     fn deploy_entry_context_menu(
