@@ -43,7 +43,8 @@ pub(crate) struct TestPlatform {
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart:
         RefCell<Option<oneshot::Sender<(Option<PathBuf>, Vec<std::ffi::OsString>)>>>,
-    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    headless_renderer_factory:
+        Option<Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>>,
     weak: Weak<Self>,
 }
 
@@ -136,7 +137,7 @@ impl TestPlatform {
         foreground_executor: ForegroundExecutor,
         text_system: Arc<dyn PlatformTextSystem>,
         headless_renderer_factory: Option<
-            Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>,
+            Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>,
         >,
     ) -> Rc<Self> {
         Rc::new_cyclic(|weak| TestPlatform {
@@ -441,7 +442,10 @@ impl Platform for TestPlatform {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
-        let renderer = self.headless_renderer_factory.as_ref().and_then(|f| f());
+        let renderer = match self.headless_renderer_factory.as_ref() {
+            Some(factory) => factory()?,
+            None => None,
+        };
         let window = TestWindow::new(
             handle,
             params,
