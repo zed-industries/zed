@@ -1635,7 +1635,12 @@ impl WgpuRenderer {
             .retain(|texture_id, _| texture_ids.contains(texture_id));
 
         for texture_id in texture_ids {
-            let texture_info = self.atlas.get_texture_info(texture_id);
+            let Some(texture_info) = self.atlas.get_texture_info(texture_id) else {
+                self.resources_mut()
+                    .atlas_texture_bind_groups
+                    .remove(&texture_id);
+                continue;
+            };
             let is_current = self
                 .resources()
                 .atlas_texture_bind_groups
@@ -1688,10 +1693,11 @@ impl WgpuRenderer {
             return Ok(());
         }
         let resources = self.resources();
-        let texture = resources
-            .atlas_texture_bind_groups
-            .get(&texture_id)
-            .context("missing atlas texture bind group")?;
+        // The atlas has released this texture; the batch belongs to a stale
+        // paint that will be replaced once its view re-renders.
+        let Some(texture) = resources.atlas_texture_bind_groups.get(&texture_id) else {
+            return Ok(());
+        };
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, &sprite_instances.bind_group, &[]);
