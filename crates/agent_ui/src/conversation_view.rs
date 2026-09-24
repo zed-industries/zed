@@ -5978,7 +5978,7 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_completed_plan_snapshot_keeps_list_state_in_sync(cx: &mut TestAppContext) {
+    async fn test_plan_completion_does_not_add_transcript_entries(cx: &mut TestAppContext) {
         init_test(cx);
 
         let connection = StubAgentConnection::new();
@@ -5993,10 +5993,12 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        let session_id = active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
-            assert_thread_list_item_count_matches_entries(view, cx);
-            view.thread.read(cx).session_id().clone()
-        });
+        let (session_id, entry_count) =
+            active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+                assert_thread_list_item_count_matches_entries(view, cx);
+                let thread = view.thread.read(cx);
+                (thread.session_id().clone(), thread.entries().len())
+            });
 
         cx.update(|_, cx| {
             connection.send_update(
@@ -6010,8 +6012,15 @@ pub(crate) mod tests {
             );
         });
         cx.run_until_parked();
-        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
-            assert_thread_list_item_count_matches_entries(view, cx);
+        let plan_content = active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            view.thread
+                .read(cx)
+                .plan()
+                .entries
+                .first()
+                .expect("active plan entry")
+                .content
+                .clone()
         });
 
         cx.update(|_, cx| {
@@ -6030,11 +6039,84 @@ pub(crate) mod tests {
             assert_thread_list_item_count_matches_entries(view, cx);
         });
 
-        connection.end_turn(session_id, acp::StopReason::EndTurn);
+        connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
         cx.run_until_parked();
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert_thread_list_item_count_matches_entries(view, cx);
+            let thread = view.thread.read(cx);
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+            assert_eq!(thread.entries().len(), entry_count);
+            assert_eq!(thread.plan().stats().completed, 1);
+            assert_eq!(thread.plan().stats().pending, 0);
+            assert_eq!(
+                thread
+                    .plan()
+                    .entries
+                    .first()
+                    .expect("completed plan entry")
+                    .content,
+                plan_content
+            );
         });
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::Plan(acp::Plan::new(vec![acp::PlanEntry::new(
+                    "Revise the thing",
+                    acp::PlanEntryPriority::High,
+                    acp::PlanEntryStatus::InProgress,
+                )])),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_thread_list_item_count_matches_entries(view, cx);
+            let thread = view.thread.read(cx);
+            let entry = thread.plan().entries.first().expect("reopened plan entry");
+            assert_eq!(entry.content, plan_content);
+            assert_eq!(entry.content.read(cx).source(), "Revise the thing");
+            assert_eq!(thread.plan().stats().pending, 1);
+            assert_eq!(thread.entries().len(), entry_count);
+        });
+
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
+            view.thread.update(cx, |thread, cx| {
+                thread.clear_plan(cx);
+                assert!(thread.plan().is_empty());
+                assert_eq!(thread.entries().len(), entry_count);
+            });
+        });
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::Plan(acp::Plan::new(vec![acp::PlanEntry::new(
+                    "Another task",
+                    acp::PlanEntryPriority::Medium,
+                    acp::PlanEntryStatus::Completed,
+                )])),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).plan().stats().completed, 1);
+        });
+
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("Continue", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_thread_list_item_count_matches_entries(view, cx);
+            assert!(view.thread.read(cx).plan().is_empty());
+        });
+        connection.end_turn(session_id, acp::StopReason::EndTurn);
+        cx.run_until_parked();
     }
 
     async fn setup_conversation_view_with_initial_content(
@@ -8059,6 +8141,40 @@ pub(crate) mod tests {
             2,
             "all Markdown leaves in replacement tool output should be searchable",
         );
+
+        for (fields, expected_matches) in [
+            (
+                acp::ToolCallUpdateFields::new()
+                    .content(vec![])
+                    .raw_output(serde_json::json!("Raw mango")),
+                1,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().raw_output(serde_json::json!("Raw mango mango")),
+                2,
+            ),
+        ] {
+            thread
+                .update(cx, |thread, cx| {
+                    thread.handle_session_update(
+                        acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                            "search-tool-content",
+                            fields,
+                        )),
+                        cx,
+                    )
+                })
+                .expect("raw output update should apply");
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+            cx.run_until_parked();
+            assert_eq!(
+                bar.read_with(cx, |bar, _| bar.match_count()),
+                expected_matches,
+                "expanded tool search should track the latest raw fallback",
+            );
+        }
     }
 
     #[gpui::test]
