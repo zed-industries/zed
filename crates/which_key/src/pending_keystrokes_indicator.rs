@@ -1,22 +1,22 @@
 use gpui::{
     Action as _, Anchor, Animation, AnimationExt, App, Context, HoverListenerMode,
-    KeybindingKeystroke, Render, Subscription, Task, Window, anchored, deferred,
+    KeybindingKeystroke, Render, ScrollHandle, Subscription, Task, Window, anchored, deferred,
 };
 use settings::{Settings, SettingsStore};
 use std::{rc::Rc, time::Duration};
 use ui::{
-    ButtonLike, CircularProgress, KeyBinding, KeyBindingStyle, prelude::*,
-    text_for_keybinding_keystrokes, tooltip_container,
+    ButtonLike, CircularProgress, KeyBinding, KeyBindingStyle, prelude::*, tooltip_container,
 };
 use util::ResultExt;
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
 
 use crate::{
-    bindings_for_pending_input, map_pending_keystrokes, which_key_settings::WhichKeySettings,
+    bindings_for_pending_input, map_pending_keystrokes,
+    pending_bindings::{PendingBindingRow, PendingBindings, prepare_pending_bindings},
+    which_key_settings::WhichKeySettings,
 };
 
-const MAX_TOOLTIP_BINDINGS: usize = 10;
 const POPOVER_HIDE_DELAY: Duration = Duration::from_millis(300);
 
 /// A status bar item shown while pending input can complete a multi-stroke key binding.
@@ -24,6 +24,7 @@ pub struct PendingKeystrokesIndicator {
     render_state: Option<Rc<IndicatorRenderState>>,
     pending_input_generation: u64,
     popover: PopoverState,
+    popover_scroll_handle: ScrollHandle,
     _pending_input_subscription: Subscription,
     _settings_subscription: Subscription,
 }
@@ -45,7 +46,7 @@ impl PopoverState {
 struct IndicatorRenderState {
     keystrokes: Rc<[KeybindingKeystroke]>,
     pending_input_generation: u64,
-    bindings: Vec<(Rc<[KeybindingKeystroke]>, SharedString)>,
+    bindings: Rc<[PendingBindingRow]>,
     timeout: Option<IndicatorTimeout>,
 }
 
@@ -92,6 +93,7 @@ impl PendingKeystrokesIndicator {
             render_state: None,
             pending_input_generation: 0,
             popover: PopoverState::default(),
+            popover_scroll_handle: ScrollHandle::new(),
             _pending_input_subscription: pending_input_subscription,
             _settings_subscription: settings_subscription,
         }
@@ -119,39 +121,19 @@ impl PendingKeystrokesIndicator {
         };
         let keystrokes = pending_input.keystrokes();
 
-        let mut bindings = bindings_for_pending_input(window, keystrokes)
-            .into_iter()
-            .map(|binding| {
-                let remaining_text =
-                    text_for_keybinding_keystrokes(&binding.remaining_keystrokes, cx);
-                (
-                    remaining_text,
-                    binding.remaining_keystrokes,
-                    binding.action_name,
-                )
-            })
-            .collect::<Vec<_>>();
-        bindings.sort_by(|(text_a, keys_a, action_a), (text_b, keys_b, action_b)| {
-            keys_a
-                .len()
-                .cmp(&keys_b.len())
-                .then_with(|| text_a.cmp(text_b))
-                .then_with(|| action_a.cmp(action_b))
-        });
-        bindings.dedup_by(|(text_a, _, action_a), (text_b, _, action_b)| {
-            text_a == text_b && action_a == action_b
-        });
+        let bindings = prepare_pending_bindings(bindings_for_pending_input(window, keystrokes), cx);
 
         let keystrokes = map_pending_keystrokes(keystrokes, cx.keyboard_mapper().as_ref());
+        let pending_keys_changed = self
+            .render_state
+            .as_ref()
+            .is_none_or(|previous| previous.keystrokes.as_ref() != keystrokes.as_slice());
+        if pending_keys_changed {
+            self.popover_scroll_handle.set_offset(Default::default());
+        }
         // Pausing or resuming the timer also notifies observers.
         // Only a change in pending keys should close the popover early.
-        if self.popover.visible
-            && !self.popover.is_pointer_over()
-            && self
-                .render_state
-                .as_ref()
-                .is_some_and(|previous| previous.keystrokes.as_ref() != keystrokes.as_slice())
-        {
+        if self.popover.visible && !self.popover.is_pointer_over() && pending_keys_changed {
             self.popover = PopoverState::default();
         }
 
@@ -159,10 +141,7 @@ impl PendingKeystrokesIndicator {
         self.render_state = Some(Rc::new(IndicatorRenderState {
             keystrokes: keystrokes.into(),
             pending_input_generation: self.pending_input_generation,
-            bindings: bindings
-                .into_iter()
-                .map(|(_, keystrokes, action)| (Rc::from(keystrokes), action))
-                .collect(),
+            bindings: bindings.into(),
             timeout: pending_input.timeout().map(|timeout| IndicatorTimeout {
                 timeout_duration: timeout.duration(),
                 remaining_duration: timeout.remaining(cx),
@@ -174,6 +153,7 @@ impl PendingKeystrokesIndicator {
 
     fn clear_render_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.popover = PopoverState::default();
+        self.popover_scroll_handle.set_offset(Default::default());
         window.set_pending_input_timeout_paused(&cx.entity(), false, cx);
         self.render_state.take().is_some()
     }
@@ -295,6 +275,9 @@ impl Render for PendingKeystrokesIndicator {
 
         let popover = self.popover.visible.then(|| {
             let popover_render_state = render_state.clone();
+            let viewport_size = window.viewport_size();
+            let max_panel_width = px((f32::from(viewport_size.width) * 0.5).min(480.0));
+            let max_content_height = px(f32::from(viewport_size.height) * 0.4);
             let anchored_popover = deferred(
                 anchored()
                     .anchor(Anchor::BottomRight)
@@ -310,60 +293,14 @@ impl Render for PendingKeystrokesIndicator {
                             }))
                             .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
                             .child(tooltip_container(cx, |el, _| {
-                                el.child(
-                                    v_flex()
-                                        .gap_1()
-                                        .child(
-                                            h_flex()
-                                                .gap_1()
-                                                .child(
-                                                    KeyBinding::from_keystrokes(
-                                                        popover_render_state.keystrokes.clone(),
-                                                        false,
-                                                    )
-                                                    .color(Color::Accent),
-                                                )
-                                                .child(
-                                                    Label::new("is waiting for more keys")
-                                                        .color(Color::Muted),
-                                                ),
-                                        )
-                                        .children(
-                                            popover_render_state
-                                                .bindings
-                                                .iter()
-                                                .take(MAX_TOOLTIP_BINDINGS)
-                                                .map(|(keystrokes, action)| {
-                                                    h_flex()
-                                                        .gap_2()
-                                                        .child(
-                                                            KeyBinding::from_keystrokes(
-                                                                keystrokes.clone(),
-                                                                false,
-                                                            )
-                                                            .color(Color::Accent),
-                                                        )
-                                                        .child(
-                                                            Label::new(action.clone())
-                                                                .size(LabelSize::Small),
-                                                        )
-                                                }),
-                                        )
-                                        .when(
-                                            popover_render_state.bindings.len()
-                                                > MAX_TOOLTIP_BINDINGS,
-                                            |el| {
-                                                el.child(
-                                                    Label::new(format!(
-                                                        "…and {} more",
-                                                        popover_render_state.bindings.len()
-                                                            - MAX_TOOLTIP_BINDINGS
-                                                    ))
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                                )
-                                            },
-                                        ),
+                                el.p_0().max_w(max_panel_width).overflow_hidden().child(
+                                    PendingBindings::new(
+                                        "pending-keystrokes-popover-content",
+                                        popover_render_state.keystrokes.clone(),
+                                        popover_render_state.bindings.clone(),
+                                        self.popover_scroll_handle.clone(),
+                                        max_content_height,
+                                    ),
                                 )
                             })),
                     ),
@@ -492,13 +429,14 @@ mod tests {
                 bindings: render_state
                     .bindings
                     .iter()
-                    .map(|(keystrokes, action)| {
+                    .map(|binding| {
                         (
-                            keystrokes
+                            binding
+                                .keystrokes
                                 .iter()
                                 .map(|keystroke| keystroke.inner().unparse())
                                 .collect(),
-                            action.to_string(),
+                            binding.action_name.to_string(),
                         )
                     })
                     .collect(),
@@ -631,16 +569,7 @@ mod tests {
         assert_eq!(first_render_state.keystrokes, vec!["ctrl-b"]);
         assert_eq!(
             first_render_state.bindings,
-            vec![
-                (
-                    vec!["h".to_string()],
-                    humanize_action_name(LongerBinding.name()),
-                ),
-                (
-                    vec!["h".to_string(), "j".to_string()],
-                    humanize_action_name(LongestBinding.name()),
-                ),
-            ]
+            vec![(vec!["h".to_string()], "+2 keybinds".to_string())]
         );
 
         cx.simulate_keystrokes("h");

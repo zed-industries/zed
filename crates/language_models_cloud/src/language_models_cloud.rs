@@ -19,13 +19,13 @@ use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
 };
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, BASETEN_PROVIDER_ID, BASETEN_PROVIDER_NAME,
-    CompactionResult, DisabledReason, GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
-    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionResult, DisabledReason,
+    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
+    LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, ProviderErrorCategory,
+    RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID,
+    ZED_CLOUD_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -271,7 +271,9 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
             self.model.id.to_string(),
             1.0,
             self.model.max_output_tokens as u64,
-            if enable_thinking {
+            if enable_thinking && effort.is_some() {
+                AnthropicModelMode::AdaptiveThinking
+            } else if enable_thinking {
                 AnthropicModelMode::Thinking {
                     budget_tokens: Some(4_096),
                 }
@@ -281,14 +283,6 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )?;
-        if enable_thinking && effort.is_some() {
-            request.thinking = Some(anthropic::Thinking::Adaptive {
-                display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
-                // The cloud proxy owns the beta header needed for block binding.
-                block_binding: None,
-            });
-            request.output_config = Some(anthropic::OutputConfig { effort });
-        }
         if !self.model.supports_fast_mode {
             request.speed = None;
         }
@@ -607,7 +601,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
             Anthropic => ANTHROPIC_PROVIDER_ID,
-            Baseten => BASETEN_PROVIDER_ID,
             OpenAi => OPEN_AI_PROVIDER_ID,
             Google => GOOGLE_PROVIDER_ID,
             XAi => X_AI_PROVIDER_ID,
@@ -618,7 +611,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
             Anthropic => ANTHROPIC_PROVIDER_NAME,
-            Baseten => BASETEN_PROVIDER_NAME,
             OpenAi => OPEN_AI_PROVIDER_NAME,
             Google => GOOGLE_PROVIDER_NAME,
             XAi => X_AI_PROVIDER_NAME,
@@ -726,8 +718,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             // Unreachable while the `supports_explicit_compaction` guard
             // above holds, but a provider mismatch should degrade to the
             // same unsupported error rather than panic.
-            cloud_llm_client::LanguageModelProvider::Baseten
-            | cloud_llm_client::LanguageModelProvider::Google
+            cloud_llm_client::LanguageModelProvider::Google
             | cloud_llm_client::LanguageModelProvider::XAi => async {
                 Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
                     "this cloud model does not support explicit compaction"
@@ -765,7 +756,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
 
     fn supports_split_token_display(&self) -> bool {
         use cloud_llm_client::LanguageModelProvider::*;
-        matches!(self.model.provider, Baseten | OpenAi | XAi)
+        matches!(self.model.provider, OpenAi | XAi)
     }
 
     fn telemetry_id(&self) -> String {
@@ -969,8 +960,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
-            provider @ (cloud_llm_client::LanguageModelProvider::Baseten
-            | cloud_llm_client::LanguageModelProvider::XAi) => {
+            cloud_llm_client::LanguageModelProvider::XAi => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
                 let request = match into_open_ai(
@@ -1000,7 +990,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            provider,
+                            provider: cloud_llm_client::LanguageModelProvider::XAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request).map_err(|error| {
                                 LanguageModelCompletionError::SerializeRequest {
@@ -1288,7 +1278,6 @@ pub fn provider_name(
 ) -> LanguageModelProviderName {
     match provider {
         cloud_llm_client::LanguageModelProvider::Anthropic => ANTHROPIC_PROVIDER_NAME,
-        cloud_llm_client::LanguageModelProvider::Baseten => BASETEN_PROVIDER_NAME,
         cloud_llm_client::LanguageModelProvider::OpenAi => OPEN_AI_PROVIDER_NAME,
         cloud_llm_client::LanguageModelProvider::Google => GOOGLE_PROVIDER_NAME,
         cloud_llm_client::LanguageModelProvider::XAi => X_AI_PROVIDER_NAME,
@@ -2117,6 +2106,30 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn opus_55_hosted_requests_use_adaptive_thinking_with_prefix_binding() -> Result<()> {
+        let mut model = cloud_anthropic_test_model(FakeHttpClient::with_404_response());
+        Arc::make_mut(&mut model.model).id =
+            cloud_llm_client::LanguageModelId("claude-opus-5-5".into());
+        for effort in [None, Some("high")] {
+            let request = model.anthropic_request(LanguageModelRequest {
+                thinking_allowed: true,
+                thinking_effort: effort.map(str::to_string),
+                temperature: Some(0.25),
+                ..Default::default()
+            })?;
+            let body = serde_json::to_value(request)?;
+            assert_eq!(body["thinking"]["type"], "adaptive");
+            assert_eq!(
+                body["thinking"]["block_binding"]["prefix_mismatch_behavior"],
+                "drop_block"
+            );
+            assert_eq!(body["output_config"]["effort"].as_str(), effort);
+            assert!(body.get("temperature").is_none());
+        }
+        Ok(())
     }
 
     #[gpui::test]
