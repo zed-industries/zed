@@ -10003,7 +10003,14 @@ impl Render for Workspace {
                                                 "zoomed_centered_layout_left_padding".into()
                                             }))
                                         })
-                                        .child(div().size_full().child(zoomed_view))
+                                        .child(
+                                            div()
+                                                .size_full()
+                                                .debug_selector(|| {
+                                                    "zoomed_centered_layout_content".into()
+                                                })
+                                                .child(zoomed_view),
+                                        )
                                         .when_some(right, |this, padding| {
                                             this.child(padding.border_l_1().debug_selector(|| {
                                                 "zoomed_centered_layout_right_padding".into()
@@ -15584,7 +15591,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_centered_layout_pads_a_zoomed_pane(cx: &mut TestAppContext) {
+    async fn test_centered_layout_with_zoomed_pane(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, cx).await;
@@ -15600,12 +15607,9 @@ mod tests {
         });
         cx.run_until_parked();
 
-        assert!(
-            cx.debug_bounds("zoomed_centered_layout_left_padding")
-                .is_none()
-                && cx
-                    .debug_bounds("zoomed_centered_layout_right_padding")
-                    .is_none(),
+        assert_eq!(
+            zoomed_padding_bounds(cx),
+            (None, None),
             "nothing is zoomed, so the zoom overlay should not be padded"
         );
 
@@ -15613,34 +15617,105 @@ mod tests {
         cx.run_until_parked();
 
         workspace.read_with(cx, |workspace, _| {
-            assert!(workspace.zoomed.is_some(), "the pane should be zoomed");
-            assert!(
-                workspace.center.panes().len() > 1,
+            assert_eq!(
+                workspace.zoomed,
+                Some(second_pane.downgrade().into()),
+                "the pane should be zoomed"
+            );
+            assert_eq!(
+                workspace.center.panes().len(),
+                2,
                 "the split should survive the zoom"
             );
         });
 
-        let left = cx
-            .debug_bounds("zoomed_centered_layout_left_padding")
-            .expect("a zoomed pane should be padded while the layout is centered");
-        let right = cx
-            .debug_bounds("zoomed_centered_layout_right_padding")
-            .expect("a zoomed pane should be padded while the layout is centered");
-        assert!(left.size.width > px(0.));
-        assert!(right.size.width > px(0.));
+        assert_zoomed_pane_is_padded(cx);
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_centered_layout(&ToggleCenteredLayout, window, cx);
         });
         cx.run_until_parked();
 
-        assert!(
-            cx.debug_bounds("zoomed_centered_layout_left_padding")
-                .is_none()
-                && cx
-                    .debug_bounds("zoomed_centered_layout_right_padding")
-                    .is_none(),
+        assert_eq!(
+            zoomed_padding_bounds(cx),
+            (None, None),
             "turning the centered layout off should remove the padding"
+        );
+
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(
+                workspace.zoomed,
+                Some(second_pane.downgrade().into()),
+                "the pane should stay zoomed while toggling the centered layout"
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_centered_layout(&ToggleCenteredLayout, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_zoomed_pane_is_padded(cx);
+    }
+
+    #[gpui::test]
+    async fn test_centered_layout_with_zoomed_dock(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        add_an_item_to_active_pane(cx, &workspace, 1);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_centered_layout(&ToggleCenteredLayout, window, cx);
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+        cx.run_until_parked();
+
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, _| {
+            assert!(workspace.centered_layout);
+            assert_eq!(workspace.zoomed, Some(panel.to_any().downgrade()));
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+        });
+        assert_eq!(
+            zoomed_padding_bounds(cx),
+            (None, None),
+            "a zoomed dock should not receive centered layout padding"
+        );
+    }
+
+    fn zoomed_padding_bounds(
+        cx: &mut VisualTestContext,
+    ) -> (Option<Bounds<Pixels>>, Option<Bounds<Pixels>>) {
+        (
+            cx.debug_bounds("zoomed_centered_layout_left_padding"),
+            cx.debug_bounds("zoomed_centered_layout_right_padding"),
+        )
+    }
+
+    fn assert_zoomed_pane_is_padded(cx: &mut VisualTestContext) {
+        let (Some(left), Some(right)) = zoomed_padding_bounds(cx) else {
+            panic!("a centered zoomed pane should have padding on both sides");
+        };
+        let content = cx
+            .debug_bounds("zoomed_centered_layout_content")
+            .expect("a centered zoomed pane should render its content");
+        assert!(left.size.width > px(0.));
+        assert_eq!(
+            left.size.width, right.size.width,
+            "the zoomed pane should be horizontally centered"
+        );
+        assert!(content.size.width > px(0.));
+        assert!(
+            left.right() <= content.left() && content.right() <= right.left(),
+            "the zoomed pane should sit between the paddings: left {left:?}, content {content:?}, right {right:?}"
         );
     }
 
