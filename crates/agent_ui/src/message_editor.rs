@@ -1139,12 +1139,11 @@ impl MessageEditor {
                     continue;
                 };
 
-                let crease_text =
-                    acp_thread::selection_name(Some(file_path.as_ref()), &meta.line_range);
-                let line_range = meta.line_range.clone();
+                let crease_text = acp_thread::selection_name(Some(file_path.as_ref()), &line_range);
+
                 let mention_uri = MentionUri::Selection {
                     abs_path: Some(file_path.clone()),
-                    line_range: meta.line_range.clone(),
+                    line_range: line_range.clone(),
                     column: None,
                 };
 
