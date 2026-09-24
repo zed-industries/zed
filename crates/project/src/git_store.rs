@@ -4411,7 +4411,7 @@ impl GitStore {
                     repository_handle.show_commit(commit, cx)
                 } else {
                     let show = repository_handle.show(commit);
-                    cx.spawn(async move |_, _| show.await?)
+                    cx.background_spawn(async move { show.await? })
                 }
             })
             .await?;
