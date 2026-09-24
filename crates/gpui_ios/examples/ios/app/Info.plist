@@ -31,6 +31,9 @@
 				<dict>
 					<key>UISceneConfigurationName</key>
 					<string>Default Configuration</string>
+					<!-- Restored sessions may skip the app delegate's configuration callback. -->
+					<key>UISceneDelegateClassName</key>
+					<string>GPUIIosSceneDelegate</string>
 				</dict>
 			</array>
 		</dict>

@@ -779,7 +779,8 @@ pub(super) mod tests {
         assert!(contains_range(&(4..8), &(8..8)));
         assert!(!contains_range(&(4..8), &(3..5)));
         assert!(!contains_range(&(4..8), &(7..9)));
-        assert!(!contains_range(&(4..8), &(6..5)));
+        let reversed_range = Range { start: 6, end: 5 };
+        assert!(!contains_range(&(4..8), &reversed_range));
         let length = "a😀e\u{301}".encode_utf16().count();
         assert_eq!(length, 5);
         assert_eq!(checked_range(1, 2, length), Some(1..3));
