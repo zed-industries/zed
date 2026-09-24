@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_format_dispatch() -> anyhow::Result<()> {
-        for extension in ["jsonl", "ndjson", "JSONL", "NdJsOn"] {
+        for extension in ["jsonl", "ndjson", "JSONL", "nDjSoN"] {
             let format = TabularFormat::from_extension(extension).context("format not detected")?;
             assert_eq!(format, TabularFormat::JsonLines);
             assert_eq!(
