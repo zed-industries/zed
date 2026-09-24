@@ -1077,7 +1077,6 @@ impl MessageEditor {
                 }
                 _ => None,
             });
-        dbg!(&editor_clipboard_selections);
         // Insert creases for pasted clipboard selections that:
         // 1. Contain exactly one selection
         // 2. Have an associated file path
