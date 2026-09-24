@@ -219,6 +219,18 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
             .unreachable_border
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        untracked: colors
+            .untracked
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        untracked_background: colors
+            .untracked_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        untracked_border: colors
+            .untracked_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         warning: colors
             .warning
             .as_ref()
