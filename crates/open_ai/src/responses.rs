@@ -1053,7 +1053,7 @@ pub async fn stream_response(
 #[inline(never)]
 fn decode_stream_event(line: &str) -> serde_json::Result<StreamEvent> {
     serde_json::from_str(line).or_else(|error| {
-        // Some gateways (e.g. LiteLLM) send a bare `{"error": {...}}` envelope without a `type`.
+        // Deserialize provider errors that are missing a `type`.
         match serde_json::from_str::<GenericStreamErrorPayload>(line) {
             Ok(payload) if payload.error.is_some() => {
                 Ok(StreamEvent::GenericError { error: payload })
