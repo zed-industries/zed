@@ -190,6 +190,9 @@ pub struct SettingsContent {
     #[serde(flatten)]
     pub remote: RemoteSettingsContent,
 
+    /// Settings related to the command palette.
+    pub command_palette: Option<CommandPaletteSettingsContent>,
+
     /// Settings related to the file finder.
     pub file_finder: Option<FileFinderSettingsContent>,
 
@@ -399,7 +402,7 @@ impl SettingsContent {
 fallible_options::flattened_deserialize!(SettingsContent {
     sections: { project, theme, extension, workspace, editor, remote },
     options: {
-        call_hierarchy, file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent,
+        call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent,
         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
@@ -926,6 +929,15 @@ pub struct PanelSettingsContent {
 
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct CommandPaletteSettingsContent {
+    /// Whether to use command history ranking for sorting in the command palette.
+    ///
+    /// Default: true
+    pub use_command_history: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct FileFinderSettingsContent {
     /// Whether to show file icons in the file finder.
     ///
@@ -1278,6 +1290,22 @@ pub enum LineIndicatorFormat {
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
 pub struct MarkdownPreviewSettingsContent {
+    /// The name of a font to use for rendering in the markdown preview.
+    /// Falls back to the UI font if unset.
+    pub font_family: Option<FontFamilyName>,
+    /// The name of a font to use for code (code blocks and inline code) in the
+    /// markdown preview. Falls back to the buffer font if unset.
+    pub code_font_family: Option<FontFamilyName>,
+    /// The font size to use for rendering in the markdown preview.
+    /// Falls back to the UI font size if unset.
+    pub font_size: Option<FontSize>,
+    /// The theme to use for the markdown preview.
+    /// Falls back to the main editor theme if unset.
+    pub theme: Option<ThemeSelection>,
+    /// Whether to automatically open Markdown files in the preview.
+    ///
+    /// Default: false
+    pub open_markdown_files_in_preview: Option<bool>,
     /// Whether to limit the width of the rendered markdown content. When
     /// enabled, content is constrained to `max_width` and centered
     /// horizontally within the preview pane, for optimal readability.
@@ -1479,8 +1507,6 @@ impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     }
 }
 
-pub const REST_OF_FILE_SCAN_EXCLUSIONS: &str = "...";
-
 // A SplicingVec in the settings replaces the value it merges over, except that
 // a `...` entry expands to that previous value.
 //
@@ -1493,6 +1519,10 @@ pub const REST_OF_FILE_SCAN_EXCLUSIONS: &str = "...";
 // repeating it.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SplicingVec(pub Vec<String>);
+
+impl SplicingVec {
+    pub const REST: &str = "...";
+}
 
 impl From<Vec<String>> for SplicingVec {
     fn from(vec: Vec<String>) -> Self {
@@ -1507,7 +1537,7 @@ impl merge_from::MergeFrom for SplicingVec {
             .0
             .iter()
             .flat_map(|entry| {
-                if entry == REST_OF_FILE_SCAN_EXCLUSIONS {
+                if entry == Self::REST {
                     inherited.clone()
                 } else {
                     vec![entry.clone()]

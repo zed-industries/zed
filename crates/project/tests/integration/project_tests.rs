@@ -221,7 +221,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         [root_link_path.as_ref()],
         cx,
     )
@@ -4366,6 +4366,15 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                                 ..Diagnostic::default()
                             },
                         ),
+                        DiagnosticEntry::new(
+                            Unclipped(PointUtf16::new(3, 0))..Unclipped(PointUtf16::new(3, 0)),
+                            Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error on empty line".into(),
+                                source_kind: DiagnosticSourceKind::Pushed,
+                                ..Diagnostic::default()
+                            },
+                        ),
                     ],
                     cx,
                 )
@@ -4391,6 +4400,13 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                 ("\nlet three = 3;\n", None)
             ]
         );
+
+        let snapshot = buffer.snapshot();
+        let diagnostics = snapshot
+            .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(3, 0), false)
+            .collect::<Vec<_>>();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range, Point::new(3, 0)..Point::new(3, 0));
     });
 }
 
@@ -8607,7 +8623,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         }
     }));
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [dir.path()], cx).await;
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
         let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
@@ -8761,7 +8777,7 @@ async fn test_recreated_directory_receives_child_events(cx: &mut gpui::TestAppCo
     cx.executor().allow_parking();
 
     let dir = TempTree::new(json!({}));
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [dir.path()], cx).await;
     let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
 
     tree.flush_fs_events(cx).await;
@@ -16735,12 +16751,7 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
     git_commit("Initial commit", &repo);
     std::fs::write(&file_path, file_contents).unwrap();
 
-    let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
-        [root.path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -16975,12 +16986,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     std::fs::remove_file(work_dir.join("d.txt")).unwrap();
     std::fs::write(work_dir.join("a.txt"), "aa").unwrap();
 
-    let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
-        [root.path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -17262,12 +17268,7 @@ async fn test_git_events_after_project_excludes_dot_git(cx: &mut gpui::TestAppCo
     git_commit("Initial commit", &repo);
     git_branch("other-branch", &repo);
 
-    let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
-        [work_dir.as_path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [work_dir.as_path()], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -17354,12 +17355,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     // `sub` is a nested git repository.
     let _sub = git_init(&work_dir.join("sub"));
 
-    let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
-        [root.path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -18210,7 +18206,7 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     git_add("a.txt", &repo);
     git_commit("init", &repo);
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root_path], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -18366,7 +18362,7 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
     git_commit("init", &repo);
     std::fs::write(root_path.join("projects/project1/a"), "aa").unwrap();
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root_path], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -18481,7 +18477,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     git_add(DOTGITIGNORE, &repo);
     git_commit("Initial commit", &repo);
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root_path], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -18764,7 +18760,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     git_add(".gitignore", &repo);
     git_commit("Initial commit", &repo);
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root_path], cx).await;
     let repository_updates = Arc::new(Mutex::new(Vec::new()));
     let project_events = Arc::new(Mutex::new(Vec::new()));
     project.update(cx, |project, cx| {
@@ -20513,10 +20509,10 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![
-                    "**/generated/**".to_string(),
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
                     "**/*.gen.rs".to_string(),
-                ]);
+                    "**/generated/**".to_string(),
+                ]));
             });
         });
     });
@@ -20582,6 +20578,56 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_read_only_files_splice_project_settings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
+                    SplicingVec::REST.to_string(),
+                    "**/*.lock".to_string(),
+                ]));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{"read_only_files": ["**/generated/**", "..."]}"#,
+            },
+            "generated": {"schema.rs": ""},
+            "src": {"main.rs": ""},
+            "yarn.lock": "",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    cx.executor().run_until_parked();
+
+    for (relative_path, expected_read_only) in [
+        ("generated/schema.rs", true),
+        ("src/main.rs", false),
+        ("yarn.lock", true),
+    ] {
+        let full_path = Path::new(path!("/root")).join(relative_path);
+        let result = project
+            .update(cx, |project, cx| project.open_local_buffer(&full_path, cx))
+            .await;
+        match result {
+            Ok(buffer) => assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.read_only()),
+                expected_read_only,
+                "{relative_path}"
+            ),
+            Err(error) => panic!("could not open {relative_path}: {error}"),
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -20589,7 +20635,7 @@ async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![]);
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![]));
             });
         });
     });
@@ -20656,12 +20702,7 @@ async fn test_os_read_only_files_open_as_read_only(cx: &mut gpui::TestAppContext
     permissions.set_readonly(true);
     std::fs::set_permissions(&file_path, permissions).unwrap();
 
-    let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
-        [root.path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -20686,10 +20727,10 @@ async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
                     "**/*.lock".to_string(),
                     "**/package-lock.json".to_string(),
-                ]);
+                ]));
             });
         });
     });

@@ -106,7 +106,8 @@ impl KeyBinding {
         cx.set_global(VimStyle(enabled));
     }
 
-    fn is_vim_mode(cx: &App) -> bool {
+    /// Returns whether keybindings use Vim-style notation.
+    pub fn is_vim_mode(cx: &App) -> bool {
         cx.try_global::<VimStyle>().is_some_and(|g| g.0)
     }
 
@@ -116,7 +117,8 @@ impl KeyBinding {
         cx.refresh_windows();
     }
 
-    fn default_visibility(cx: &mut App) -> bool {
+    /// Returns whether keybindings are visible application-wide.
+    pub fn default_visibility(cx: &mut App) -> bool {
         cx.default_global::<KeyBindingVisibility>().0
     }
 

@@ -196,15 +196,13 @@ impl Output {
                 .pl_1()
                 .when(v.has_clipboard_content(window, cx), |el| {
                     let v = v.clone();
-                    el.child(
-                        IconButton::new(ElementId::Name("copy-output".into()), IconName::Copy)
-                            .style(ButtonStyle::Transparent)
-                            .tooltip(Tooltip::text("Copy Output"))
-                            .on_click(move |_, window, cx| {
-                                let clipboard_content = v.clipboard_content(window, cx);
 
-                                if let Some(clipboard_content) = clipboard_content.as_ref() {
-                                    cx.write_to_clipboard(clipboard_content.clone());
+                    el.child(
+                        CopyButton::new(("copy-output", v.entity_id()), "")
+                            .tooltip_label("Copy Output")
+                            .custom_on_click(move |window, cx| {
+                                if let Some(clipboard_item) = v.clipboard_content(window, cx) {
+                                    cx.write_to_clipboard(clipboard_item);
                                 }
                             }),
                     )

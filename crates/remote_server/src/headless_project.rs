@@ -457,6 +457,10 @@ impl HeadlessProject {
                     .log_err();
             }
             LspStoreEvent::LanguageServerUpdate {
+                message: proto::update_language_server::Variant::MetadataUpdated(_),
+                ..
+            } => {}
+            LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
                 message,
@@ -478,6 +482,33 @@ impl HeadlessProject {
                         message: message.clone(),
                     })
                     .log_err();
+            }
+            LspStoreEvent::LanguageServerShowDocument(show_document_request) => {
+                let request = self
+                    .session
+                    .request(proto::LanguageServerShowDocumentRequest {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        uri: show_document_request.uri.as_str().to_owned(),
+                        external: show_document_request.external,
+                        take_focus: show_document_request.take_focus,
+                        selection_start: show_document_request.selection.map(|selection| {
+                            proto::PointUtf16 {
+                                row: selection.start.line,
+                                column: selection.start.character,
+                            }
+                        }),
+                        selection_end: show_document_request.selection.map(|selection| {
+                            proto::PointUtf16 {
+                                row: selection.end.line,
+                                column: selection.end.character,
+                            }
+                        }),
+                    });
+                let show_document_request = show_document_request.clone();
+                cx.background_spawn(async move {
+                    show_document_request.respond(request.await.is_ok());
+                })
+                .detach();
             }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 let request = self.session.request(proto::LanguageServerPromptRequest {
@@ -869,6 +900,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
         cx: AsyncApp,
     ) -> Result<()> {
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
         let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.downgrade());
         cx.update(|cx| {
@@ -887,8 +919,14 @@ impl HeadlessProject {
                 };
             let server_key =
                 LanguageServerLogKey::new(LanguageServerKind::LocalSsh { lsp_store }, server_id);
-            log_store.update(cx, |log_store, _| {
-                log_store.toggle_lsp_logs(&server_key, envelope.payload.enabled, toggled_log_kind);
+            log_store.update(cx, |log_store, cx| {
+                log_store.set_downstream_log_stream(
+                    &server_key,
+                    peer_id,
+                    toggled_log_kind,
+                    envelope.payload.enabled,
+                    cx,
+                );
             });
             anyhow::Ok(())
         })?;
