@@ -909,7 +909,7 @@ fn collect_markdowns(
             if entry_view_state.is_tool_call_expanded(&tool_call.id) {
                 out.extend(
                     tool_call
-                        .content
+                        .content()
                         .iter()
                         .filter_map(|content| match content {
                             ToolCallContent::ContentBlock(content) => content.markdown().cloned(),

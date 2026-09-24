@@ -929,13 +929,14 @@ pub struct ToolCall {
     pub label: Entity<Markdown>,
     title: Option<SharedString>,
     pub kind: acp::ToolKind,
-    pub content: Vec<ToolCallContent>,
+    structured_content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
     pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
+    raw_output_content: Option<Box<ToolCallContent>>,
     pub tool_name: Option<SharedString>,
     pub subagent_session_info: Option<SubagentSessionInfo>,
     pub sandbox_authorization_details: Option<SandboxAuthorizationDetails>,
@@ -986,28 +987,30 @@ impl ToolCall {
             title.as_ref(),
             tool_name.as_ref(),
             tool_call.kind,
-            language_registry,
+            language_registry.clone(),
             cx,
         );
 
-        let result = Self {
+        let mut result = Self {
             id: tool_call.tool_call_id,
             label,
             title,
             kind: tool_call.kind,
-            content,
+            structured_content: content,
             locations: tool_call.locations,
             resolved_locations: Vec::default(),
             status,
             raw_input: tool_call.raw_input,
             raw_input_markdown,
             raw_output: tool_call.raw_output,
+            raw_output_content: None,
             tool_name,
             subagent_session_info,
             sandbox_authorization_details,
             sandbox_fallback_authorization_details,
             sandbox_not_applied,
         };
+        result.update_raw_output_content(&language_registry, cx);
         Ok(result)
     }
 
@@ -1070,6 +1073,7 @@ impl ToolCall {
             raw_output,
             ..
         } = fields;
+        let output_changed = content.is_some() || raw_output.is_some();
 
         let was_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
         let mut label_changed = title.is_some() || kind.is_some();
@@ -1145,7 +1149,7 @@ impl ToolCall {
             let mut content = content.into_iter();
 
             // Reuse existing content if we can
-            for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
+            for (old, new) in self.structured_content.iter_mut().zip(content.by_ref()) {
                 let valid_content =
                     old.update_from_acp(new, language_registry.clone(), terminals, cx)?;
                 if !valid_content {
@@ -1156,12 +1160,12 @@ impl ToolCall {
                 if let Some(new) =
                     ToolCallContent::from_acp(new, language_registry.clone(), terminals, cx)?
                 {
-                    self.content.push(new);
+                    self.structured_content.push(new);
                 } else {
                     new_content_len -= 1;
                 }
             }
-            self.content.truncate(new_content_len);
+            self.structured_content.truncate(new_content_len);
         }
 
         if let Some(locations) = locations {
@@ -1174,17 +1178,49 @@ impl ToolCall {
         }
 
         if let Some(raw_output) = raw_output {
-            if self.content.is_empty()
-                && let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
-            {
-                self.content
-                    .push(ToolCallContent::ContentBlock(ContentBlock::from_markdown(
-                        markdown,
-                    )));
-            }
             self.raw_output = Some(raw_output);
         }
+        if output_changed {
+            self.update_raw_output_content(&language_registry, cx);
+        }
         Ok(())
+    }
+
+    fn update_raw_output_content(
+        &mut self,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        if !self.structured_content.is_empty() {
+            self.raw_output_content = None;
+            return;
+        }
+        let Some(text) = self.raw_output.as_ref().and_then(raw_output_text) else {
+            self.raw_output_content = None;
+            return;
+        };
+        if let Some(ToolCallContent::ContentBlock(block)) = self.raw_output_content.as_deref()
+            && let Some(markdown) = block.markdown()
+        {
+            update_markdown_in_place(markdown, &text, cx);
+        } else {
+            let markdown =
+                cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx));
+            self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock(
+                ContentBlock::from_markdown(markdown),
+            )));
+        }
+    }
+
+    pub fn content(&self) -> &[ToolCallContent] {
+        if self.structured_content.is_empty() {
+            self.raw_output_content
+                .as_deref()
+                .map(std::slice::from_ref)
+                .unwrap_or_default()
+        } else {
+            &self.structured_content
+        }
     }
 
     fn update_status(&mut self, status: ToolCallStatus) {
@@ -1213,19 +1249,23 @@ impl ToolCall {
     }
 
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
-        self.content.iter().filter_map(|content| match content {
-            ToolCallContent::Diff(diff) => Some(diff),
-            ToolCallContent::ContentBlock(_) => None,
-            ToolCallContent::Terminal(_) => None,
-        })
+        self.structured_content
+            .iter()
+            .filter_map(|content| match content {
+                ToolCallContent::Diff(diff) => Some(diff),
+                ToolCallContent::ContentBlock(_) => None,
+                ToolCallContent::Terminal(_) => None,
+            })
     }
 
     pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
-        self.content.iter().filter_map(|content| match content {
-            ToolCallContent::Terminal(terminal) => Some(terminal),
-            ToolCallContent::ContentBlock(_) => None,
-            ToolCallContent::Diff(_) => None,
-        })
+        self.structured_content
+            .iter()
+            .filter_map(|content| match content {
+                ToolCallContent::Terminal(terminal) => Some(terminal),
+                ToolCallContent::ContentBlock(_) => None,
+                ToolCallContent::Diff(_) => None,
+            })
     }
 
     pub fn is_subagent(&self) -> bool {
@@ -1241,7 +1281,7 @@ impl ToolCall {
             label.to_string()
         };
         let mut markdown = format!("**Tool Call: {}**\nStatus: {}\n\n", label, self.status);
-        for content in &self.content {
+        for content in self.content() {
             markdown.push_str(content.to_markdown(cx).as_str());
             markdown.push_str("\n\n");
         }
@@ -1765,15 +1805,7 @@ impl ContentBlock {
         let acp::ContentBlock::Text(text_content) = block else {
             return false;
         };
-        let new_content = &text_content.text;
-        markdown.update(cx, |markdown, cx| {
-            let current = markdown.source().to_string();
-            match new_content.strip_prefix(&current) {
-                Some("") => {}
-                Some(suffix) => markdown.append(suffix, cx),
-                None => markdown.reset(new_content.clone().into(), cx),
-            }
-        });
+        update_markdown_in_place(markdown, &text_content.text, cx);
         true
     }
 
@@ -3650,17 +3682,16 @@ impl AcpThread {
                     label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
                     title: Some("Tool call not found".into()),
                     kind: acp::ToolKind::Fetch,
-                    content: vec![ToolCallContent::ContentBlock(ContentBlock::new_output(
-                        "Tool call not found".into(),
-                        &languages,
-                        cx,
-                    ))],
+                    structured_content: vec![ToolCallContent::ContentBlock(
+                        ContentBlock::new_output("Tool call not found".into(), &languages, cx),
+                    )],
                     status: ToolCallStatus::Failed,
                     locations: Vec::new(),
                     resolved_locations: Vec::new(),
                     raw_input: None,
                     raw_input_markdown: None,
                     raw_output: None,
+                    raw_output_content: None,
                     tool_name: None,
                     subagent_session_info: None,
                     sandbox_authorization_details: None,
@@ -3689,13 +3720,16 @@ impl AcpThread {
                 }
             }
             ToolCallUpdate::UpdateDiff(update) => {
-                call.content.clear();
-                call.content.push(ToolCallContent::Diff(update.diff));
+                call.structured_content.clear();
+                call.structured_content
+                    .push(ToolCallContent::Diff(update.diff));
+                call.update_raw_output_content(&languages, cx);
             }
             ToolCallUpdate::UpdateTerminal(update) => {
-                call.content.clear();
-                call.content
+                call.structured_content.clear();
+                call.structured_content
                     .push(ToolCallContent::Terminal(update.terminal));
+                call.update_raw_output_content(&languages, cx);
             }
         }
 
@@ -5304,43 +5338,31 @@ fn markdown_for_raw_output(
     language_registry: &Arc<LanguageRegistry>,
     cx: &mut App,
 ) -> Option<Entity<Markdown>> {
+    let text = raw_output_text(raw_output)?;
+    Some(cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx)))
+}
+
+fn raw_output_text(raw_output: &serde_json::Value) -> Option<String> {
     match raw_output {
         serde_json::Value::Null => None,
-        serde_json::Value::Bool(value) => Some(cx.new(|cx| {
-            Markdown::new(
-                value.to_string().into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        })),
-        serde_json::Value::Number(value) => Some(cx.new(|cx| {
-            Markdown::new(
-                value.to_string().into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        })),
-        serde_json::Value::String(value) => Some(cx.new(|cx| {
-            Markdown::new(
-                value.clone().into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        })),
-        value => Some(cx.new(|cx| {
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::String(value) => Some(value.clone()),
+        value => {
             let pretty_json = to_string_pretty(value).unwrap_or_else(|_| value.to_string());
-
-            Markdown::new(
-                format!("```json\n{}\n```", pretty_json).into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        })),
+            Some(format!("```json\n{}\n```", pretty_json))
+        }
     }
+}
+
+fn update_markdown_in_place(markdown: &Entity<Markdown>, text: &str, cx: &mut App) {
+    markdown.update(cx, |markdown, cx| {
+        match text.strip_prefix(markdown.source().as_ref()) {
+            Some("") => {}
+            Some(suffix) => markdown.append(suffix, cx),
+            None => markdown.reset(text.to_owned().into(), cx),
+        }
+    });
 }
 
 #[cfg(test)]
@@ -8183,6 +8205,167 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_tool_call_raw_output_creation_and_updates_export_latest_content(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let mut created_with_raw_output = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("created", "Tool").raw_output(serde_json::json!("first")),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("raw-only tool call should convert")
+        });
+        let mut updated_with_raw_output = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("updated", "Tool"),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("empty tool call should convert")
+        });
+
+        let created_export = cx.read(|cx| created_with_raw_output.to_markdown(cx));
+        cx.update(|cx| {
+            updated_with_raw_output
+                .update_fields(
+                    acp::ToolCallUpdateFields::new().raw_output(serde_json::json!("first")),
+                    None,
+                    languages.clone(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("first raw output update should apply");
+        });
+        let first_update_export = cx.read(|cx| updated_with_raw_output.to_markdown(cx));
+        let Some(ToolCallContent::ContentBlock(block)) = updated_with_raw_output.content().first()
+        else {
+            panic!("expected raw output content");
+        };
+        let raw_markdown = block
+            .markdown()
+            .expect("raw output should be Markdown")
+            .clone();
+        cx.update(|cx| {
+            created_with_raw_output
+                .update_fields(
+                    acp::ToolCallUpdateFields::new().raw_output(serde_json::json!("second")),
+                    None,
+                    languages.clone(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("second raw output update should apply");
+            updated_with_raw_output
+                .update_fields(
+                    acp::ToolCallUpdateFields::new().raw_output(serde_json::json!("second")),
+                    None,
+                    languages.clone(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("second raw output update should apply");
+        });
+        let latest_exports = cx.read(|cx| {
+            assert_eq!(raw_markdown.read(cx).source(), "second");
+            (
+                created_with_raw_output.to_markdown(cx),
+                updated_with_raw_output.to_markdown(cx),
+            )
+        });
+        assert_eq!(
+            (created_export, first_update_export, latest_exports),
+            (
+                "**Tool Call: Tool**\nStatus: Pending\n\nfirst\n\n".to_string(),
+                "**Tool Call: Tool**\nStatus: Pending\n\nfirst\n\n".to_string(),
+                (
+                    "**Tool Call: Tool**\nStatus: Pending\n\nsecond\n\n".to_string(),
+                    "**Tool Call: Tool**\nStatus: Pending\n\nsecond\n\n".to_string(),
+                ),
+            )
+        );
+    }
+
+    #[gpui::test]
+    fn test_tool_call_clearing_structured_content_restores_retained_raw_output(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let mut call = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("tool", "Tool")
+                    .content(vec!["structured".into()])
+                    .raw_output(serde_json::json!("raw")),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("tool call should convert")
+        });
+        cx.read(|cx| {
+            assert_eq!(
+                call.to_markdown(cx),
+                "**Tool Call: Tool**\nStatus: Pending\n\nstructured\n\n"
+            );
+        });
+        cx.update(|cx| {
+            call.update_fields(
+                acp::ToolCallUpdateFields::new().raw_output(serde_json::json!("new raw")),
+                None,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("raw output should update without replacing structured content");
+            assert_eq!(
+                call.to_markdown(cx),
+                "**Tool Call: Tool**\nStatus: Pending\n\nstructured\n\n"
+            );
+        });
+        cx.update(|cx| {
+            call.update_fields(
+                acp::ToolCallUpdateFields::new().content(vec![]),
+                None,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("clearing structured content should apply");
+        });
+        cx.read(|cx| {
+            assert_eq!(call.raw_output, Some(serde_json::json!("new raw")));
+            assert_eq!(
+                call.to_markdown(cx),
+                "**Tool Call: Tool**\nStatus: Pending\n\nnew raw\n\n"
+            );
+        });
+        cx.update(|cx| {
+            call.update_fields(
+                acp::ToolCallUpdateFields::new().content(vec!["replacement".into()]),
+                None,
+                languages,
+                &HashMap::default(),
+                cx,
+            )
+            .expect("structured content should replace the raw fallback");
+            assert_eq!(
+                call.to_markdown(cx),
+                "**Tool Call: Tool**\nStatus: Pending\n\nreplacement\n\n"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_tool_call_name_precedence_and_updates(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -8459,8 +8642,8 @@ mod tests {
                 tool_call.status,
                 ToolCallStatus::WaitingForConfirmation { .. }
             ));
-            assert_eq!(tool_call.content.len(), 1);
-            assert_eq!(tool_call.content[0].to_markdown(cx), "updated content");
+            assert_eq!(tool_call.content().len(), 1);
+            assert_eq!(tool_call.content()[0].to_markdown(cx), "updated content");
         });
 
         thread
@@ -8487,8 +8670,8 @@ mod tests {
                 tool_call.status,
                 ToolCallStatus::WaitingForConfirmation { .. }
             ));
-            assert_eq!(tool_call.content.len(), 1);
-            assert_eq!(tool_call.content[0].to_markdown(cx), "updated again");
+            assert_eq!(tool_call.content().len(), 1);
+            assert_eq!(tool_call.content()[0].to_markdown(cx), "updated again");
         });
 
         let selected_outcome = SelectedPermissionOutcome::new(
@@ -8538,8 +8721,8 @@ mod tests {
                 .expect("tool call should exist");
             assert_eq!(tool_call.label.read(cx).source(), "Completed");
             assert!(matches!(tool_call.status, ToolCallStatus::Completed));
-            assert_eq!(tool_call.content.len(), 1);
-            assert_eq!(tool_call.content[0].to_markdown(cx), "done");
+            assert_eq!(tool_call.content().len(), 1);
+            assert_eq!(tool_call.content()[0].to_markdown(cx), "done");
         });
     }
 
@@ -11073,12 +11256,12 @@ mod tests {
                 assert_eq!(tool_call.kind, acp::ToolKind::Fetch);
 
                 // Check that the content contains the error message
-                assert_eq!(tool_call.content.len(), 1);
-                if let ToolCallContent::ContentBlock(content_block) = &tool_call.content[0] {
+                assert_eq!(tool_call.content().len(), 1);
+                if let ToolCallContent::ContentBlock(content_block) = &tool_call.content()[0] {
                     let markdown = content_block.plain_markdown().expect("expected markdown");
                     assert!(markdown.read(cx).source().contains("Tool call not found"));
                 } else {
-                    panic!("Expected ContentBlock, got: {:?}", tool_call.content[0]);
+                    panic!("Expected ContentBlock, got: {:?}", tool_call.content()[0]);
                 }
             } else {
                 panic!("Expected ToolCall entry, got: {:?}", thread.entries[0]);
