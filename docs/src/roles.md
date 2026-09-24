@@ -12,18 +12,18 @@ can access and configure.
 
 Every member of an organization is assigned one of four roles:
 
-| Capability                                                      | Owner | Admin | Billing Manager | Member |
-| --------------------------------------------------------------- | ----- | ----- | --------------- | ------ |
-| Use hosted AI and Edit Predictions through Business             | Yes   | Yes   | No              | Yes    |
-| View organization members                                       | Yes   | Yes   | Yes             | Yes    |
-| Invite members                                                  | Yes   | Yes   | No              | No     |
-| Change non-owner member roles                                   | Yes   | Yes   | No              | No     |
-| Remove non-owner members                                        | Yes   | Yes   | No              | No     |
-| Configure organization settings and data controls               | Yes   | Yes   | No              | No     |
-| View subscription, usage, and billing information               | Yes   | Yes   | Yes             | No     |
-| Update billing details, tax ID information, and payment methods | Yes   | Yes   | Yes             | No     |
-| Cancel the subscription                                         | Yes   | No    | No              | No     |
-| Transfer ownership                                              | Yes   | No    | No              | No     |
+| Capability                                                                        | Owner | Admin | Billing Manager | Member |
+| --------------------------------------------------------------------------------- | ----- | ----- | --------------- | ------ |
+| Use hosted AI and Edit Predictions through Business                               | Yes   | Yes   | No              | Yes    |
+| View organization members                                                         | Yes   | Yes   | Yes             | Yes    |
+| Invite members                                                                    | Yes   | Yes   | No              | No     |
+| Change non-owner member roles                                                     | Yes   | Yes   | No              | No     |
+| Remove non-owner members                                                          | Yes   | Yes   | No              | No     |
+| Configure [organization settings and data controls](./business/admin-controls.md) | Yes   | Yes   | No              | No     |
+| View subscription, usage, and billing information                                 | Yes   | Yes   | Yes             | No     |
+| Update billing details, tax ID information, and payment methods                   | Yes   | Yes   | Yes             | No     |
+| Cancel the subscription                                                           | Yes   | No    | No              | No     |
+| Transfer ownership                                                                | Yes   | No    | No              | No     |
 
 ### Owner {#role-owner}
 

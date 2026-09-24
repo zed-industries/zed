@@ -77,9 +77,11 @@ pub(crate) fn bundle_mac(
     }
 
     pub fn bundle_mac(arch: Arch) -> Step<Run> {
-        named::bash(&format!("./script/bundle-mac {arch}-apple-darwin"))
+        let target = Platform::Mac.target_triple(arch);
+        named::bash(&format!("./script/bundle-mac {target}"))
     }
     let platform = Platform::Mac;
+    let target = platform.target_triple(arch);
     let artifact_name = match arch {
         Arch::X86_64 => assets::MAC_X86_64,
         Arch::AARCH64 => assets::MAC_AARCH64,
@@ -104,7 +106,7 @@ pub(crate) fn bundle_mac(
             .add_step(print_macos_toolchain())
             .add_step(bundle_mac(arch))
             .add_step(upload_artifact(&format!(
-                "target/{arch}-apple-darwin/release/{artifact_name}"
+                "target/{target}/release/{artifact_name}"
             )))
             .add_step(upload_artifact(&format!(
                 "target/{remote_server_artifact_name}"
