@@ -24,7 +24,7 @@ gpui.workspace = true
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 anyhow.workspace = true
 async-task.workspace = true
-block.workspace = true
+block2.workspace = true
 core-foundation.workspace = true
 core-graphics.workspace = true
 core-video.workspace = true
