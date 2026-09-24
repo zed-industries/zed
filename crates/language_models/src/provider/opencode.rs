@@ -811,7 +811,19 @@ impl LanguageModel for OpenCodeLanguageModel {
                 if levels.is_empty() {
                     return Vec::new();
                 }
-                let default_index = levels.len() - 1;
+                let default_index = if levels.contains(&ReasoningEffort::Max) {
+                    [
+                        ReasoningEffort::High,
+                        ReasoningEffort::Medium,
+                        ReasoningEffort::Low,
+                        ReasoningEffort::Minimal,
+                    ]
+                    .into_iter()
+                    .find_map(|effort| levels.iter().position(|level| *level == effort))
+                    .unwrap_or(levels.len() - 1)
+                } else {
+                    levels.len() - 1
+                };
                 levels
                     .into_iter()
                     .enumerate()
@@ -1678,6 +1690,58 @@ mod tests {
         );
         assert!(errors.contains_key(&OpenCodeSubscription::Zen));
         assert!(!errors.contains_key(&OpenCodeSubscription::Go));
+    }
+
+    #[gpui::test]
+    fn test_default_reasoning_effort(cx: &mut gpui::TestAppContext) {
+        use ReasoningEffort::{High, Low, Max, Medium, Minimal, XHigh};
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            let provider = OpenCodeLanguageModelProvider::new_with_cache(
+                FakeHttpClient::with_404_response(),
+                Arc::new(TestCredentialsProvider),
+                FakeFs::new(cx.background_executor().clone()),
+                PathBuf::from("/cache/models.json"),
+                cx,
+            );
+            for (levels, expected) in [
+                (vec![Low, Medium, High, XHigh, Max], Some("high")),
+                (vec![Max, High, Medium], Some("high")),
+                (vec![Low, Medium, Max], Some("medium")),
+                (vec![Minimal, Low, Max], Some("low")),
+                (vec![Minimal, Max], Some("minimal")),
+                (vec![Low, High, XHigh], Some("xhigh")),
+                (vec![High, Low], Some("low")),
+                (vec![Max], Some("max")),
+                (vec![ReasoningEffort::None], None),
+                (vec![], None),
+            ] {
+                let model = provider.create_language_model_with_capabilities(
+                    opencode::Model::new(
+                        "test-model".to_string(),
+                        None,
+                        1000,
+                        None,
+                        ApiProtocol::OpenAiChat,
+                        Some(levels),
+                        None,
+                        false,
+                    ),
+                    OpenCodeSubscription::Zen,
+                    false,
+                    true,
+                );
+                assert_eq!(
+                    model
+                        .default_effort_level()
+                        .map(|effort| effort.value.to_string())
+                        .as_deref(),
+                    expected,
+                );
+            }
+        });
     }
 
     #[test]
