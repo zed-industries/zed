@@ -4408,6 +4408,142 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     assert_eq!(parent_status, AgentThreadStatus::WaitingForConfirmation);
 }
 
+fn request_test_elicitation(
+    thread: &Entity<AcpThread>,
+    cx: &mut gpui::VisualTestContext,
+) -> (
+    acp_thread::ElicitationEntryId,
+    Task<acp::CreateElicitationResponse>,
+) {
+    let request = cx.update(|_, cx| {
+        thread.update(cx, |thread, cx| {
+            let session_id = thread.session_id().clone();
+            thread
+                .request_elicitation_with_id(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            acp::ElicitationSchema::new().string("answer", true),
+                        ),
+                        "Which option should I use?",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        })
+    });
+    cx.run_until_parked();
+    request
+}
+
+fn sidebar_thread_status(
+    sidebar: &Entity<Sidebar>,
+    session_id: &acp::SessionId,
+    cx: &mut gpui::VisualTestContext,
+) -> AgentThreadStatus {
+    sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(thread)
+                    if thread.metadata.session_id.as_ref() == Some(session_id) =>
+                {
+                    Some(thread.status)
+                }
+                _ => None,
+            })
+            .expect("Expected thread entry in sidebar")
+    })
+}
+
+#[gpui::test]
+async fn test_pending_elicitation_marks_sidebar_thread_waiting(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new().with_supports_load_session(true);
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+
+    let session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+    cx.run_until_parked();
+    assert_ne!(
+        sidebar_thread_status(&sidebar, &session_id, cx),
+        AgentThreadStatus::WaitingForConfirmation
+    );
+
+    let thread = cx.update(|_, cx| panel.read(cx).active_agent_thread(cx).unwrap());
+    let (elicitation_id, _response_task) = request_test_elicitation(&thread, cx);
+    assert_eq!(
+        sidebar_thread_status(&sidebar, &session_id, cx),
+        AgentThreadStatus::WaitingForConfirmation
+    );
+
+    cx.update(|_, cx| {
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+        })
+    });
+    cx.run_until_parked();
+    assert_ne!(
+        sidebar_thread_status(&sidebar, &session_id, cx),
+        AgentThreadStatus::WaitingForConfirmation
+    );
+}
+
+#[gpui::test]
+async fn test_subagent_elicitation_marks_parent_sidebar_thread_waiting(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new().with_supports_load_session(true);
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+
+    let parent_session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&parent_session_id, &project, cx).await;
+
+    let subagent_session_id = acp::SessionId::new("subagent-session");
+    cx.update(|_, cx| {
+        let parent_thread = panel.read(cx).active_agent_thread(cx).unwrap();
+        parent_thread.update(cx, |thread: &mut AcpThread, cx| {
+            thread.subagent_spawned(subagent_session_id.clone(), cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let subagent_thread = panel.read_with(cx, |panel, cx| {
+        panel
+            .active_conversation_view()
+            .and_then(|conversation| conversation.read(cx).thread_view(&subagent_session_id))
+            .map(|thread_view| thread_view.read(cx).thread.clone())
+            .expect("Expected subagent thread to be loaded into the conversation")
+    });
+    let _request = request_test_elicitation(&subagent_thread, cx);
+
+    assert_eq!(
+        sidebar_thread_status(&sidebar, &parent_session_id, cx),
+        AgentThreadStatus::WaitingForConfirmation
+    );
+}
+
 #[gpui::test]
 async fn test_background_thread_completion_triggers_notification(cx: &mut TestAppContext) {
     let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
