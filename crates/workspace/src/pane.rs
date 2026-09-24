@@ -4554,16 +4554,18 @@ impl Render for Pane {
             ))
             .on_action(cx.listener(
                 |pane: &mut Self, action: &RevealInProjectPanel, _window, cx| {
-                    let active_item = pane.active_item();
-                    let entry_id = active_item.as_ref().and_then(|item| {
-                        action
-                            .entry_id
-                            .map(ProjectEntryId::from_proto)
-                            .or_else(|| item.project_entry_ids(cx).first().copied())
-                    });
+                    let entry_id = action.entry_id.map(ProjectEntryId::from_proto);
+                    let active_project_path =
+                        pane.active_item().and_then(|item| item.project_path(cx));
 
                     pane.project
                         .update(cx, |project, cx| {
+                            let entry_id = entry_id.or_else(|| {
+                                active_project_path
+                                    .as_ref()
+                                    .and_then(|path| project.entry_for_path(path, cx))
+                                    .map(|entry| entry.id)
+                            });
                             if let Some(entry_id) = entry_id
                                 && project
                                     .worktree_for_entry(entry_id, cx)
