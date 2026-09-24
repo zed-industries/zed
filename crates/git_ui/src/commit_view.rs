@@ -1139,6 +1139,7 @@ pub(crate) async fn build_buffer(
             text,
         );
         let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite, cx);
+        buffer.set_language_registry(language_registry.clone());
         buffer.set_language_async(language, cx);
         buffer
     });
@@ -1534,7 +1535,9 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
 mod tests {
     use super::*;
     use editor::{Navigated, actions::GoToDefinition};
-    use gpui::TestAppContext;
+    use gpui::{EmptyView, TestAppContext};
+    use indoc::indoc;
+    use language::{Language, LanguageConfig, markdown_lang};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1649,5 +1652,71 @@ mod tests {
         workspace.read_with(cx, |workspace, _| {
             assert!(workspace.has_notification(&notification_id));
         });
+    }
+
+    #[gpui::test]
+    async fn test_build_buffer_resolves_injected_languages(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(markdown_lang());
+        language_registry.add(Arc::new(markdown_inline_lang()));
+
+        let window = cx.add_window(|_, _| EmptyView);
+        let mut async_cx = window
+            .update(cx, |_, window, cx| window.to_async(cx))
+            .expect("window should be open");
+
+        let text = indoc! {"
+            # Title
+
+            Some *emphasized* text.
+        "}
+        .to_string();
+        let blob = Arc::new(GitBlob {
+            path: RepoPath::new("notes.md").unwrap(),
+            worktree_id: WorktreeId::from_usize(0),
+            is_deleted: false,
+            is_binary: false,
+            display_name: "abc1234 - notes.md".into(),
+        }) as Arc<dyn File>;
+
+        let buffer = build_buffer(text, blob, &language_registry, &mut async_cx)
+            .await
+            .expect("buffer should build");
+
+        cx.run_until_parked();
+
+        buffer.read_with(cx, |buffer, _| {
+            let language = buffer.language().expect("buffer should have a language");
+            assert_eq!(language.name().as_ref(), "Markdown");
+
+            let layers = buffer
+                .snapshot()
+                .syntax_layers()
+                .map(|layer| layer.language.name().to_string())
+                .collect::<Vec<_>>();
+            assert!(
+                layers.iter().any(|name| name == "Markdown-Inline"),
+                "emphasis, links, and fenced code blocks are highlighted by the injected \
+                 Markdown-Inline grammar, but the buffer parsed with layers {layers:?}",
+            );
+        });
+    }
+
+    fn markdown_inline_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Markdown-Inline".into(),
+                hidden: true,
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_highlights_query("(emphasis) @emphasis")
+        .unwrap()
     }
 }
