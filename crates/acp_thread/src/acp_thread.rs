@@ -396,7 +396,6 @@ pub enum AgentThreadEntry {
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
     Elicitation(ElicitationEntryId),
-    CompletedPlan(Vec<PlanEntry>),
     ContextCompaction(ContextCompaction),
 }
 
@@ -849,7 +848,6 @@ impl AgentThreadEntry {
             Self::AssistantMessage(message) => message.indented,
             Self::ToolCall(_) => false,
             Self::Elicitation(_) => false,
-            Self::CompletedPlan(_) => false,
             Self::ContextCompaction(_) => false,
         }
     }
@@ -860,14 +858,6 @@ impl AgentThreadEntry {
             Self::AssistantMessage(message) => message.to_markdown(cx),
             Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
             Self::Elicitation(_) => "## Input Requested\n\n".to_string(),
-            Self::CompletedPlan(entries) => {
-                let mut md = String::from("## Plan\n\n");
-                for entry in entries {
-                    let source = entry.content.read(cx).source().to_string();
-                    md.push_str(&format!("- [x] {}\n", source));
-                }
-                md
-            }
             Self::ContextCompaction(compaction) => {
                 let status = match &compaction.status {
                     ContextCompactionStatus::InProgress => "In Progress",
@@ -2933,7 +2923,6 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -2963,7 +2952,6 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -2984,7 +2972,6 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -2997,7 +2984,6 @@ impl AcpThread {
             match entry {
                 AgentThreadEntry::UserMessage(..) => return false,
                 AgentThreadEntry::AssistantMessage(..)
-                | AgentThreadEntry::CompletedPlan(..)
                 | AgentThreadEntry::ContextCompaction(_)
                 | AgentThreadEntry::Elicitation(_) => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
@@ -4139,13 +4125,6 @@ impl AcpThread {
         cx.notify();
     }
 
-    pub fn snapshot_completed_plan(&mut self, cx: &mut Context<Self>) {
-        if !self.plan.is_empty() && self.plan.stats().pending == 0 {
-            let completed_entries = std::mem::take(&mut self.plan.entries);
-            self.push_entry(AgentThreadEntry::CompletedPlan(completed_entries), cx);
-        }
-    }
-
     fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
         self.plan
             .entries
@@ -4379,10 +4358,6 @@ impl AcpThread {
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
                         if canceled && is_same_turn {
                             this.cancel_pending_turn_entries(cx);
-                        }
-
-                        if !canceled {
-                            this.snapshot_completed_plan(cx);
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals

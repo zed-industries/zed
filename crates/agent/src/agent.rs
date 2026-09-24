@@ -1729,9 +1729,6 @@ impl NativeAgent {
                     })
                     .await
                     .map_err(Arc::new)?;
-                    acp_thread.update(cx, |thread, cx| {
-                        thread.snapshot_completed_plan(cx);
-                    });
                     Ok(acp_thread)
                 }
             })
