@@ -479,14 +479,9 @@ pub async fn stream_completion(
             };
             match serde_json::from_str::<ResponseStreamResult<OpenRouterErrorBody>>(value.get()) {
                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                Ok(ResponseStreamResult::Err { error }) => {
-                    Some(Err(OpenRouterError::ApiError(ApiError {
-                        status: None,
-                        code: error.code,
-                        message: error.message,
-                        retry_after: None,
-                    })))
-                }
+                Ok(ResponseStreamResult::Err { error }) => Some(Err(OpenRouterError::ApiError(
+                    ApiError::from_stream_error(error),
+                ))),
                 Err(error) => Some(Err(OpenRouterError::DeserializeResponse(error))),
             }
         })
@@ -616,12 +611,11 @@ pub async fn list_models(
             },
         };
 
-        Err(OpenRouterError::ApiError(ApiError {
-            status: Some(status.as_u16()),
-            code: error_response.code,
-            message: error_response.message,
-            retry_after: retry_after_with_rate_limit_default(status, response.headers()),
-        }))
+        Err(OpenRouterError::ApiError(ApiError::from_http_error(
+            status,
+            response.headers(),
+            error_response,
+        )))
     }
 }
 
@@ -665,25 +659,12 @@ impl OpenRouterError {
                 metadata: None,
             },
         };
-        Self::ApiError(ApiError {
-            status: Some(status_code.as_u16()),
-            code: error_response.code,
-            message: error_response.message,
-            retry_after: retry_after_with_rate_limit_default(status_code, &headers),
-        })
+        Self::ApiError(ApiError::from_http_error(
+            status_code,
+            &headers,
+            error_response,
+        ))
     }
-}
-
-/// OpenRouter reports a rate limit's reset time via `X-RateLimit-Reset` when
-/// present, but omits it on some rate-limited responses; a minute is a
-/// reasonable default backoff for those.
-fn retry_after_with_rate_limit_default(
-    status: http_client::StatusCode,
-    headers: &http::HeaderMap,
-) -> Option<Duration> {
-    extract_retry_after(headers).or_else(|| {
-        (status == http_client::StatusCode::TOO_MANY_REQUESTS).then(|| Duration::from_secs(60))
-    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -692,6 +673,31 @@ pub struct OpenRouterErrorBody {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+impl OpenRouterErrorBody {
+    fn is_upstream_provider_error(&self) -> bool {
+        self.metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.contains_key("provider_name"))
+    }
+
+    /// Upstream provider failures only say "Provider returned error"; the
+    /// provider's own explanation is in `metadata.raw`.
+    fn into_message(self) -> String {
+        let raw = self
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("raw"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty() && *raw != self.message)
+            .map(str::to_owned);
+        match raw {
+            Some(raw) => format!("{}: {raw}", self.message),
+            None => self.message,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -709,6 +715,40 @@ pub struct ApiError {
     pub code: u16,
     pub message: String,
     pub retry_after: Option<Duration>,
+}
+
+impl ApiError {
+    fn from_http_error(
+        status: http_client::StatusCode,
+        headers: &http::HeaderMap,
+        error: OpenRouterErrorBody,
+    ) -> Self {
+        // OpenRouter omits `X-RateLimit-Reset` on some of its own rate-limited
+        // responses, and a minute is a reasonable backoff for those. A 429
+        // from an upstream provider is usually a brief shared-pool limit that
+        // OpenRouter asks clients to retry shortly, so it uses the standard
+        // backoff instead.
+        let retry_after = extract_retry_after(headers).or_else(|| {
+            (status == http_client::StatusCode::TOO_MANY_REQUESTS
+                && !error.is_upstream_provider_error())
+            .then(|| Duration::from_secs(60))
+        });
+        Self {
+            status: Some(status.as_u16()),
+            code: error.code,
+            message: error.into_message(),
+            retry_after,
+        }
+    }
+
+    fn from_stream_error(error: OpenRouterErrorBody) -> Self {
+        Self {
+            status: None,
+            code: error.code,
+            message: error.into_message(),
+            retry_after: None,
+        }
+    }
 }
 
 // -- Conversions to `language_model_core` types --
@@ -768,6 +808,7 @@ mod tests {
         FakeHttpClient, Response,
         http::{HeaderName, HeaderValue},
     };
+    use language_model_core::LanguageModelCompletionError;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -882,6 +923,92 @@ mod tests {
                 ..
             } if status == http_client::StatusCode::INTERNAL_SERVER_ERROR && code == "499"
         ));
+    }
+
+    fn rate_limited_completion_error(body: &'static str) -> LanguageModelCompletionError {
+        let client = FakeHttpClient::create(move |_| async move {
+            Ok(Response::builder()
+                .status(429)
+                .body(AsyncBody::from(body))?)
+        });
+        let request = Request {
+            model: "vendor/model".to_string(),
+            messages: Vec::new(),
+            stream: true,
+            session_id: None,
+            max_tokens: None,
+            stop: Vec::new(),
+            temperature: 0.4,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            tools: Vec::new(),
+            reasoning: None,
+            usage: RequestUsage { include: true },
+            provider: None,
+        };
+        let result = block_on(stream_completion(
+            client.as_ref(),
+            OPEN_ROUTER_API_URL,
+            "secret",
+            request,
+            &CustomHeaders::default(),
+        ));
+        match result {
+            Ok(_) => panic!("expected a rate limit error"),
+            Err(error) => error.into(),
+        }
+    }
+
+    #[test]
+    fn upstream_provider_rate_limit_surfaces_raw_message_and_retries_shortly() {
+        let error = rate_limited_completion_error(
+            r#"{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"vendor/model is temporarily rate-limited upstream. Please retry shortly.","provider_name":"Stealth","limit_source":"upstream_provider_shared_pool","remedy_hint":"Retry shortly, add your own provider key, or route to another provider"}},"user_id":"user_1"}"#,
+        );
+
+        assert!(matches!(
+            &error,
+            LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::RateLimit,
+                retry_after: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            error.to_string(),
+            "Provider returned error: vendor/model is temporarily rate-limited upstream. Please retry shortly."
+        );
+        assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn open_router_rate_limit_without_reset_header_waits_a_minute() {
+        let error = rate_limited_completion_error(
+            r#"{"error":{"message":"Rate limit exceeded: free-models-per-min.","code":429}}"#,
+        );
+
+        assert_eq!(
+            error.to_string(),
+            "Rate limit exceeded: free-models-per-min."
+        );
+        assert_eq!(error.retry_delay(1), Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn streamed_upstream_provider_error_surfaces_raw_message() {
+        let body: ResponseStreamResult<OpenRouterErrorBody> = serde_json::from_str(
+            r#"{"id":"gen-1","choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}],"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"vendor/model is temporarily rate-limited upstream. Please retry shortly.","provider_name":"Stealth"}}}"#,
+        )
+        .expect("stream chunk");
+        let ResponseStreamResult::Err { error } = body else {
+            panic!("expected an error chunk");
+        };
+        let error = LanguageModelCompletionError::from(ApiError::from_stream_error(error));
+
+        assert_eq!(
+            error.to_string(),
+            "Provider returned error: vendor/model is temporarily rate-limited upstream. Please retry shortly."
+        );
+        assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
     }
 
     #[test]
