@@ -9547,10 +9547,10 @@ impl Render for Workspace {
             log::info!("Rendered first frame");
         }
 
-        let should_use_centered_layout = self.centered_layout
+        let pad_center_pane = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
-        let should_use_zoomed_and_centered_layout =
+        let pad_zoomed_pane =
             self.centered_layout && self.zoomed.is_some() && self.zoomed_position.is_none();
         let render_padding = |size| {
             (size > 0.0).then(|| {
@@ -9561,10 +9561,11 @@ impl Render for Workspace {
                     .border_color(cx.theme().colors().pane_group_border)
             })
         };
-        let centered_paddings = |is_padding_enabled: bool| {
-            if !is_padding_enabled {
+        let render_centered_paddings = |enabled: bool| {
+            if !enabled {
                 return (None, None);
             }
+
             let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
                 render_padding(Self::adjust_padding(
@@ -9575,8 +9576,8 @@ impl Render for Workspace {
                 )),
             )
         };
-        let paddings = centered_paddings(should_use_centered_layout);
-        let zoomed_paddings = centered_paddings(should_use_zoomed_and_centered_layout);
+        let centered_paddings = render_centered_paddings(pad_center_pane);
+        let zoomed_paddings = render_centered_paddings(pad_zoomed_pane);
         let ui_font = theme_settings::setup_ui_font(window, cx);
 
         let theme = cx.theme().clone();
@@ -9776,16 +9777,19 @@ impl Render for Workspace {
                                                         .child(
                                                             h_flex()
                                                                 .flex_1()
-                                                                .when_some(paddings.0, |this, p| {
-                                                                    this.child(p.border_r_1())
-                                                                })
+                                                                .when_some(
+                                                                    centered_paddings.0,
+                                                                    |this, p| {
+                                                                        this.child(p.border_r_1())
+                                                                    },
+                                                                )
                                                                 .child(self.render_center(
                                                                     &pane_render_context,
                                                                     window,
                                                                     cx,
                                                                 ))
                                                                 .when_some(
-                                                                    paddings.1,
+                                                                    centered_paddings.1,
                                                                     |this, p| {
                                                                         this.child(p.border_l_1())
                                                                     },
@@ -9837,7 +9841,7 @@ impl Render for Workspace {
                                                                     h_flex()
                                                                         .flex_1()
                                                                         .when_some(
-                                                                            paddings.0,
+                                                                            centered_paddings.0,
                                                                             |this, p| {
                                                                                 this.child(
                                                                                     p.border_r_1(),
@@ -9850,7 +9854,7 @@ impl Render for Workspace {
                                                                             cx,
                                                                         ))
                                                                         .when_some(
-                                                                            paddings.1,
+                                                                            centered_paddings.1,
                                                                             |this, p| {
                                                                                 this.child(
                                                                                     p.border_l_1(),
@@ -9904,7 +9908,7 @@ impl Render for Workspace {
                                                                     h_flex()
                                                                         .flex_1()
                                                                         .when_some(
-                                                                            paddings.0,
+                                                                            centered_paddings.0,
                                                                             |this, p| {
                                                                                 this.child(
                                                                                     p.border_r_1(),
@@ -9917,7 +9921,7 @@ impl Render for Workspace {
                                                                             cx,
                                                                         ))
                                                                         .when_some(
-                                                                            paddings.1,
+                                                                            centered_paddings.1,
                                                                             |this, p| {
                                                                                 this.child(
                                                                                     p.border_l_1(),
@@ -9959,17 +9963,19 @@ impl Render for Workspace {
                                                 .child(
                                                     h_flex()
                                                         .flex_1()
-                                                        .when_some(paddings.0, |this, p| {
-                                                            this.child(p.border_r_1())
-                                                        })
+                                                        .when_some(
+                                                            centered_paddings.0,
+                                                            |this, p| this.child(p.border_r_1()),
+                                                        )
                                                         .child(self.render_center(
                                                             &pane_render_context,
                                                             window,
                                                             cx,
                                                         ))
-                                                        .when_some(paddings.1, |this, p| {
-                                                            this.child(p.border_l_1())
-                                                        }),
+                                                        .when_some(
+                                                            centered_paddings.1,
+                                                            |this, p| this.child(p.border_l_1()),
+                                                        ),
                                                 )
                                                 .children(self.render_dock(
                                                     DockPosition::Bottom,
@@ -10005,7 +10011,7 @@ impl Render for Workspace {
                                         })
                                         .into_any_element(),
                                 };
-                                let div = div()
+                                let overlay = div()
                                     .occlude()
                                     .absolute()
                                     .overflow_hidden()
@@ -10016,14 +10022,16 @@ impl Render for Workspace {
                                     .shadow_lg();
 
                                 if !WorkspaceSettings::get_global(cx).zoomed_padding {
-                                    return Some(div);
+                                    return Some(overlay);
                                 }
 
                                 Some(match self.zoomed_position {
-                                    Some(DockPosition::Left) => div.right_2().border_r_1(),
-                                    Some(DockPosition::Right) => div.left_2().border_l_1(),
-                                    Some(DockPosition::Bottom) => div.top_2().border_t_1(),
-                                    None => div.top_2().bottom_2().left_2().right_2().border_1(),
+                                    Some(DockPosition::Left) => overlay.right_2().border_r_1(),
+                                    Some(DockPosition::Right) => overlay.left_2().border_l_1(),
+                                    Some(DockPosition::Bottom) => overlay.top_2().border_t_1(),
+                                    None => {
+                                        overlay.top_2().bottom_2().left_2().right_2().border_1()
+                                    }
                                 })
                             }))
                             .children(self.render_notifications(window, cx)),
