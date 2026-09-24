@@ -1010,7 +1010,11 @@ mod tests {
             sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            sidebar_side: Default::default(),
+            threads_sidebar: agent_settings::ThreadsSidebarSettings {
+                auto_open: true,
+                default_width: px(300.),
+                position: settings::SidebarDockPosition::Left,
+            },
             thinking_display: Default::default(),
         };
 

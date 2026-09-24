@@ -7,6 +7,7 @@ license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/agent.rs"
+doctest = false
 
 [features]
 test-support = ["db/test-support"]

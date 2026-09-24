@@ -43,6 +43,7 @@ pub use remote::{
 };
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use client::{
     ChannelId, Client, ErrorExt, ParticipantIndex, Status, TypedEnvelope, User, UserStore,
@@ -6622,7 +6623,16 @@ impl Workspace {
             project.set_active_path(active_entry.clone(), cx)
         });
 
-        if focus_changed && let Some(project_path) = &active_entry {
+        // Infer the active repository only from singleton items.
+        // A multibuffer's active path represents the cursor's location within
+        // an aggregate view, so we assume it's not the user's intent to switch
+        // repositories.
+        if focus_changed
+            && let Some(project_path) = &active_entry
+            && self
+                .active_item(cx)
+                .is_some_and(|item| item.buffer_kind(cx) == ItemBufferKind::Singleton)
+        {
             let git_store_entity = self.project.read(cx).git_store().clone();
             git_store_entity.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_path(project_path, cx);
@@ -9547,9 +9557,11 @@ impl Render for Workspace {
             log::info!("Rendered first frame");
         }
 
-        let centered_layout = self.centered_layout
+        let pad_center_pane = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
+        let pad_zoomed_pane =
+            self.centered_layout && self.zoomed.is_some() && self.zoomed_position.is_none();
         let render_padding = |size| {
             (size > 0.0).then(|| {
                 div()
@@ -9559,7 +9571,11 @@ impl Render for Workspace {
                     .border_color(cx.theme().colors().pane_group_border)
             })
         };
-        let paddings = if centered_layout {
+        let render_centered_paddings = |enabled: bool| {
+            if !enabled {
+                return (None, None);
+            }
+
             let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
                 render_padding(Self::adjust_padding(
@@ -9569,9 +9585,9 @@ impl Render for Workspace {
                     settings.right_padding.map(|padding| padding.0),
                 )),
             )
-        } else {
-            (None, None)
         };
+        let centered_paddings = render_centered_paddings(pad_center_pane);
+        let zoomed_paddings = render_centered_paddings(pad_zoomed_pane);
         let ui_font = theme_settings::setup_ui_font(window, cx);
 
         let theme = cx.theme().clone();
@@ -9771,16 +9787,19 @@ impl Render for Workspace {
                                                         .child(
                                                             h_flex()
                                                                 .flex_1()
-                                                                .when_some(paddings.0, |this, p| {
-                                                                    this.child(p.border_r_1())
-                                                                })
+                                                                .when_some(
+                                                                    centered_paddings.0,
+                                                                    |this, p| {
+                                                                        this.child(p.border_r_1())
+                                                                    },
+                                                                )
                                                                 .child(self.render_center(
                                                                     &pane_render_context,
                                                                     window,
                                                                     cx,
                                                                 ))
                                                                 .when_some(
-                                                                    paddings.1,
+                                                                    centered_paddings.1,
                                                                     |this, p| {
                                                                         this.child(p.border_l_1())
                                                                     },
@@ -9832,7 +9851,7 @@ impl Render for Workspace {
                                                                     h_flex()
                                                                         .flex_1()
                                                                         .when_some(
-                                                                            paddings.0,
+                                                                            centered_paddings.0,
                                                                             |this, p| {
                                                                                 this.child(
                                                                                     p.border_r_1(),
@@ -9845,7 +9864,7 @@ impl Render for Workspace {
                                                                             cx,
                                                                         ))
                                                                         .when_some(
-                                                                            paddings.1,
+                                                                            centered_paddings.1,
                                                                             |this, p| {
                                                                                 this.child(
                                                                                     p.border_l_1(),
@@ -9899,7 +9918,7 @@ impl Render for Workspace {
                                                                     h_flex()
                                                                         .flex_1()
                                                                         .when_some(
-                                                                            paddings.0,
+                                                                            centered_paddings.0,
                                                                             |this, p| {
                                                                                 this.child(
                                                                                     p.border_r_1(),
@@ -9912,7 +9931,7 @@ impl Render for Workspace {
                                                                             cx,
                                                                         ))
                                                                         .when_some(
-                                                                            paddings.1,
+                                                                            centered_paddings.1,
                                                                             |this, p| {
                                                                                 this.child(
                                                                                     p.border_l_1(),
@@ -9954,17 +9973,19 @@ impl Render for Workspace {
                                                 .child(
                                                     h_flex()
                                                         .flex_1()
-                                                        .when_some(paddings.0, |this, p| {
-                                                            this.child(p.border_r_1())
-                                                        })
+                                                        .when_some(
+                                                            centered_paddings.0,
+                                                            |this, p| this.child(p.border_r_1()),
+                                                        )
                                                         .child(self.render_center(
                                                             &pane_render_context,
                                                             window,
                                                             cx,
                                                         ))
-                                                        .when_some(paddings.1, |this, p| {
-                                                            this.child(p.border_l_1())
-                                                        }),
+                                                        .when_some(
+                                                            centered_paddings.1,
+                                                            |this, p| this.child(p.border_l_1()),
+                                                        ),
                                                 )
                                                 .children(self.render_dock(
                                                     DockPosition::Bottom,
@@ -9983,25 +10004,51 @@ impl Render for Workspace {
                             })
                             .children(self.zoomed.as_ref().and_then(|view| {
                                 let zoomed_view = view.upgrade()?;
-                                let div = div()
+                                let zoomed_element = match zoomed_paddings {
+                                    (None, None) => zoomed_view.into_any_element(),
+                                    (left, right) => h_flex()
+                                        .size_full()
+                                        .when_some(left, |this, padding| {
+                                            this.child(padding.border_r_1().debug_selector(|| {
+                                                "zoomed_centered_layout_left_padding".into()
+                                            }))
+                                        })
+                                        .child(
+                                            div()
+                                                .size_full()
+                                                .debug_selector(|| {
+                                                    "zoomed_centered_layout_content".into()
+                                                })
+                                                .child(zoomed_view),
+                                        )
+                                        .when_some(right, |this, padding| {
+                                            this.child(padding.border_l_1().debug_selector(|| {
+                                                "zoomed_centered_layout_right_padding".into()
+                                            }))
+                                        })
+                                        .into_any_element(),
+                                };
+                                let overlay = div()
                                     .occlude()
                                     .absolute()
                                     .overflow_hidden()
                                     .border_color(colors.border)
                                     .bg(colors.background)
-                                    .child(zoomed_view)
+                                    .child(zoomed_element)
                                     .inset_0()
                                     .shadow_lg();
 
                                 if !WorkspaceSettings::get_global(cx).zoomed_padding {
-                                    return Some(div);
+                                    return Some(overlay);
                                 }
 
                                 Some(match self.zoomed_position {
-                                    Some(DockPosition::Left) => div.right_2().border_r_1(),
-                                    Some(DockPosition::Right) => div.left_2().border_l_1(),
-                                    Some(DockPosition::Bottom) => div.top_2().border_t_1(),
-                                    None => div.top_2().bottom_2().left_2().right_2().border_1(),
+                                    Some(DockPosition::Left) => overlay.right_2().border_r_1(),
+                                    Some(DockPosition::Right) => overlay.left_2().border_l_1(),
+                                    Some(DockPosition::Bottom) => overlay.top_2().border_t_1(),
+                                    None => {
+                                        overlay.top_2().bottom_2().left_2().right_2().border_1()
+                                    }
                                 })
                             }))
                             .children(self.render_notifications(window, cx)),
@@ -11168,7 +11215,14 @@ pub fn open_paths(
                     open_options.requesting_window = Some(window);
                     window
                         .update(cx, |multi_workspace, _, cx| {
-                            multi_workspace.open_sidebar(cx);
+                            if AgentSettings::get_global(cx).threads_sidebar.auto_open {
+                                multi_workspace.open_sidebar(cx);
+                            } else {
+                                // Opening the sidebar is also what pins the
+                                // workspace we are about to navigate away from,
+                                // so pin it here to keep it in this window.
+                                multi_workspace.retain_active_workspace(cx);
+                            }
                         })
                         .log_err();
                 }
@@ -15551,6 +15605,135 @@ mod tests {
             let result = render_center_group(workspace, window, cx);
             assert_eq!(result.decorated_pane_ix, Some(1));
         });
+    }
+
+    #[gpui::test]
+    async fn test_centered_layout_with_zoomed_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        add_an_item_to_active_pane(cx, &workspace, 1);
+        let second_pane = split_pane(cx, &workspace);
+        add_an_item_to_active_pane(cx, &workspace, 2);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_centered_layout(&ToggleCenteredLayout, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            zoomed_padding_bounds(cx),
+            (None, None),
+            "nothing is zoomed, so the zoom overlay should not be padded"
+        );
+
+        second_pane.update_in(cx, |pane, window, cx| pane.zoom_in(&ZoomIn, window, cx));
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(
+                workspace.zoomed,
+                Some(second_pane.downgrade().into()),
+                "the pane should be zoomed"
+            );
+            assert_eq!(
+                workspace.center.panes().len(),
+                2,
+                "the split should survive the zoom"
+            );
+        });
+
+        assert_zoomed_pane_is_padded(cx);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_centered_layout(&ToggleCenteredLayout, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            zoomed_padding_bounds(cx),
+            (None, None),
+            "turning the centered layout off should remove the padding"
+        );
+
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(
+                workspace.zoomed,
+                Some(second_pane.downgrade().into()),
+                "the pane should stay zoomed while toggling the centered layout"
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_centered_layout(&ToggleCenteredLayout, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_zoomed_pane_is_padded(cx);
+    }
+
+    #[gpui::test]
+    async fn test_centered_layout_with_zoomed_dock(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        add_an_item_to_active_pane(cx, &workspace, 1);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_centered_layout(&ToggleCenteredLayout, window, cx);
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+        cx.run_until_parked();
+
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, _| {
+            assert!(workspace.centered_layout);
+            assert_eq!(workspace.zoomed, Some(panel.to_any().downgrade()));
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+        });
+        assert_eq!(
+            zoomed_padding_bounds(cx),
+            (None, None),
+            "a zoomed dock should not receive centered layout padding"
+        );
+    }
+
+    fn zoomed_padding_bounds(
+        cx: &mut VisualTestContext,
+    ) -> (Option<Bounds<Pixels>>, Option<Bounds<Pixels>>) {
+        (
+            cx.debug_bounds("zoomed_centered_layout_left_padding"),
+            cx.debug_bounds("zoomed_centered_layout_right_padding"),
+        )
+    }
+
+    fn assert_zoomed_pane_is_padded(cx: &mut VisualTestContext) {
+        let (Some(left), Some(right)) = zoomed_padding_bounds(cx) else {
+            panic!("a centered zoomed pane should have padding on both sides");
+        };
+        let content = cx
+            .debug_bounds("zoomed_centered_layout_content")
+            .expect("a centered zoomed pane should render its content");
+        assert!(left.size.width > px(0.));
+        assert_eq!(
+            left.size.width, right.size.width,
+            "the zoomed pane should be horizontally centered"
+        );
+        assert!(content.size.width > px(0.));
+        assert!(
+            left.right() <= content.left() && content.right() <= right.left(),
+            "the zoomed pane should sit between the paddings: left {left:?}, content {content:?}, right {right:?}"
+        );
     }
 
     #[gpui::test]
