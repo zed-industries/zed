@@ -39,6 +39,7 @@ use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
 use notifications::status_toast::StatusToast;
+use platform_title_bar::apply_title_bar_insets;
 use project::{
     AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId, repo_identity_path_if_local,
 };
@@ -7348,7 +7349,13 @@ impl Sidebar {
         h_flex()
             .h(header_height)
             .map(|header| match window.window_decorations() {
-                Decorations::Client { .. } => header.mt(px(-1.)),
+                // Without projects there's no bottom border to match the title bar's.
+                Decorations::Client { .. } => apply_title_bar_insets(
+                    header,
+                    left_window_controls,
+                    right_window_controls,
+                    no_open_projects,
+                ),
                 Decorations::Server => header.mt_px().pb_px(),
             })
             .when(left_window_controls, |this| {
