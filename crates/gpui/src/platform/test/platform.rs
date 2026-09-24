@@ -3,12 +3,13 @@ use crate::NoopTextSystem;
 #[cfg(any(test, feature = "test-support"))]
 use crate::PathPromptOptions;
 use crate::{
-    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SharedString,
-    SourceMetadata, SystemNotification, SystemNotificationResponse, Task, TestDisplay, TestWindow,
-    ThermalState, WindowAppearance, WindowParams, size,
+    ActivityGuard, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem,
+    CursorStyle, DevicePixels, DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu,
+    Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PromptButton, ScreenCaptureFrame,
+    ScreenCaptureSource, ScreenCaptureStream, SharedString, SourceMetadata, SystemNotification,
+    SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
+    WindowParams, size,
 };
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
@@ -53,6 +54,8 @@ pub(crate) struct TestPlatform {
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
     menus: RefCell<Vec<OwnedMenu>>,
+    pub(crate) app_lifecycle_callback: RefCell<Option<Box<dyn FnMut(AppLifecyclePhase)>>>,
+    pub(crate) memory_warning_callback: RefCell<Option<Box<dyn FnMut()>>>,
 }
 
 #[derive(Clone)]
@@ -171,6 +174,8 @@ impl TestPlatform {
             text_system,
             headless_renderer_factory,
             menus: Default::default(),
+            app_lifecycle_callback: Default::default(),
+            memory_warning_callback: Default::default(),
         })
     }
 
@@ -587,6 +592,14 @@ impl Platform for TestPlatform {
     fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn on_app_lifecycle(&self, callback: Box<dyn FnMut(AppLifecyclePhase)>) {
+        *self.app_lifecycle_callback.borrow_mut() = Some(callback);
+    }
+
+    fn on_memory_warning(&self, callback: Box<dyn FnMut()>) {
+        *self.memory_warning_callback.borrow_mut() = Some(callback);
+    }
 
     fn set_app_identity(&self, identifier: &str, name: &str) {
         self.system_notifications.borrow_mut().app_identity =
