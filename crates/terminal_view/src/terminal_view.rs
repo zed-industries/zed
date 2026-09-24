@@ -1389,19 +1389,25 @@ impl TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // TODO: this should be moved out of render
-        self.scroll_handle.update(self.terminal.read(cx));
+        // The terminal element syncs during prepaint. Apply queued scroll events before
+        // snapshotting the handle so the content and scrollbar use the same offset.
+        self.terminal
+            .update(cx, |terminal, cx| terminal.sync(window, cx));
 
         if let Some(new_display_offset) = self.scroll_handle.future_display_offset.take() {
-            self.terminal.update(cx, |term, _| {
-                let delta = new_display_offset as i32 - term.last_content.display_offset as i32;
+            self.terminal.update(cx, |terminal, _| {
+                let delta = new_display_offset as i32 - terminal.last_content.display_offset as i32;
                 match delta.cmp(&0) {
-                    cmp::Ordering::Greater => term.scroll_up_by(delta as usize),
-                    cmp::Ordering::Less => term.scroll_down_by(-delta as usize),
+                    cmp::Ordering::Greater => terminal.scroll_up_by(delta as usize),
+                    cmp::Ordering::Less => terminal.scroll_down_by(-delta as usize),
                     cmp::Ordering::Equal => {}
                 }
             });
+            self.terminal
+                .update(cx, |terminal, cx| terminal.sync(window, cx));
         }
+
+        self.scroll_handle.update(self.terminal.read(cx));
 
         let terminal_handle = self.terminal.clone();
         let terminal_view_handle = cx.entity();
@@ -2244,6 +2250,7 @@ mod tests {
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
+    use ui::ScrollableHandle;
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
     use workspace::item::test::{TestItem, TestProjectItem};
@@ -3397,6 +3404,109 @@ mod tests {
             terminal.last_content().terminal_bounds.bounds
         });
         (bounds, draw_size)
+    }
+
+    #[gpui::test]
+    async fn test_scrollbar_tracks_terminal_content_in_same_frame(cx: &mut TestAppContext) {
+        let (project, workspace) = init_test(cx).await;
+        let terminal = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        terminal.update(cx, |terminal, cx| {
+            let output = (0..200)
+                .map(|line| format!("line {line}\n"))
+                .collect::<String>();
+            terminal.write_output(output.as_bytes(), cx);
+        });
+
+        let (terminal_view, cx) = cx.add_window_view(|window, cx| {
+            TerminalView::new(
+                terminal.clone(),
+                workspace.downgrade(),
+                None,
+                project.downgrade(),
+                window,
+                cx,
+            )
+        });
+        let draw_size = gpui::size(px(400.), px(201.));
+        cx.simulate_resize(draw_size);
+        cx.draw(gpui::Point::default(), draw_size, |_, _| {
+            terminal_view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+        cx.draw(gpui::Point::default(), draw_size, |_, _| {
+            terminal_view.clone().into_any_element()
+        });
+
+        terminal_view.update(cx, |terminal_view, _| {
+            terminal_view.scroll_handle.take_offset_snapshots();
+        });
+        terminal.update(cx, |terminal, _| terminal.scroll_to_top());
+        assert_eq!(
+            terminal.read_with(cx, |terminal, _| terminal.last_content.display_offset),
+            0,
+            "the terminal should still show the bottom before the frame is drawn"
+        );
+        cx.draw(gpui::Point::default(), draw_size, |_, _| {
+            terminal_view.clone().into_any_element()
+        });
+
+        let offset_snapshots = terminal_view.update(cx, |terminal_view, _| {
+            terminal_view.scroll_handle.take_offset_snapshots()
+        });
+        let (display_offset, scrollbar_offset) = offset_snapshots
+            .first()
+            .copied()
+            .expect("the scrollbar should have read its offset during the frame");
+        let max_offset = terminal.read_with(cx, |terminal, _| {
+            terminal
+                .total_lines()
+                .saturating_sub(terminal.viewport_lines())
+        });
+        assert_eq!(display_offset, max_offset);
+        assert_eq!(
+            scrollbar_offset,
+            px(0.),
+            "the scrollbar should use the same top-of-history offset as the terminal content"
+        );
+
+        terminal.update(cx, |terminal, _| terminal.scroll_to_bottom());
+        cx.draw(gpui::Point::default(), draw_size, |_, _| {
+            terminal_view.clone().into_any_element()
+        });
+        terminal_view.update(cx, |terminal_view, _| {
+            terminal_view.scroll_handle.take_offset_snapshots();
+            terminal_view
+                .scroll_handle
+                .set_offset(gpui::point(px(0.0), px(0.0)));
+        });
+        cx.draw(gpui::Point::default(), draw_size, |_, _| {
+            terminal_view.clone().into_any_element()
+        });
+
+        let (display_offset, scrollbar_offset) = terminal_view.update(cx, |terminal_view, _| {
+            terminal_view
+                .scroll_handle
+                .take_offset_snapshots()
+                .into_iter()
+                .next()
+                .expect("the scrollbar should have read its offset during the frame")
+        });
+        assert_eq!(display_offset, max_offset);
+        assert_eq!(
+            scrollbar_offset,
+            px(0.),
+            "a scrollbar drag should update the terminal content in the same frame"
+        );
     }
 
     #[gpui::test]
