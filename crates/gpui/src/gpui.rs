@@ -46,6 +46,9 @@ pub mod profiler;
 ))]
 #[expect(missing_docs)]
 pub mod queue;
+/// A seeded, mutable element tree for benchmarks and tests of GPUI rendering.
+#[cfg(any(test, feature = "bench-support"))]
+pub mod randomized_element_tree;
 mod scene;
 mod shared_uri;
 mod spring;

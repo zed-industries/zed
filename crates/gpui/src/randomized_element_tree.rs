@@ -5,13 +5,18 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use stacksafe::stacksafe;
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
 };
 
-crate::actions!(randomized_element_tree, [RandomizedElementTreeAction]);
+crate::actions!(
+    randomized_element_tree,
+    [
+        /// Dispatched to no one: the action generated elements register handlers for.
+        RandomizedElementTreeAction
+    ]
+);
 
 /// The initial shape generated for a randomized element tree.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -261,11 +266,15 @@ pub enum RandomizedElementTreeMutationKind {
     Insert,
     /// Remove a seeded random descendant and its subtree.
     Remove,
+    /// Remove a seeded random childless descendant. Unlike [`Self::Remove`] this changes
+    /// the element count by exactly one, so it can alternate with [`Self::Insert`] in a
+    /// long benchmark loop without the tree collapsing or growing.
+    RemoveLeaf,
 }
 
 impl RandomizedElementTreeMutationKind {
     /// Every supported mutation kind, suitable for parameterized tests and benchmarks.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::RootColor,
         Self::RootOpacity,
         Self::RootBorder,
@@ -281,6 +290,7 @@ impl RandomizedElementTreeMutationKind {
         Self::Reorder,
         Self::Insert,
         Self::Remove,
+        Self::RemoveLeaf,
     ];
 }
 
@@ -516,7 +526,8 @@ impl RandomizedElementTree {
     /// This does not synchronize or notify persistent child entities. Entity-aware callers should
     /// use [`Self::apply_mutation`] with [`RandomizedElementTreeMutationKind::Remove`].
     pub fn remove_child(&mut self) -> Option<RandomizedElementTreeMutation> {
-        self.remove_child_internal().map(|applied| applied.mutation)
+        self.remove_child_internal(false)
+            .map(|applied| applied.mutation)
     }
 
     fn apply_mutation_without_notification(
@@ -586,7 +597,10 @@ impl RandomizedElementTree {
             RandomizedElementTreeMutationKind::Reorder => self.reorder_child(),
             RandomizedElementTreeMutationKind::Insert => self.insert_child_internal(),
             RandomizedElementTreeMutationKind::Remove => self
-                .remove_child_internal()
+                .remove_child_internal(false)
+                .unwrap_or_else(|| self.insert_child_internal()),
+            RandomizedElementTreeMutationKind::RemoveLeaf => self
+                .remove_child_internal(true)
                 .unwrap_or_else(|| self.insert_child_internal()),
         }
     }
@@ -618,9 +632,16 @@ impl RandomizedElementTree {
         }
     }
 
-    fn remove_child_internal(&mut self) -> Option<AppliedRandomizedElementTreeMutation> {
+    fn remove_child_internal(
+        &mut self,
+        leaves_only: bool,
+    ) -> Option<AppliedRandomizedElementTreeMutation> {
         let mut snapshot = self.snapshot.borrow_mut();
-        let path = random_node_path(&snapshot.children, &mut self.rng)?;
+        let path = if leaves_only {
+            random_leaf_path(&snapshot.children, &mut self.rng)?
+        } else {
+            random_node_path(&snapshot.children, &mut self.rng)?
+        };
         let (index, parent_path) = path.split_last()?;
         let parent_id = node_at_path(&snapshot.children, parent_path).map(|node| node.id);
         let owner_entity_id = nearest_entity_id(&snapshot.children, parent_path);
@@ -1001,7 +1022,7 @@ enum RandomizedChildMutation {
     Visibility,
 }
 
-#[stacksafe]
+#[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
 fn render_node(
     node: &RandomizedElementNode,
     entities: &RandomizedElementEntities,
@@ -1016,7 +1037,7 @@ fn render_node(
     render_node_body(node, Some(entities), work_counters)
 }
 
-#[stacksafe]
+#[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
 fn render_node_body(
     node: &RandomizedElementNode,
     entities: Option<&RandomizedElementEntities>,
@@ -1097,6 +1118,23 @@ fn random_node_path(
         None
     } else {
         paths.get(rng.random_range(0..paths.len())).cloned()
+    }
+}
+
+fn random_leaf_path(
+    root_children: &[RandomizedElementNode],
+    rng: &mut StdRng,
+) -> Option<Vec<usize>> {
+    let leaves = node_paths(root_children)
+        .into_iter()
+        .filter(|path| {
+            node_at_path(root_children, path).is_some_and(|node| node.children.is_empty())
+        })
+        .collect::<Vec<_>>();
+    if leaves.is_empty() {
+        None
+    } else {
+        leaves.get(rng.random_range(0..leaves.len())).cloned()
     }
 }
 

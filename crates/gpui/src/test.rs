@@ -25,14 +25,6 @@
 //!   assert!(true)
 //! }
 //! ```
-mod randomized_element_tree;
-
-pub use randomized_element_tree::{
-    RandomizedElementTree, RandomizedElementTreeConfig, RandomizedElementTreeMutation,
-    RandomizedElementTreeMutationKind, RandomizedElementTreeSnapshot,
-    RandomizedElementTreeTopology, RandomizedElementTreeWorkCounters,
-};
-
 use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
 use futures::StreamExt as _;
 use proptest::prelude::{Just, Strategy, any};
