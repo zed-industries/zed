@@ -112,25 +112,58 @@ pub use spring::*;
 
 /// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
 ///
-/// This mirrors `criterion::criterion_group!` so GPUI benchmark files can keep the
-/// same shape as ordinary Criterion benchmarks.
+/// The same target list drives wall-time runs and, on Linux, retired-instruction
+/// runs. Wall time remains the default. Set
+/// `GPUI_BENCH_MEASUREMENT=instructions` to select the hardware-counter mode.
 ///
 /// [`gpui::bench`]: crate::bench
 #[macro_export]
 macro_rules! bench_group {
-    ($($tokens:tt)*) => {
-        criterion::criterion_group!($($tokens)*);
+    ($name:ident, $($target:path),+ $(,)?) => {
+        pub fn $name() {
+            let measurement = $crate::requested_bench_measurement().unwrap_or_else(|error| {
+                eprintln!("failed to select GPUI benchmark measurement: {error:#}");
+                std::process::exit(2);
+            });
+            match measurement {
+                $crate::BenchMeasurement::WallTime => {
+                    let mut criterion: criterion::Criterion<_> =
+                        criterion::Criterion::default().configure_from_args();
+                    $(
+                        $target(&mut criterion);
+                    )+
+                    criterion.final_summary();
+                }
+                $crate::BenchMeasurement::Instructions => {
+                    let measurement = $crate::RetiredInstructions::new().unwrap_or_else(|error| {
+                        eprintln!("failed to start GPUI instruction benchmark: {error:#}");
+                        std::process::exit(2);
+                    });
+                    let mut criterion =
+                        criterion::Criterion::default()
+                            .with_measurement(measurement)
+                            .configure_from_args();
+                    $(
+                        $target(&mut criterion);
+                    )+
+                    criterion.final_summary();
+                }
+            }
+        }
     };
 }
 
 /// Defines the entry point for GPUI Criterion benchmark groups.
 ///
-/// This mirrors `criterion::criterion_main!` so GPUI benchmark files can keep the
-/// same shape as ordinary Criterion benchmarks.
+/// Each group selects its scalar measurement from `GPUI_BENCH_MEASUREMENT`.
 #[macro_export]
 macro_rules! bench_main {
-    ($($tokens:tt)*) => {
-        criterion::criterion_main!($($tokens)*);
+    ($($group:path),+ $(,)?) => {
+        fn main() {
+            $(
+                $group();
+            )+
+        }
     };
 }
 pub use gpui_shared_string::*;

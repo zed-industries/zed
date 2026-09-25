@@ -13,6 +13,7 @@ path = "src/language.rs"
 doctest = false
 
 [features]
+bench-support = ["grammars", "tree-sitter-rust"]
 test-support = [
     "rand",
     "collections/test-support",

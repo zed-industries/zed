@@ -1,0 +1,43 @@
+[package]
+name = "gpui_benchmarks"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_benchmarks.rs"
+doctest = false
+
+[dev-dependencies]
+assets.workspace = true
+benchmarks = { path = "../benchmarks" }
+criterion.workspace = true
+editor.workspace = true
+gpui = { workspace = true, features = ["bench-support"] }
+gpui_platform = { workspace = true, features = ["bench-support", "font-kit"] }
+indoc.workspace = true
+language = { workspace = true, features = ["bench-support"] }
+markdown.workspace = true
+multi_buffer.workspace = true
+project.workspace = true
+rand.workspace = true
+rpc.workspace = true
+settings.workspace = true
+text.workspace = true
+theme.workspace = true
+theme_settings.workspace = true
+ui.workspace = true
+util = { workspace = true, features = ["bench-support"] }
+zed_actions.workspace = true
+
+[[bench]]
+name = "editor_render"
+harness = false
+
+[[bench]]
+name = "markdown_renderer"
+harness = false

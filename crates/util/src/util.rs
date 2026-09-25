@@ -607,7 +607,7 @@ pub fn wrapped_usize_outward_from(
     })
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 mod rng {
     use rand::prelude::*;
 
@@ -659,7 +659,7 @@ mod rng {
         }
     }
 }
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub use rng::RandomCharIter;
 
 /// Get an embedded file as a string.

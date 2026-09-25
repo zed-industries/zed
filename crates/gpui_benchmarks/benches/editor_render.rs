@@ -11,15 +11,18 @@ use gpui::{
 use indoc::{formatdoc, indoc};
 use language::{Buffer, Capability, DiskState, File, LocalFile, Rope};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use settings::{
-    DisplayIn, LocalSettingsKind, LocalSettingsPath, SettingsStore, ShowMinimap, WorktreeId,
-};
+use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore, WorktreeId};
 use theme::ActiveTheme as _;
 use util::{RandomCharIter, paths::PathStyle, rel_path::RelPath};
 use zed_actions::editor::{MoveDown, MoveUp};
 
 struct BenchFile {
     path: Arc<RelPath>,
+}
+
+fn build_simple_multi_buffer(text: &str, cx: &mut App) -> gpui::Entity<MultiBuffer> {
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    cx.new(|cx| MultiBuffer::singleton(buffer, cx))
 }
 
 impl File for BenchFile {
@@ -70,7 +73,7 @@ fn editor_multi_cursor_input(line_count: &usize, cx: &mut BenchAppContext) {
     init_context(cx);
 
     let text = "line:\n".repeat(*line_count);
-    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let buffer = cx.update(|cx| build_simple_multi_buffer(&text, cx));
 
     let mut window = cx.add_empty_window();
     let editor = window.update(|window, cx| {
@@ -122,7 +125,7 @@ fn open_editor_with_one_long_line(cx: &mut BenchAppContext) {
 
     let text = String::from_iter(["char"; 1000]);
     cx.bench_iter(move |cx| {
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let buffer = cx.update(|cx| build_simple_multi_buffer(&text, cx));
 
         let mut window = cx.add_empty_window();
         window.update(|window, cx| {
@@ -144,14 +147,10 @@ fn editor_render(cx: &mut BenchAppContext) {
     let buffer = cx.update(|cx| {
         let mut rng = StdRng::seed_from_u64(1);
         let text_len = rng.random_range(10000..90000);
-        if rng.random() {
-            let text = RandomCharIter::new(&mut rng)
-                .take(text_len)
-                .collect::<String>();
-            MultiBuffer::build_simple(&text, cx)
-        } else {
-            MultiBuffer::build_random(&mut rng, cx)
-        }
+        let text = RandomCharIter::new(&mut rng)
+            .take(text_len)
+            .collect::<String>();
+        build_simple_multi_buffer(&text, cx)
     });
 
     let mut window = cx.add_empty_window();
@@ -369,17 +368,23 @@ fn editor_render_highlighted_minimap(cx: &mut BenchAppContext) {
     init_context(cx);
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                let minimap = settings.editor.minimap.get_or_insert_default();
-                minimap.show = Some(ShowMinimap::Always);
-                minimap.display_in = Some(DisplayIn::AllEditors);
-            });
+            let result = store
+                .set_user_settings(
+                    r#"{"minimap":{"show":"always","display_in":"all_editors"}}"#,
+                    cx,
+                )
+                .result();
+            if let Err(error) = result {
+                panic!("failed to configure minimap benchmark settings: {error}");
+            }
         });
     });
     render_highlighted_editor(cx);
 }
 
-fn render_highlighted_editor(cx: &mut BenchAppContext) {
+fn render_highlighted_editor<M: criterion::measurement::Measurement>(
+    cx: &mut BenchAppContext<'_, '_, M>,
+) {
     let mut rng = StdRng::seed_from_u64(1);
     let text = random_rust_file(&mut rng, 10_000).join("\n");
     let language = language::rust_lang();
@@ -430,9 +435,9 @@ fn render_highlighted_editor(cx: &mut BenchAppContext) {
     });
 }
 
-fn init_context(cx: &mut BenchAppContext) {
+fn init_context<M: criterion::measurement::Measurement>(cx: &mut BenchAppContext<'_, '_, M>) {
     cx.update(|cx| {
-        let store = SettingsStore::test(cx);
+        let store = SettingsStore::new(cx, settings::default_settings().as_ref());
         cx.set_global(store);
         assets::Assets.load_test_fonts(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
