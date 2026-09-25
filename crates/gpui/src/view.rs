@@ -840,6 +840,62 @@ mod tests {
         );
     }
 
+    /// The content mask (and image cache) a node is drawn under is pushed by its ancestors
+    /// during prepaint, so at layout the fresh cache key does not have it yet. A clean view
+    /// under a clipping parent must still be reused, not restarted every frame.
+    #[gpui::test]
+    fn clipped_views_are_reused(cx: &mut TestAppContext) {
+        struct Leaf {
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div().size(px(200.)).bg(rgb(0x336699))
+            }
+        }
+        struct Host {
+            leaf: Entity<Leaf>,
+            revision: usize,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .child(div().size(px(10.)).bg(rgb(self.revision as u32)))
+                    .child(
+                        div()
+                            .size(px(50.))
+                            .overflow_hidden()
+                            .child(self.leaf.clone()),
+                    )
+            }
+        }
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            leaf: cx.new(|_| Leaf {
+                renders: renders.clone(),
+            }),
+            revision: 0,
+        });
+        cx.run_until_parked();
+        assert_eq!(renders.get(), 1);
+        for _ in 0..3 {
+            window
+                .update(cx, |host, _, cx| {
+                    host.revision += 1;
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            renders.get(),
+            1,
+            "a clean view under a clipping parent is reused"
+        );
+    }
+
     /// Group styles resolve through per-frame bookkeeping that every prepaint of a grouped
     /// element writes. That bookkeeping is drawing, not state: a view whose subtree uses
     /// `.group()` and `group_hover` stays clean across frames nothing changed, and its

@@ -23,14 +23,20 @@ pub(crate) struct ViewNodeCacheKey {
 
 impl ViewNodeCacheKey {
     /// Whether output recorded under `self` is valid for a frame whose ambient inputs are
-    /// `other`. Bounds are unknown during layout, so that phase compares without them.
-    pub(crate) fn matches(&self, other: &Self, ignore_bounds: bool) -> bool {
-        (ignore_bounds || self.bounds == other.bounds)
-            && self.content_mask == other.content_mask
+    /// `other`. Each input is compared only in the phase whose ancestors have pushed it:
+    /// bounds and the content mask come from prepaint, so layout leaves them out and
+    /// prepaint restarts the render if they differ; the image cache is pushed by
+    /// `ImageCacheElement` at layout and paint but not prepaint, so only layout compares it.
+    pub(crate) fn matches(&self, other: &Self, at_layout: bool) -> bool {
+        let phase_inputs = if at_layout {
+            self.image_cache == other.image_cache
+        } else {
+            self.bounds == other.bounds && self.content_mask == other.content_mask
+        };
+        phase_inputs
             && self.rem_size == other.rem_size
             && self.scale_factor == other.scale_factor
             && self.opacity == other.opacity
-            && self.image_cache == other.image_cache
             && self.text_style_hash == other.text_style_hash
     }
 }
