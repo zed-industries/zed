@@ -10,8 +10,8 @@ use editor::{
     SizingBehavior,
 };
 use gpui::{
-    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, TextStyleRefinement, WeakEntity, Window,
+    AnyEntity, App, AppContext as _, Corners, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
 use project::{AgentId, Project, project_settings::DiagnosticSeverity};
@@ -643,6 +643,22 @@ fn create_terminal(
             cx,
         )
         .with_read_only(read_only);
+
+        // GPUI can't clip children to rounded corners, so the terminal has to
+        // round its own background to avoid painting over the corners of the
+        // tool card it sits in.
+        // This matches the `rounded_md`/`rounded_b_md` on that card, which GPUI
+        // doesn't expose as a value, so if the card's corner radii ever change,
+        // this also needs to be updated.
+        view.set_background_corner_radii(
+            Some(Corners {
+                bottom_left: gpui::rems(0.375),
+                bottom_right: gpui::rems(0.375),
+                ..Default::default()
+            }),
+            cx,
+        );
+
         view.set_embedded_mode(Some(1000), cx);
         view
     })
