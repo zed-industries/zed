@@ -428,6 +428,7 @@ impl EntryViewState {
                         index,
                         Entry::AssistantMessage(AssistantMessageEntry {
                             scroll_handles_by_chunk_index: HashMap::default(),
+                            last_thought_source_version: None,
                             focus_handle: cx.focus_handle(),
                         }),
                     );
@@ -529,6 +530,7 @@ pub enum ViewEvent {
 #[derive(Debug)]
 pub struct AssistantMessageEntry {
     scroll_handles_by_chunk_index: HashMap<usize, ScrollHandle>,
+    last_thought_source_version: Option<acp_thread::MessageContentVersion>,
     focus_handle: FocusHandle,
 }
 
@@ -538,10 +540,14 @@ impl AssistantMessageEntry {
     }
 
     pub fn sync(&mut self, message: &acp_thread::AssistantMessage) {
-        if let Some(acp_thread::AssistantMessageChunk::Thought { .. }) = message.chunks.last() {
+        if let Some(acp_thread::AssistantMessageChunk::Thought { block, .. }) =
+            message.chunks.last()
+            && self.last_thought_source_version != Some(block.source_version())
+        {
             let ix = message.chunks.len() - 1;
             let handle = self.scroll_handles_by_chunk_index.entry(ix).or_default();
             handle.scroll_to_bottom();
+            self.last_thought_source_version = Some(block.source_version());
         }
     }
 }
