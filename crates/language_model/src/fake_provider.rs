@@ -2,7 +2,7 @@ use crate::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice,
+    LanguageModelToolChoice, PromptCompactionStrategy,
 };
 use anyhow::anyhow;
 use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, stream::StreamExt};
@@ -119,6 +119,9 @@ pub struct FakeLanguageModel {
     supports_disabling_thinking: AtomicBool,
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
+    supports_tools: AtomicBool,
+    supports_tool_choice: AtomicBool,
+    preserves_prompt_compaction_request_prefix: AtomicBool,
     supports_server_side_compaction: AtomicBool,
     max_token_count: AtomicU64,
     max_input_tokens: Option<u64>,
@@ -140,6 +143,9 @@ impl Default for FakeLanguageModel {
             supports_disabling_thinking: AtomicBool::new(true),
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
+            supports_tools: AtomicBool::new(false),
+            supports_tool_choice: AtomicBool::new(false),
+            preserves_prompt_compaction_request_prefix: AtomicBool::new(false),
             supports_server_side_compaction: AtomicBool::new(false),
             max_token_count: AtomicU64::new(1_000_000),
             max_input_tokens: None,
@@ -188,6 +194,19 @@ impl FakeLanguageModel {
 
     pub fn set_supports_images(&self, supports: bool) {
         self.supports_images.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_tools(&self, supports: bool) {
+        self.supports_tools.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_tool_choice(&self, supports: bool) {
+        self.supports_tool_choice.store(supports, SeqCst);
+    }
+
+    pub fn set_preserves_prompt_compaction_request_prefix(&self, preserves: bool) {
+        self.preserves_prompt_compaction_request_prefix
+            .store(preserves, SeqCst);
     }
 
     pub fn set_supports_server_side_compaction(&self, supports: bool) {
@@ -321,11 +340,19 @@ impl LanguageModel for FakeLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        self.supports_tools.load(SeqCst)
+    }
+
+    fn prompt_compaction_strategy(&self) -> PromptCompactionStrategy {
+        if self.preserves_prompt_compaction_request_prefix.load(SeqCst) {
+            PromptCompactionStrategy::PreserveRequestPrefix
+        } else {
+            PromptCompactionStrategy::RebuildPrompt
+        }
     }
 
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        false
+        self.supports_tool_choice.load(SeqCst)
     }
 
     fn supports_images(&self) -> bool {

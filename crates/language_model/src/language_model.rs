@@ -88,6 +88,15 @@ impl Default for LanguageModelTextStream {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PromptCompactionStrategy {
+    RebuildPrompt,
+    /// Preserve tools, system instructions, conversation history, and reasoning
+    /// settings while disabling tool calls. Providers must only opt in when
+    /// `tool_choice: none` is enforced without invalidating that cached prefix.
+    PreserveRequestPrefix,
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -165,6 +174,12 @@ pub trait LanguageModel: Send + Sync {
     /// compaction (requested via `LanguageModelRequest::compact_at_tokens`).
     fn supports_server_side_compaction(&self) -> bool {
         false
+    }
+
+    /// Controls how Zed builds prompt-based compaction requests. This does not
+    /// affect provider-native compaction.
+    fn prompt_compaction_strategy(&self) -> PromptCompactionStrategy {
+        PromptCompactionStrategy::RebuildPrompt
     }
 
     fn supports_explicit_compaction(&self) -> bool {

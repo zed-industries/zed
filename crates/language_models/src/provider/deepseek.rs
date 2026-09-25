@@ -13,7 +13,8 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    PromptCompactionStrategy, ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage,
+    env_var,
 };
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -314,6 +315,10 @@ impl LanguageModel for DeepSeekLanguageModel {
 
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
         true
+    }
+
+    fn prompt_compaction_strategy(&self) -> PromptCompactionStrategy {
+        PromptCompactionStrategy::PreserveRequestPrefix
     }
 
     fn supports_images(&self) -> bool {
