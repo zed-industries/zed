@@ -2261,6 +2261,90 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_project_diff_shows_changed_images(cx: &mut TestAppContext) {
+        use crate::image_diff_view::png_bytes;
+        use git::repository::repo_path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "notes.txt": "new notes\n",
+            }),
+        )
+        .await;
+        fs.insert_file(path!("/project/logo.png"), png_bytes(4, 4))
+            .await;
+        fs.insert_file(path!("/project/new.png"), png_bytes(3, 3))
+            .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            for (path, contents) in [
+                ("notes.txt", b"old notes\n".to_vec()),
+                ("logo.png", png_bytes(2, 2)),
+                ("gone.png", png_bytes(5, 5)),
+            ] {
+                state
+                    .head_contents
+                    .insert(repo_path(path), contents.clone());
+                state.index_contents.insert(repo_path(path), contents);
+            }
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        let mut paths = diff.read_with(cx, |diff, cx| diff.excerpt_file_paths(cx));
+        paths.sort();
+        assert_eq!(paths, vec!["gone.png", "logo.png", "new.png", "notes.txt"]);
+
+        let (sides, block_count) = diff.read_with(cx, |diff, cx| {
+            let diff = diff.diff.read(cx);
+            (diff.image_diff_sides(cx), diff.image_block_count())
+        });
+        assert_eq!(
+            sides,
+            vec![
+                ("gone.png".into(), "Loaded(5x5)".into(), "Absent".into()),
+                (
+                    "logo.png".into(),
+                    "Loaded(2x2)".into(),
+                    "Loaded(4x4)".into()
+                ),
+                ("new.png".into(), "Absent".into(), "Loaded(3x3)".into()),
+            ]
+        );
+        assert_eq!(block_count, 3);
+
+        // Committing the image removes it from the diff along with its preview block.
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state
+                .head_contents
+                .insert(repo_path("logo.png"), png_bytes(4, 4));
+            state
+                .index_contents
+                .insert(repo_path("logo.png"), png_bytes(4, 4));
+        })
+        .unwrap();
+        cx.run_until_parked();
+
+        let mut paths = diff.read_with(cx, |diff, cx| diff.excerpt_file_paths(cx));
+        paths.sort();
+        assert_eq!(paths, vec!["gone.png", "new.png", "notes.txt"]);
+        let block_count = diff.read_with(cx, |diff, cx| diff.diff.read(cx).image_block_count());
+        assert_eq!(block_count, 2);
+    }
+
+    #[gpui::test]
     async fn test_tree_view_orders_directories_before_files(cx: &mut TestAppContext) {
         init_test(cx);
 

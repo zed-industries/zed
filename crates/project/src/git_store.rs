@@ -229,6 +229,7 @@ pub struct CommitDiff {
 pub enum GitFileRevision {
     Head,
     Index,
+    Blob(Oid),
 }
 
 #[derive(Debug)]
@@ -7209,6 +7210,9 @@ impl Repository {
                     let revision = match revision {
                         GitFileRevision::Head => format!("HEAD:{}", repo_path.as_unix_str()),
                         GitFileRevision::Index => format!(":{}", repo_path.as_unix_str()),
+                        GitFileRevision::Blob(oid) => {
+                            return backend.load_blob_content(oid).await.map(Some);
+                        }
                     };
                     Ok(backend
                         .load_revisions(vec![revision])
