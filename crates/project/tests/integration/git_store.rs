@@ -2577,3 +2577,55 @@ mod repository_activation_tests {
         });
     }
 }
+
+mod file_bytes_tests {
+    use fs::FakeFs;
+    use git::repository::RepoPath;
+    use gpui::TestAppContext;
+    use project::{
+        Project,
+        git_store::{GitFileRevision, Repository},
+    };
+    use serde_json::json;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_load_file_bytes_returns_raw_blob_contents(cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ ".git": {}, "a.png": "" }))
+            .await;
+        let head_bytes = vec![0x89, b'P', b'N', b'G', 0x00, 0xFF];
+        let index_bytes = vec![0x00, 0x01, 0x02];
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state
+                .head_contents
+                .insert(RepoPath::new("a.png").unwrap(), head_bytes.clone());
+            state
+                .index_contents
+                .insert(RepoPath::new("a.png").unwrap(), index_bytes.clone());
+        })
+        .unwrap();
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        let load = |revision: GitFileRevision, path: &str, cx: &mut TestAppContext| {
+            let repo_path = RepoPath::new(path).unwrap();
+            repository.update(cx, |repository: &mut Repository, cx| {
+                repository.load_file_bytes(revision, repo_path, cx)
+            })
+        };
+
+        let head = load(GitFileRevision::Head, "a.png", cx).await.unwrap();
+        let index = load(GitFileRevision::Index, "a.png", cx).await.unwrap();
+        let missing = load(GitFileRevision::Head, "missing.png", cx).await.unwrap();
+
+        assert_eq!(head, Some(head_bytes));
+        assert_eq!(index, Some(index_bytes));
+        assert_eq!(missing, None);
+    }
+}
