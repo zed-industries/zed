@@ -4286,7 +4286,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn title_bar_section() -> [SettingsPageItem; 11] {
+    fn title_bar_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Title Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4353,6 +4353,29 @@ fn window_and_layout_page() -> SettingsPage {
                             .title_bar
                             .get_or_insert_default()
                             .show_worktree_name = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Active File",
+                description: "Show the active file's name or project-relative path in the titlebar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("title_bar.show_active_file"),
+                    pick: |settings_content| {
+                        settings_content
+                            .title_bar
+                            .as_ref()?
+                            .show_active_file
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .title_bar
+                            .get_or_insert_default()
+                            .show_active_file = value;
                     },
                 }),
                 metadata: None,
