@@ -7,6 +7,7 @@ use collections::{HashMap, HashSet};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use std::{
     cell::RefCell,
+    ops::RangeInclusive,
     rc::{Rc, Weak},
 };
 
@@ -32,6 +33,17 @@ pub enum RandomizedElementTreeTopology {
 }
 
 impl RandomizedElementTreeTopology {
+    /// Every topology.
+    pub const ALL: [Self; 4] = [Self::Wide, Self::Deep, Self::Mixed, Self::Narrow];
+
+    /// Whether the tree's depth grows with its element count. `Deep` nests every element
+    /// under the previous one and `Narrow` nests four in five, so both recurse once per
+    /// element through layout and paint; without gpui's `stacker` feature that overflows
+    /// a 2 MB thread stack somewhere between 384 and 512 elements in a release build.
+    pub fn is_tall(self) -> bool {
+        matches!(self, Self::Deep | Self::Narrow)
+    }
+
     fn from_seed(seed: u64) -> Self {
         match seed % 4 {
             0 => Self::Wide,
@@ -105,6 +117,77 @@ impl RandomizedElementTreeConfig {
     /// Returns the probability of each generated interaction feature.
     pub fn handler_density(&self) -> f64 {
         self.handler_density
+    }
+}
+
+/// Bounds a seed is drawn against to produce a [`RandomizedElementTreeConfig`]: a family
+/// of trees, such as "tall trees of 32 to 256 elements with up to half of them entities",
+/// from which one seed picks one member. Every field of the resulting config, and the
+/// tree built from it, follows from the seed alone, so a run over seeds `0..n` samples the
+/// family and any one seed reproduces exactly.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RandomizedElementTreeBounds {
+    topologies: Vec<RandomizedElementTreeTopology>,
+    element_count: RangeInclusive<usize>,
+    entity_density: RangeInclusive<f64>,
+    handler_density: RangeInclusive<f64>,
+}
+
+impl RandomizedElementTreeBounds {
+    /// Trees of any topology with `element_count` elements, no entities and no handlers.
+    pub fn new(element_count: RangeInclusive<usize>) -> Self {
+        Self {
+            topologies: RandomizedElementTreeTopology::ALL.to_vec(),
+            element_count,
+            entity_density: 0.0..=0.0,
+            handler_density: 0.0..=0.0,
+        }
+    }
+
+    /// Restricts the topologies a seed may pick. An empty list keeps them all.
+    pub fn with_topologies(
+        mut self,
+        topologies: impl IntoIterator<Item = RandomizedElementTreeTopology>,
+    ) -> Self {
+        let topologies: Vec<_> = topologies.into_iter().collect();
+        if !topologies.is_empty() {
+            self.topologies = topologies;
+        }
+        self
+    }
+
+    /// The range a seed draws the share of entity-backed elements from.
+    pub fn with_entity_density(mut self, density: RangeInclusive<f64>) -> Self {
+        self.entity_density =
+            normalized_density(*density.start())..=normalized_density(*density.end());
+        self
+    }
+
+    /// The range a seed draws the per-feature handler probability from.
+    pub fn with_handler_density(mut self, density: RangeInclusive<f64>) -> Self {
+        self.handler_density =
+            normalized_density(*density.start())..=normalized_density(*density.end());
+        self
+    }
+
+    /// Draws one config from these bounds. The config keeps `seed`, so the tree's contents
+    /// and mutation stream are reproducible from the same number as its shape.
+    pub fn sample(&self, seed: u64) -> RandomizedElementTreeConfig {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let topology = self.topologies[rng.random_range(0..self.topologies.len())];
+        let element_count = rng.random_range(self.element_count.clone());
+        RandomizedElementTreeConfig::new(seed, element_count)
+            .with_topology(topology)
+            .with_entity_density(sample_range(&self.entity_density, &mut rng))
+            .with_handler_density(sample_range(&self.handler_density, &mut rng))
+    }
+}
+
+fn sample_range(range: &RangeInclusive<f64>, rng: &mut StdRng) -> f64 {
+    if range.start() >= range.end() {
+        *range.start()
+    } else {
+        rng.random_range(range.clone())
     }
 }
 
@@ -1309,6 +1392,34 @@ mod tests {
                 border_widths: quad.border_widths,
             }
         }
+    }
+
+    #[test]
+    fn bounds_sample_within_range_and_reproduce_from_the_seed() {
+        let bounds = RandomizedElementTreeBounds::new(32..=256)
+            .with_topologies([
+                RandomizedElementTreeTopology::Deep,
+                RandomizedElementTreeTopology::Narrow,
+            ])
+            .with_entity_density(0.1..=0.5)
+            .with_handler_density(0.25..=0.25);
+        let mut topologies = BTreeSet::new();
+        for seed in 0..64 {
+            let config = bounds.sample(seed);
+            assert_eq!(config.seed(), seed);
+            assert!((32..=256).contains(&config.element_count()), "{config:?}");
+            assert!(config.topology().is_tall(), "{config:?}");
+            assert!((0.1..=0.5).contains(&config.entity_density()), "{config:?}");
+            assert_eq!(config.handler_density(), 0.25);
+            assert_eq!(
+                bounds.sample(seed),
+                config,
+                "a seed draws the same config twice"
+            );
+            topologies.insert(format!("{:?}", config.topology()));
+        }
+        assert_eq!(topologies.len(), 2, "64 seeds pick both allowed topologies");
+        assert_ne!(bounds.sample(0), bounds.sample(1));
     }
 
     #[test]
