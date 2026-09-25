@@ -891,7 +891,7 @@ impl ExtensionsPage {
                     Icon::new(IconName::LoadCircle)
                         .size(IconSize::Small)
                         .color(Color::Muted)
-                        .with_rotate_animation(3),
+                        .with_rotate_animation(2),
                 )
             })
     }
@@ -899,11 +899,6 @@ impl ExtensionsPage {
     fn retry_button(&self, cx: &mut Context<Self>) -> Button {
         Button::new("retry-fetch-extensions", "Retry")
             .style(ButtonStyle::Outlined)
-            .start_icon(
-                Icon::new(IconName::RotateCw)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
             .on_click(cx.listener(|this, _, _, cx| {
                 this.fetch_extensions(FetchDebounce::Immediate, None, cx);
             }))
