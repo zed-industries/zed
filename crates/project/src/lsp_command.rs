@@ -3900,10 +3900,18 @@ impl InlayHints {
         });
 
         let position = snapshot.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
-        let position = if kind == Some(InlayHintKind::Parameter) {
-            snapshot.anchor_before(position)
-        } else {
-            snapshot.anchor_after(position)
+        let position = match kind {
+            Some(InlayHintKind::Type) => snapshot.anchor_after(position),
+            Some(InlayHintKind::Parameter) => snapshot.anchor_before(position),
+            None => {
+                let offset = position.to_offset(snapshot);
+                let (range, _) = snapshot.surrounding_word(offset, None);
+                if range.start < offset {
+                    snapshot.anchor_after(position)
+                } else {
+                    snapshot.anchor_before(position)
+                }
+            }
         };
 
         let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id);
