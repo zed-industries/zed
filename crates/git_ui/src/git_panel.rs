@@ -10,7 +10,7 @@ use crate::commit_view::CommitView;
 use crate::git_panel_settings::GitPanelScrollbarAccessor;
 use crate::project_diff::{DeployBranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
-use crate::solo_diff_view::SoloDiffView;
+use crate::solo_diff_view::open_file_diff_for_entry;
 use crate::staged_diff::StagedDiff;
 use crate::unstaged_diff::UnstagedDiff;
 use crate::{branch_picker, picker_prompt, render_remote_button};
@@ -2555,7 +2555,7 @@ impl GitPanel {
                 .clone();
             let repository = self.active_repository.clone()?;
 
-            SoloDiffView::open_or_focus(entry, repository, self.workspace.clone(), window, cx)
+            open_file_diff_for_entry(entry, repository, self.workspace.clone(), window, cx)
                 .detach_and_notify_err(self.workspace.clone(), window, cx);
 
             Some(())
@@ -9825,6 +9825,8 @@ pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool
 
 #[cfg(test)]
 mod tests {
+    use crate::image_diff_view::{ImageDiffView, png_bytes};
+    use crate::solo_diff_view::SoloDiffView;
     use editor::SplittableEditor;
     use git::{
         repository::repo_path,
@@ -11715,6 +11717,54 @@ mod tests {
             assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<UnstagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_file_diff_on_image_opens_image_diff_view(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/project"), json!({ ".git": {} }))
+            .await;
+        fs.insert_file(path!("/project/logo.png"), png_bytes(4, 4))
+            .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state
+                .head_contents
+                .insert(repo_path("logo.png"), png_bytes(2, 2));
+            state
+                .index_contents
+                .insert(repo_path("logo.png"), png_bytes(2, 2));
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        project
+            .update(&mut cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = panel.entry_by_path(&repo_path("logo.png"));
+            assert!(panel.selected_entry.is_some(), "logo.png should be listed");
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert!(workspace.active_item_as::<ImageDiffView>(cx).is_some());
+            assert_eq!(workspace.items_of_type::<ImageDiffView>(cx).count(), 1);
+            assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 0);
+            assert!(workspace.notification_ids().is_empty());
         });
     }
 

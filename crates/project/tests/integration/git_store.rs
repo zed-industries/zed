@@ -2612,7 +2612,8 @@ mod file_bytes_tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         cx.run_until_parked();
 
-        let repository = project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
         let load = |revision: GitFileRevision, path: &str, cx: &mut TestAppContext| {
             let repo_path = RepoPath::new(path).unwrap();
             repository.update(cx, |repository: &mut Repository, cx| {
@@ -2622,7 +2623,9 @@ mod file_bytes_tests {
 
         let head = load(GitFileRevision::Head, "a.png", cx).await.unwrap();
         let index = load(GitFileRevision::Index, "a.png", cx).await.unwrap();
-        let missing = load(GitFileRevision::Head, "missing.png", cx).await.unwrap();
+        let missing = load(GitFileRevision::Head, "missing.png", cx)
+            .await
+            .unwrap();
 
         assert_eq!(head, Some(head_bytes));
         assert_eq!(index, Some(index_bytes));
