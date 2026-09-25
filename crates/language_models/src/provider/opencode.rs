@@ -9,11 +9,11 @@ use gpui::{
 use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, ProviderSettingsView, RateLimiter, ReasoningEffort,
-    SubPageProviderSettings, env_var,
+    LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView, RateLimiter,
+    ReasoningEffort, SubPageProviderSettings, env_var, unavailable_error,
 };
 use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
 use serde::Deserialize;
@@ -96,6 +96,7 @@ pub struct OpenCodeSettings {
 pub struct OpenCodeLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -370,27 +371,282 @@ impl OpenCodeLanguageModelProvider {
             }
         });
 
-        Self { http_client, state }
+        Self {
+            http_client,
+            state,
+            request_limiters: ModelRateLimiters::default(),
+        }
     }
 
-    fn create_language_model_with_capabilities(
+    /// Every model this provider offers, keyed by id: discovered models of
+    /// enabled subscriptions, with settings entries added or overriding them.
+    fn opencode_models(
         &self,
-        model: opencode::Model,
+        cx: &App,
+    ) -> BTreeMap<String, (DiscoveredModel, OpenCodeSubscription)> {
+        let mut models: BTreeMap<String, (DiscoveredModel, OpenCodeSubscription)> =
+            BTreeMap::default();
+        let settings = Self::settings(cx);
+
+        let discovered_models = &self.state.read(cx).discovered_models;
+        for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
+            if Self::subscription_enabled(subscription, cx) {
+                if let Some(discovered) = discovered_models.get(&subscription) {
+                    for model in discovered {
+                        let key = model_id(&model.model, subscription);
+                        models.insert(key, (model.clone(), subscription));
+                    }
+                }
+            }
+        }
+
+        for model in &settings.available_models {
+            let protocol = match model.protocol {
+                Some(OpenCodeApiProtocol::Anthropic) => ApiProtocol::Anthropic,
+                Some(OpenCodeApiProtocol::OpenAiResponses) => ApiProtocol::OpenAiResponses,
+                Some(OpenCodeApiProtocol::OpenAiChat) => ApiProtocol::OpenAiChat,
+                Some(OpenCodeApiProtocol::Google) => ApiProtocol::Google,
+                None => ApiProtocol::OpenAiChat, // default fallback
+            };
+            let subscription = match model.subscription {
+                Some(settings::OpenCodeModelSubscription::Go) => OpenCodeSubscription::Go,
+                Some(settings::OpenCodeModelSubscription::Zen) | None => OpenCodeSubscription::Zen,
+            };
+            if !Self::subscription_enabled(subscription, cx) {
+                continue;
+            }
+            let custom_model = opencode::Model::new(
+                model.name.clone(),
+                model.display_name.clone(),
+                model.max_tokens,
+                model.max_output_tokens,
+                protocol,
+                model.reasoning_effort_levels.clone(),
+                model.custom_model_api_url.clone(),
+                model.interleaved_reasoning,
+            );
+            let key = model_id(&custom_model, subscription);
+            models.insert(
+                key,
+                (
+                    DiscoveredModel {
+                        supports_images: true,
+                        supports_thinking: model_supports_thinking(&custom_model),
+                        model: custom_model,
+                    },
+                    subscription,
+                ),
+            );
+        }
+
+        models
+    }
+
+    /// The current configuration of `model` and the subscription serving it,
+    /// if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<(DiscoveredModel, OpenCodeSubscription), LanguageModelCompletionError> {
+        self.opencode_models(cx)
+            .remove(model.id.0.as_ref())
+            .ok_or_else(|| unavailable_error(model))
+    }
+
+    fn base_api_url(
+        &self,
+        config: &DiscoveredModel,
         subscription: OpenCodeSubscription,
-        supports_images: bool,
-        supports_thinking: bool,
-    ) -> Arc<dyn LanguageModel> {
-        let id_str = format!("{}/{}", subscription.id_prefix(), model.id());
-        Arc::new(OpenCodeLanguageModel {
-            id: LanguageModelId::from(id_str),
-            model,
-            subscription,
-            supports_images,
-            supports_thinking,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
+        cx: &AsyncApp,
+    ) -> SharedString {
+        if let Some(url) = config.model.custom_model_api_url() {
+            if !url.is_empty() {
+                return url.to_string().into();
+            }
+        }
+
+        // Combine base URL with subscription path suffix
+        let base = self
+            .state
+            .read_with(cx, |_, cx| OpenCodeLanguageModelProvider::api_url(cx));
+
+        let suffix = subscription.api_path_suffix();
+        let base_str = base.as_ref().trim_end_matches('/');
+        format!("{}{}", base_str, suffix).into()
+    }
+
+    fn current_api_key(&self, cx: &AsyncApp) -> Option<Arc<str>> {
+        self.state.read_with(cx, |state, cx| {
+            let api_url = OpenCodeLanguageModelProvider::api_url(cx);
+            state.api_key_state.key(&api_url)
         })
+    }
+
+    fn custom_headers(&self, cx: &AsyncApp) -> CustomHeaders {
+        self.state.read_with(cx, |_, cx| {
+            OpenCodeLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone()
+        })
+    }
+
+    fn stream_anthropic(
+        &self,
+        config: &DiscoveredModel,
+        subscription: OpenCodeSubscription,
+        request_limiter: &RateLimiter,
+        request: anthropic::Request,
+        http_client: Arc<dyn HttpClient>,
+        extra_headers: CustomHeaders,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<anthropic::Event, anthropic::AnthropicError>,
+            >,
+            LanguageModelCompletionError,
+        >,
+    > {
+        // Anthropic crate appends /v1/messages to api_url
+        let api_url = self.base_api_url(config, subscription, cx);
+        let api_key = self.current_api_key(cx);
+
+        let future = request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
+            let request = anthropic::stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                None,
+                &extra_headers,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_openai_chat(
+        &self,
+        config: &DiscoveredModel,
+        subscription: OpenCodeSubscription,
+        request_limiter: &RateLimiter,
+        request: open_ai::Request,
+        http_client: Arc<dyn HttpClient>,
+        extra_headers: CustomHeaders,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
+    {
+        // OpenAI crate appends /chat/completions to api_url, so we pass base + "/v1"
+        let base_url = self.base_api_url(config, subscription, cx);
+        let api_url: SharedString = format!("{base_url}/v1").into();
+        let api_key = self.current_api_key(cx);
+        let provider_name = PROVIDER_NAME.0.to_string();
+
+        let future = request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
+            let request = open_ai::stream_completion(
+                http_client.as_ref(),
+                &provider_name,
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_openai_response(
+        &self,
+        config: &DiscoveredModel,
+        subscription: OpenCodeSubscription,
+        request_limiter: &RateLimiter,
+        request: open_ai::responses::Request,
+        http_client: Arc<dyn HttpClient>,
+        extra_headers: CustomHeaders,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<open_ai::responses::StreamEvent>>>,
+    > {
+        // Responses crate appends /responses to api_url, so we pass base + "/v1"
+        let base_url = self.base_api_url(config, subscription, cx);
+        let api_url: SharedString = format!("{base_url}/v1").into();
+        let api_key = self.current_api_key(cx);
+        let provider_name = PROVIDER_NAME.0.to_string();
+
+        let future = request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
+            let request = open_ai::responses::stream_response(
+                http_client.as_ref(),
+                &provider_name,
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_google(
+        &self,
+        config: &DiscoveredModel,
+        subscription: OpenCodeSubscription,
+        request_limiter: &RateLimiter,
+        request: google_ai::GenerateContentRequest,
+        http_client: Arc<dyn HttpClient>,
+        extra_headers: CustomHeaders,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<google_ai::GenerateContentResponse>>>,
+    > {
+        let api_url = self.base_api_url(config, subscription, cx);
+        let api_key = self.current_api_key(cx);
+
+        let future = request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
+            let request = opencode::stream_generate_content(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 
     pub fn settings(cx: &App) -> &OpenCodeSettings {
@@ -436,80 +692,18 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiOpenCode)
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_model(&self, _cx: &App) -> Option<LanguageModel> {
         None
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, _cx: &App) -> Option<LanguageModel> {
         None
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: BTreeMap<String, (DiscoveredModel, OpenCodeSubscription)> =
-            BTreeMap::default();
-        let settings = Self::settings(cx);
-
-        let discovered_models = &self.state.read(cx).discovered_models;
-        for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
-            if Self::subscription_enabled(subscription, cx) {
-                if let Some(discovered) = discovered_models.get(&subscription) {
-                    for model in discovered {
-                        let key = format!("{}/{}", subscription.id_prefix(), model.model.id());
-                        models.insert(key, (model.clone(), subscription));
-                    }
-                }
-            }
-        }
-
-        for model in &settings.available_models {
-            let protocol = match model.protocol {
-                Some(OpenCodeApiProtocol::Anthropic) => ApiProtocol::Anthropic,
-                Some(OpenCodeApiProtocol::OpenAiResponses) => ApiProtocol::OpenAiResponses,
-                Some(OpenCodeApiProtocol::OpenAiChat) => ApiProtocol::OpenAiChat,
-                Some(OpenCodeApiProtocol::Google) => ApiProtocol::Google,
-                None => ApiProtocol::OpenAiChat, // default fallback
-            };
-            let subscription = match model.subscription {
-                Some(settings::OpenCodeModelSubscription::Go) => OpenCodeSubscription::Go,
-                Some(settings::OpenCodeModelSubscription::Zen) | None => OpenCodeSubscription::Zen,
-            };
-            if !Self::subscription_enabled(subscription, cx) {
-                continue;
-            }
-            let custom_model = opencode::Model::new(
-                model.name.clone(),
-                model.display_name.clone(),
-                model.max_tokens,
-                model.max_output_tokens,
-                protocol,
-                model.reasoning_effort_levels.clone(),
-                model.custom_model_api_url.clone(),
-                model.interleaved_reasoning,
-            );
-            let key = format!("{}/{}", subscription.id_prefix(), model.name);
-            models.insert(
-                key,
-                (
-                    DiscoveredModel {
-                        supports_images: true,
-                        supports_thinking: model_supports_thinking(&custom_model),
-                        model: custom_model,
-                    },
-                    subscription,
-                ),
-            );
-        }
-
-        models
-            .into_values()
-            .map(|(model, subscription)| {
-                self.create_language_model_with_capabilities(
-                    model.model,
-                    subscription,
-                    model.supports_images,
-                    model.supports_thinking,
-                )
-            })
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        self.opencode_models(cx)
+            .values()
+            .map(|(model, subscription)| language_model(model, *subscription))
             .collect()
     }
 
@@ -533,17 +727,177 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
             )),
         ))
     }
-}
 
-pub struct OpenCodeLanguageModel {
-    id: LanguageModelId,
-    model: opencode::Model,
-    subscription: OpenCodeSubscription,
-    supports_images: bool,
-    supports_thinking: bool,
-    state: Entity<State>,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let (config, subscription) = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        let http_client: Arc<dyn HttpClient> = Arc::new(InjectHeaderClient {
+            inner: self.http_client.clone(),
+            name: http::HeaderName::from_static(OPENCODE_SESSION_HEADER_NAME),
+            value: opencode_session_header_value(request.thread_id.as_deref()),
+        });
+        let extra_headers = self.custom_headers(cx);
+
+        match config.model.protocol() {
+            ApiProtocol::Anthropic => {
+                let mode = if config.supports_thinking && request.thinking_allowed {
+                    anthropic::AnthropicModelMode::AdaptiveThinking
+                } else {
+                    anthropic::AnthropicModelMode::Default
+                };
+                let anthropic_request = match into_anthropic(
+                    request,
+                    config.model.id().to_string(),
+                    1.0,
+                    config.model.max_output_tokens().unwrap_or(8192),
+                    mode,
+                    anthropic::completion::AnthropicPromptCacheMode::Automatic,
+                    &PROVIDER_ID,
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
+                let stream = self.stream_anthropic(
+                    &config,
+                    subscription,
+                    &request_limiter,
+                    anthropic_request,
+                    http_client,
+                    extra_headers,
+                    cx,
+                );
+                let executor = cx.background_executor().clone();
+                async move {
+                    let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(stream.await?).boxed(),
+                        executor,
+                    ))
+                }
+                .boxed()
+            }
+            ApiProtocol::OpenAiChat => {
+                let reasoning_effort = if request.thinking_allowed {
+                    request
+                        .thinking_effort
+                        .as_deref()
+                        .and_then(normalize_reasoning_effort)
+                } else {
+                    None
+                };
+                let openai_request = match into_open_ai(
+                    request,
+                    config.model.id(),
+                    true,
+                    false,
+                    config.model.max_output_tokens(),
+                    ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                    reasoning_effort,
+                    config.model.interleaved_reasoning(),
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
+                let stream = self.stream_openai_chat(
+                    &config,
+                    subscription,
+                    &request_limiter,
+                    openai_request,
+                    http_client,
+                    extra_headers,
+                    cx,
+                );
+                let executor = cx.background_executor().clone();
+                async move {
+                    let mapper = ChatCompletionEventMapper::new();
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(stream.await?).boxed(),
+                        executor,
+                    ))
+                }
+                .boxed()
+            }
+            ApiProtocol::OpenAiResponses => {
+                let supports_none_reasoning_effort = config
+                    .model
+                    .supported_reasoning_effort_levels()
+                    .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
+                let response_request = match into_open_ai_response(
+                    request,
+                    config.model.id(),
+                    true,
+                    false,
+                    config.model.max_output_tokens(),
+                    None,
+                    supports_none_reasoning_effort,
+                    &PROVIDER_ID,
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
+                let stream = self.stream_openai_response(
+                    &config,
+                    subscription,
+                    &request_limiter,
+                    response_request,
+                    http_client,
+                    extra_headers,
+                    cx,
+                );
+                let executor = cx.background_executor().clone();
+                async move {
+                    let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(stream.await?).boxed(),
+                        executor,
+                    ))
+                }
+                .boxed()
+            }
+            ApiProtocol::Google => {
+                let mut request = request;
+                if request.max_output_tokens.is_some() {
+                    request.max_output_tokens =
+                        request.effective_max_output_tokens(config.model.max_output_tokens());
+                }
+                let mode = if config.supports_thinking && request.thinking_allowed {
+                    google_ai::GoogleModelMode::Thinking {
+                        budget_tokens: None,
+                    }
+                } else {
+                    google_ai::GoogleModelMode::Default
+                };
+                let google_request = match into_google(request, config.model.id().to_string(), mode)
+                {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
+                let stream = self.stream_google(
+                    &config,
+                    subscription,
+                    &request_limiter,
+                    google_request,
+                    http_client,
+                    extra_headers,
+                    cx,
+                );
+                async move {
+                    let mapper = GoogleEventMapper::new();
+                    Ok(mapper.map_stream(stream.await?.boxed()).boxed())
+                }
+                .boxed()
+            }
+        }
+    }
 }
 
 struct InjectHeaderClient {
@@ -580,433 +934,81 @@ fn opencode_session_header_value(thread_id: Option<&str>) -> http::HeaderValue {
         .unwrap_or_else(|| http::HeaderValue::from(rand::random::<u64>()))
 }
 
-impl OpenCodeLanguageModel {
-    fn base_api_url(&self, cx: &AsyncApp) -> SharedString {
-        if let Some(url) = self.model.custom_model_api_url() {
-            if !url.is_empty() {
-                return url.to_string().into();
-            }
-        }
-
-        // Combine base URL with subscription path suffix
-        let base = self
-            .state
-            .read_with(cx, |_, cx| OpenCodeLanguageModelProvider::api_url(cx));
-
-        let suffix = self.subscription.api_path_suffix();
-        let base_str = base.as_ref().trim_end_matches('/');
-        format!("{}{}", base_str, suffix).into()
-    }
-
-    fn api_key(&self, cx: &AsyncApp) -> Option<Arc<str>> {
-        self.state.read_with(cx, |state, cx| {
-            let api_url = OpenCodeLanguageModelProvider::api_url(cx);
-            state.api_key_state.key(&api_url)
-        })
-    }
-
-    fn custom_headers(&self, cx: &AsyncApp) -> CustomHeaders {
-        self.state.read_with(cx, |_, cx| {
-            OpenCodeLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone()
-        })
-    }
-
-    fn stream_anthropic(
-        &self,
-        request: anthropic::Request,
-        http_client: Arc<dyn HttpClient>,
-        extra_headers: CustomHeaders,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<
-                'static,
-                Result<anthropic::Event, anthropic::AnthropicError>,
-            >,
-            LanguageModelCompletionError,
-        >,
-    > {
-        // Anthropic crate appends /v1/messages to api_url
-        let api_url = self.base_api_url(cx);
-        let api_key = self.api_key(cx);
-
-        let future = self.request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
-            };
-            let request = anthropic::stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                None,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn stream_openai_chat(
-        &self,
-        request: open_ai::Request,
-        http_client: Arc<dyn HttpClient>,
-        extra_headers: CustomHeaders,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
-        // OpenAI crate appends /chat/completions to api_url, so we pass base + "/v1"
-        let base_url = self.base_api_url(cx);
-        let api_url: SharedString = format!("{base_url}/v1").into();
-        let api_key = self.api_key(cx);
-        let provider_name = PROVIDER_NAME.0.to_string();
-
-        let future = self.request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
-            };
-            let request = open_ai::stream_completion(
-                http_client.as_ref(),
-                &provider_name,
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn stream_openai_response(
-        &self,
-        request: open_ai::responses::Request,
-        http_client: Arc<dyn HttpClient>,
-        extra_headers: CustomHeaders,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<futures::stream::BoxStream<'static, Result<open_ai::responses::StreamEvent>>>,
-    > {
-        // Responses crate appends /responses to api_url, so we pass base + "/v1"
-        let base_url = self.base_api_url(cx);
-        let api_url: SharedString = format!("{base_url}/v1").into();
-        let api_key = self.api_key(cx);
-        let provider_name = PROVIDER_NAME.0.to_string();
-
-        let future = self.request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
-            };
-            let request = open_ai::responses::stream_response(
-                http_client.as_ref(),
-                &provider_name,
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn stream_google(
-        &self,
-        request: google_ai::GenerateContentRequest,
-        http_client: Arc<dyn HttpClient>,
-        extra_headers: CustomHeaders,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<futures::stream::BoxStream<'static, Result<google_ai::GenerateContentResponse>>>,
-    > {
-        let api_url = self.base_api_url(cx);
-        let api_key = self.api_key(cx);
-
-        let future = self.request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
-            };
-            let request = opencode::stream_generate_content(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
+fn model_id(model: &opencode::Model, subscription: OpenCodeSubscription) -> String {
+    format!("{}/{}", subscription.id_prefix(), model.id())
 }
 
-impl LanguageModel for OpenCodeLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
-
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(format!(
-            "{}: {}",
-            self.subscription.display_name(),
-            self.model.display_name()
-        ))
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.model.supports_tools()
-    }
-
-    fn supports_images(&self) -> bool {
-        self.supports_images
-    }
-
-    fn supports_thinking(&self) -> bool {
-        self.supports_thinking
-    }
-
-    fn supports_disabling_thinking(&self) -> bool {
-        self.model
-            .supported_reasoning_effort_levels()
-            .is_some_and(|levels| levels.contains(&ReasoningEffort::None))
-    }
-
-    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        self.model
-            .supported_reasoning_effort_levels()
-            .map(|levels| {
-                let levels = levels
-                    .iter()
-                    .copied()
-                    .filter(|effort| *effort != ReasoningEffort::None)
-                    .collect::<Vec<_>>();
-                if levels.is_empty() {
-                    return Vec::new();
-                }
-                let default_index = if levels.contains(&ReasoningEffort::Max) {
-                    [
-                        ReasoningEffort::High,
-                        ReasoningEffort::Medium,
-                        ReasoningEffort::Low,
-                        ReasoningEffort::Minimal,
-                    ]
-                    .into_iter()
-                    .find_map(|effort| levels.iter().position(|level| *level == effort))
-                    .unwrap_or(levels.len() - 1)
-                } else {
-                    levels.len() - 1
-                };
-                levels
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, effort)| {
-                        let (name, value) = reasoning_effort_display(effort);
-                        LanguageModelEffortLevel {
-                            name: name.into(),
-                            value: value.into(),
-                            is_default: i == default_index,
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => true,
-            LanguageModelToolChoice::None => {
-                // Google models don't support None tool choice
-                self.model.protocol() != ApiProtocol::Google
+fn language_model(model: &DiscoveredModel, subscription: OpenCodeSubscription) -> LanguageModel {
+    let DiscoveredModel {
+        model,
+        supports_images,
+        supports_thinking,
+    } = model;
+    let supported_effort_levels = model
+        .supported_reasoning_effort_levels()
+        .map(|levels| {
+            let levels = levels
+                .iter()
+                .copied()
+                .filter(|effort| *effort != ReasoningEffort::None)
+                .collect::<Vec<_>>();
+            if levels.is_empty() {
+                return Vec::new();
             }
-        }
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!(
-            "opencode/{}/{}",
-            self.subscription.id_prefix(),
-            self.model.id()
-        )
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens()
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<
-                'static,
-                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-            >,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let http_client: Arc<dyn HttpClient> = Arc::new(InjectHeaderClient {
-            inner: self.http_client.clone(),
-            name: http::HeaderName::from_static(OPENCODE_SESSION_HEADER_NAME),
-            value: opencode_session_header_value(request.thread_id.as_deref()),
-        });
-        let extra_headers = self.custom_headers(cx);
-
-        match self.model.protocol() {
-            ApiProtocol::Anthropic => {
-                let mode = if self.supports_thinking() && request.thinking_allowed {
-                    anthropic::AnthropicModelMode::AdaptiveThinking
-                } else {
-                    anthropic::AnthropicModelMode::Default
-                };
-                let anthropic_request = match into_anthropic(
-                    request,
-                    self.model.id().to_string(),
-                    1.0,
-                    self.model.max_output_tokens().unwrap_or(8192),
-                    mode,
-                    anthropic::completion::AnthropicPromptCacheMode::Automatic,
-                    &PROVIDER_ID,
-                ) {
-                    Ok(request) => request,
-                    Err(error) => return async move { Err(error.into()) }.boxed(),
-                };
-                let stream =
-                    self.stream_anthropic(anthropic_request, http_client, extra_headers, cx);
-                let executor = cx.background_executor().clone();
-                async move {
-                    let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
-                    Ok(language_model::stream_in_background(
-                        mapper.map_stream(stream.await?).boxed(),
-                        executor,
-                    ))
-                }
-                .boxed()
-            }
-            ApiProtocol::OpenAiChat => {
-                let reasoning_effort = if request.thinking_allowed {
-                    request
-                        .thinking_effort
-                        .as_deref()
-                        .and_then(normalize_reasoning_effort)
-                } else {
-                    None
-                };
-                let openai_request = match into_open_ai(
-                    request,
-                    self.model.id(),
-                    true,
-                    false,
-                    self.model.max_output_tokens(),
-                    ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-                    reasoning_effort,
-                    self.model.interleaved_reasoning(),
-                ) {
-                    Ok(request) => request,
-                    Err(error) => return async move { Err(error.into()) }.boxed(),
-                };
-                let stream =
-                    self.stream_openai_chat(openai_request, http_client, extra_headers, cx);
-                let executor = cx.background_executor().clone();
-                async move {
-                    let mapper = ChatCompletionEventMapper::new();
-                    Ok(language_model::stream_in_background(
-                        mapper.map_stream(stream.await?).boxed(),
-                        executor,
-                    ))
-                }
-                .boxed()
-            }
-            ApiProtocol::OpenAiResponses => {
-                let supports_none_reasoning_effort = self
-                    .model
-                    .supported_reasoning_effort_levels()
-                    .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
-                let response_request = match into_open_ai_response(
-                    request,
-                    self.model.id(),
-                    true,
-                    false,
-                    self.model.max_output_tokens(),
-                    None,
-                    supports_none_reasoning_effort,
-                    &PROVIDER_ID,
-                ) {
-                    Ok(request) => request,
-                    Err(error) => return async move { Err(error.into()) }.boxed(),
-                };
-                let stream =
-                    self.stream_openai_response(response_request, http_client, extra_headers, cx);
-                let executor = cx.background_executor().clone();
-                async move {
-                    let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-                    Ok(language_model::stream_in_background(
-                        mapper.map_stream(stream.await?).boxed(),
-                        executor,
-                    ))
-                }
-                .boxed()
-            }
-            ApiProtocol::Google => {
-                let mut request = request;
-                if request.max_output_tokens.is_some() {
-                    request.max_output_tokens =
-                        request.effective_max_output_tokens(self.max_output_tokens());
-                }
-                let mode = if self.supports_thinking() && request.thinking_allowed {
-                    google_ai::GoogleModelMode::Thinking {
-                        budget_tokens: None,
+            let default_index = if levels.contains(&ReasoningEffort::Max) {
+                [
+                    ReasoningEffort::High,
+                    ReasoningEffort::Medium,
+                    ReasoningEffort::Low,
+                    ReasoningEffort::Minimal,
+                ]
+                .into_iter()
+                .find_map(|effort| levels.iter().position(|level| *level == effort))
+                .unwrap_or(levels.len() - 1)
+            } else {
+                levels.len() - 1
+            };
+            levels
+                .into_iter()
+                .enumerate()
+                .map(|(i, effort)| {
+                    let (name, value) = reasoning_effort_display(effort);
+                    LanguageModelEffortLevel {
+                        name: name.into(),
+                        value: value.into(),
+                        is_default: i == default_index,
                     }
-                } else {
-                    google_ai::GoogleModelMode::Default
-                };
-                let google_request = match into_google(request, self.model.id().to_string(), mode) {
-                    Ok(request) => request,
-                    Err(error) => return async move { Err(error.into()) }.boxed(),
-                };
-                let stream = self.stream_google(google_request, http_client, extra_headers, cx);
-                async move {
-                    let mapper = GoogleEventMapper::new();
-                    Ok(mapper.map_stream(stream.await?.boxed()).boxed())
-                }
-                .boxed()
-            }
-        }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    LanguageModel {
+        supports_tools: model.supports_tools(),
+        supports_images: *supports_images,
+        supports_thinking: *supports_thinking,
+        supports_disabling_thinking: model
+            .supported_reasoning_effort_levels()
+            .is_some_and(|levels| levels.contains(&ReasoningEffort::None)),
+        supported_effort_levels: supported_effort_levels.into(),
+        tool_choice_support: LanguageModelToolChoiceSupport {
+            auto: true,
+            any: true,
+            // Google models don't support None tool choice
+            none: model.protocol() != ApiProtocol::Google,
+        },
+        max_output_tokens: model.max_output_tokens(),
+        ..LanguageModel::new(
+            LanguageModelId::from(model_id(model, subscription)),
+            LanguageModelName::from(format!(
+                "{}: {}",
+                subscription.display_name(),
+                model.display_name()
+            )),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("opencode/{}/{}", subscription.id_prefix(), model.id()),
+            model.max_token_count(),
+        )
     }
 }
 
@@ -1692,34 +1694,25 @@ mod tests {
         assert!(!errors.contains_key(&OpenCodeSubscription::Go));
     }
 
-    #[gpui::test]
-    fn test_default_reasoning_effort(cx: &mut gpui::TestAppContext) {
+    #[test]
+    fn test_default_reasoning_effort() {
         use ReasoningEffort::{High, Low, Max, Medium, Minimal, XHigh};
 
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            let provider = OpenCodeLanguageModelProvider::new_with_cache(
-                FakeHttpClient::with_404_response(),
-                Arc::new(TestCredentialsProvider),
-                FakeFs::new(cx.background_executor().clone()),
-                PathBuf::from("/cache/models.json"),
-                cx,
-            );
-            for (levels, expected) in [
-                (vec![Low, Medium, High, XHigh, Max], Some("high")),
-                (vec![Max, High, Medium], Some("high")),
-                (vec![Low, Medium, Max], Some("medium")),
-                (vec![Minimal, Low, Max], Some("low")),
-                (vec![Minimal, Max], Some("minimal")),
-                (vec![Low, High, XHigh], Some("xhigh")),
-                (vec![High, Low], Some("low")),
-                (vec![Max], Some("max")),
-                (vec![ReasoningEffort::None], None),
-                (vec![], None),
-            ] {
-                let model = provider.create_language_model_with_capabilities(
-                    opencode::Model::new(
+        for (levels, expected) in [
+            (vec![Low, Medium, High, XHigh, Max], Some("high")),
+            (vec![Max, High, Medium], Some("high")),
+            (vec![Low, Medium, Max], Some("medium")),
+            (vec![Minimal, Low, Max], Some("low")),
+            (vec![Minimal, Max], Some("minimal")),
+            (vec![Low, High, XHigh], Some("xhigh")),
+            (vec![High, Low], Some("low")),
+            (vec![Max], Some("max")),
+            (vec![ReasoningEffort::None], None),
+            (vec![], None),
+        ] {
+            let model = language_model(
+                &DiscoveredModel {
+                    model: opencode::Model::new(
                         "test-model".to_string(),
                         None,
                         1000,
@@ -1729,19 +1722,19 @@ mod tests {
                         None,
                         false,
                     ),
-                    OpenCodeSubscription::Zen,
-                    false,
-                    true,
-                );
-                assert_eq!(
-                    model
-                        .default_effort_level()
-                        .map(|effort| effort.value.to_string())
-                        .as_deref(),
-                    expected,
-                );
-            }
-        });
+                    supports_images: false,
+                    supports_thinking: true,
+                },
+                OpenCodeSubscription::Zen,
+            );
+            assert_eq!(
+                model
+                    .default_effort_level()
+                    .map(|effort| effort.value.to_string())
+                    .as_deref(),
+                expected,
+            );
+        }
     }
 
     #[test]
@@ -1959,11 +1952,15 @@ mod tests {
             state.set_api_key(Some("test-key".to_string()), cx)
         });
         store_key.await.unwrap();
-        let model = provider.create_language_model_with_capabilities(
-            test_model("test-model", ApiProtocol::Anthropic),
+        let model = add_discovered_model(
+            &provider,
+            DiscoveredModel {
+                model: test_model("test-model", ApiProtocol::Anthropic),
+                supports_images: true,
+                supports_thinking: false,
+            },
             OpenCodeSubscription::Go,
-            true,
-            false,
+            cx,
         );
         let request = LanguageModelRequest {
             thread_id: None,
@@ -1976,8 +1973,8 @@ mod tests {
             ..Default::default()
         };
 
-        let stream = model
-            .stream_completion(request, &cx.to_async())
+        let stream = provider
+            .stream_completion(&model, request, &cx.to_async())
             .await
             .unwrap();
         drop(stream);
@@ -1996,6 +1993,25 @@ mod tests {
             .unwrap()
             .parse::<u64>()
             .expect("generated session id should be a u64");
+    }
+
+    /// Adds a model to the provider's discovered list, as a successful catalog
+    /// fetch would, and returns it.
+    fn add_discovered_model(
+        provider: &OpenCodeLanguageModelProvider,
+        model: DiscoveredModel,
+        subscription: OpenCodeSubscription,
+        cx: &mut gpui::TestAppContext,
+    ) -> LanguageModel {
+        let language_model = language_model(&model, subscription);
+        provider.state.update(cx, |state, _| {
+            state
+                .discovered_models
+                .entry(subscription)
+                .or_default()
+                .push(model)
+        });
+        language_model
     }
 
     fn test_model(name: &str, protocol: ApiProtocol) -> opencode::Model {

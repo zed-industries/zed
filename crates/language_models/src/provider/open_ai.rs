@@ -7,10 +7,11 @@ use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactionResult, EnvVar,
     FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelCompletionStream, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, ProviderSettingsView, RateLimiter, env_var, stream_in_background,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoiceSupport,
+    ModelRateLimiters, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, ProviderSettingsView,
+    RateLimiter, env_var, stream_in_background, unavailable_error,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -48,6 +49,7 @@ pub struct OpenAiSettings {
 pub struct OpenAiLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -109,17 +111,161 @@ impl OpenAiLanguageModelProvider {
             }
         });
 
-        Self { http_client, state }
+        Self {
+            http_client,
+            state,
+            request_limiters: ModelRateLimiters::default(),
+        }
     }
 
-    fn create_language_model(&self, model: open_ai::Model) -> Arc<dyn LanguageModel> {
-        Arc::new(OpenAiLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        })
+    /// Every model this provider offers, keyed by id: the built-in models,
+    /// with settings entries added or overriding built-in ones.
+    fn open_ai_models(&self, cx: &App) -> BTreeMap<String, open_ai::Model> {
+        let mut models = BTreeMap::default();
+
+        for model in open_ai::Model::iter() {
+            if !matches!(model, open_ai::Model::Custom { .. }) {
+                models.insert(model.id().to_string(), model);
+            }
+        }
+
+        for model in &Self::settings(cx).available_models {
+            models.insert(
+                model.name.clone(),
+                open_ai::Model::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                    max_completion_tokens: model.max_completion_tokens,
+                    reasoning_effort: model.reasoning_effort,
+                    supports_chat_completions: model.capabilities.chat_completions,
+                    supports_images: model.capabilities.images,
+                },
+            );
+        }
+
+        models
+    }
+
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<open_ai::Model, LanguageModelCompletionError> {
+        self.open_ai_models(cx)
+            .remove(model.id.0.as_ref())
+            .ok_or_else(|| unavailable_error(model))
+    }
+
+    fn stream_chat_completion(
+        &self,
+        request_limiter: &RateLimiter,
+        request: open_ai::Request,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
+    {
+        let http_client = self.http_client.clone();
+
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+
+        let future = request_limiter.stream(async move {
+            let provider = PROVIDER_NAME;
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            let request = stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_response(
+        &self,
+        request_limiter: &RateLimiter,
+        request: ResponseRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
+    {
+        let http_client = self.http_client.clone();
+
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+
+        let provider = PROVIDER_NAME;
+        let future = request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            let request = stream_response(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn compact_response(
+        &self,
+        request_limiter: &RateLimiter,
+        request: CompactRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactedResponse, LanguageModelCompletionError>> {
+        let http_client = self.http_client.clone();
+
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+
+        let provider = PROVIDER_NAME;
+        let future = request_limiter.run(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            Ok(compact_response(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            )
+            .await?)
+        });
+
+        future.boxed()
     }
 
     fn settings(cx: &App) -> &OpenAiSettings {
@@ -157,48 +303,30 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiOpenAi)
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(open_ai::Model::default()))
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
+        self.open_ai_models(cx)
+            .get(open_ai::Model::default().id())
+            .map(language_model)
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(open_ai::Model::default_fast()))
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
+        self.open_ai_models(cx)
+            .get(open_ai::Model::default_fast().id())
+            .map(language_model)
     }
 
-    fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        vec![self.create_language_model(open_ai::Model::FivePointSixSol)]
+    fn recommended_models(&self, cx: &App) -> Vec<LanguageModel> {
+        self.open_ai_models(cx)
+            .get(open_ai::Model::FivePointSixSol.id())
+            .map(language_model)
+            .into_iter()
+            .collect()
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = BTreeMap::default();
-
-        // Add base models from open_ai::Model::iter()
-        for model in open_ai::Model::iter() {
-            if !matches!(model, open_ai::Model::Custom { .. }) {
-                models.insert(model.id().to_string(), model);
-            }
-        }
-
-        // Override with available models from settings
-        for model in &OpenAiLanguageModelProvider::settings(cx).available_models {
-            models.insert(
-                model.name.clone(),
-                open_ai::Model::Custom {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    max_output_tokens: model.max_output_tokens,
-                    max_completion_tokens: model.max_completion_tokens,
-                    reasoning_effort: model.reasoning_effort,
-                    supports_chat_completions: model.capabilities.chat_completions,
-                    supports_images: model.capabilities.images,
-                },
-            );
-        }
-
-        models
-            .into_values()
-            .map(|model| self.create_language_model(model))
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        self.open_ai_models(cx)
+            .values()
+            .map(language_model)
             .collect()
     }
 
@@ -223,6 +351,180 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
+    }
+
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        if !config.supports_priority() {
+            request.speed = None;
+        }
+        if config.uses_responses_api() {
+            normalize_open_ai_response_thinking_effort(&mut request, &config);
+            let request = match into_open_ai_response(
+                request,
+                config.id(),
+                config.supports_parallel_tool_calls(),
+                config.supports_prompt_cache_key(),
+                config.max_output_tokens(),
+                default_thinking_reasoning_effort(&config),
+                config
+                    .supported_reasoning_efforts()
+                    .contains(&open_ai::ReasoningEffort::None),
+                &OPEN_AI_PROVIDER_ID,
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
+            let completions = self.stream_response(&request_limiter, request, cx);
+            let executor = cx.background_executor().clone();
+            async move {
+                let mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+                Ok(stream_in_background(
+                    mapper.map_stream(completions.await?).boxed(),
+                    executor,
+                ))
+            }
+            .boxed()
+        } else {
+            let request = match into_open_ai(
+                request,
+                config.id(),
+                config.supports_parallel_tool_calls(),
+                config.supports_prompt_cache_key(),
+                config.max_output_tokens(),
+                ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                None,
+                false,
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
+            let completions = self.stream_chat_completion(&request_limiter, request, cx);
+            let executor = cx.background_executor().clone();
+            async move {
+                let mapper = ChatCompletionEventMapper::new();
+                Ok(stream_in_background(
+                    mapper.map_stream(completions.await?).boxed(),
+                    executor,
+                ))
+            }
+            .boxed()
+        }
+    }
+
+    fn count_input_tokens(
+        &self,
+        model: &LanguageModel,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        if !config.uses_responses_api() {
+            return async { Ok(None) }.boxed();
+        }
+        normalize_open_ai_response_thinking_effort(&mut request, &config);
+        let request = into_open_ai_response(
+            request,
+            config.id(),
+            config.supports_parallel_tool_calls(),
+            config.supports_prompt_cache_key(),
+            config.max_output_tokens(),
+            default_thinking_reasoning_effort(&config),
+            config
+                .supported_reasoning_efforts()
+                .contains(&open_ai::ReasoningEffort::None),
+            &OPEN_AI_PROVIDER_ID,
+        );
+        let http_client = self.http_client.clone();
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+        request_limiter
+            .run(async move {
+                let request = request?.into_count_tokens_request();
+                let api_key = api_key.ok_or(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                })?;
+                open_ai::responses::count_input_tokens(
+                    http_client.as_ref(),
+                    PROVIDER_NAME.0.as_str(),
+                    &api_url,
+                    &api_key,
+                    request,
+                    &extra_headers,
+                )
+                .await
+                .map(Some)
+                .map_err(Into::into)
+            })
+            .boxed()
+    }
+
+    fn compact(
+        &self,
+        model: &LanguageModel,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        if !config.supports_compaction() {
+            return async {
+                Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                    "this OpenAI model does not support explicit compaction"
+                )))
+            }
+            .boxed();
+        }
+
+        normalize_open_ai_response_thinking_effort(&mut request, &config);
+        let request = match into_open_ai_response(
+            request,
+            config.id(),
+            config.supports_parallel_tool_calls(),
+            config.supports_prompt_cache_key(),
+            config.max_output_tokens(),
+            default_thinking_reasoning_effort(&config),
+            config
+                .supported_reasoning_efforts()
+                .contains(&open_ai::ReasoningEffort::None),
+            &OPEN_AI_PROVIDER_ID,
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let request = request.into_compact_request();
+        let response = self.compact_response(&request_limiter, request, cx);
+        async move {
+            let response = response.await?;
+            let usage = token_usage_from_response_usage(&response.usage);
+            let context = response
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                .map_err(LanguageModelCompletionError::Other)?;
+            Ok(CompactionResult { context, usage })
+        }
+        .boxed()
     }
 
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
@@ -354,382 +656,53 @@ mod tests {
     }
 }
 
-pub struct OpenAiLanguageModel {
-    id: LanguageModelId,
-    model: open_ai::Model,
-    state: Entity<State>,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-}
-
-impl OpenAiLanguageModel {
-    fn stream_completion(
-        &self,
-        request: open_ai::Request,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
-        let http_client = self.http_client.clone();
-
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
-            let api_url = OpenAiLanguageModelProvider::api_url(cx);
-            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
-        });
-
-        let future = self.request_limiter.stream(async move {
-            let provider = PROVIDER_NAME;
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey { provider });
-            };
-            let request = stream_completion(
-                http_client.as_ref(),
-                provider.0.as_str(),
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn stream_response(
-        &self,
-        request: ResponseRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
-    {
-        let http_client = self.http_client.clone();
-
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
-            let api_url = OpenAiLanguageModelProvider::api_url(cx);
-            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
-        });
-
-        let provider = PROVIDER_NAME;
-        let future = self.request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey { provider });
-            };
-            let request = stream_response(
-                http_client.as_ref(),
-                provider.0.as_str(),
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn compact_response(
-        &self,
-        request: CompactRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactedResponse, LanguageModelCompletionError>> {
-        let http_client = self.http_client.clone();
-
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
-            let api_url = OpenAiLanguageModelProvider::api_url(cx);
-            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
-        });
-
-        let provider = PROVIDER_NAME;
-        let future = self.request_limiter.run(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey { provider });
-            };
-            Ok(compact_response(
-                http_client.as_ref(),
-                provider.0.as_str(),
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            )
-            .await?)
-        });
-
-        future.boxed()
-    }
-}
-
-impl LanguageModel for OpenAiLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
-
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_images(&self) -> bool {
-        use open_ai::Model;
-        match &self.model {
-            Model::FourOmniMini
-            | Model::Five
-            | Model::FiveMini
-            | Model::FiveNano
-            | Model::FivePointOne
-            | Model::FivePointTwo
-            | Model::FivePointThreeCodex
-            | Model::FivePointFour
-            | Model::FivePointFourMini
-            | Model::FivePointFourNano
-            | Model::FivePointFourPro
-            | Model::FivePointFive
-            | Model::FivePointFivePro
-            | Model::FivePointSixSol
-            | Model::FivePointSixTerra
-            | Model::FivePointSixLuna
-            | Model::SixAstra
-            | Model::SixSol
-            | Model::SixLuna
-            | Model::O3 => true,
-            Model::Four => false,
-            Model::Custom {
-                supports_images, ..
-            } => *supports_images,
-        }
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto => true,
-            LanguageModelToolChoice::Any => true,
-            LanguageModelToolChoice::None => true,
-        }
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_thinking(&self) -> bool {
-        supports_selectable_thinking_effort(&self.model)
-    }
-
-    fn supports_fast_mode(&self) -> bool {
-        self.model.supports_priority()
-    }
-
-    fn supports_server_side_compaction(&self) -> bool {
-        self.model.supports_compaction()
-    }
-
-    fn supports_explicit_compaction(&self) -> bool {
-        self.model.supports_compaction()
-    }
-
-    fn compact(
-        &self,
-        mut request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
-        if !self.supports_explicit_compaction() {
-            return async {
-                Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
-                    "this OpenAI model does not support explicit compaction"
-                )))
-            }
-            .boxed();
-        }
-
-        normalize_open_ai_response_thinking_effort(&mut request, &self.model);
-        let request = match into_open_ai_response(
-            request,
-            self.model.id(),
-            self.model.supports_parallel_tool_calls(),
-            self.model.supports_prompt_cache_key(),
-            self.max_output_tokens(),
-            default_thinking_reasoning_effort(&self.model),
-            self.model
-                .supported_reasoning_efforts()
-                .contains(&open_ai::ReasoningEffort::None),
-            &OPEN_AI_PROVIDER_ID,
-        ) {
-            Ok(request) => request,
-            Err(error) => return async move { Err(error.into()) }.boxed(),
-        };
-        let request = request.into_compact_request();
-        let response = self.compact_response(request, cx);
-        async move {
-            let response = response.await?;
-            let usage = token_usage_from_response_usage(&response.usage);
-            let context = response
-                .into_compacted_context(OPEN_AI_PROVIDER_ID)
-                .map_err(LanguageModelCompletionError::Other)?;
-            Ok(CompactionResult { context, usage })
-        }
-        .boxed()
-    }
-
-    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        supported_thinking_effort_levels(&self.model)
-    }
-
-    fn supports_split_token_display(&self) -> bool {
-        true
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("openai/{}", self.model.id())
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens()
-    }
-
-    fn count_input_tokens(
-        &self,
-        mut request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
-        if !self.model.uses_responses_api() {
-            return async { Ok(None) }.boxed();
-        }
-        normalize_open_ai_response_thinking_effort(&mut request, &self.model);
-        let request = into_open_ai_response(
-            request,
-            self.model.id(),
-            self.model.supports_parallel_tool_calls(),
-            self.model.supports_prompt_cache_key(),
-            self.max_output_tokens(),
-            default_thinking_reasoning_effort(&self.model),
-            self.model
-                .supported_reasoning_efforts()
-                .contains(&open_ai::ReasoningEffort::None),
-            &OPEN_AI_PROVIDER_ID,
-        );
-        let http_client = self.http_client.clone();
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
-            let api_url = OpenAiLanguageModelProvider::api_url(cx);
-            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
-        });
-        self.request_limiter
-            .run(async move {
-                let request = request?.into_count_tokens_request();
-                let api_key = api_key.ok_or(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                })?;
-                open_ai::responses::count_input_tokens(
-                    http_client.as_ref(),
-                    PROVIDER_NAME.0.as_str(),
-                    &api_url,
-                    &api_key,
-                    request,
-                    &extra_headers,
-                )
-                .await
-                .map(Some)
-                .map_err(Into::into)
-            })
-            .boxed()
-    }
-
-    fn stream_completion(
-        &self,
-        mut request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<
-                'static,
-                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-            >,
-            LanguageModelCompletionError,
-        >,
-    > {
-        if !self.model.supports_priority() {
-            request.speed = None;
-        }
-        if self.model.uses_responses_api() {
-            normalize_open_ai_response_thinking_effort(&mut request, &self.model);
-            let request = match into_open_ai_response(
-                request,
-                self.model.id(),
-                self.model.supports_parallel_tool_calls(),
-                self.model.supports_prompt_cache_key(),
-                self.max_output_tokens(),
-                default_thinking_reasoning_effort(&self.model),
-                self.model
-                    .supported_reasoning_efforts()
-                    .contains(&open_ai::ReasoningEffort::None),
-                &OPEN_AI_PROVIDER_ID,
-            ) {
-                Ok(request) => request,
-                Err(error) => return async move { Err(error.into()) }.boxed(),
-            };
-            let completions = self.stream_response(request, cx);
-            let executor = cx.background_executor().clone();
-            async move {
-                let mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
-                Ok(stream_in_background(
-                    mapper.map_stream(completions.await?).boxed(),
-                    executor,
-                ))
-            }
-            .boxed()
-        } else {
-            let request = match into_open_ai(
-                request,
-                self.model.id(),
-                self.model.supports_parallel_tool_calls(),
-                self.model.supports_prompt_cache_key(),
-                self.max_output_tokens(),
-                ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-                None,
-                false,
-            ) {
-                Ok(request) => request,
-                Err(error) => return async move { Err(error.into()) }.boxed(),
-            };
-            let completions = self.stream_completion(request, cx);
-            let executor = cx.background_executor().clone();
-            async move {
-                let mapper = ChatCompletionEventMapper::new();
-                Ok(stream_in_background(
-                    mapper.map_stream(completions.await?).boxed(),
-                    executor,
-                ))
-            }
-            .boxed()
-        }
+fn language_model(model: &open_ai::Model) -> LanguageModel {
+    use open_ai::Model;
+    let supports_images = match model {
+        Model::FourOmniMini
+        | Model::Five
+        | Model::FiveMini
+        | Model::FiveNano
+        | Model::FivePointOne
+        | Model::FivePointTwo
+        | Model::FivePointThreeCodex
+        | Model::FivePointFour
+        | Model::FivePointFourMini
+        | Model::FivePointFourNano
+        | Model::FivePointFourPro
+        | Model::FivePointFive
+        | Model::FivePointFivePro
+        | Model::FivePointSixSol
+        | Model::FivePointSixTerra
+        | Model::FivePointSixLuna
+        | Model::SixAstra
+        | Model::SixSol
+        | Model::SixLuna
+        | Model::O3 => true,
+        Model::Four => false,
+        Model::Custom {
+            supports_images, ..
+        } => *supports_images,
+    };
+    LanguageModel {
+        supports_tools: true,
+        supports_images,
+        tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        supports_streaming_tools: true,
+        supports_thinking: supports_selectable_thinking_effort(model),
+        supports_fast_mode: model.supports_priority(),
+        supports_server_side_compaction: model.supports_compaction(),
+        supports_explicit_compaction: model.supports_compaction(),
+        supported_effort_levels: supported_thinking_effort_levels(model).into(),
+        supports_split_token_display: true,
+        max_output_tokens: model.max_output_tokens(),
+        ..LanguageModel::new(
+            LanguageModelId::from(model.id().to_string()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("openai/{}", model.id()),
+            model.max_token_count(),
+        )
     }
 }
