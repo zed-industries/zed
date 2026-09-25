@@ -29,8 +29,8 @@ use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme_settings::ThemeSettings;
 use ui::{
-    Banner, ContextMenu, Divider, ListItem, ListItemSpacing, ScrollableHandle, Switch,
-    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple,
+    Banner, CommonAnimationExt, ContextMenu, Divider, ListItem, ListItemSpacing, ScrollableHandle,
+    Switch, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple,
     WithScrollbar, prelude::*,
 };
 use util::ResultExt;
@@ -390,6 +390,7 @@ enum FetchDebounce {
 
 pub struct ExtensionsPage {
     workspace: WeakEntity<Workspace>,
+    extension_store: Entity<ExtensionStore>,
     provider_registry: Arc<GitHostingProviderRegistry>,
     list: UniformListScrollHandle,
     fetch_state: ExtensionFetchState,
@@ -417,12 +418,12 @@ impl ExtensionsPage {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let store = ExtensionStore::global(cx);
+            let extension_store = ExtensionStore::global(cx);
             let workspace_handle = workspace.weak_handle();
             let subscriptions = [
-                cx.observe(&store, |_: &mut Self, _, cx| cx.notify()),
+                cx.observe(&extension_store, |_: &mut Self, _, cx| cx.notify()),
                 cx.subscribe_in(
-                    &store,
+                    &extension_store,
                     window,
                     move |this, _, event, window, cx| match event {
                         extension_host::Event::ExtensionsUpdated => {
@@ -455,6 +456,7 @@ impl ExtensionsPage {
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
+                extension_store,
                 provider_registry,
                 list: scroll_handle,
                 fetch_state: ExtensionFetchState::Fetching,
@@ -489,7 +491,7 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let extension_store = ExtensionStore::global(cx).read(cx);
+        let extension_store = self.extension_store.read(cx);
         let themes = extension_store
             .extension_themes(extension_id)
             .map(|name| name.to_string())
@@ -532,7 +534,8 @@ impl ExtensionsPage {
     /// the remote fetch, so local results show up without waiting for the server.
     fn update_local_search_results(&mut self, cx: &mut Context<Self>) {
         let search = self.search_query(cx);
-        let mut installed_extensions = ExtensionStore::global(cx)
+        let mut installed_extensions = self
+            .extension_store
             .read(cx)
             .installed_extensions()
             .values()
@@ -589,7 +592,7 @@ impl ExtensionsPage {
     }
 
     fn rebuild_displayed_extensions(&mut self, cx: &mut Context<Self>) {
-        let installed_extensions = ExtensionStore::global(cx).read(cx).installed_extensions();
+        let installed_extensions = self.extension_store.read(cx).installed_extensions();
         let provides_filter = self.provides_filter;
 
         // Remote results can lag behind a provides filter change by one fetch, so
@@ -672,8 +675,8 @@ impl ExtensionsPage {
                     .await;
             }
 
-            let Ok(remote_extensions) = this.update(cx, |_, cx| {
-                let extension_store = ExtensionStore::global(cx);
+            let Ok(remote_extensions) = this.update(cx, |this, cx| {
+                let extension_store = &this.extension_store;
                 if let Some(id) = search
                     .as_deref()
                     .and_then(|search| search.strip_prefix("id:"))
@@ -727,10 +730,11 @@ impl ExtensionsPage {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<ExtensionCard> {
+        let extension_store = self.extension_store.read(cx);
         range
             .filter_map(|index| {
                 let row = *self.displayed_extensions.get(index)?;
-                self.render_extension(row, cx)
+                self.render_extension(row, extension_store, cx)
             })
             .collect()
     }
@@ -738,7 +742,8 @@ impl ExtensionsPage {
     fn render_extension(
         &self,
         row: DisplayedExtension,
-        cx: &mut Context<Self>,
+        extension_store: &ExtensionStore,
+        cx: &Context<Self>,
     ) -> Option<ExtensionCard> {
         let remote_index = match row {
             DisplayedExtension::Installed {
@@ -752,9 +757,9 @@ impl ExtensionsPage {
                     .as_deref()
                     .map(|url| self.get_repository_icon(url));
                 let card = if extension.dev {
-                    ExtensionCard::for_dev(manifest, cx)
+                    ExtensionCard::for_dev(manifest, extension_store)
                 } else {
-                    ExtensionCard::for_installed(manifest, cx)
+                    ExtensionCard::for_installed(manifest, extension_store)
                 };
                 return Some(match repository_icon {
                     Some(icon) => card.repository_icon(icon),
@@ -771,7 +776,7 @@ impl ExtensionsPage {
         let extension = self.remote_extensions.get(remote_index)?;
         let weak_self = cx.weak_entity();
         Some(
-            ExtensionCard::for_remote(extension, cx)
+            ExtensionCard::for_remote(extension, extension_store, cx)
                 .repository_icon(self.get_repository_icon(&extension.manifest.repository))
                 .context_menu(move |extension_id, authors, window, cx| {
                     let this = weak_self.upgrade()?;
@@ -828,10 +833,8 @@ impl ExtensionsPage {
         };
 
         cx.spawn_in(window, async move |this, cx| {
-            let extension_versions_task = this.update(cx, |_, cx| {
-                let extension_store = ExtensionStore::global(cx);
-
-                extension_store.update(cx, |store, cx| {
+            let extension_versions_task = this.update(cx, |this, cx| {
+                this.extension_store.update(cx, |store, cx| {
                     store.fetch_extension_versions(&extension_id, cx)
                 })
             })?;
@@ -878,7 +881,32 @@ impl ExtensionsPage {
             .border_color(editor_border)
             .rounded_md()
             .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted))
-            .child(self.render_text_input(&self.query_editor, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .child(self.render_text_input(&self.query_editor, cx)),
+            )
+            .when(self.fetch_state == ExtensionFetchState::Fetching, |this| {
+                this.child(
+                    Icon::new(IconName::LoadCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_rotate_animation(3),
+                )
+            })
+    }
+
+    fn retry_button(&self, cx: &mut Context<Self>) -> Button {
+        Button::new("retry-fetch-extensions", "Retry")
+            .style(ButtonStyle::Outlined)
+            .start_icon(
+                Icon::new(IconName::RotateCw)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.fetch_extensions(FetchDebounce::Immediate, None, cx);
+            }))
     }
 
     fn render_text_input(
@@ -970,7 +998,8 @@ impl ExtensionsPage {
         let fetch_is_relevant = self.filter != ExtensionFilter::Installed;
         let fetch_failure_is_relevant =
             self.fetch_state == ExtensionFetchState::Failed && fetch_is_relevant;
-        let message = if self.fetch_state == ExtensionFetchState::Fetching && fetch_is_relevant {
+        let is_loading = self.fetch_state == ExtensionFetchState::Fetching && fetch_is_relevant;
+        let message = if is_loading {
             "Loading extensions…"
         } else if fetch_failure_is_relevant {
             "Failed to load extensions. Please check your connection and try again."
@@ -1000,17 +1029,34 @@ impl ExtensionsPage {
             }
         };
 
-        h_flex()
-            .py_4()
-            .gap_1p5()
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .when(is_loading, |this| {
+                        this.child(
+                            Icon::new(IconName::LoadCircle)
+                                .size(IconSize::Small)
+                                .color(Color::Accent)
+                                .with_rotate_animation(3),
+                        )
+                    })
+                    .when(fetch_failure_is_relevant, |this| {
+                        this.child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Warning),
+                        )
+                    })
+                    .child(Label::new(message)),
+            )
             .when(fetch_failure_is_relevant, |this| {
-                this.child(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .color(Color::Warning),
-                )
+                this.child(self.retry_button(cx))
             })
-            .child(Label::new(message))
     }
 
     fn update_settings(
@@ -1578,12 +1624,15 @@ impl Render for ExtensionsPage {
                         |this| {
                             this.child(
                                 div().pt_4().child(
-                                    Banner::new().severity(Severity::Warning).child(
-                                        Label::new(
-                                            "Failed to load extensions. Showing installed extensions only.",
+                                    Banner::new()
+                                        .severity(Severity::Warning)
+                                        .child(
+                                            Label::new(
+                                                "Failed to load extensions. Showing installed extensions only.",
+                                            )
+                                            .mt_0p5(),
                                         )
-                                        .mt_0p5(),
-                                    ),
+                                        .action_slot(self.retry_button(cx)),
                                 ),
                             )
                         },
