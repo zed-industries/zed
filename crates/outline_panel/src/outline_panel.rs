@@ -1,4 +1,7 @@
+mod call_hierarchy_view;
 mod outline_panel_settings;
+
+use call_hierarchy_view::{CallHierarchyRow, CallHierarchyState};
 
 use anyhow::Context as _;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, IndexMap};
@@ -23,9 +26,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
     uniform_list,
 };
-use language::{
-    Anchor, BufferId, BufferSnapshot, DiskState, OffsetRangeExt, OutlineItem, ToPoint, ToPointUtf16,
-};
+use language::{Anchor, BufferId, BufferSnapshot, DiskState, OffsetRangeExt, OutlineItem};
 use language::{LanguageAwareStyling, language_settings::LanguageSettings};
 
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -42,8 +43,7 @@ use std::{
     u32,
 };
 
-use call_hierarchy::{Call, CallHierarchyMode, fetch_calls, make_call, render_item};
-use editor::actions::ShowCallHierarchy;
+use call_hierarchy::CallHierarchyMode;
 use outline_panel_settings::{DockSide, FolderIndicator, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, Project, ProjectPath};
 use search::{BufferSearchBar, ProjectSearchView};
@@ -164,100 +164,6 @@ enum ItemsDisplayMode {
     Search(SearchState),
     Outline,
     CallHierarchy(CallHierarchyState),
-}
-
-static NEXT_CALL_NODE_ID: atomic::AtomicU64 = atomic::AtomicU64::new(0);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct CallNodeId(u64);
-
-impl CallNodeId {
-    fn next() -> Self {
-        Self(NEXT_CALL_NODE_ID.fetch_add(1, atomic::Ordering::Relaxed))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CallNodeState {
-    /// Children have not been fetched yet.
-    Unknown,
-    /// Children are currently being fetched.
-    Loading,
-    /// The node has no callers/callees.
-    Leaf,
-    Collapsed,
-    Expanded,
-}
-
-/// A node in the lazily-fetched call hierarchy tree.
-#[derive(Debug, Clone)]
-struct CallHierarchyNode {
-    id: CallNodeId,
-    call: Call,
-    state: CallNodeState,
-    children: Option<Vec<CallHierarchyNode>>,
-}
-
-impl CallHierarchyNode {
-    fn find_mut(&mut self, id: CallNodeId) -> Option<&mut CallHierarchyNode> {
-        if self.id == id {
-            return Some(self);
-        }
-        self.children
-            .as_mut()?
-            .iter_mut()
-            .find_map(|child| child.find_mut(id))
-    }
-
-    fn flatten<'a>(&'a self, depth: usize, out: &mut Vec<(usize, &'a CallHierarchyNode)>) {
-        out.push((depth, self));
-        if self.state == CallNodeState::Expanded
-            && let Some(children) = &self.children
-        {
-            for child in children {
-                child.flatten(depth + 1, out);
-            }
-        }
-    }
-}
-
-/// State backing [`ItemsDisplayMode::CallHierarchy`].
-struct CallHierarchyState {
-    direction: CallHierarchyMode,
-    root: Option<CallHierarchyNode>,
-    /// The buffer/position the hierarchy was invoked from, used to re-seed on direction changes.
-    origin_buffer: Option<Entity<language::Buffer>>,
-    origin_position: Option<language::PointUtf16>,
-    loading: bool,
-    fetch_task: Task<()>,
-    expanding: HashMap<CallNodeId, Task<()>>,
-}
-
-impl std::fmt::Debug for CallHierarchyState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CallHierarchyState")
-            .field("direction", &self.direction)
-            .field("root", &self.root)
-            .field("loading", &self.loading)
-            .finish_non_exhaustive()
-    }
-}
-
-/// A single rendered row in call hierarchy mode.
-#[derive(Clone, Debug)]
-struct CallHierarchyRow {
-    id: CallNodeId,
-    call: Call,
-    state: CallNodeState,
-}
-
-fn call_into_node(call: Call) -> CallHierarchyNode {
-    CallHierarchyNode {
-        id: CallNodeId::next(),
-        call,
-        state: CallNodeState::Unknown,
-        children: None,
-    }
 }
 
 #[derive(Debug)]
@@ -826,7 +732,7 @@ impl PartialEq for PanelEntry {
                     ..
                 }),
             ) => match_range_a == match_range_b && kind_a == kind_b,
-            (Self::CallHierarchy(a), Self::CallHierarchy(b)) => a.id == b.id,
+            (Self::CallHierarchy(a), Self::CallHierarchy(b)) => a == b,
             _ => false,
         }
     }
@@ -1212,7 +1118,8 @@ impl OutlinePanel {
                                     cx,
                                 );
                             }
-                        } else {
+                        } else if !matches!(outline_panel.mode, ItemsDisplayMode::CallHierarchy(_))
+                        {
                             outline_panel.clear_previous(window, cx);
                             cx.notify();
                         }
@@ -1571,9 +1478,8 @@ impl OutlinePanel {
         // depend on the panel's active editor (which may have been closed while
         // navigating between call sites), so handle it before that guard.
         if let PanelEntry::CallHierarchy(row) = entry {
-            let call = row.call.clone();
             self.select_entry(entry.clone(), true, window, cx);
-            self.open_call_target(&call, window, cx);
+            self.open_call_hierarchy_row(row, prefer_focus_change, window, cx);
             return;
         }
         let Some(active_editor) = self.active_editor() else {
@@ -1774,6 +1680,10 @@ impl OutlinePanel {
     }
 
     fn select_parent(&mut self, _: &SelectParent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(PanelEntry::CallHierarchy(row)) = self.selected_entry().cloned() {
+            self.select_call_hierarchy_parent(&row, window, cx);
+            return;
+        }
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
             let mut previous_entries = self
                 .cached_entries
@@ -1838,7 +1748,7 @@ impl OutlinePanel {
                 PanelEntry::Search(_) => {
                     previous_entries.find(|entry| !matches!(entry, PanelEntry::Search(_)))
                 }
-                PanelEntry::CallHierarchy(_) => None,
+                PanelEntry::CallHierarchy(_) => return None,
             }
         }) {
             self.select_entry(entry_to_select.clone(), true, window, cx);
@@ -1983,8 +1893,10 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         if let Some(PanelEntry::CallHierarchy(row)) = self.selected_entry().cloned() {
-            if row.state != CallNodeState::Expanded {
-                self.toggle_call_node(row.id, window, cx);
+            if row.is_expanded() {
+                self.select_next(&SelectNext, window, cx);
+            } else {
+                self.toggle_call_hierarchy_row(&row, window, cx);
             }
             return;
         }
@@ -2059,8 +1971,10 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         if let Some(PanelEntry::CallHierarchy(row)) = self.selected_entry().cloned() {
-            if row.state == CallNodeState::Expanded {
-                self.toggle_call_node(row.id, window, cx);
+            if row.is_expanded() {
+                self.toggle_call_hierarchy_row(&row, window, cx);
+            } else {
+                self.select_parent(&SelectParent, window, cx);
             }
             return;
         }
@@ -2301,7 +2215,7 @@ impl OutlinePanel {
         // Call hierarchy expansion is independent of the panel's active editor,
         // which may have been closed while navigating between call sites.
         if let PanelEntry::CallHierarchy(row) = entry {
-            self.toggle_call_node(row.id, window, cx);
+            self.toggle_call_hierarchy_row(row, window, cx);
             return;
         }
         let Some(active_editor) = self.active_editor() else {
@@ -2518,12 +2432,16 @@ impl OutlinePanel {
         if !self.active
             || !OutlinePanelSettings::get_global(cx).auto_reveal_entries
             || self.focus_handle.contains_focused(window, cx)
+            || matches!(self.mode, ItemsDisplayMode::CallHierarchy(_))
         {
             return;
         }
         self.reveal_selection_task = cx.spawn_in(window, async move |outline_panel, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             outline_panel.update_in(cx, |outline_panel, window, cx| {
+                if matches!(outline_panel.mode, ItemsDisplayMode::CallHierarchy(_)) {
+                    return;
+                }
                 let Some(entry) = outline_panel.location_for_editor_selection(&editor, window, cx)
                 else {
                     outline_panel.selected_entry = SelectedEntry::None;
@@ -3103,331 +3021,6 @@ impl OutlinePanel {
                 is_active && self.focus_handle.contains_focused(window, cx),
                 |div| div.border_color(cx.theme().colors().panel_focused_border),
             )
-    }
-
-    // ===== Call hierarchy mode =====
-
-    /// Workspace action handler: enters call hierarchy mode in the outline panel,
-    /// seeded from the symbol under the cursor in the active editor.
-    pub fn show_call_hierarchy(
-        workspace: &mut Workspace,
-        _: &ShowCallHierarchy,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let Some(editor) = workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<Editor>(cx))
-        else {
-            return;
-        };
-        let Some(panel) = workspace.panel::<OutlinePanel>(cx) else {
-            return;
-        };
-        workspace.focus_panel::<OutlinePanel>(window, cx);
-        panel.update(cx, |panel, cx| {
-            panel.start_call_hierarchy(editor, CallHierarchyMode::Incoming, window, cx);
-        });
-    }
-
-    fn start_call_hierarchy(
-        &mut self,
-        editor: Entity<Editor>,
-        direction: CallHierarchyMode,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
-            return;
-        };
-        let position = editor.update(cx, |editor, cx| {
-            let snapshot = editor.display_snapshot(cx);
-            editor
-                .selections
-                .newest::<language::Point>(&snapshot)
-                .head()
-        });
-        let position_utf16 = position.to_point_utf16(&buffer.read(cx).snapshot());
-
-        self.mode = ItemsDisplayMode::CallHierarchy(CallHierarchyState {
-            direction,
-            root: None,
-            origin_buffer: Some(buffer.clone()),
-            origin_position: Some(position_utf16),
-            loading: true,
-            fetch_task: Task::ready(()),
-            expanding: HashMap::default(),
-        });
-        self.fetch_call_hierarchy_root(buffer, position_utf16, direction, window, cx);
-    }
-
-    fn fetch_call_hierarchy_root(
-        &mut self,
-        buffer: Entity<language::Buffer>,
-        position: language::PointUtf16,
-        direction: CallHierarchyMode,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let prepare_task = self.project.update(cx, |project, cx| {
-            project.prepare_call_hierarchy(&buffer, position, cx)
-        });
-        let project = self.project.clone();
-        let task = cx.spawn_in(window, async move |panel, cx| {
-            let root_item = match prepare_task.await {
-                Ok(Some(items)) => items.into_iter().next(),
-                _ => None,
-            };
-            let Some(root_item) = root_item else {
-                panel
-                    .update_in(cx, |panel, window, cx| {
-                        if let ItemsDisplayMode::CallHierarchy(state) = &mut panel.mode {
-                            state.loading = false;
-                            state.root = None;
-                        }
-                        panel.update_cached_entries(None, window, cx);
-                    })
-                    .ok();
-                return;
-            };
-            let children = fetch_calls(&root_item, &project, direction, cx).await;
-            let root_call = make_call(root_item, &project, cx).await;
-            panel
-                .update_in(cx, |panel, window, cx| {
-                    if let ItemsDisplayMode::CallHierarchy(state) = &mut panel.mode {
-                        let child_nodes: Vec<CallHierarchyNode> =
-                            children.into_iter().map(call_into_node).collect();
-                        let root_state = if child_nodes.is_empty() {
-                            CallNodeState::Leaf
-                        } else {
-                            CallNodeState::Expanded
-                        };
-                        state.root = Some(CallHierarchyNode {
-                            id: CallNodeId::next(),
-                            call: root_call,
-                            state: root_state,
-                            children: Some(child_nodes),
-                        });
-                        state.loading = false;
-                    }
-                    panel.update_cached_entries(None, window, cx);
-                })
-                .ok();
-        });
-        if let ItemsDisplayMode::CallHierarchy(state) = &mut self.mode {
-            state.fetch_task = task;
-        }
-        self.update_cached_entries(None, window, cx);
-    }
-
-    fn toggle_call_node(&mut self, id: CallNodeId, window: &mut Window, cx: &mut Context<Self>) {
-        let ItemsDisplayMode::CallHierarchy(state) = &mut self.mode else {
-            return;
-        };
-        let direction = state.direction;
-        let Some(node) = state.root.as_mut().and_then(|root| root.find_mut(id)) else {
-            return;
-        };
-        match node.state {
-            CallNodeState::Expanded => node.state = CallNodeState::Collapsed,
-            CallNodeState::Collapsed => node.state = CallNodeState::Expanded,
-            CallNodeState::Leaf | CallNodeState::Loading => return,
-            CallNodeState::Unknown => {
-                let item = node.call.item.clone();
-                node.state = CallNodeState::Loading;
-                let project = self.project.clone();
-                let task = cx.spawn_in(window, async move |panel, cx| {
-                    let children = fetch_calls(&item, &project, direction, cx).await;
-                    panel
-                        .update_in(cx, |panel, window, cx| {
-                            if let ItemsDisplayMode::CallHierarchy(state) = &mut panel.mode {
-                                if let Some(node) =
-                                    state.root.as_mut().and_then(|root| root.find_mut(id))
-                                {
-                                    let child_nodes: Vec<CallHierarchyNode> =
-                                        children.into_iter().map(call_into_node).collect();
-                                    node.state = if child_nodes.is_empty() {
-                                        CallNodeState::Leaf
-                                    } else {
-                                        CallNodeState::Expanded
-                                    };
-                                    node.children = Some(child_nodes);
-                                }
-                                state.expanding.remove(&id);
-                            }
-                            panel.update_cached_entries(None, window, cx);
-                        })
-                        .ok();
-                });
-                if let ItemsDisplayMode::CallHierarchy(state) = &mut self.mode {
-                    state.expanding.insert(id, task);
-                }
-            }
-        }
-        self.update_cached_entries(None, window, cx);
-    }
-
-    fn toggle_call_hierarchy_direction(
-        &mut self,
-        _: &ToggleCallHierarchyDirection,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ItemsDisplayMode::CallHierarchy(state) = &mut self.mode else {
-            return;
-        };
-        let new_direction = match state.direction {
-            CallHierarchyMode::Incoming => CallHierarchyMode::Outgoing,
-            CallHierarchyMode::Outgoing => CallHierarchyMode::Incoming,
-        };
-        state.direction = new_direction;
-        state.root = None;
-        state.loading = true;
-        state.expanding.clear();
-        let origin = state.origin_buffer.clone().zip(state.origin_position);
-        if let Some((buffer, position)) = origin {
-            self.fetch_call_hierarchy_root(buffer, position, new_direction, window, cx);
-        } else {
-            self.update_cached_entries(None, window, cx);
-        }
-    }
-
-    fn exit_call_hierarchy(
-        &mut self,
-        _: &ExitCallHierarchy,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !matches!(self.mode, ItemsDisplayMode::CallHierarchy(_)) {
-            return;
-        }
-        self.mode = ItemsDisplayMode::Outline;
-        // Navigating call sites may have changed the active editor while we
-        // ignored those changes; re-sync to it now so the outline reflects the
-        // file the user actually ended up in.
-        if let Some((active_item, active_editor)) = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
-        {
-            self.replace_active_editor(active_item, active_editor, window, cx);
-        } else {
-            self.update_contents(None, window, cx);
-        }
-    }
-
-    fn open_call_target(&mut self, call: &Call, window: &mut Window, cx: &mut Context<Self>) {
-        let buffer = call.target.buffer.clone();
-        let target = call.target.range.start;
-        self.workspace
-            .update(cx, |workspace, cx| {
-                let position = target.to_point(&buffer.read(cx).snapshot());
-                let pane = workspace.active_pane().clone();
-                let editor = workspace.open_project_item::<Editor>(
-                    Some(pane),
-                    buffer,
-                    true,
-                    true,
-                    true,
-                    true,
-                    window,
-                    cx,
-                );
-                editor.update(cx, |editor, cx| {
-                    editor.change_selections(
-                        SelectionEffects::scroll(Autoscroll::center()),
-                        window,
-                        cx,
-                        |s| s.select_ranges([position..position]),
-                    );
-                });
-            })
-            .ok();
-    }
-
-    fn call_hierarchy_cached_entries(&self, query: Option<&str>) -> Vec<CachedEntry> {
-        let ItemsDisplayMode::CallHierarchy(state) = &self.mode else {
-            return Vec::new();
-        };
-        let Some(root) = &state.root else {
-            return Vec::new();
-        };
-        let mut flat = Vec::new();
-        root.flatten(0, &mut flat);
-        let query = query.map(|query| query.to_lowercase());
-        flat.into_iter()
-            .filter(|(_, node)| {
-                query.as_ref().is_none_or(|query| {
-                    node.call
-                        .display
-                        .name
-                        .to_lowercase()
-                        .contains(query.as_str())
-                })
-            })
-            .map(|(depth, node)| CachedEntry {
-                depth,
-                string_match: None,
-                entry: PanelEntry::CallHierarchy(CallHierarchyRow {
-                    id: node.id,
-                    call: node.call.clone(),
-                    state: node.state,
-                }),
-            })
-            .collect()
-    }
-
-    fn render_call_hierarchy_row(
-        &self,
-        row: &CallHierarchyRow,
-        depth: usize,
-        string_match: Option<&StringMatch>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let item_id = ElementId::from(SharedString::from(format!("call-hierarchy-{}", row.id.0)));
-        let (name_element, detail_element) = render_item(
-            &row.call,
-            string_match
-                .map(|string_match| string_match.ranges().collect::<Vec<_>>())
-                .unwrap_or_default(),
-            cx,
-        );
-        let is_active = matches!(
-            self.selected_entry(),
-            Some(PanelEntry::CallHierarchy(selected)) if selected.id == row.id
-        );
-        let icon = match row.state {
-            CallNodeState::Loading => Icon::new(IconName::ArrowCircle)
-                .color(Color::Muted)
-                .into_any_element(),
-            CallNodeState::Leaf => empty_icon(),
-            CallNodeState::Unknown | CallNodeState::Collapsed | CallNodeState::Expanded => {
-                let is_expanded = row.state == CallNodeState::Expanded;
-                FileIcons::get_chevron_icon(is_expanded, cx)
-                    .map(|icon_path| {
-                        Icon::from_path(icon_path)
-                            .color(entry_label_color(is_active))
-                            .into_any_element()
-                    })
-                    .unwrap_or_else(empty_icon)
-            }
-        };
-        let label = h_flex()
-            .gap_1()
-            .child(name_element)
-            .when_some(detail_element, |this, detail| this.child(detail))
-            .into_any_element();
-        self.entry_element(
-            PanelEntry::CallHierarchy(row.clone()),
-            item_id,
-            depth,
-            icon,
-            is_active,
-            label,
-            window,
-            cx,
-        )
     }
 
     fn entry_name(&self, worktree_id: &WorktreeId, entry: &FsEntryPath, cx: &App) -> String {
@@ -4439,16 +4032,31 @@ impl OutlinePanel {
                     .update_in(cx, |outline_panel, window, cx| {
                         outline_panel.cached_entries = new_cached_entries;
                         outline_panel.max_width_item_index = max_width_item_index;
-                        if let SelectedEntry::Valid(selected, _) = &outline_panel.selected_entry
-                            && let Some((index, cached)) =
+                        let call_hierarchy =
+                            matches!(outline_panel.mode, ItemsDisplayMode::CallHierarchy(_));
+                        if let SelectedEntry::Valid(selected, _) = &outline_panel.selected_entry {
+                            if let Some((index, cached)) =
                                 outline_panel.cached_entry_for_selection(selected)
-                        {
-                            outline_panel.selected_entry =
-                                SelectedEntry::Valid(cached.entry.clone(), index);
+                            {
+                                outline_panel.selected_entry =
+                                    SelectedEntry::Valid(cached.entry.clone(), index);
+                            } else if call_hierarchy {
+                                outline_panel.selected_entry = SelectedEntry::None;
+                            }
                         }
-                        if (outline_panel.selected_entry.is_invalidated()
-                            || matches!(outline_panel.selected_entry, SelectedEntry::None))
-                            && let Some(new_selected_entry) =
+                        if outline_panel.selected_entry.is_invalidated()
+                            || matches!(outline_panel.selected_entry, SelectedEntry::None)
+                        {
+                            if call_hierarchy {
+                                if let Some(entry) = outline_panel.cached_entries.first() {
+                                    outline_panel.select_entry(
+                                        entry.entry.clone(),
+                                        false,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            } else if let Some(new_selected_entry) =
                                 outline_panel.active_editor().and_then(|active_editor| {
                                     outline_panel.location_for_editor_selection(
                                         &active_editor,
@@ -4456,17 +4064,18 @@ impl OutlinePanel {
                                         cx,
                                     )
                                 })
-                        {
-                            let awaiting_outlines = match &new_selected_entry {
-                                PanelEntry::Outline(outline) => outline_panel
-                                    .buffers
-                                    .get(&outline.buffer_id())
-                                    .is_some_and(BufferOutlines::should_fetch_outlines),
-                                _ => false,
-                            };
-                            outline_panel.select_entry(new_selected_entry, false, window, cx);
-                            if awaiting_outlines {
-                                outline_panel.selected_entry.invalidate();
+                            {
+                                let awaiting_outlines = match &new_selected_entry {
+                                    PanelEntry::Outline(outline) => outline_panel
+                                        .buffers
+                                        .get(&outline.buffer_id())
+                                        .is_some_and(BufferOutlines::should_fetch_outlines),
+                                    _ => false,
+                                };
+                                outline_panel.select_entry(new_selected_entry, false, window, cx);
+                                if awaiting_outlines {
+                                    outline_panel.selected_entry.invalidate();
+                                }
                             }
                         }
 
@@ -4558,9 +4167,22 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<(Vec<CachedEntry>, Option<usize>)> {
-        if matches!(self.mode, ItemsDisplayMode::CallHierarchy(_)) {
-            let entries = self.call_hierarchy_cached_entries(query.as_deref());
-            return Task::ready((entries, None));
+        if let ItemsDisplayMode::CallHierarchy(state) = &self.mode {
+            let mut generation_state = GenerationState::default();
+            let track_matches = query.is_some();
+            for (depth, row) in state.rows() {
+                self.push_entry(
+                    &mut generation_state,
+                    track_matches,
+                    PanelEntry::CallHierarchy(row),
+                    depth,
+                    cx,
+                );
+            }
+            let executor = cx.background_executor().clone();
+            return cx.spawn_in(window, async move |_, _| {
+                filter_generation_state(generation_state, query, executor).await
+            });
         }
         let Some(active_editor) = self.active_editor() else {
             return Task::ready((Vec::new(), None));
@@ -4962,48 +4584,7 @@ impl OutlinePanel {
                 return (Vec::new(), None);
             };
 
-            let Some(query) = query else {
-                return (
-                    generation_state.entries,
-                    generation_state
-                        .max_width_estimate_and_index
-                        .map(|(_, index)| index),
-                );
-            };
-
-            let mut matched_ids = match_strings(
-                &generation_state.match_candidates,
-                &query,
-                true,
-                true,
-                usize::MAX,
-                &AtomicBool::default(),
-                cx.background_executor().clone(),
-            )
-            .await
-            .into_iter()
-            .map(|string_match| (string_match.candidate_id, string_match))
-            .collect::<HashMap<_, _>>();
-
-            let mut id = 0;
-            generation_state.entries.retain_mut(|cached_entry| {
-                let retain = match matched_ids.remove(&id) {
-                    Some(string_match) => {
-                        cached_entry.string_match = Some(string_match);
-                        true
-                    }
-                    None => false,
-                };
-                id += 1;
-                retain
-            });
-
-            (
-                generation_state.entries,
-                generation_state
-                    .max_width_estimate_and_index
-                    .map(|(_, index)| index),
-            )
+            filter_generation_state(generation_state, query, cx.background_executor().clone()).await
         })
     }
 
@@ -5071,19 +4652,16 @@ impl OutlinePanel {
                             .push(StringMatchCandidate::new(id, &search_data.context_text));
                     }
                 }
-                // Call hierarchy mode bypasses `push_entry`; nothing to index here.
-                PanelEntry::CallHierarchy(_) => {}
+                PanelEntry::CallHierarchy(row) => {
+                    state
+                        .match_candidates
+                        .push(StringMatchCandidate::new(id, row.name()));
+                }
             }
         }
 
         let width_estimate = self.width_estimate(depth, &entry, cx);
-        if Some(width_estimate)
-            > state
-                .max_width_estimate_and_index
-                .map(|(estimate, _)| estimate)
-        {
-            state.max_width_estimate_and_index = Some((width_estimate, state.entries.len()));
-        }
+        state.entry_widths.push(width_estimate);
         state.entries.push(CachedEntry {
             depth,
             entry,
@@ -5222,7 +4800,8 @@ impl OutlinePanel {
                             .zip(&new_search_matches)
                             .any(|((existing, _), incoming)| existing != incoming)
                 }
-                ItemsDisplayMode::Outline | ItemsDisplayMode::CallHierarchy(_) => true,
+                ItemsDisplayMode::Outline => true,
+                ItemsDisplayMode::CallHierarchy(_) => false,
             };
             if changed {
                 let previous_matches = match &mut self.mode {
@@ -5594,7 +5173,7 @@ impl OutlinePanel {
                 .get()
                 .map(|data| data.context_text.len())
                 .unwrap_or_default(),
-            PanelEntry::CallHierarchy(row) => row.call.display.name.len(),
+            PanelEntry::CallHierarchy(row) => row.name().len(),
         };
 
         (item_text_chars + depth) as u64
@@ -6004,6 +5583,14 @@ impl Panel for OutlinePanel {
                     let old_active = outline_panel.active;
                     outline_panel.active = active;
                     if old_active != active {
+                        if matches!(outline_panel.mode, ItemsDisplayMode::CallHierarchy(_)) {
+                            if active {
+                                outline_panel.update_cached_entries(None, window, cx);
+                            }
+                            outline_panel.serialize(cx);
+                            cx.notify();
+                            return;
+                        }
                         outline_panel.lsp_outline_refresh_task = Task::ready(());
                         outline_panel.outline_fetch_tasks.clear();
                         if active
@@ -6076,7 +5663,7 @@ impl Render for OutlinePanel {
         let search_query_text = search_query.map(|sq| sq.query.to_string());
 
         let call_hierarchy_direction = match &self.mode {
-            ItemsDisplayMode::CallHierarchy(state) => Some(state.direction),
+            ItemsDisplayMode::CallHierarchy(state) => Some(state.direction()),
             _ => None,
         };
 
@@ -6439,15 +6026,74 @@ fn reserve_chevron_slot(indicator: FolderIndicator, icon: AnyElement) -> AnyElem
 struct GenerationState {
     entries: Vec<CachedEntry>,
     match_candidates: Vec<StringMatchCandidate>,
-    max_width_estimate_and_index: Option<(u64, usize)>,
+    entry_widths: Vec<u64>,
 }
 
 impl GenerationState {
     fn clear(&mut self) {
         self.entries.clear();
         self.match_candidates.clear();
-        self.max_width_estimate_and_index = None;
+        self.entry_widths.clear();
     }
+
+    fn max_width_item_index(&self) -> Option<usize> {
+        let mut maximum = None;
+        for (index, width) in self.entry_widths.iter().enumerate() {
+            if maximum.is_none_or(|(current, _)| *width > current) {
+                maximum = Some((*width, index));
+            }
+        }
+        maximum.map(|(_, index)| index)
+    }
+}
+
+async fn filter_generation_state(
+    generation_state: GenerationState,
+    query: Option<String>,
+    executor: gpui::BackgroundExecutor,
+) -> (Vec<CachedEntry>, Option<usize>) {
+    let Some(query) = query else {
+        let max_width_item_index = generation_state.max_width_item_index();
+        return (generation_state.entries, max_width_item_index);
+    };
+
+    let mut matched_ids = match_strings(
+        &generation_state.match_candidates,
+        &query,
+        true,
+        true,
+        usize::MAX,
+        &AtomicBool::default(),
+        executor,
+    )
+    .await
+    .into_iter()
+    .map(|string_match| (string_match.candidate_id, string_match))
+    .collect::<HashMap<_, _>>();
+
+    debug_assert_eq!(
+        generation_state.entries.len(),
+        generation_state.entry_widths.len()
+    );
+    let mut entries = Vec::with_capacity(generation_state.entries.len());
+    let mut max_width: Option<(u64, usize)> = None;
+    for (id, (mut cached_entry, width)) in generation_state
+        .entries
+        .into_iter()
+        .zip(generation_state.entry_widths)
+        .enumerate()
+    {
+        let Some(string_match) = matched_ids.remove(&id) else {
+            continue;
+        };
+        cached_entry.string_match = Some(string_match);
+        if max_width.is_none_or(|(max, _)| width > max) {
+            max_width = Some((width, entries.len()));
+        }
+        entries.push(cached_entry);
+    }
+
+    (entries, max_width.map(|(_, index)| index))
 }
 
 #[cfg(test)]
@@ -10207,7 +9853,7 @@ outline: struct OutlineEntryExcerpt
         });
     }
 
-    async fn add_outline_panel(
+    pub(super) async fn add_outline_panel(
         project: &Entity<Project>,
         cx: &mut TestAppContext,
     ) -> (WindowHandle<MultiWorkspace>, Entity<Workspace>) {
@@ -10238,7 +9884,7 @@ outline: struct OutlineEntryExcerpt
         (window, workspace)
     }
 
-    fn outline_panel(
+    pub(super) fn outline_panel(
         workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
     ) -> Entity<OutlinePanel> {
@@ -10296,7 +9942,7 @@ outline: struct OutlineEntryExcerpt
             .await;
     }
 
-    fn add_multi_buffer_editor(
+    pub(super) fn add_multi_buffer_editor(
         workspace: &Entity<Workspace>,
         project: &Entity<Project>,
         excerpts: &[(&Entity<language::Buffer>, Vec<Range<language::Point>>)],
@@ -10357,7 +10003,11 @@ outline: struct OutlineEntryExcerpt
         flush_outline_tasks(cx);
     }
 
-    fn select_in_buffer(editor: &Entity<Editor>, buffer_id: BufferId, cx: &mut VisualTestContext) {
+    pub(super) fn select_in_buffer(
+        editor: &Entity<Editor>,
+        buffer_id: BufferId,
+        cx: &mut VisualTestContext,
+    ) {
         let anchor = editor.read_with(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let excerpt = snapshot
@@ -10379,7 +10029,7 @@ outline: struct OutlineEntryExcerpt
         flush_outline_tasks(cx);
     }
 
-    async fn wait_for_outline_tasks(
+    pub(super) async fn wait_for_outline_tasks(
         outline_panel: &Entity<OutlinePanel>,
         cx: &mut VisualTestContext,
     ) {
@@ -10538,7 +10188,7 @@ outline: struct OutlineEntryExcerpt
                     format!("search: {search_result}")
                 }
                 PanelEntry::CallHierarchy(row) => {
-                    format!("call: {}", row.call.display.name)
+                    format!("call: {}", row.name())
                 }
             };
 
@@ -10549,7 +10199,7 @@ outline: struct OutlineEntryExcerpt
         display_string
     }
 
-    fn init_test(cx: &mut TestAppContext) {
+    pub(super) fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
@@ -10857,7 +10507,7 @@ outline: struct OutlineEntryExcerpt
         editor
     }
 
-    fn flush_outline_tasks(cx: &mut VisualTestContext) {
+    pub(super) fn flush_outline_tasks(cx: &mut VisualTestContext) {
         cx.run_until_parked();
         cx.executor().advance_clock(UPDATE_DEBOUNCE * 3);
         cx.run_until_parked();
