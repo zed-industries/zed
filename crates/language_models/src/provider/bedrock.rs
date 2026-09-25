@@ -906,8 +906,10 @@ impl LanguageModel for BedrockModel {
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
+            LanguageModelToolChoice::Auto => self.model.supports_tool_use(),
+            LanguageModelToolChoice::Any => {
                 self.model.supports_tool_use()
+                    && anthropic::supports_forced_tool_use(self.model.id())
             }
             // Add support for None - we'll filter tool calls at response
             LanguageModelToolChoice::None => self.model.supports_tool_use(),
