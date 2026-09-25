@@ -5453,6 +5453,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "show_branch_status_icon": false,
     "show_branch_name": true,
     "show_worktree_name": true,
+    "show_active_file": "off",
     "show_project_items": true,
     "show_onboarding_banner": true,
     "show_user_picture": true,
@@ -5469,6 +5470,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_branch_status_icon`: Whether to show git status indicators on the branch icon in the titlebar
 - `show_branch_name`: Whether to show the branch name button in the titlebar
 - `show_worktree_name`: Whether to show the worktree name button in the titlebar
+- `show_active_file`: Whether to show the active file in the titlebar. Can be `"off"`, `"file_name"` (e.g. `main.rs`) or `"relative_path"` (e.g. `src/main.rs`)
 - `show_project_items`: Whether to show the project host and name in the titlebar
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
 - `show_user_picture`: Whether to show user picture in the titlebar
