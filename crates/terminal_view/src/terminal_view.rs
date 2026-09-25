@@ -138,6 +138,12 @@ pub struct TerminalView {
     cursor_shape: CursorShape,
     blink_manager: Entity<BlinkManager>,
     mode: TerminalMode,
+    /// Corner radii for the terminal's background, for when it's embedded in a
+    /// container with rounded corners.
+    ///
+    /// GPUI can't clip children to rounded corners, so without this the square
+    /// background paints over the container's corners. Only the background is
+    /// rounded, terminal content isn't clipped.
     background_corner_radii: Option<Corners<Rems>>,
     // Explicit override for whether workspace-specific context menu actions are shown.
     // When `None`, visibility is derived from `mode` (hidden for embedded terminals).
@@ -1437,7 +1443,6 @@ impl Render for TerminalView {
                     ))
                     .when(self.content_mode(window, cx).is_scrollable(), |div| {
                         let colors = cx.theme().colors();
-                        let radii = self.background_corner_radii.unwrap_or_default();
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
                                 .show_along(ScrollAxes::Vertical)
@@ -1445,11 +1450,6 @@ impl Render for TerminalView {
                                     ScrollAxes::Vertical,
                                     colors.editor_background,
                                 )
-                                .track_corner_radii(Corners {
-                                    top_right: radii.top_right.into(),
-                                    bottom_right: radii.bottom_right.into(),
-                                    ..Default::default()
-                                })
                                 .tracked_scroll_handle(&self.scroll_handle),
                             window,
                             cx,

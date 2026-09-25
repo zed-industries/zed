@@ -2782,25 +2782,8 @@ impl Element for MarkdownElement {
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
                                     // This is a parent container that we can position the copy button inside.
-                                    let mut parent_container = div()
-                                        .group("code_block")
-                                        .relative()
-                                        .w_full()
-                                        .rounded_lg()
-                                        .when(
-                                            matches!(
-                                                &self.code_block_renderer,
-                                                CodeBlockRenderer::Default { border: true, .. }
-                                            ),
-                                            |container| {
-                                                container.rounded_md().border_1().border_color(
-                                                    cx.theme().colors().border_variant,
-                                                )
-                                            },
-                                        );
-                                    let mut code_block_style = parent_container.style().clone();
-                                    code_block_style.refine(&self.style.code_block);
-                                    let corner_radii = code_block_style.corner_radii;
+                                    let parent_container =
+                                        div().group("code_block").relative().w_full();
 
                                     let mut parent_container: AnyDiv = if let Some(scroll_handle) =
                                         scroll_handle.as_ref()
@@ -2812,30 +2795,32 @@ impl Element for MarkdownElement {
                                                 ScrollAxes::Horizontal,
                                                 cx.theme().colors().editor_background,
                                             )
-                                            .track_corner_radii(gpui::Corners {
-                                                bottom_left: corner_radii
-                                                    .bottom_left
-                                                    .unwrap_or_default(),
-                                                bottom_right: corner_radii
-                                                    .bottom_right
-                                                    .unwrap_or_default(),
-                                                ..Default::default()
-                                            })
                                             .notify_content();
 
                                         parent_container
+                                            .rounded_lg()
                                             .custom_scrollbars(scrollbars, window, cx)
                                             .into()
                                     } else {
                                         parent_container.into()
                                     };
 
+                                    if let CodeBlockRenderer::Default { border: true, .. } =
+                                        &self.code_block_renderer
+                                    {
+                                        parent_container = parent_container
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border_variant);
+                                    }
+
                                     parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
-                                    let code_block = div().id(("code-block", range.start)).map(
-                                        |mut code_block| {
-                                            code_block.style().corner_radii = corner_radii;
+                                    let code_block = div()
+                                        .id(("code-block", range.start))
+                                        .rounded_lg()
+                                        .map(|code_block| {
                                             if let Some(scroll_handle) = scroll_handle.as_ref() {
                                                 code_block
                                                     .flex()
@@ -2845,8 +2830,7 @@ impl Element for MarkdownElement {
                                             } else {
                                                 code_block.w_full()
                                             }
-                                        },
-                                    );
+                                        });
 
                                     builder.push_text_style(self.style.code_block.text.to_owned());
                                     builder.push_code_block(language);

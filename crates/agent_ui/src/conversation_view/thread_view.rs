@@ -24,7 +24,6 @@ use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::{AvailableSkill, PromptLocalCommand, pluralize};
 use crate::message_editor::SharedSessionCapabilities;
-use crate::ui::MD_CORNER_RADIUS;
 use crate::ui::{
     SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip, TerminalSandboxWarning,
     TerminalToolHeader,
@@ -3881,7 +3880,7 @@ impl ThreadView {
             .child(
                 v_flex()
                     .w_full()
-                    .rounded(MD_CORNER_RADIUS)
+                    .rounded_md()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
                     .child(
@@ -8014,7 +8013,7 @@ impl ThreadView {
                     .border_1()
                     .when(tool_failed || command_failed, |card| card.border_dashed())
                     .border_color(border_color)
-                    .rounded(MD_CORNER_RADIUS)
+                    .rounded_md()
             })
             .overflow_hidden()
             .child(header)
@@ -8026,7 +8025,7 @@ impl ThreadView {
                         .when(tool_failed || command_failed, |card| card.border_dashed())
                         .border_color(border_color)
                         .bg(cx.theme().colors().terminal_background)
-                        .rounded_b(MD_CORNER_RADIUS)
+                        .rounded_b_md()
                         .text_ui_sm(cx)
                         .h_full()
                         .children(terminal_view.map(|terminal_view| {
@@ -8685,7 +8684,7 @@ impl ThreadView {
                     this
                 } else if use_card_layout {
                     this.my_1p5()
-                        .rounded(MD_CORNER_RADIUS)
+                        .rounded_md()
                         .border_1()
                         .when(failed_or_canceled, |this| this.border_dashed())
                         .border_color(self.tool_card_border_color(cx))
@@ -9996,7 +9995,7 @@ impl ThreadView {
         v_flex()
             .p_3()
             .gap_1()
-            .rounded_b(MD_CORNER_RADIUS)
+            .rounded_b_md()
             .bg(cx.theme().colors().editor_background)
             .child(bar(0, "w_4_5"))
             .child(bar(1, "w_1_4"))
@@ -10762,7 +10761,7 @@ impl ThreadView {
 
         v_flex()
             .w_full()
-            .rounded(MD_CORNER_RADIUS)
+            .rounded_md()
             .border_1()
             .when(has_no_title_or_canceled, |this| this.border_dashed())
             .border_color(self.tool_card_border_color(cx))
