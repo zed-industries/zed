@@ -116,10 +116,15 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
-        LanguageModelCostInfo::RequestCost {
-            cost_per_request: self.model.multiplier(),
+        if let Some(cost) = self.model.token_cost() {
+            return Some(LanguageModelCostInfo::TokenCost {
+                input_token_cost_per_1m: cost.input_dollars_per_1m,
+                output_token_cost_per_1m: cost.output_dollars_per_1m,
+            });
         }
-        .into()
+        self.model
+            .multiplier()
+            .map(|cost_per_request| LanguageModelCostInfo::RequestCost { cost_per_request })
     }
 
     fn telemetry_id(&self) -> String {
