@@ -240,7 +240,7 @@ impl EntryViewState {
                 let can_rewind = thread.read(cx).supports_truncate(cx);
                 let has_client_id = message.client_id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
-                let chunks = message.chunks.clone();
+                let chunks = message.content.source_blocks().to_vec();
                 if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
                     if !editor.focus_handle(cx).is_focused(window) {
                         // Only update if we are not editing.
@@ -414,11 +414,6 @@ impl EntryViewState {
                 };
                 entry.sync(message);
             }
-            AgentThreadEntry::CompletedPlan(_) => {
-                if !matches!(self.entries.get(index), Some(Entry::CompletedPlan)) {
-                    self.set_entry(index, Entry::CompletedPlan);
-                }
-            }
             AgentThreadEntry::ContextCompaction(_) => {
                 if !matches!(self.entries.get(index), Some(Entry::ContextCompaction)) {
                     self.set_entry(index, Entry::ContextCompaction);
@@ -470,7 +465,6 @@ impl EntryViewState {
                 Entry::UserMessage { .. }
                 | Entry::AssistantMessage { .. }
                 | Entry::Elicitation { .. }
-                | Entry::CompletedPlan
                 | Entry::ContextCompaction => {}
                 Entry::ToolCall(ToolCallEntry { content, .. }) => {
                     for view in content.values() {
@@ -540,7 +534,6 @@ pub enum Entry {
     AssistantMessage(AssistantMessageEntry),
     ToolCall(ToolCallEntry),
     Elicitation { focus_handle: FocusHandle },
-    CompletedPlan,
     ContextCompaction,
 }
 
@@ -551,7 +544,7 @@ impl Entry {
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
             Self::Elicitation { focus_handle } => Some(focus_handle.clone()),
-            Self::CompletedPlan | Self::ContextCompaction => None,
+            Self::ContextCompaction => None,
         }
     }
 
@@ -561,7 +554,6 @@ impl Entry {
             Self::AssistantMessage(_)
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
-            | Self::CompletedPlan
             | Self::ContextCompaction => None,
         }
     }
@@ -592,7 +584,6 @@ impl Entry {
             Self::UserMessage(_)
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
-            | Self::CompletedPlan
             | Self::ContextCompaction => None,
         }
     }
@@ -611,7 +602,6 @@ impl Entry {
             Self::UserMessage(_)
             | Self::AssistantMessage(_)
             | Self::Elicitation { .. }
-            | Self::CompletedPlan
             | Self::ContextCompaction => false,
         }
     }
@@ -630,7 +620,7 @@ impl Focusable for Entry {
             Self::AssistantMessage(message) => message.focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
             Self::Elicitation { focus_handle } => focus_handle.clone(),
-            Self::CompletedPlan | Self::ContextCompaction => cx.focus_handle(),
+            Self::ContextCompaction => cx.focus_handle(),
         }
     }
 }
