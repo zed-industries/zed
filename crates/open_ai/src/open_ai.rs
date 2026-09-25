@@ -100,6 +100,12 @@ pub enum Model {
     FivePointSixTerra,
     #[serde(rename = "gpt-5.6-luna")]
     FivePointSixLuna,
+    #[serde(rename = "gpt-6-astra")]
+    SixAstra,
+    #[serde(rename = "gpt-6-sol")]
+    SixSol,
+    #[serde(rename = "gpt-6-luna")]
+    SixLuna,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -149,6 +155,9 @@ impl Model {
             "gpt-5.6-sol" => Ok(Self::FivePointSixSol),
             "gpt-5.6-terra" => Ok(Self::FivePointSixTerra),
             "gpt-5.6-luna" => Ok(Self::FivePointSixLuna),
+            "gpt-6-astra" => Ok(Self::SixAstra),
+            "gpt-6-sol" => Ok(Self::SixSol),
+            "gpt-6-luna" => Ok(Self::SixLuna),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -173,6 +182,9 @@ impl Model {
             Self::FivePointSixSol => "gpt-5.6-sol",
             Self::FivePointSixTerra => "gpt-5.6-terra",
             Self::FivePointSixLuna => "gpt-5.6-luna",
+            Self::SixAstra => "gpt-6-astra",
+            Self::SixSol => "gpt-6-sol",
+            Self::SixLuna => "gpt-6-luna",
             Self::Custom { name, .. } => name,
         }
     }
@@ -197,6 +209,9 @@ impl Model {
             Self::FivePointSixSol => "GPT-5.6 Sol",
             Self::FivePointSixTerra => "GPT-5.6 Terra",
             Self::FivePointSixLuna => "GPT-5.6 Luna",
+            Self::SixAstra => "GPT-6 Astra",
+            Self::SixSol => "GPT-6 Sol",
+            Self::SixLuna => "GPT-6 Luna",
             Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
         }
     }
@@ -221,6 +236,9 @@ impl Model {
             Self::FivePointSixSol => 1_050_000,
             Self::FivePointSixTerra => 1_050_000,
             Self::FivePointSixLuna => 1_050_000,
+            Self::SixAstra => 1_050_000,
+            Self::SixSol => 1_050_000,
+            Self::SixLuna => 1_050_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -248,6 +266,9 @@ impl Model {
             Self::FivePointSixSol => Some(128_000),
             Self::FivePointSixTerra => Some(128_000),
             Self::FivePointSixLuna => Some(128_000),
+            Self::SixAstra => Some(128_000),
+            Self::SixSol => Some(128_000),
+            Self::SixLuna => Some(128_000),
         }
     }
 
@@ -271,7 +292,10 @@ impl Model {
             | Self::FivePointFive
             | Self::FivePointFivePro
             | Self::FivePointSixTerra
-            | Self::FivePointSixLuna => Some(ReasoningEffort::Medium),
+            | Self::FivePointSixLuna
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna => Some(ReasoningEffort::Medium),
             _ => None,
         }
     }
@@ -318,8 +342,19 @@ impl Model {
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
             ],
-            Self::FivePointSixSol | Self::FivePointSixTerra | Self::FivePointSixLuna => &[
+            Self::FivePointSixSol
+            | Self::FivePointSixTerra
+            | Self::FivePointSixLuna
+            | Self::SixSol
+            | Self::SixLuna => &[
                 ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
+            ],
+            Self::SixAstra => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
@@ -372,6 +407,9 @@ impl Model {
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
             | Self::FivePointSixLuna
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna
             | Self::FiveNano => true,
             Self::O3 | Model::Custom { .. } => false,
         }
@@ -402,7 +440,10 @@ impl Model {
             | Self::FivePointFivePro
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
-            | Self::FivePointSixLuna => true,
+            | Self::FivePointSixLuna
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna => true,
             Self::Four
             | Self::FourOmniMini
             | Self::O3
@@ -432,7 +473,10 @@ impl Model {
             | Self::FivePointFive
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
-            | Self::FivePointSixLuna => true,
+            | Self::FivePointSixLuna
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna => true,
             Self::Four
             | Self::FiveNano
             | Self::FivePointFourNano
@@ -446,7 +490,8 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use language_model_core::{
-        LanguageModelCompletionError, OPEN_AI_PROVIDER_NAME, ProviderErrorCategory,
+        LanguageModelCompletionError, LanguageModelProviderName, OPEN_AI_PROVIDER_NAME,
+        ProviderErrorCategory,
     };
 
     use super::{Model, ReasoningEffort, RequestError, StatusCode};
@@ -552,6 +597,65 @@ mod tests {
     }
 
     #[test]
+    fn http_usage_limit_type_is_payment_required() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: OPEN_AI_PROVIDER_NAME.to_string(),
+            status_code: StatusCode::TOO_MANY_REQUESTS,
+            body: serde_json::json!({
+                "error": {
+                    "type": "usage_limit_reached",
+                    "message": "The usage limit has been reached",
+                    "plan_type": "plus"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(!error.is_transient());
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                status: Some(StatusCode::TOO_MANY_REQUESTS),
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::PaymentRequired,
+                ..
+            } if code == "usage_limit_reached"
+                && message == "The usage limit has been reached"
+        ));
+    }
+
+    #[test]
+    fn http_unknown_error_type_is_preserved_for_compatible_provider() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: "Compatible Provider".to_string(),
+            status_code: StatusCode::BAD_REQUEST,
+            body: serde_json::json!({
+                "error": {
+                    "type": "provider_specific_error",
+                    "message": "Provider-specific rejection"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::InvalidRequest,
+                ..
+            } if provider == LanguageModelProviderName::from("Compatible Provider".to_string())
+                && code == "provider_specific_error"
+                && message == "Provider-specific rejection"
+        ));
+    }
+
+    #[test]
     fn http_invalid_prompt_is_content_policy_rejection() {
         let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
             provider: OPEN_AI_PROVIDER_NAME.to_string(),
@@ -645,11 +749,11 @@ pub struct Request {
     pub service_tier: Option<ServiceTier>,
 }
 
-/// Service tier for OpenAI requests. Maps to the top-level `service_tier`
-/// field on Responses and Chat Completions. We only ever send `Priority`
-/// today (in response to Fast Mode being enabled); the other variants are
-/// included for symmetry with the API and so deserialization of echoed
-/// values does not fail.
+/// Selects the service tier for OpenAI requests.
+///
+/// This maps to the top-level `service_tier` field on Responses and Chat
+/// Completions. `Priority` serializes as `priority` for compatibility, while
+/// deserialization also accepts the `fast` value echoed by some models.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceTier {
@@ -657,6 +761,7 @@ pub enum ServiceTier {
     Default,
     Flex,
     Scale,
+    #[serde(alias = "fast")]
     Priority,
 }
 
@@ -1034,24 +1139,46 @@ pub async fn stream_completion(
         &request,
     )
     .await?;
+    let provider_name =
+        language_model_core::LanguageModelProviderName::from(provider_name.to_string());
     Ok(events
-        .filter_map(|event| async move {
-            let value = match event {
-                Ok(ChatCompletionStreamEvent::Data(value)) => value,
-                Ok(ChatCompletionStreamEvent::Done) => return None,
-                Err(error) => return Some(Err(anyhow!(error))),
-            };
-            match serde_json::from_str::<ResponseStreamResult>(value.get()) {
-                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                Ok(ResponseStreamResult::Err { error }) => Some(Err(anyhow!(error.message))),
-                Err(error) => {
-                    log::error!(
-                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
-                        Response: `{}`",
-                        error,
-                        value,
-                    );
-                    Some(Err(anyhow!(error)))
+        .filter_map(move |event| {
+            let provider_name = provider_name.clone();
+            async move {
+                let value = match event {
+                    Ok(ChatCompletionStreamEvent::Data(value)) => value,
+                    Ok(ChatCompletionStreamEvent::Done) => return None,
+                    Err(error) => return Some(Err(anyhow!(error))),
+                };
+                match serde_json::from_str::<ResponseStreamResult>(value.get()) {
+                    Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                    Ok(ResponseStreamResult::Err { error }) => {
+                        let category = completion::response_error_category(
+                            error.code.as_deref(),
+                            error.error_type.as_deref(),
+                            None,
+                            &error.message,
+                        );
+                        Some(Err(anyhow!(
+                            language_model_core::LanguageModelCompletionError::from_provider_response(
+                                provider_name,
+                                None,
+                                error.code.or(error.error_type),
+                                error.message,
+                                None,
+                                category,
+                            )
+                        )))
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                            Response: `{}`",
+                            error,
+                            value,
+                        );
+                        Some(Err(anyhow!(error)))
+                    }
                 }
             }
         })
@@ -1195,13 +1322,14 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
                     let error = error_response.error;
                     let category = completion::response_error_category(
                         error.code.as_deref(),
+                        error.error_type.as_deref(),
                         Some(status_code),
                         &error.message,
                     );
                     Self::from_provider_response(
                         provider.into(),
                         Some(status_code),
-                        error.code,
+                        error.code.or(error.error_type),
                         error.message,
                         retry_after,
                         category,

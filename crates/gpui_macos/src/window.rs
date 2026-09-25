@@ -6,7 +6,6 @@ use crate::{
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
-use block::ConcreteBlock;
 use block2::RcBlock;
 use cocoa::{
     appkit::{
@@ -18,7 +17,7 @@ use cocoa::{
     },
     base::{id, nil},
     foundation::{
-        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
+        NSArray, NSAutoreleasePool, NSData, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
         NSOperatingSystemVersion, NSPoint, NSProcessInfo, NSRect, NSSize, NSString, NSUInteger,
         NSUserDefaults,
     },
@@ -31,7 +30,7 @@ use gpui::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
-    WindowParams, point, px, size,
+    WindowParams, WindowVisibility, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -50,12 +49,18 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
-use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject as Objc2Object};
-use objc2_app_kit::{
-    NSAlert, NSAlertStyle, NSBeep, NSButton as Objc2NSButton, NSView as Objc2NSView,
-    NSWindow as Objc2NSWindow, NSWindowButton as Objc2NSWindowButton,
+use objc2::{
+    AnyThread, MainThreadMarker,
+    rc::Retained,
+    runtime::{AnyObject as Objc2Object, ProtocolObject},
 };
-use objc2_foundation::{NSPoint as Objc2NSPoint, NSRect as Objc2NSRect};
+use objc2_app_kit::{
+    NSAlert, NSAlertStyle, NSBeep, NSButton as Objc2NSButton, NSDraggingImageComponent,
+    NSDraggingImageComponentIconKey, NSDraggingItem, NSPasteboardWriting, NSTrackingArea,
+    NSTrackingAreaOptions, NSView as Objc2NSView, NSWindow as Objc2NSWindow,
+    NSWindowButton as Objc2NSWindowButton, NSWorkspace,
+};
+use objc2_foundation::{NSPoint as Objc2NSPoint, NSRect as Objc2NSRect, NSURL};
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -69,7 +74,7 @@ use std::{
     ptr::{self, NonNull},
     rc::Rc,
     sync::{
-        Arc, Weak,
+        Arc, Once, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -77,10 +82,14 @@ use std::{
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
+static RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT: Once = Once::new();
+
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
+static mut WINDOW_STATE_ARCHIVER_DELEGATE_CLASS: *const Class = ptr::null();
+static mut WINDOW_STATE_UNARCHIVER_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -92,14 +101,6 @@ const NSNormalWindowLevel: NSInteger = 0;
 const NSFloatingWindowLevel: NSInteger = 3;
 #[allow(non_upper_case_globals)]
 const NSPopUpWindowLevel: NSInteger = 101;
-#[allow(non_upper_case_globals)]
-const NSTrackingMouseEnteredAndExited: NSUInteger = 0x01;
-#[allow(non_upper_case_globals)]
-const NSTrackingMouseMoved: NSUInteger = 0x02;
-#[allow(non_upper_case_globals)]
-const NSTrackingActiveAlways: NSUInteger = 0x80;
-#[allow(non_upper_case_globals)]
-const NSTrackingInVisibleRect: NSUInteger = 0x200;
 #[allow(non_upper_case_globals)]
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 #[allow(non_upper_case_globals)]
@@ -121,12 +122,6 @@ pub enum UserTabbingPreference {
     InFullScreen,
 }
 
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {
-    // AppKit constant naming the icon component of an NSDraggingImageComponent.
-    #[allow(non_upper_case_globals)]
-    static NSDraggingImageComponentIconKey: id;
-}
 #[ctor(unsafe)]
 unsafe fn build_classes() {
     unsafe {
@@ -313,6 +308,74 @@ unsafe fn build_classes() {
             );
             decl.register()
         };
+        WINDOW_STATE_ARCHIVER_DELEGATE_CLASS = {
+            let mut decl =
+                ClassDecl::new("GPUIWindowStateArchiverDelegate", class!(NSObject)).unwrap();
+            decl.add_method(
+                sel!(archiver:willEncodeObject:),
+                window_state_archiver_will_encode_object
+                    as extern "C" fn(&Object, Sel, id, id) -> id,
+            );
+            decl.register()
+        };
+        WINDOW_STATE_UNARCHIVER_CLASS = {
+            let mut decl =
+                ClassDecl::new("GPUIWindowStateKeyedUnarchiver", class!(NSKeyedUnarchiver))
+                    .unwrap();
+            decl.add_method(
+                sel!(_windowRestorationOptions),
+                window_state_unarchiver_restoration_options as extern "C" fn(&Object, Sel) -> id,
+            );
+            decl.register()
+        };
+    }
+}
+
+// NSKeyedArchiverDelegate callback that skips objects which don't adopt `NSSecureCoding`
+// (the window itself and its NSView hierarchy), so encoding the window's restorable state
+// succeeds. AppKit still encodes the window frame and its persistent window-management
+// identifier, which is what the Space restoration on relaunch keys off.
+extern "C" fn window_state_archiver_will_encode_object(
+    _this: &Object,
+    _sel: Sel,
+    _archiver: id,
+    object: id,
+) -> id {
+    // SAFETY: `object` is whatever AppKit hands the delegate during archiving; we only send it
+    // `isKindOfClass:` with valid class arguments, which is safe for any Objective-C object.
+    unsafe {
+        if object.is_null() {
+            return object;
+        }
+        let is_view: BOOL = msg_send![object, isKindOfClass: class!(NSView)];
+        let is_window: BOOL = msg_send![object, isKindOfClass: class!(NSWindow)];
+        if is_view == YES || is_window == YES {
+            nil
+        } else {
+            object
+        }
+    }
+}
+
+// Override of the private `_windowRestorationOptions` on our NSKeyedUnarchiver subclass.
+// Returning a default-initialized `NSWindowRestorationOptions` tells AppKit to restore the
+// window to its original Space. This is the macOS 15+ path (FB15644170: the
+// `NSWindowRestoresWorkspaceAtLaunch` user default no longer works there).
+extern "C" fn window_state_unarchiver_restoration_options(_this: &Object, _sel: Sel) -> id {
+    if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
+        return nil;
+    }
+    // SAFETY: we look the class up by name and only send it `alloc`/`init`/`autorelease`, all of
+    // which have the standard `-> id` signature. Returning `nil` when the class is absent is valid.
+    unsafe {
+        match Class::get("NSWindowRestorationOptions") {
+            Some(class) => {
+                let options: id = msg_send![class, alloc];
+                let options: id = msg_send![options, init];
+                msg_send![options, autorelease]
+            }
+            None => nil,
+        }
     }
 }
 
@@ -391,6 +454,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         decl.add_method(
             sel!(windowWillExitFullScreen:),
             window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidFailToExitFullScreen:),
+            window_did_fail_to_exit_fullscreen as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
             sel!(windowDidExitFullScreen:),
@@ -485,6 +552,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     }
 }
 
+#[derive(Clone, Copy)]
 struct TrafficLightFrames {
     titlebar: Objc2NSRect,
     close: Objc2NSRect,
@@ -601,6 +669,10 @@ struct MacWindowState {
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
+    visibility_callback: Option<Box<dyn FnMut(WindowVisibility)>>,
+    // `None` until a callback is registered, so notifications during
+    // construction are not queued for delivery to a callback registered later.
+    last_visibility: Option<WindowVisibility>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
@@ -612,6 +684,7 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     traffic_light_frames: Option<TrafficLightFrames>,
+    pre_fullscreen_traffic_light_frames: Option<TrafficLightFrames>,
     transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
@@ -625,6 +698,7 @@ struct MacWindowState {
     // windows draw their own titlebar and move the window via `start_window_move`.
     app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    is_exiting_fullscreen: bool,
     simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
@@ -641,7 +715,7 @@ struct MacWindowState {
 impl MacWindowState {
     fn move_traffic_light(&mut self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
-            if self.is_fullscreen() {
+            if self.is_fullscreen() && !self.is_exiting_fullscreen {
                 self.restore_traffic_light();
                 return;
             }
@@ -1034,6 +1108,8 @@ impl MacWindow {
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
+                visibility_callback: None,
+                last_visibility: None,
                 resize_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
@@ -1047,6 +1123,7 @@ impl MacWindow {
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 traffic_light_frames: None,
+                pre_fullscreen_traffic_light_frames: None,
                 transparent_titlebar: titlebar
                     .as_ref()
                     .is_none_or(|titlebar| titlebar.appears_transparent),
@@ -1057,6 +1134,7 @@ impl MacWindow {
                 first_mouse: false,
                 app_owns_titlebar_drag,
                 fullscreen_restore_bounds: Bounds::default(),
+                is_exiting_fullscreen: false,
                 simple_fullscreen_state: None,
                 move_tab_to_new_window_callback: None,
                 merge_all_windows_callback: None,
@@ -1122,15 +1200,21 @@ impl MacWindow {
             let main_window: id = msg_send![app, mainWindow];
             let mut sheet_parent = None;
 
+            // SAFETY: This is the live GPUIView (an NSView subclass) added to the
+            // content view above, and window creation runs on the main thread.
+            let tracking_view = &*native_view.cast::<Objc2NSView>();
+
             match kind {
                 WindowKind::Normal | WindowKind::Floating => {
                     if kind == WindowKind::Floating {
                         // Let the window float keep above normal windows.
                         native_window.setLevel_(NSFloatingWindowLevel);
+                        native_window.setAcceptsMouseMovedEvents_(YES);
                     } else {
                         native_window.setLevel_(NSNormalWindowLevel);
+                        native_window.setAcceptsMouseMovedEvents_(NO);
+                        add_mouse_tracking_area(tracking_view);
                     }
-                    native_window.setAcceptsMouseMovedEvents_(YES);
 
                     if let Some(tabbing_identifier) = tabbing_identifier {
                         let tabbing_id = ns_string(tabbing_identifier.as_str());
@@ -1142,19 +1226,7 @@ impl MacWindow {
                 // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only
                 // for exhaustiveness.
                 WindowKind::PopUp | WindowKind::AnchoredPopup(_) => {
-                    // Use a tracking area to allow receiving MouseMoved events even when
-                    // the window or application aren't active, which is often the case
-                    // e.g. for notification windows.
-                    let tracking_area: id = msg_send![class!(NSTrackingArea), alloc];
-                    let _: () = msg_send![
-                        tracking_area,
-                        initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
-                        options: NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
-                        owner: native_view
-                        userInfo: nil
-                    ];
-                    let _: () =
-                        msg_send![native_view, addTrackingArea: tracking_area.autorelease()];
+                    add_mouse_tracking_area(tracking_view);
 
                     native_window.setLevel_(NSPopUpWindowLevel);
                     let _: () = msg_send![
@@ -1303,6 +1375,15 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
+        // `accesskit_macos::SubclassingAdapter::for_window` strong-retains the
+        // window's content view, and that content view keeps the `GPUIView` it
+        // hosts alive. Together with the `Arc<Mutex<MacWindowState>>` parked in
+        // both views' `windowState` ivar, that forms
+        // `MacWindowState -> adapter -> content view -> GPUIView -> MacWindowState`,
+        // a cycle the delegate/`frame_source` teardown below cannot break. Drop
+        // the adapter here so the native view, its `CAMetalLayer` and the
+        // renderer's command queue are actually released with the window.
+        drop(this.accesskit_adapter.take());
         this.renderer.destroy();
         let window = this.native_window;
         let sheet_parent = this.sheet_parent.take();
@@ -1311,6 +1392,9 @@ impl Drop for MacWindow {
             this.native_window.setDelegate_(nil);
         }
         this.input_handler.take();
+        // A delivery task queued by `report_visibility` may still run after the
+        // GPUI window is gone; without a callback it has nothing to notify.
+        this.visibility_callback.take();
         this.foreground_executor
             .spawn(async move {
                 unsafe {
@@ -1423,6 +1507,116 @@ impl PlatformWindow for MacWindow {
             } else {
                 let _: () = msg_send![native_window, setTabbingIdentifier:nil];
             }
+        }
+    }
+
+    fn native_window_state(&self) -> Option<Vec<u8>> {
+        let native_window = {
+            let state = self.0.lock();
+            if state.is_fullscreen() || state.simple_fullscreen_state.is_some() {
+                return None;
+            }
+            state.native_window
+        };
+        // SAFETY: `native_window` is a live `NSWindow` retained by this window's state, and the
+        // selectors below are AppKit/Foundation methods sent with their documented signatures. The
+        // archived bytes are copied into an owned `Vec` before the objects we allocated are
+        // released, so no pointer into Objective-C memory escapes this block.
+        unsafe {
+            let archiver: id = msg_send![class!(NSKeyedArchiver), alloc];
+            let archiver: id = msg_send![archiver, initRequiringSecureCoding: YES];
+            if archiver.is_null() {
+                log::warn!("failed to create an archiver for the native window state");
+                return None;
+            }
+            let delegate: id = msg_send![WINDOW_STATE_ARCHIVER_DELEGATE_CLASS, new];
+            let _: () = msg_send![archiver, setDelegate: delegate];
+            let _: () = msg_send![native_window, encodeRestorableStateWithCoder: archiver];
+            let _: () = msg_send![archiver, finishEncoding];
+            // The archiver holds a weak reference to its delegate; clear it before the delegate
+            // is released below.
+            let _: () = msg_send![archiver, setDelegate: nil];
+
+            let data: id = msg_send![archiver, encodedData];
+            let bytes = if data.is_null() {
+                ptr::null()
+            } else {
+                data.bytes() as *const u8
+            };
+            let state = if bytes.is_null() {
+                log::warn!("the archiver produced no data for the native window state");
+                None
+            } else {
+                Some(std::slice::from_raw_parts(bytes, data.length() as usize).to_vec())
+            };
+
+            let _: () = msg_send![delegate, release];
+            let _: () = msg_send![archiver, release];
+            state
+        }
+    }
+
+    fn restore_native_window_state(&self, state: &[u8]) {
+        if state.is_empty() {
+            return;
+        }
+        let native_window = self.0.lock().native_window;
+        // SAFETY: `native_window` is a live `NSWindow` retained by this window's state. The NSData,
+        // NSKeyedUnarchiver and `restoreStateWithCoder:` selectors are sent with their documented
+        // signatures, and the `NSData` only borrows `state` for the duration of this synchronous
+        // call (it is consumed before `state` could be freed).
+        unsafe {
+            let data = NSData::dataWithBytes_length_(
+                nil,
+                state.as_ptr() as *const c_void,
+                state.len() as u64,
+            );
+            if data.is_null() {
+                log::warn!(
+                    "failed to wrap {} bytes of native window state",
+                    state.len()
+                );
+                return;
+            }
+
+            // On macOS < 15 the `NSWindowRestoresWorkspaceAtLaunch` user default controls whether
+            // the window is restored to its original Space. On macOS 15+ that default is broken
+            // (FB15644170), and the `_windowRestorationOptions` override on our unarchiver subclass
+            // handles it instead.
+            if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
+                RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT.call_once(|| {
+                    let defaults: id = NSUserDefaults::standardUserDefaults();
+                    let key = ns_string("NSWindowRestoresWorkspaceAtLaunch");
+                    let yes_value: id = msg_send![class!(NSNumber), numberWithBool: YES];
+                    let dict: id = msg_send![
+                        class!(NSDictionary),
+                        dictionaryWithObject: yes_value
+                        forKey: key
+                    ];
+                    let _: () = msg_send![defaults, registerDefaults: dict];
+                });
+            }
+
+            let unarchiver: id = msg_send![WINDOW_STATE_UNARCHIVER_CLASS, alloc];
+            let mut error: id = nil;
+            let unarchiver: id =
+                msg_send![unarchiver, initForReadingFromData: data error: &mut error];
+            if unarchiver.is_null() {
+                log::warn!(
+                    "failed to unarchive the native window state: {}",
+                    ns_error_description(error)
+                );
+                return;
+            }
+            let _: () = msg_send![native_window, restoreStateWithCoder: unarchiver];
+            let error: id = msg_send![unarchiver, error];
+            if !error.is_null() {
+                log::warn!(
+                    "failed to restore the native window state: {}",
+                    ns_error_description(error)
+                );
+            }
+            let _: () = msg_send![unarchiver, release];
         }
     }
 
@@ -1627,6 +1821,10 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        visibility(&self.0.lock())
+    }
+
     // is_hovered is unused on macOS. See Window::is_window_hovered.
     fn is_hovered(&self) -> bool {
         false
@@ -1825,6 +2023,12 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().activate_callback = Some(callback);
     }
 
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        let mut state = self.0.lock();
+        state.last_visibility = Some(visibility(&state));
+        state.visibility_callback = Some(callback);
+    }
+
     fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
@@ -1978,9 +2182,16 @@ impl PlatformWindow for MacWindow {
                                 }
                             }
                             "Fill" => {
-                                // There is no documented API for "Fill" action, so we'll just zoom the window
                                 if is_resizable {
-                                    window.zoom_(nil);
+                                    // Unlike `zoom:`, AppKit's private Fill action honors the system's
+                                    // "Tiled windows have margins" setting.
+                                    let responds_to_zoom_fill: BOOL =
+                                        msg_send![window, respondsToSelector: sel!(_zoomFill:)];
+                                    if responds_to_zoom_fill == YES {
+                                        let _: () = msg_send![window, _zoomFill: nil];
+                                    } else {
+                                        window.zoom_(nil);
+                                    }
                                 }
                             }
                             _ => {
@@ -2014,6 +2225,8 @@ impl PlatformWindow for MacWindow {
     }
 
     fn start_external_drag(&self, payload: &ExternalDragPayload) -> bool {
+        use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
+
         let ExternalDragPayload::Files(paths) = payload;
         if paths.entries().is_empty() {
             log::warn!("start_external_drag declined: no paths");
@@ -2036,7 +2249,7 @@ impl PlatformWindow for MacWindow {
 
         // SAFETY: This method runs on the AppKit/foreground path during drag initiation. The
         // native view/window are retained by MacWindowState, copied out under a short lock above,
-        // and Objective-C results that may be nil are checked before use.
+        // and all pointers passed to Objective-C remain valid for their respective calls.
         unsafe {
             let event: id = Retained::as_ptr(&last_left_mouse_down_event)
                 .cast_mut()
@@ -2044,7 +2257,7 @@ impl PlatformWindow for MacWindow {
             let dragging_items: id = msg_send![class!(NSMutableArray), array];
             // AppKit keeps this frame's distance from the event's location as the drag image's
             // offset from the cursor, so it has to stay anchored on `event`.
-            let location: NSPoint = msg_send![event, locationInWindow];
+            let location: cocoa::foundation::NSPoint = msg_send![event, locationInWindow];
             let frame = NSRect::new(
                 NSPoint::new(location.x - 16., location.y - 16.),
                 NSSize::new(32., 32.),
@@ -2057,24 +2270,18 @@ impl PlatformWindow for MacWindow {
                     continue;
                 };
 
-                let url: id = msg_send![
-                    class!(NSURL),
-                    fileURLWithFileSystemRepresentation: path_bytes.as_ptr()
-                    isDirectory: is_directory.to_objc()
-                    relativeToURL: nil
-                ];
+                let path_bytes = NonNull::new_unchecked(path_bytes.as_ptr().cast_mut());
+                let url = NSURL::fileURLWithFileSystemRepresentation_isDirectory_relativeToURL(
+                    path_bytes,
+                    *is_directory,
+                    None,
+                );
 
-                if url.is_null() {
-                    log::warn!("start_external_drag skipped path with nil NSURL");
-                    continue;
-                }
-
-                let item: id = msg_send![class!(NSDraggingItem), alloc];
-                let item: id = msg_send![item, initWithPasteboardWriter: url];
-                if item.is_null() {
-                    log::warn!("start_external_drag declined: NSDraggingItem allocation failed");
-                    continue;
-                }
+                let pasteboard_writer = ProtocolObject::<dyn NSPasteboardWriting>::from_ref(&*url);
+                let item = NSDraggingItem::initWithPasteboardWriter(
+                    NSDraggingItem::alloc(),
+                    pasteboard_writer,
+                );
 
                 // Resolve drag images lazily via `imageComponentsProvider` (Apple's
                 // recommendation for large item counts), and by file *type* rather than
@@ -2090,26 +2297,24 @@ impl PlatformWindow for MacWindow {
                         .map(|extension| extension.to_string())
                         .unwrap_or_else(|| "public.data".to_string())
                 };
-                let provider = ConcreteBlock::new(move || -> id {
-                    let component: id = msg_send![
-                        class!(NSDraggingImageComponent),
-                        draggingImageComponentWithKey: NSDraggingImageComponentIconKey
-                    ];
-                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-                    let icon: id = msg_send![workspace, iconForFileType: ns_string(&file_type)];
-                    let _: () = msg_send![component, setContents: icon];
+                let provider = RcBlock::new(move || {
+                    let component = NSDraggingImageComponent::draggingImageComponentWithKey(
+                        NSDraggingImageComponentIconKey,
+                    );
+                    let workspace = NSWorkspace::sharedWorkspace();
+                    let file_type = NSString::from_str(&file_type);
+                    // TODO: Replace with `iconForContentType` once Zed no longer supports MacOS 10.15
+                    #[expect(deprecated, reason = "Support for MacOS 10.15")]
+                    let icon = workspace.iconForFileType(&file_type);
+                    component.setContents(Some(&icon));
                     // Component frames are relative to the item's dragging frame.
-                    let _: () = msg_send![
-                        component,
-                        setFrame: NSRect::new(NSPoint::new(0., 0.), NSSize::new(32., 32.))
-                    ];
-                    msg_send![class!(NSArray), arrayWithObject: component]
+                    component.setFrame(NSRect::new(NSPoint::new(0., 0.), NSSize::new(32., 32.)));
+                    let components = NSArray::from_slice(&[&*component]);
+                    NonNull::new_unchecked(Retained::autorelease_return(components))
                 });
-                let provider = provider.copy();
-                let _: () = msg_send![item, setDraggingFrame: frame];
-                let _: () = msg_send![item, setImageComponentsProvider: provider];
-                let _: () = msg_send![dragging_items, addObject: item];
-                let _: () = msg_send![item, release];
+                item.setDraggingFrame(frame);
+                item.setImageComponentsProvider(Some(&provider));
+                let _: () = msg_send![dragging_items, addObject: Retained::as_ptr(&item)];
             }
 
             let count: NSUInteger = msg_send![dragging_items, count];
@@ -2278,6 +2483,28 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
         drop_window_state(this);
         let _: () = msg_send![super(this, class!(NSView)), dealloc];
     }
+}
+
+fn add_mouse_tracking_area(native_view: &Objc2NSView) {
+    let options = NSTrackingAreaOptions::MouseEnteredAndExited
+        | NSTrackingAreaOptions::MouseMoved
+        // Track even when another application is active so visible
+        // windows can respond to hover without being focused.
+        | NSTrackingAreaOptions::ActiveAlways
+        | NSTrackingAreaOptions::InVisibleRect;
+
+    // SAFETY: NSView provides the tracking-event callbacks, and the owner is
+    // the same view that retains the tracking area. No user info is supplied.
+    let tracking_area = unsafe {
+        NSTrackingArea::initWithRect_options_owner_userInfo(
+            NSTrackingArea::alloc(),
+            Objc2NSRect::ZERO,
+            options,
+            Some(native_view),
+            None,
+        )
+    };
+    native_view.addTrackingArea(&tracking_area);
 }
 
 extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
@@ -2706,9 +2933,55 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     }
 }
 
+fn visibility(state: &MacWindowState) -> WindowVisibility {
+    let is_visible = unsafe {
+        state
+            .native_window
+            .occlusionState()
+            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+    };
+    if is_visible {
+        WindowVisibility::Visible
+    } else {
+        WindowVisibility::Hidden
+    }
+}
+
+fn report_visibility(window_state: &Arc<Mutex<MacWindowState>>) {
+    let state = window_state.lock();
+    if state.last_visibility.is_none() {
+        return;
+    }
+    let executor = state.foreground_executor.clone();
+    drop(state);
+
+    // AppKit can notify while GPUI is updating a window. Deliver observers
+    // after that update completes, as activation notifications do. The state
+    // is read at delivery rather than captured here so a burst of
+    // notifications collapses to the final value.
+    executor
+        .spawn({
+            let window_state = window_state.clone();
+            async move {
+                let mut state = window_state.lock();
+                let visibility = visibility(&state);
+                if state.last_visibility == Some(visibility) {
+                    return;
+                }
+                state.last_visibility = Some(visibility);
+                if let Some(mut callback) = state.visibility_callback.take() {
+                    drop(state);
+                    callback(visibility);
+                    window_state.lock().visibility_callback = Some(callback);
+                }
+            }
+        })
+        .detach();
+}
+
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = &mut *window_state.lock();
+    let mut lock = window_state.lock();
     unsafe {
         if lock
             .native_window
@@ -2721,6 +2994,10 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
             lock.stop_display_link();
         }
     }
+    drop(lock);
+    // The only visibility source: AppKit posts this for covering, minimizing,
+    // hiding, Space switches, and display sleep alike.
+    report_visibility(&window_state);
 }
 
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
@@ -2732,6 +3009,8 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.fullscreen_restore_bounds = lock.bounds();
+    lock.is_exiting_fullscreen = false;
+    lock.pre_fullscreen_traffic_light_frames = lock.traffic_light_frames;
     lock.restore_traffic_light();
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
@@ -2745,7 +3024,8 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.as_ref().lock();
+    let mut lock = window_state.as_ref().lock();
+    lock.is_exiting_fullscreen = true;
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
@@ -2754,17 +3034,41 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
             lock.native_window.setTitlebarAppearsTransparent_(YES);
         }
     }
+
+    lock.move_traffic_light();
+}
+
+extern "C" fn window_did_fail_to_exit_fullscreen(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    lock.is_exiting_fullscreen = false;
+    lock.restore_traffic_light();
 }
 
 extern "C" fn window_did_exit_fullscreen(this: &Object, _: Sel, _: id) {
     // SAFETY: This method is registered only on GPUI window classes, which initialize
     // WINDOW_STATE_IVAR with an Arc<Mutex<MacWindowState>> during window creation.
     let window_state = unsafe { get_window_state(this) };
-    window_state.as_ref().lock().move_traffic_light();
+    let mut lock = window_state.as_ref().lock();
+    lock.is_exiting_fullscreen = false;
+    // Moving the buttons during the transition captures their fullscreen frames.
+    // Keep using the native windowed frames when restoring them on the next entry.
+    lock.traffic_light_frames = lock.pre_fullscreen_traffic_light_frames.take();
+    lock.move_traffic_light();
 }
 
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
     unsafe { NSProcessInfo::processInfo(nil).isOperatingSystemAtLeastVersion(version) }
+}
+
+fn ns_error_description(error: id) -> String {
+    if error.is_null() {
+        return "unknown error".to_owned();
+    }
+    unsafe {
+        let description: id = msg_send![error, localizedDescription];
+        description.to_str().to_owned()
+    }
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
@@ -3343,6 +3647,18 @@ extern "C" fn dragging_session_ended(
     send_file_drop_event(window_state, FileDropEvent::Ended);
 }
 
+fn synthetic_drag_button_is_pressed(button: Option<MouseButton>, pressed: NSUInteger) -> bool {
+    let bit = match button {
+        Some(MouseButton::Left) => 0,
+        Some(MouseButton::Right) => 1,
+        Some(MouseButton::Middle) => 2,
+        Some(MouseButton::Navigate(gpui::NavigationDirection::Back)) => 3,
+        Some(MouseButton::Navigate(gpui::NavigationDirection::Forward)) => 4,
+        None => return false,
+    };
+    pressed & (1 << bit) != 0
+}
+
 async fn synthetic_drag(
     window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
@@ -3351,17 +3667,24 @@ async fn synthetic_drag(
 ) {
     loop {
         executor.timer(Duration::from_millis(16)).await;
-        if let Some(window_state) = window_state.upgrade() {
-            let mut lock = window_state.lock();
-            if lock.synthetic_drag_counter == drag_id {
-                if let Some(mut callback) = lock.event_callback.take() {
-                    drop(lock);
-                    callback(PlatformInput::MouseMove(event.clone()));
-                    window_state.lock().event_callback = Some(callback);
-                }
-            } else {
-                break;
-            }
+        let Some(window_state) = window_state.upgrade() else {
+            break;
+        };
+        let mut lock = window_state.lock();
+        if lock.synthetic_drag_counter != drag_id {
+            break;
+        }
+        // Native menu tracking can consume mouse-up, leaving stale drag events replaying.
+        // Check whether the original mouse button is still physically pressed before replaying.
+        let pressed: NSUInteger = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+        if !synthetic_drag_button_is_pressed(event.pressed_button, pressed) {
+            lock.synthetic_drag_counter += 1;
+            break;
+        }
+        if let Some(mut callback) = lock.event_callback.take() {
+            drop(lock);
+            callback(PlatformInput::MouseMove(event.clone()));
+            window_state.lock().event_callback = Some(callback);
         }
     }
 }

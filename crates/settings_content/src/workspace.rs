@@ -125,7 +125,7 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
-    /// Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+    /// Whether to allow windows to tab together based on the user's tabbing preference (macOS only).
     ///
     /// Default: false
     pub use_system_window_tabs: Option<bool>,
@@ -146,6 +146,25 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
+    /// Window title template.
+    ///
+    /// Available variables are `${projectName}`, `${fileName}`,
+    /// `${filePath}`, `${relativePath}`, `${fileStem}`, `${remoteName}`,
+    /// `${remoteHost}`, `${appName}`, `${branch}`,
+    /// and `${separator}`.
+    /// `${separator}` is omitted when adjacent variables are empty,
+    /// but literal text is preserved.
+    /// The collaboration indicator, when present, is appended after the
+    /// rendered template.
+    /// If the template renders to nothing, the default template is used instead.
+    ///
+    /// Default: `${projectName}${separator}${fileName}`
+    pub window_title_format: Option<String>,
+    /// String substituted for `${separator}` in the window title format.
+    /// Include any surrounding whitespace in the value.
+    ///
+    /// Default: ` — `
+    pub window_title_separator: Option<String>,
     /// Controls whether Zed or the window manager or compositor draws window decorations on Linux.
     ///
     /// Default: client
@@ -193,7 +212,8 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
-    /// Whether to open tabs in preview mode when opened from the project panel with a single click.
+    /// Whether to open tabs in preview mode when opened from the project panel
+    /// with a single click or the `project_panel::Open` action.
     ///
     /// Default: true
     pub enable_preview_from_project_panel: Option<bool>,
@@ -561,8 +581,8 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: non_utf8
     pub active_encoding_button: Option<EncodingDisplayOptions>,
-    /// Whether to show an indicator with a countdown while timed multi-stroke input is pending.
-    /// Hovering the indicator pauses the timeout.
+    /// Whether to show an indicator while multi-stroke input is pending.
+    /// If the input has a timeout, a countdown is shown and hovering the indicator pauses it.
     /// Its binding preview popover is disabled when the which-key popup is enabled.
     ///
     /// Default: true

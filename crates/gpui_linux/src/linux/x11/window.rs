@@ -7,7 +7,8 @@ use gpui::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, popup::PopupNotSupportedError, px,
+    WindowDecorations, WindowKind, WindowParams, WindowVisibility, popup::PopupNotSupportedError,
+    px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -245,6 +246,7 @@ pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
@@ -277,8 +279,11 @@ pub struct X11WindowState {
     maximized_horizontal: bool,
     hidden: bool,
     active: bool,
+    /// Owned by the client's `WindowRef`, which combines the mapped state with
+    /// `VisibilityNotify`; this is the last value it reported.
+    visibility: WindowVisibility,
     hovered: bool,
-    pub(crate) force_render_after_recovery: bool,
+    force_render_after_recovery: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -827,6 +832,8 @@ impl X11WindowState {
                 atoms: *atoms,
                 input_handler: None,
                 active: false,
+                // The window is not mapped until the client sees `MapNotify`.
+                visibility: WindowVisibility::Hidden,
                 hovered: false,
                 force_render_after_recovery: false,
                 fullscreen: false,
@@ -1174,9 +1181,13 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn refresh(&self, request_frame_options: RequestFrameOptions) {
+    pub fn refresh(&self, mut request_frame_options: RequestFrameOptions) {
         let callback = self.callbacks.borrow_mut().request_frame.take();
         if let Some(mut fun) = callback {
+            // Expose events can present a frame before the refresh timer runs,
+            // so every frame request must rebuild stale atlas references after recovery.
+            request_frame_options.force_render |=
+                std::mem::take(&mut self.state.borrow_mut().force_render_after_recovery);
             fun(request_frame_options);
             self.callbacks.borrow_mut().request_frame = Some(fun);
         }
@@ -1335,6 +1346,17 @@ impl X11WindowStatePtr {
         if let Some(mut fun) = callback {
             fun(focus);
             self.callbacks.borrow_mut().hovered_status_change = Some(fun);
+        }
+    }
+
+    pub fn set_visibility(&self, visibility: WindowVisibility) {
+        if std::mem::replace(&mut self.state.borrow_mut().visibility, visibility) == visibility {
+            return;
+        }
+        let callback = self.callbacks.borrow_mut().visibility_change.take();
+        if let Some(mut fun) = callback {
+            fun(visibility);
+            self.callbacks.borrow_mut().visibility_change = Some(fun);
         }
     }
 
@@ -1536,6 +1558,10 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().active
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.0.state.borrow().visibility
+    }
+
     fn is_hovered(&self) -> bool {
         self.0.state.borrow().hovered
     }
@@ -1681,6 +1707,10 @@ impl PlatformWindow for X11Window {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.0.callbacks.borrow_mut().visibility_change = Some(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {

@@ -49,8 +49,8 @@ pub fn release_nightly() -> Workflow {
     named::workflow()
         .with_minimal_permissions()
         .on(Event::default()
-            // Fire 6 times a day
-            .schedule([Schedule::new("0 */4 * * *")])
+            // Fire twice a day at 02:00 and 14:00 UTC
+            .schedule([Schedule::new("0 2,14 * * *")])
             .workflow_dispatch(WorkflowDispatch::default()))
         .concurrency(
             Concurrency::default()
