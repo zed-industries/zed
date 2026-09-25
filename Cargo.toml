@@ -932,7 +932,7 @@ which = "8"
 windows-core = "0.62"
 windows-registry = "0.6.0"
 yaml-rust2 = "0.8"
-yawc = { git = "https://github.com/zed-industries/yawc", rev = "71a452f551cac178367eaac5d7418a09afa1f3a2", version = "0.3.3" }
+yawc = "0.4.2"
 zeroize = "1.8"
 zstd = "0.11"
 
