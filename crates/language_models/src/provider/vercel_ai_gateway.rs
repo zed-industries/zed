@@ -9,10 +9,11 @@ use http_client::{
 use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoiceSupport,
-    ModelRateLimiters, ProviderSettingsView, RateLimiter, env_var, unavailable_error,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView, RateLimiter, env_var,
+    unavailable_error,
 };
 use serde::Deserialize;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
@@ -314,7 +315,9 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
+}
 
+impl LanguageModelClient for VercelAiGatewayLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,

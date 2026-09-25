@@ -6,10 +6,10 @@ use futures::future::{BoxFuture, Shared};
 use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, IconOrSvg, InlineDescription, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionStream, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters,
-    ProviderSettingsView, unavailable_error,
+    AuthenticateError, IconOrSvg, InlineDescription, LanguageModel, LanguageModelClient,
+    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, ModelRateLimiters, ProviderSettingsView, unavailable_error,
 };
 use std::sync::Arc;
 use ui::{ConfiguredApiCard, prelude::*};
@@ -159,7 +159,9 @@ impl LanguageModelProvider for XAiSubscribedProvider {
         Sign in via Settings > AI > LLM Providers to continue."
             .into()
     }
+}
 
+impl LanguageModelClient for XAiSubscribedProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,
