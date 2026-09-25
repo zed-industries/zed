@@ -598,7 +598,16 @@ async fn poll_path_until_created(
 
         // Probe case sensitivity now that the path exists, rather than at add
         // time when it didn't.
-        let case_insensitive = !fs.is_path_case_sensitive(&path);
+        let case_insensitive = if fs.is_fake() {
+            !fs.is_path_case_sensitive(&path)
+        } else {
+            smol::unblock({
+                let path = path.clone();
+                let fs = fs.clone();
+                move || !fs.is_path_case_sensitive(&path)
+            })
+            .await
+        };
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
 
         if registrations.lock().contains_key(&key) {
@@ -606,15 +615,32 @@ async fn poll_path_until_created(
             return;
         }
 
-        match register_existing_path(
-            &native_watcher,
-            &poll_watcher,
-            fs.as_ref(),
-            path.clone(),
-            case_insensitive,
-            tx.clone(),
-            pending_path_events.clone(),
-        ) {
+        let register = {
+            let path = path.clone();
+            let tx = tx.clone();
+            let pending_path_events = pending_path_events.clone();
+            let fs = fs.clone();
+            let native_watcher = native_watcher.clone();
+            let poll_watcher = poll_watcher.clone();
+            move || {
+                register_existing_path(
+                    &native_watcher,
+                    &poll_watcher,
+                    fs.as_ref(),
+                    path,
+                    case_insensitive,
+                    tx,
+                    pending_path_events,
+                )
+            }
+        };
+        let registration = if fs.is_fake() {
+            register()
+        } else {
+            smol::unblock(register).await
+        };
+
+        match registration {
             Ok(Some(registration)) => {
                 {
                     let mut pending_registrations = pending_registrations.lock();
