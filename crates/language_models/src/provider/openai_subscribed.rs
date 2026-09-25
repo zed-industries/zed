@@ -7,10 +7,10 @@ use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, CompactionResult, FastModeConfirmation, IconOrSvg, InlineDescription,
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionStream,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters, ProviderSettingsView,
-    unavailable_error,
+    LanguageModel, LanguageModelClient, LanguageModelCompletionError,
+    LanguageModelCompletionStream, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters,
+    ProviderSettingsView, unavailable_error,
 };
 use openai_subscribed::{ChatGptModel, PROVIDER_ID, PROVIDER_NAME, State, language_model};
 use std::sync::Arc;
@@ -173,6 +173,18 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
             .into()
     }
 
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for OpenAI?".into(),
+            message: "Fast mode sends requests using OpenAI's Priority processing tier, which \
+                targets significantly lower latency than the standard tier and is billed at a \
+                premium per-token rate."
+                .into(),
+        })
+    }
+}
+
+impl LanguageModelClient for OpenAiSubscribedProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,
@@ -200,16 +212,6 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         };
         let request_limiter = self.request_limiters.for_model(&model.id);
         openai_subscribed::compact(&config, &self.state, &request_limiter, request, cx)
-    }
-
-    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
-        Some(FastModeConfirmation {
-            title: "Enable Fast Mode for OpenAI?".into(),
-            message: "Fast mode sends requests using OpenAI's Priority processing tier, which \
-                targets significantly lower latency than the standard tier and is billed at a \
-                premium per-token rate."
-                .into(),
-        })
     }
 }
 

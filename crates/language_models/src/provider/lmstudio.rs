@@ -10,10 +10,10 @@ use language_model::{
     LanguageModelToolResultContent, MessageContent, env_var, unavailable_error,
 };
 use language_model::{
-    InlineDescription, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, ModelRateLimiters, ProviderSettingsView, RateLimiter, Role,
-    SubPageProviderSettings,
+    InlineDescription, LanguageModelClient, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters, ProviderSettingsView,
+    RateLimiter, Role, SubPageProviderSettings,
 };
 use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
@@ -329,7 +329,9 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
             )),
         ))
     }
+}
 
+impl LanguageModelClient for LmStudioLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,

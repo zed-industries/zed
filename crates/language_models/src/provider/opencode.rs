@@ -9,11 +9,11 @@ use gpui::{
 use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView, RateLimiter,
-    ReasoningEffort, SubPageProviderSettings, env_var, unavailable_error,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView,
+    RateLimiter, ReasoningEffort, SubPageProviderSettings, env_var, unavailable_error,
 };
 use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
 use serde::Deserialize;
@@ -727,7 +727,9 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
             )),
         ))
     }
+}
 
+impl LanguageModelClient for OpenCodeLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,

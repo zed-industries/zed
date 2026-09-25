@@ -39,7 +39,7 @@ use http_client::{
     http::{HeaderValue, header::AUTHORIZATION},
 };
 use language_model::{
-    AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
+    AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel, LanguageModelClient,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelCompletionStream,
     LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
@@ -753,6 +753,29 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             .collect()
     }
 
+    fn is_authenticated(&self, cx: &App) -> bool {
+        self.state.read(cx).is_authenticated()
+    }
+
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require IAM permissions for the `bedrock-mantle` endpoint.".into(),
+            )),
+        ))
+    }
+}
+
+impl LanguageModelClient for BedrockLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,
@@ -773,27 +796,6 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                 self.stream_mantle_completion(&config, &request_limiter, request, cx)
             }
         }
-    }
-
-    fn is_authenticated(&self, cx: &App) -> bool {
-        self.state.read(cx).is_authenticated()
-    }
-
-    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        self.state.update(cx, |state, cx| state.authenticate(cx))
-    }
-
-    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
-        let state = self.state.clone();
-        Some(ProviderSettingsView::SubPage(
-            SubPageProviderSettings::new(move |window, cx| {
-                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
-                    .into()
-            })
-            .description(InlineDescription::Text(
-                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require IAM permissions for the `bedrock-mantle` endpoint.".into(),
-            )),
-        ))
     }
 }
 
