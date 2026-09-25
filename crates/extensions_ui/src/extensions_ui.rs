@@ -1133,8 +1133,8 @@ impl ExtensionsPage {
                 cx,
             ),
             Feature::Git => self.render_feature_upsell_banner(
-                "Zed comes with basic Git support—more features are coming in the future.".into(),
-                "https://zed.dev/docs/git".into(),
+                "Zed comes with basic Git support—more features are coming in the future.",
+                "https://zed.dev/docs/git",
                 false,
                 cx,
             ),
