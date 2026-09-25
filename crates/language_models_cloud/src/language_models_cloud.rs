@@ -1,5 +1,6 @@
 use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result};
+use cloud_api_client::ClientApiError;
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
     CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
@@ -57,13 +58,98 @@ pub trait CloudLlmTokenProvider: Send + Sync {
     type AuthContext: Clone + Send + 'static;
 
     fn auth_context(&self, cx: &impl AppContext) -> Self::AuthContext;
-    fn cached_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
-    fn refresh_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
+    fn cached_token(
+        &self,
+        auth_context: Self::AuthContext,
+    ) -> BoxFuture<'static, Result<String, ClientApiError>>;
+    fn refresh_token(
+        &self,
+        auth_context: Self::AuthContext,
+    ) -> BoxFuture<'static, Result<String, ClientApiError>>;
 
     /// Whether the user has consented to upstream providers retaining
     /// inference logs for models that require it (see
     /// [`LanguageModel::requires_data_retention`]).
     fn has_data_retention_consent(&self, cx: &impl AppContext) -> bool;
+}
+
+/// Why an authenticated request to the Zed LLM service failed before a
+/// response arrived.
+#[derive(Debug, Error)]
+pub enum LlmRequestError {
+    /// The token provider could not supply an LLM token.
+    #[error("failed to acquire an LLM token")]
+    Token(#[source] ClientApiError),
+    #[error("failed to build the LLM request")]
+    BuildRequest(#[source] anyhow::Error),
+    #[error("failed to send the LLM request")]
+    Send(#[source] anyhow::Error),
+}
+
+impl LlmRequestError {
+    /// Classifies the failure as a completion error for a request to `host`.
+    ///
+    /// Credential and billing failures while acquiring a token become provider
+    /// rejections, so callers can tell them apart from connectivity problems.
+    pub fn into_completion_error(self, host: String) -> LanguageModelCompletionError {
+        match self {
+            Self::Token(ClientApiError::Unauthorized) => {
+                LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    Some(StatusCode::UNAUTHORIZED),
+                    None,
+                    "Zed rejected the credentials for this request.".to_string(),
+                    None,
+                    ProviderErrorCategory::Authentication,
+                )
+            }
+            Self::Token(ClientApiError::NotSignedIn) => {
+                LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    None,
+                    None,
+                    "Not signed in to Zed.".to_string(),
+                    None,
+                    ProviderErrorCategory::Authentication,
+                )
+            }
+            Self::Token(ClientApiError::ServerError { status, .. })
+                if status == StatusCode::PAYMENT_REQUIRED =>
+            {
+                payment_required_error(status)
+            }
+            Self::Token(ClientApiError::ServerError { status, body, .. }) => {
+                LanguageModelCompletionError::from_http_status(PROVIDER_NAME, status, body, None)
+            }
+            Self::Token(error @ ClientApiError::ConnectionFailed { .. }) => {
+                LanguageModelCompletionError::HttpSend {
+                    provider: PROVIDER_NAME,
+                    host,
+                    error: error.into(),
+                }
+            }
+            Self::Send(error) => LanguageModelCompletionError::HttpSend {
+                provider: PROVIDER_NAME,
+                host,
+                error,
+            },
+            error @ (Self::Token(
+                ClientApiError::InvalidResponse(_) | ClientApiError::RequestBuildFailed(_),
+            )
+            | Self::BuildRequest(_)) => LanguageModelCompletionError::Other(error.into()),
+        }
+    }
+}
+
+fn payment_required_error(status: StatusCode) -> LanguageModelCompletionError {
+    LanguageModelCompletionError::from_provider_response(
+        PROVIDER_NAME,
+        Some(status),
+        None,
+        "payment required to use this language model; please upgrade your account".to_string(),
+        None,
+        ProviderErrorCategory::PaymentRequired,
+    )
 }
 
 /// Sends an authenticated request to the Zed LLM service, retrying once with
@@ -75,15 +161,28 @@ pub async fn authenticated_llm_request<TP: CloudLlmTokenProvider>(
     token_provider: &TP,
     auth_context: TP::AuthContext,
     build_request: impl Fn(&str) -> Result<http_client::Request<AsyncBody>>,
-) -> Result<Response<AsyncBody>> {
-    let token = token_provider.cached_token(auth_context.clone()).await?;
-    let response = http_client.send(build_request(&token)?).await?;
+) -> Result<Response<AsyncBody>, LlmRequestError> {
+    let send = async |token: String| {
+        let request = build_request(&token).map_err(LlmRequestError::BuildRequest)?;
+        http_client
+            .send(request)
+            .await
+            .map_err(LlmRequestError::Send)
+    };
+    let token = token_provider
+        .cached_token(auth_context.clone())
+        .await
+        .map_err(LlmRequestError::Token)?;
+    let response = send(token).await?;
     if !needs_llm_token_refresh(&response) && response.status() != StatusCode::UNAUTHORIZED {
         return Ok(response);
     }
     log::info!("LLM token rejected; refreshing and retrying request");
-    let token = token_provider.refresh_token(auth_context).await?;
-    http_client.send(build_request(&token)?).await
+    let token = token_provider
+        .refresh_token(auth_context)
+        .await
+        .map_err(LlmRequestError::Token)?;
+    send(token).await
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -196,11 +295,7 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
                 Ok(request.body(body.clone().into())?)
             })
             .await
-            .map_err(|error| LanguageModelCompletionError::HttpSend {
-                provider: PROVIDER_NAME,
-                host,
-                error,
-            })?;
+            .map_err(|error| error.into_completion_error(host))?;
 
         let status = response.status();
         if status.is_success() {
@@ -217,15 +312,7 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         }
 
         if status == StatusCode::PAYMENT_REQUIRED {
-            return Err(LanguageModelCompletionError::from_provider_response(
-                PROVIDER_NAME,
-                Some(status),
-                None,
-                "payment required to use this language model; please upgrade your account"
-                    .to_string(),
-                None,
-                ProviderErrorCategory::PaymentRequired,
-            ));
+            return Err(payment_required_error(status));
         }
 
         let mut body = String::new();
@@ -1974,6 +2061,94 @@ mod tests {
         ));
     }
 
+    #[gpui::test]
+    async fn token_acquisition_failures_are_classified(_cx: &mut gpui::TestAppContext) {
+        async fn token_failure(error: fn() -> ClientApiError) -> LanguageModelCompletionError {
+            let http_client = FakeHttpClient::create(|_| async move {
+                panic!("no request should be sent without a token")
+            });
+            let http_client = HttpClientWithUrl::new(http_client, "https://test.example", None);
+            authenticated_llm_request(
+                &http_client,
+                &FailingTokenProvider { error },
+                (),
+                |_token| unreachable!("no request should be built without a token"),
+            )
+            .await
+            .err()
+            .expect("token acquisition should fail")
+            .into_completion_error("test.example".to_string())
+        }
+
+        for error in [
+            (|| ClientApiError::Unauthorized) as fn() -> ClientApiError,
+            || ClientApiError::NotSignedIn,
+        ] {
+            let error = token_failure(error).await;
+            assert!(
+                matches!(
+                    &error,
+                    LanguageModelCompletionError::ProviderRejection {
+                        provider,
+                        category: ProviderErrorCategory::Authentication,
+                        ..
+                    } if *provider == PROVIDER_NAME
+                ),
+                "{error:?}"
+            );
+            assert!(!error.is_transient());
+        }
+
+        let error = token_failure(|| ClientApiError::ServerError {
+            host: "test.example".to_string(),
+            status: StatusCode::PAYMENT_REQUIRED,
+            body: "no subscription".to_string(),
+        })
+        .await;
+        assert!(
+            matches!(
+                error,
+                LanguageModelCompletionError::ProviderRejection {
+                    category: ProviderErrorCategory::PaymentRequired,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+
+        let error = token_failure(|| ClientApiError::ServerError {
+            host: "test.example".to_string(),
+            status: StatusCode::FORBIDDEN,
+            body: "no model access".to_string(),
+        })
+        .await;
+        assert!(
+            matches!(
+                &error,
+                LanguageModelCompletionError::ProviderRejection {
+                    category: ProviderErrorCategory::Permission,
+                    message,
+                    ..
+                } if message == "no model access"
+            ),
+            "{error:?}"
+        );
+
+        let error = token_failure(|| ClientApiError::ConnectionFailed {
+            host: "test.example".to_string(),
+            source: anyhow::anyhow!("offline"),
+        })
+        .await;
+        assert!(
+            matches!(
+                &error,
+                LanguageModelCompletionError::HttpSend { host, .. } if host == "test.example"
+            ),
+            "{error:?}"
+        );
+        assert!(error.is_transient());
+    }
+
     #[test]
     fn test_response_stream_error_maps_to_structured_variant() {
         // Read/deserialize failures mid-stream must keep their structured
@@ -2354,19 +2529,48 @@ mod tests {
         fn cached_token(
             &self,
             _auth_context: Self::AuthContext,
-        ) -> BoxFuture<'static, Result<String>> {
+        ) -> BoxFuture<'static, Result<String, ClientApiError>> {
             async { Ok("test-token".to_string()) }.boxed()
         }
 
         fn refresh_token(
             &self,
             _auth_context: Self::AuthContext,
-        ) -> BoxFuture<'static, Result<String>> {
+        ) -> BoxFuture<'static, Result<String, ClientApiError>> {
             async { Ok("refreshed-test-token".to_string()) }.boxed()
         }
 
         fn has_data_retention_consent(&self, _cx: &impl AppContext) -> bool {
             self.data_retention_consent
+        }
+    }
+
+    struct FailingTokenProvider {
+        error: fn() -> ClientApiError,
+    }
+
+    impl CloudLlmTokenProvider for FailingTokenProvider {
+        type AuthContext = ();
+
+        fn auth_context(&self, _cx: &impl AppContext) -> Self::AuthContext {}
+
+        fn cached_token(
+            &self,
+            _auth_context: Self::AuthContext,
+        ) -> BoxFuture<'static, Result<String, ClientApiError>> {
+            let error = (self.error)();
+            async move { Err(error) }.boxed()
+        }
+
+        fn refresh_token(
+            &self,
+            auth_context: Self::AuthContext,
+        ) -> BoxFuture<'static, Result<String, ClientApiError>> {
+            self.cached_token(auth_context)
+        }
+
+        fn has_data_retention_consent(&self, _cx: &impl AppContext) -> bool {
+            false
         }
     }
 }

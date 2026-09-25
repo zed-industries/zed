@@ -9795,6 +9795,7 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "cloud_api_client",
  "cloud_llm_client",
  "futures 0.3.34",
  "google_ai",

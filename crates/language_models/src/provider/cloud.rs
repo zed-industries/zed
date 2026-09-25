@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 use client::{
     Client, RefreshLlmTokenListener, TelemetrySettings, UserStore, global_llm_token, zed_urls,
 };
-use cloud_api_client::LlmApiToken;
+use cloud_api_client::{ClientApiError, LlmApiToken};
 use cloud_api_types::OrganizationId;
 use cloud_api_types::Plan;
 use futures::FutureExt;
@@ -51,12 +51,11 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
     fn cached_token(
         &self,
         organization_id: Self::AuthContext,
-    ) -> BoxFuture<'static, Result<String>> {
+    ) -> BoxFuture<'static, Result<String, ClientApiError>> {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
         Box::pin(async move {
-            let organization_id =
-                organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
+            let organization_id = organization_id.ok_or(ClientApiError::NotSignedIn)?;
             client
                 .cached_llm_token(&llm_api_token, organization_id)
                 .await
@@ -66,12 +65,11 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
     fn refresh_token(
         &self,
         organization_id: Self::AuthContext,
-    ) -> BoxFuture<'static, Result<String>> {
+    ) -> BoxFuture<'static, Result<String, ClientApiError>> {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
         Box::pin(async move {
-            let organization_id =
-                organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
+            let organization_id = organization_id.ok_or(ClientApiError::NotSignedIn)?;
             client
                 .refresh_llm_token(&llm_api_token, organization_id)
                 .await
