@@ -1,4 +1,4 @@
-use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
+use crate::{CompositorGpuHint, DeviceErrorState, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
 use collections::FxHashMap;
@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const MAX_INSTANCE_BUFFER_SIZE: u64 = 256 * 1024 * 1024;
 
@@ -225,7 +225,22 @@ struct WgpuRendererCore {
     adapter_info: wgpu::AdapterInfo,
     target_format: wgpu::TextureFormat,
     max_texture_size: u32,
-    last_error: Arc<Mutex<Option<String>>>,
+}
+
+/// GPU resources of a windowed renderer. A surface is only ever configured against the
+/// device that owns `core`, so it cannot outlive it: there is no surface-only state.
+enum RendererState {
+    /// Frames can be drawn.
+    Ready {
+        surface: wgpu::Surface<'static>,
+        core: WgpuRendererCore,
+    },
+    /// The native surface is gone (Android `TerminateWindow`, browser context loss) but
+    /// the device, pipelines, and atlas remain so `replace_surface` can resume without
+    /// re-uploading cached textures.
+    Unconfigured { core: WgpuRendererCore },
+    /// Released by `destroy`, or dropped for a device recovery that has not succeeded yet.
+    Released,
 }
 
 pub struct WgpuRenderer {
@@ -235,28 +250,33 @@ pub struct WgpuRenderer {
     /// Compositor GPU hint for adapter selection (unused on WASM).
     #[allow(dead_code)]
     compositor_gpu: Option<CompositorGpuHint>,
-    core: Option<WgpuRendererCore>,
-    surface: Option<wgpu::Surface<'static>>,
+    state: RendererState,
     surface_config: wgpu::SurfaceConfiguration,
     atlas: Arc<WgpuAtlas>,
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
+    max_texture_size: u32,
+    is_bgr: bool,
     failed_frame_count: u32,
-    device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    device_errors: Arc<DeviceErrorState>,
+    observed_error_generation: u64,
+    last_surface_error: Option<String>,
     needs_redraw: bool,
 }
 
 impl WgpuRenderer {
-    fn core(&self) -> &WgpuRendererCore {
-        self.core.as_ref().expect("GPU resources not available")
+    fn core(&self) -> Option<&WgpuRendererCore> {
+        match &self.state {
+            RendererState::Ready { core, .. } | RendererState::Unconfigured { core } => Some(core),
+            RendererState::Released => None,
+        }
     }
 
-    fn core_mut(&mut self) -> &mut WgpuRendererCore {
-        self.core.as_mut().expect("GPU resources not available")
-    }
-
-    fn resources(&self) -> &WgpuResources {
-        &self.core().resources
+    fn core_mut(&mut self) -> Option<&mut WgpuRendererCore> {
+        match &mut self.state {
+            RendererState::Ready { core, .. } | RendererState::Unconfigured { core } => Some(core),
+            RendererState::Released => None,
+        }
     }
 
     /// Creates a new WgpuRenderer from raw window handles.
@@ -446,14 +466,17 @@ impl WgpuRenderer {
         Ok(Self {
             context: gpu_context,
             compositor_gpu,
-            core: Some(core),
-            surface: Some(surface),
+            state: RendererState::Ready { surface, core },
             surface_config,
             atlas,
             transparent_alpha_mode,
             opaque_alpha_mode,
+            max_texture_size,
+            is_bgr: false,
             failed_frame_count: 0,
-            device_lost: context.device_lost_flag(),
+            device_errors: Arc::clone(context.errors()),
+            observed_error_generation: 0,
+            last_surface_error: None,
             needs_redraw: false,
         })
     }
@@ -974,61 +997,64 @@ impl WgpuRendererCore {
 }
 
 impl WgpuRenderer {
+    /// Records the new drawable size and reconfigures the surface when one is present.
+    /// The size is kept even without GPU resources so that recovery restores it.
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         let width = size.width.0 as u32;
         let height = size.height.0 as u32;
 
-        if width != self.surface_config.width || height != self.surface_config.height {
-            let max_texture_size = self.core().max_texture_size;
-            let clamped_width = width.min(max_texture_size);
-            let clamped_height = height.min(max_texture_size);
+        if width == self.surface_config.width && height == self.surface_config.height {
+            return;
+        }
 
-            if clamped_width != width || clamped_height != height {
-                warn!(
-                    "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
-                     Clamping to ({}, {}). Window content may not fill the entire window.",
-                    width, height, max_texture_size, clamped_width, clamped_height
-                );
-            }
+        let clamped_width = width.min(self.max_texture_size);
+        let clamped_height = height.min(self.max_texture_size);
+        if clamped_width != width || clamped_height != height {
+            warn!(
+                "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
+                 Clamping to ({}, {}). Window content may not fill the entire window.",
+                width, height, self.max_texture_size, clamped_width, clamped_height
+            );
+        }
+        self.surface_config.width = clamped_width.max(1);
+        self.surface_config.height = clamped_height.max(1);
 
-            self.surface_config.width = clamped_width.max(1);
-            self.surface_config.height = clamped_height.max(1);
-            let surface_config = self.surface_config.clone();
+        let Some(core) = self.core_mut() else {
+            return;
+        };
+        let resources = &mut core.resources;
 
-            let Some(core) = self.core.as_mut() else {
-                return;
-            };
-            let resources = &mut core.resources;
+        // Wait for any in-flight GPU work to complete before destroying textures
+        if let Err(e) = resources.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        }) {
+            warn!("Failed to poll device during resize: {e:?}");
+        }
 
-            // Wait for any in-flight GPU work to complete before destroying textures
-            if let Err(e) = resources.device.poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            }) {
-                warn!("Failed to poll device during resize: {e:?}");
-            }
+        // Destroy old textures before allocating new ones to avoid GPU memory spikes
+        if let Some(ref texture) = resources.path_intermediate_texture {
+            texture.destroy();
+        }
+        if let Some(ref texture) = resources.path_msaa_texture {
+            texture.destroy();
+        }
 
-            // Destroy old textures before allocating new ones to avoid GPU memory spikes
-            if let Some(ref texture) = resources.path_intermediate_texture {
-                texture.destroy();
-            }
-            if let Some(ref texture) = resources.path_msaa_texture {
-                texture.destroy();
-            }
+        // Invalidate intermediate textures - they will be lazily recreated
+        // in draw() after we confirm the surface is healthy. This avoids
+        // panics when the device/surface is in an invalid state during resize.
+        resources.invalidate_intermediate_textures();
 
-            // Invalidate intermediate textures - they will be lazily recreated
-            // in draw() after we confirm the surface is healthy. This avoids
-            // panics when the device/surface is in an invalid state during resize.
-            resources.invalidate_intermediate_textures();
-            let device = Arc::clone(&resources.device);
-            if let Some(surface) = self.surface.as_ref() {
-                surface.configure(&device, &surface_config);
-            }
+        if let RendererState::Ready { surface, core } = &self.state {
+            surface.configure(&core.resources.device, &self.surface_config);
         }
     }
 
     pub fn set_subpixel_layout(&mut self, is_bgr: bool) {
-        self.core_mut().is_bgr = is_bgr;
+        self.is_bgr = is_bgr;
+        if let Some(core) = self.core_mut() {
+            core.is_bgr = is_bgr;
+        }
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
@@ -1037,30 +1063,28 @@ impl WgpuRenderer {
         } else {
             self.opaque_alpha_mode
         };
+        if new_alpha_mode == self.surface_config.alpha_mode {
+            return;
+        }
+        self.surface_config.alpha_mode = new_alpha_mode;
+        let format = self.surface_config.format;
 
-        if new_alpha_mode != self.surface_config.alpha_mode {
-            self.surface_config.alpha_mode = new_alpha_mode;
-            let surface_config = self.surface_config.clone();
-            let path_sample_count = self.core().rendering_params.path_sample_count;
-            let dual_source_blending = self.core().dual_source_blending;
-            let uses_webgl_instance_data = self.core().uses_webgl_instance_data;
-            let Some(core) = self.core.as_mut() else {
-                return;
-            };
-            let resources = &mut core.resources;
-            resources.pipelines = WgpuRendererCore::create_pipelines(
-                &resources.device,
-                &resources.bind_group_layouts,
-                surface_config.format,
-                surface_config.alpha_mode,
-                path_sample_count,
-                dual_source_blending,
-                uses_webgl_instance_data,
-            );
-            let device = Arc::clone(&resources.device);
-            if let Some(surface) = self.surface.as_ref() {
-                surface.configure(&device, &surface_config);
-            }
+        let Some(core) = self.core_mut() else {
+            return;
+        };
+        let resources = &mut core.resources;
+        resources.pipelines = WgpuRendererCore::create_pipelines(
+            &resources.device,
+            &resources.bind_group_layouts,
+            format,
+            new_alpha_mode,
+            core.rendering_params.path_sample_count,
+            core.dual_source_blending,
+            core.uses_webgl_instance_data,
+        );
+
+        if let RendererState::Ready { surface, core } = &self.state {
+            surface.configure(&core.resources.device, &self.surface_config);
         }
     }
 
@@ -1077,29 +1101,33 @@ impl WgpuRenderer {
     }
 
     pub fn supports_dual_source_blending(&self) -> bool {
-        self.core().dual_source_blending
+        self.core().is_some_and(|core| core.dual_source_blending)
     }
 
-    pub fn gpu_specs(&self) -> GpuSpecs {
-        GpuSpecs {
-            is_software_emulated: self.core().adapter_info.device_type == wgpu::DeviceType::Cpu,
-            device_name: self.core().adapter_info.name.clone(),
-            driver_name: self.core().adapter_info.driver.clone(),
-            driver_info: self.core().adapter_info.driver_info.clone(),
-        }
+    /// Returns `None` once GPU resources have been released by `destroy` or a pending
+    /// device recovery.
+    pub fn gpu_specs(&self) -> Option<GpuSpecs> {
+        let adapter_info = &self.core()?.adapter_info;
+        Some(GpuSpecs {
+            is_software_emulated: adapter_info.device_type == wgpu::DeviceType::Cpu,
+            device_name: adapter_info.name.clone(),
+            driver_name: adapter_info.driver.clone(),
+            driver_info: adapter_info.driver_info.clone(),
+        })
     }
 
     pub fn max_texture_size(&self) -> u32 {
-        self.core().max_texture_size
+        self.max_texture_size
     }
 
     pub fn draw(&mut self, scene: &Scene) -> bool {
         #[cfg(target_family = "wasm")]
         if self.device_lost() {
-            if self.surface.take().is_some() {
+            if matches!(self.state, RendererState::Ready { .. }) {
                 log::error!(
                     "Browser graphics context was lost; rendering has stopped. Reload the page to recover."
                 );
+                self.unconfigure_surface();
             }
             return false;
         }
@@ -1108,12 +1136,14 @@ impl WgpuRenderer {
         // Android background/rotation transitions).  Attempting to acquire
         // a texture from an unconfigured surface can block indefinitely on
         // some drivers (Adreno).
-        if self.surface.is_none() {
+        let RendererState::Ready { surface, core } = &mut self.state else {
             return false;
-        }
+        };
 
-        let last_error = self.core().last_error.lock().unwrap().take();
-        if let Some(error) = last_error {
+        if let Some(error) = self.last_surface_error.take().or_else(|| {
+            self.device_errors
+                .observe_error(&mut self.observed_error_generation)
+        }) {
             self.failed_frame_count += 1;
             log::error!(
                 "GPU error during frame (failure {} of 10): {error}",
@@ -1124,9 +1154,7 @@ impl WgpuRenderer {
             if self.failed_frame_count > 10 {
                 panic!("Too many consecutive GPU errors. Last error: {error}");
             } else if self.failed_frame_count > 5 {
-                if let Some(core) = self.core.as_mut() {
-                    core.resources.invalidate_intermediate_textures();
-                }
+                core.resources.invalidate_intermediate_textures();
                 self.atlas.clear();
                 self.needs_redraw = true;
                 self.failed_frame_count = 0;
@@ -1136,45 +1164,39 @@ impl WgpuRenderer {
             self.failed_frame_count = 0;
         }
 
-        let Some(surface) = self.surface.as_ref() else {
-            return false;
-        };
         let frame = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 // Textures must be destroyed before the surface can be reconfigured.
                 drop(frame);
-                let surface_config = self.surface_config.clone();
-                let device = Arc::clone(&self.resources().device);
-                surface.configure(&device, &surface_config);
+                surface.configure(&core.resources.device, &self.surface_config);
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                let surface_config = self.surface_config.clone();
-                let device = Arc::clone(&self.resources().device);
-                surface.configure(&device, &surface_config);
+                surface.configure(&core.resources.device, &self.surface_config);
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Validation => {
-                *self.core().last_error.lock().unwrap() =
-                    Some("Surface texture validation error".to_string());
+                self.last_surface_error = Some("Surface texture validation error".to_string());
                 return false;
             }
         };
 
+        // The acquired texture is the authority on frame dimensions; the surface
+        // configuration is only a request.
+        let size = Size {
+            width: DevicePixels(frame.texture.width() as i32),
+            height: DevicePixels(frame.texture.height() as i32),
+        };
         let frame_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let size = Size {
-            width: DevicePixels(self.surface_config.width as i32),
-            height: DevicePixels(self.surface_config.height as i32),
-        };
         let premultiplied_alpha =
             self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
-        if let Err(error) = self.core_mut().render_frame(
+        if let Err(error) = core.render_frame(
             scene,
             &frame_view,
             size,
@@ -1313,13 +1335,6 @@ impl WgpuRendererCore {
                 },
             ],
         });
-        let last_error = Arc::new(Mutex::new(None));
-        device.on_uncaptured_error(Arc::new({
-            let last_error = Arc::clone(&last_error);
-            move |error| {
-                *last_error.lock().unwrap() = Some(error.to_string());
-            }
-        }));
         let max_texture_size = device.limits().max_texture_dimension_2d;
 
         Self {
@@ -1352,7 +1367,6 @@ impl WgpuRendererCore {
             adapter_info: context.adapter.get_info(),
             target_format,
             max_texture_size,
-            last_error,
         }
     }
 
@@ -1364,14 +1378,21 @@ impl WgpuRendererCore {
         &mut self.resources
     }
 
+    /// Path rendering goes through an intermediate texture that must match the frame
+    /// target's dimensions, so the textures are keyed by size and rebuilt on mismatch.
     fn ensure_intermediate_textures(&mut self, size: Size<DevicePixels>) {
-        if self.resources.path_intermediate_texture.is_some() {
+        let width = size.width.0 as u32;
+        let height = size.height.0 as u32;
+        if self
+            .resources
+            .path_intermediate_texture
+            .as_ref()
+            .is_some_and(|texture| texture.width() == width && texture.height() == height)
+        {
             return;
         }
 
         let format = self.target_format;
-        let width = size.width.0 as u32;
-        let height = size.height.0 as u32;
         let path_sample_count = self.rendering_params.path_sample_count;
         let resources = &mut self.resources;
 
@@ -2092,9 +2113,15 @@ impl WgpuRenderer {
     /// (e.g. Android `TerminateWindow`) but you intend to re-create the
     /// surface later without losing cached atlas textures.
     pub fn unconfigure_surface(&mut self) {
-        self.surface = None;
+        self.state = match std::mem::replace(&mut self.state, RendererState::Released) {
+            RendererState::Ready { core, surface } => {
+                drop(surface);
+                RendererState::Unconfigured { core }
+            }
+            state @ (RendererState::Unconfigured { .. } | RendererState::Released) => state,
+        };
         // Drop intermediate textures since they reference the old surface size.
-        if let Some(core) = self.core.as_mut() {
+        if let Some(core) = self.core_mut() {
             core.resources.invalidate_intermediate_textures();
         }
     }
@@ -2136,10 +2163,22 @@ impl WgpuRenderer {
             self.surface_config.present_mode = mode;
         }
 
-        let core = self.core.as_mut().expect("GPU resources not available");
+        let mut core = match std::mem::replace(&mut self.state, RendererState::Released) {
+            RendererState::Ready {
+                core,
+                surface: old_surface,
+            } => {
+                drop(old_surface);
+                core
+            }
+            RendererState::Unconfigured { core } => core,
+            RendererState::Released => {
+                anyhow::bail!("Cannot replace the surface: GPU resources have been released")
+            }
+        };
         surface.configure(&core.resources.device, &self.surface_config);
         core.resources.invalidate_intermediate_textures();
-        self.surface = Some(surface);
+        self.state = RendererState::Ready { surface, core };
 
         Ok(())
     }
@@ -2147,13 +2186,12 @@ impl WgpuRenderer {
     pub fn destroy(&mut self) {
         // Release surface-bound GPU resources eagerly so the underlying native
         // window can be destroyed before the renderer itself is dropped.
-        self.surface.take();
-        self.core.take();
+        self.state = RendererState::Released;
     }
 
     /// Returns true if the GPU device was lost and recovery is needed.
     pub fn device_lost(&self) -> bool {
-        self.device_lost.load(std::sync::atomic::Ordering::SeqCst)
+        self.device_errors.device_lost()
     }
 
     /// Returns true if a redraw is needed because GPU state was cleared.
@@ -2190,8 +2228,7 @@ impl WgpuRenderer {
             log::warn!("GPU device lost, recreating context...");
 
             // Drop old resources to release Arc<Device>/Arc<Queue> and GPU resources
-            self.surface = None;
-            self.core = None;
+            self.state = RendererState::Released;
             *gpu_context.borrow_mut() = None;
 
             // Wait briefly for the GPU driver to stabilize, then try to
@@ -2224,10 +2261,10 @@ impl WgpuRenderer {
         let ctx_ref = gpu_context.borrow();
         let context = ctx_ref.as_ref().expect("context should exist");
 
-        self.surface = None;
-        self.core = None;
+        self.state = RendererState::Released;
         self.atlas.handle_device_lost(context);
 
+        let is_bgr = self.is_bgr;
         *self = Self::new_internal(
             Some(gpu_context.clone()),
             context,
@@ -2236,6 +2273,7 @@ impl WgpuRenderer {
             self.compositor_gpu,
             self.atlas.clone(),
         )?;
+        self.set_subpixel_layout(is_bgr);
 
         log::info!("GPU recovery complete");
         Ok(())
@@ -2249,7 +2287,19 @@ impl WgpuRenderer {
 struct HeadlessRenderTarget {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
-    size: Size<DevicePixels>,
+}
+
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+impl HeadlessRenderTarget {
+    fn size(&self) -> Size<DevicePixels> {
+        Size {
+            width: DevicePixels(self.texture.width() as i32),
+            height: DevicePixels(self.texture.height() as i32),
+        }
+    }
 }
 
 #[cfg(all(
@@ -2260,6 +2310,7 @@ pub struct WgpuHeadlessRenderer {
     context: WgpuContext,
     core: WgpuRendererCore,
     render_target: Option<HeadlessRenderTarget>,
+    observed_error_generation: u64,
 }
 
 #[cfg(all(
@@ -2281,6 +2332,7 @@ impl WgpuHeadlessRenderer {
             context,
             core,
             render_target: None,
+            observed_error_generation: 0,
         })
     }
 
@@ -2298,7 +2350,7 @@ impl WgpuHeadlessRenderer {
         if self
             .render_target
             .as_ref()
-            .is_some_and(|target| target.size == size)
+            .is_some_and(|target| target.size() == size)
         {
             return Ok(());
         }
@@ -2322,27 +2374,20 @@ impl WgpuHeadlessRenderer {
                 view_formats: &[],
             });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.render_target = Some(HeadlessRenderTarget {
-            texture,
-            view,
-            size,
-        });
-        self.core.resources.invalidate_intermediate_textures();
+        self.render_target = Some(HeadlessRenderTarget { texture, view });
         Ok(())
     }
 
-    fn check_gpu_errors(&self) -> anyhow::Result<()> {
+    fn check_gpu_errors(&mut self) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.context.device_lost(),
             "GPU device was lost during headless rendering"
         );
-        let error = self
-            .core
-            .last_error
-            .lock()
-            .map_err(|_| anyhow::anyhow!("GPU error state lock was poisoned"))?
-            .take();
-        if let Some(error) = error {
+        if let Some(error) = self
+            .context
+            .errors()
+            .observe_error(&mut self.observed_error_generation)
+        {
             anyhow::bail!("GPU error during headless rendering: {error}");
         }
         Ok(())
@@ -2362,13 +2407,15 @@ impl WgpuHeadlessRenderer {
         Ok(())
     }
 
-    fn read_image(&mut self, size: Size<DevicePixels>) -> anyhow::Result<image::RgbaImage> {
+    /// Copies the current render target back to the CPU. Dimensions come from the
+    /// target texture itself, so the copy can never disagree with what was rendered.
+    fn read_image(&mut self) -> anyhow::Result<image::RgbaImage> {
         let target = self
             .render_target
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?;
-        let width = size.width.0 as u32;
-        let height = size.height.0 as u32;
+        let width = target.texture.width();
+        let height = target.texture.height();
         let bytes_per_row = width
             .checked_mul(4)
             .ok_or_else(|| anyhow::anyhow!("Headless render target row size overflowed"))?;
@@ -2483,7 +2530,7 @@ impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
         size: Size<DevicePixels>,
     ) -> anyhow::Result<image::RgbaImage> {
         self.render(scene, size)?;
-        self.read_image(size)
+        self.read_image()
     }
 
     fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> anyhow::Result<()> {
@@ -2564,35 +2611,160 @@ impl RenderingParameters {
 mod tests {
     use super::*;
     use gpui::{
-        BorderStyle, ColorSpace, ContentMask, Corners, DevicePixels, Edges, Hsla, MonochromeSprite,
-        PlatformHeadlessRenderer, PolychromeSprite, Quad, Scene, Shadow, Size, SubpixelSprite,
-        Underline, linear_color_stop, linear_gradient,
+        BorderStyle, ColorSpace, ContentMask, Corners, Edges, Hsla, MonochromeSprite,
+        PolychromeSprite, Quad, Shadow, Size, SubpixelSprite, Underline, linear_color_stop,
+        linear_gradient,
     };
+    #[cfg(target_os = "linux")]
+    use gpui::{DevicePixels, PlatformHeadlessRenderer, Scene};
 
-    #[test]
-    fn headless_renderer_reads_padded_rows_and_resizes() -> anyhow::Result<()> {
-        let mut renderer = WgpuHeadlessRenderer::new()?;
-        let first_size = Size {
-            width: DevicePixels(13),
-            height: DevicePixels(7),
-        };
-        let image = PlatformHeadlessRenderer::render_scene_to_image(
-            &mut renderer,
-            &Scene::default(),
-            first_size,
-        )?;
-        assert_eq!(image.dimensions(), (13, 7));
-        assert!(image.pixels().all(|pixel| pixel.0 == [0, 0, 0, 255]));
+    #[cfg(target_os = "linux")]
+    fn device_size(width: i32, height: i32) -> Size<DevicePixels> {
+        Size {
+            width: DevicePixels(width),
+            height: DevicePixels(height),
+        }
+    }
 
-        PlatformHeadlessRenderer::render_scene(&mut renderer, &Scene::default(), first_size)?;
-        PlatformHeadlessRenderer::render_scene(
-            &mut renderer,
-            &Scene::default(),
-            Size {
-                width: DevicePixels(17),
-                height: DevicePixels(9),
+    #[cfg(target_os = "linux")]
+    fn solid_quad(x: f32, y: f32, width: f32, height: f32, color: Hsla) -> Quad {
+        let bounds = Bounds {
+            origin: Point {
+                x: x.into(),
+                y: y.into(),
             },
-        )?;
+            size: Size {
+                width: width.into(),
+                height: height.into(),
+            },
+        };
+        Quad {
+            order: 0,
+            border_style: BorderStyle::Solid,
+            bounds,
+            content_mask: ContentMask { bounds },
+            background: color.into(),
+            border_color: color,
+            corner_radii: Corners::default(),
+            border_widths: Edges::default(),
+        }
+    }
+
+    /// Channels are compared with a small tolerance so the assertions hold across
+    /// drivers without pinning exact rasterizer output.
+    #[cfg(target_os = "linux")]
+    fn assert_pixel(image: &image::RgbaImage, x: u32, y: u32, expected: [u8; 4]) {
+        let actual = image.get_pixel(x, y).0;
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| actual.abs_diff(expected) <= 3),
+            "pixel ({x}, {y}) was {actual:?}, expected {expected:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    const RED: [u8; 4] = [255, 0, 0, 255];
+    #[cfg(target_os = "linux")]
+    const BLUE: [u8; 4] = [0, 0, 255, 255];
+    #[cfg(target_os = "linux")]
+    const BLACK: [u8; 4] = [0, 0, 0, 255];
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_draws_quads_with_distinct_colors() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let mut scene = Scene::default();
+        scene.insert_primitive(solid_quad(0.0, 0.0, 32.0, 32.0, gpui::red()));
+        scene.insert_primitive(solid_quad(32.0, 0.0, 32.0, 32.0, gpui::blue()));
+        scene.finish();
+
+        let image = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
+        assert_eq!(image.dimensions(), (64, 32));
+        assert_pixel(&image, 8, 16, RED);
+        assert_pixel(&image, 24, 16, RED);
+        assert_pixel(&image, 40, 16, BLUE);
+        assert_pixel(&image, 56, 16, BLUE);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_captures_each_requested_size() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let mut scene = Scene::default();
+        scene.insert_primitive(solid_quad(2.0, 2.0, 4.0, 3.0, gpui::red()));
+        scene.finish();
+
+        // 13 px rows are 52 bytes, forcing readback to strip copy-row padding.
+        let image = renderer.render_scene_to_image(&scene, device_size(13, 7))?;
+        assert_eq!(image.dimensions(), (13, 7));
+        assert_pixel(&image, 0, 0, BLACK);
+        assert_pixel(&image, 3, 3, RED);
+        assert_pixel(&image, 12, 6, BLACK);
+
+        let image = renderer.render_scene_to_image(&scene, device_size(17, 9))?;
+        assert_eq!(image.dimensions(), (17, 9));
+        assert_pixel(&image, 3, 3, RED);
+        assert_pixel(&image, 16, 8, BLACK);
+
+        let image = renderer.render_scene_to_image(&Scene::default(), device_size(13, 7))?;
+        assert_eq!(image.dimensions(), (13, 7));
+        assert!(image.pixels().all(|pixel| pixel.0 == BLACK));
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_reuses_target_for_same_size() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let target_texture = |renderer: &WgpuHeadlessRenderer| {
+            renderer
+                .render_target
+                .as_ref()
+                .map(|target| target.texture.clone())
+        };
+
+        renderer.render_scene(&Scene::default(), device_size(16, 16))?;
+        let first = target_texture(&renderer);
+        assert!(first.is_some());
+
+        renderer.render_scene(&Scene::default(), device_size(16, 16))?;
+        assert_eq!(target_texture(&renderer), first);
+
+        renderer.render_scene(&Scene::default(), device_size(16, 17))?;
+        assert_ne!(target_texture(&renderer), first);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_rejects_invalid_sizes() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let too_large = renderer.core.max_texture_size as i32 + 1;
+
+        for size in [
+            device_size(0, 8),
+            device_size(8, 0),
+            device_size(-1, 8),
+            device_size(too_large, 8),
+        ] {
+            assert!(
+                renderer.render_scene(&Scene::default(), size).is_err(),
+                "{size:?} should be rejected"
+            );
+            assert!(
+                renderer
+                    .render_scene_to_image(&Scene::default(), size)
+                    .is_err(),
+                "{size:?} should be rejected"
+            );
+        }
+
+        // Rejection must leave the renderer usable.
+        let image = renderer.render_scene_to_image(&Scene::default(), device_size(4, 4))?;
+        assert_eq!(image.dimensions(), (4, 4));
         Ok(())
     }
 

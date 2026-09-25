@@ -2,6 +2,7 @@
 use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
 use gpui_util::ResultExt;
+use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::TextureFormat;
@@ -14,7 +15,63 @@ pub struct WgpuContext {
     backend: WgpuBackend,
     dual_source_blending: bool,
     color_texture_format: wgpu::TextureFormat,
-    device_lost: Arc<AtomicBool>,
+    errors: Arc<DeviceErrorState>,
+}
+
+/// Errors reported by wgpu's device-wide callbacks.
+///
+/// A device has exactly one lost callback and one uncaptured-error callback, so this
+/// state is installed once per device and shared by every renderer using it. Renderers
+/// keep their own handle so they can keep observing a loss after the context that
+/// produced it has been dropped for recovery.
+#[derive(Default)]
+pub struct DeviceErrorState {
+    lost: AtomicBool,
+    last_error: Mutex<(u64, Option<String>)>,
+}
+
+impl DeviceErrorState {
+    fn install(device: &wgpu::Device) -> Arc<Self> {
+        let errors = Arc::new(Self::default());
+        device.set_device_lost_callback({
+            let errors = Arc::clone(&errors);
+            move |reason, message| {
+                log::error!("wgpu device lost: reason={reason:?}, message={message}");
+                if reason != wgpu::DeviceLostReason::Destroyed {
+                    errors.lost.store(true, Ordering::Relaxed);
+                }
+            }
+        });
+        device.on_uncaptured_error(Arc::new({
+            let errors = Arc::clone(&errors);
+            move |error| errors.record(error.to_string())
+        }));
+        errors
+    }
+
+    /// Returns true if the GPU device was lost (e.g., due to driver crash, suspend/resume).
+    pub fn device_lost(&self) -> bool {
+        self.lost.load(Ordering::Relaxed)
+    }
+
+    fn record(&self, error: String) {
+        let mut last_error = self.last_error.lock();
+        last_error.0 = last_error.0.wrapping_add(1);
+        last_error.1 = Some(error);
+    }
+
+    /// Returns the latest error once per observer, without consuming shared state.
+    /// Start each observer at zero, including after switching devices, so errors
+    /// raised during construction are observed. Multiple errors between observations
+    /// coalesce into the latest error; this is not an error queue.
+    pub fn observe_error(&self, generation: &mut u64) -> Option<String> {
+        let last_error = self.last_error.lock();
+        if *generation == last_error.0 {
+            return None;
+        }
+        *generation = last_error.0;
+        last_error.1.clone()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -181,6 +238,9 @@ impl WgpuContext {
         not(target_family = "wasm"),
         any(test, feature = "bench-support", feature = "test-support")
     ))]
+    /// Both candidates are 8-bit RGBA-ordered or BGRA-ordered formats: headless readback
+    /// copies rows as 4 bytes per pixel and only swizzles, so no other formats may be added
+    /// here without updating it.
     fn headless_target_format(adapter: &wgpu::Adapter) -> Option<wgpu::TextureFormat> {
         let required_usages =
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
@@ -206,16 +266,7 @@ impl WgpuContext {
         dual_source_blending: bool,
         color_texture_format: TextureFormat,
     ) -> Self {
-        let device_lost = Arc::new(AtomicBool::new(false));
-        device.set_device_lost_callback({
-            let device_lost = Arc::clone(&device_lost);
-            move |reason, message| {
-                log::error!("wgpu device lost: reason={reason:?}, message={message}");
-                if reason != wgpu::DeviceLostReason::Destroyed {
-                    device_lost.store(true, Ordering::Relaxed);
-                }
-            }
-        });
+        let errors = DeviceErrorState::install(&device);
 
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
@@ -232,7 +283,7 @@ impl WgpuContext {
             backend,
             dual_source_blending,
             color_texture_format,
-            device_lost,
+            errors,
         }
     }
 
@@ -312,18 +363,9 @@ impl WgpuContext {
             }
         };
 
-        let device_lost = Arc::new(AtomicBool::new(false));
         let (device, queue, dual_source_blending, color_texture_format) =
             Self::create_device(&adapter).await?;
-        device.set_device_lost_callback({
-            let device_lost = Arc::clone(&device_lost);
-            move |reason, message| {
-                log::error!("wgpu device lost: reason={reason:?}, message={message}");
-                if reason != wgpu::DeviceLostReason::Destroyed {
-                    device_lost.store(true, Ordering::Relaxed);
-                }
-            }
-        });
+        let errors = DeviceErrorState::install(&device);
         log::info!(
             "Browser graphics initialized: requested={preference:?}, selected={backend:?}, \
              adapter={:?}, limits={:?}, dual_source_blending={dual_source_blending}",
@@ -339,7 +381,7 @@ impl WgpuContext {
             backend,
             dual_source_blending,
             color_texture_format,
-            device_lost,
+            errors,
         };
         Ok(PreparedWebGraphics { context, surface })
     }
@@ -512,6 +554,13 @@ impl WgpuContext {
         anyhow::bail!("No GPU adapter found that can configure the display surface")
     }
 
+    /// Sort adapters into a single priority order. Tiers (from highest to lowest):
+    ///
+    /// 1. ZED_DEVICE_ID match — explicit user override
+    /// 2. Compositor GPU match — the GPU the display server is rendering on
+    /// 3. Device type (Discrete > Integrated > Other > Virtual > Cpu).
+    ///    "Other" ranks above "Virtual" because OpenGL seems to count as "Other".
+    /// 4. Backend — prefer Vulkan/Metal/Dx12 over GL/etc.
     #[cfg(not(target_family = "wasm"))]
     fn sort_adapters(
         adapters: &mut [wgpu::Adapter],
@@ -520,6 +569,8 @@ impl WgpuContext {
     ) {
         adapters.sort_by_key(|adapter| {
             let info = adapter.get_info();
+            // Backends like OpenGL report device=0 for all adapters, so
+            // device-based matching is only meaningful when non-zero.
             let device_known = info.device != 0;
             let user_override: u8 = match device_id_filter {
                 Some(id) if device_known && info.device == id => 0,
@@ -658,12 +709,12 @@ impl WgpuContext {
     /// Returns true if the GPU device was lost (e.g., due to driver crash, suspend/resume).
     /// When this returns true, the context should be recreated.
     pub fn device_lost(&self) -> bool {
-        self.device_lost.load(Ordering::Relaxed)
+        self.errors.device_lost()
     }
 
-    /// Returns a clone of the device_lost flag for sharing with renderers.
-    pub(crate) fn device_lost_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.device_lost)
+    /// The device-wide error state, shared with renderers on this device.
+    pub fn errors(&self) -> &Arc<DeviceErrorState> {
+        &self.errors
     }
 }
 
@@ -686,7 +737,48 @@ fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_pci_id;
+    use super::{DeviceErrorState, parse_pci_id};
+
+    #[test]
+    fn device_errors_are_observed_independently() {
+        let errors = DeviceErrorState::default();
+        let mut first = 0;
+        let mut second = 0;
+        assert_eq!(errors.observe_error(&mut first), None);
+        errors.record("first".into());
+        assert_eq!(errors.observe_error(&mut first).as_deref(), Some("first"));
+        assert_eq!(errors.observe_error(&mut first), None);
+        assert_eq!(errors.observe_error(&mut second).as_deref(), Some("first"));
+        assert_eq!(errors.observe_error(&mut second), None);
+
+        errors.record("second".into());
+        assert_eq!(errors.observe_error(&mut second).as_deref(), Some("second"));
+        assert_eq!(errors.observe_error(&mut first).as_deref(), Some("second"));
+        assert_eq!(errors.observe_error(&mut first), None);
+        assert_eq!(errors.observe_error(&mut second), None);
+    }
+
+    #[test]
+    fn device_errors_coalesce_and_new_observers_see_latest() {
+        let errors = DeviceErrorState::default();
+        errors.record("older".into());
+        errors.record("latest".into());
+        let mut generation = 0;
+        assert_eq!(
+            errors.observe_error(&mut generation).as_deref(),
+            Some("latest")
+        );
+        assert_eq!(errors.observe_error(&mut generation), None);
+
+        let replacement = DeviceErrorState::default();
+        replacement.record("replacement".into());
+        generation = 0;
+        assert_eq!(
+            replacement.observe_error(&mut generation).as_deref(),
+            Some("replacement")
+        );
+        assert_eq!(replacement.observe_error(&mut generation), None);
+    }
 
     #[test]
     fn test_parse_device_id() {
