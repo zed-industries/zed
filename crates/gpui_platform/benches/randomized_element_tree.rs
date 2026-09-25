@@ -22,7 +22,7 @@ use gpui::{
     randomized_element_tree::{
         RandomizedElementTree, RandomizedElementTreeBounds, RandomizedElementTreeConfig,
         RandomizedElementTreeMutation, RandomizedElementTreeMutationKind,
-        RandomizedElementTreeTopology,
+        RandomizedElementTreeTopology, RecoloredChildren,
     },
 };
 
@@ -271,6 +271,67 @@ fn reorder(input: &TreeInput, cx: &mut BenchAppContext) {
     }
 }
 
+/// A tree and the share of its elements that change each frame.
+#[derive(Clone)]
+struct ChangingShareInput {
+    tree: TreeInput,
+    share_percent: usize,
+}
+
+impl fmt::Display for ChangingShareInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}-f{}", self.tree, self.share_percent)
+    }
+}
+
+/// The share of elements recolored per frame, from one element to all of them. A renderer
+/// that retains clean subtrees should scale along this axis; one that redraws everything
+/// is flat across it, so the two curves' distance is what retention buys at each share.
+/// Only families with entities are sampled: reuse happens per entity, so a tree that is
+/// one view is all-or-nothing on every renderer.
+fn changing_share_inputs() -> Vec<ChangingShareInput> {
+    inputs()
+        .into_iter()
+        .filter(|input| {
+            matches!(input.family, "any" | "dense-entities") && input.config.entity_density() > 0.0
+        })
+        .flat_map(|tree| {
+            [0, 1, 5, 25, 100]
+                .into_iter()
+                .map(move |share_percent| ChangingShareInput {
+                    tree: tree.clone(),
+                    share_percent,
+                })
+        })
+        .collect()
+}
+
+#[gpui::bench(inputs = changing_share_inputs(), input_name = "tree", group = "RandomizedTree/changing share", fps = 120)]
+fn changing_share(input: &ChangingShareInput, cx: &mut BenchAppContext) {
+    let element_count = input.tree.config.element_count();
+    let per_frame = if input.share_percent == 0 {
+        0
+    } else {
+        (input.share_percent * element_count).div_ceil(100).max(1)
+    };
+    let mut last = RecoloredChildren {
+        recolored: 0,
+        notified: 0,
+    };
+    let frames = measure(&input.tree, cx, |tree, cx| {
+        if per_frame == 0 {
+            cx.notify();
+        } else {
+            last = tree.recolor_children(per_frame, cx);
+        }
+    });
+    assert!(frames > 0);
+    if per_frame > 0 {
+        assert_eq!(last.recolored, per_frame.min(element_count));
+        assert!(last.notified >= 1);
+    }
+}
+
 gpui::bench_group!(
     benches,
     unchanged,
@@ -278,6 +339,7 @@ gpui::bench_group!(
     leaf_bounds,
     root_layout,
     insert_remove,
-    reorder
+    reorder,
+    changing_share
 );
 gpui::bench_main!(benches);
