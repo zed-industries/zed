@@ -38,7 +38,7 @@ use gpui::{
     MouseEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, Stateful,
     StrikethroughStyle, StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign,
     TextLayout, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, WrappedLineLayout,
-    actions, canvas, img, point, quad, relative, size,
+    actions, canvas, fill, img, point, quad, relative, size,
 };
 use language::{
     Bias, CharClassifier, Language, LanguageRegistry, OffsetUtf16, ResolvedHighlights, Rope,
@@ -4179,6 +4179,7 @@ impl MarkdownElementBuilder {
             text_align: TextAlign::Left,
             highlights: SmallVec::new(),
             code_chips: SmallVec::new(),
+            run_backgrounds: SmallVec::new(),
         }));
         div()
             .absolute()
@@ -4204,7 +4205,25 @@ impl MarkdownElementBuilder {
                     .highlights_for_line(first_mapping.source_index..self.current_source_index)
             })
             .unwrap_or_default();
-        let text = StyledText::new(line.text).with_runs(line.runs);
+        let mut runs = line.runs;
+        let mut run_backgrounds = SmallVec::<[(Range<usize>, Hsla); 1]>::new();
+        let mut run_start = 0;
+        for run in &mut runs {
+            let run_range = run_start..run_start + run.len;
+            run_start = run_range.end;
+            let Some(color) = run.background_color.take() else {
+                continue;
+            };
+            match run_backgrounds.last_mut() {
+                Some((previous_range, previous_color))
+                    if previous_range.end == run_range.start && *previous_color == color =>
+                {
+                    previous_range.end = run_range.end;
+                }
+                _ => run_backgrounds.push((run_range, color)),
+            }
+        }
+        let text = StyledText::new(line.text).with_runs(runs);
         let rendered_line = Rc::new(RenderedLine {
             layout: text.layout().clone(),
             visible_bounds: Cell::new(None),
@@ -4218,6 +4237,7 @@ impl MarkdownElementBuilder {
             text_align,
             highlights,
             code_chips: line.code_chips.into_iter().collect(),
+            run_backgrounds,
         });
         self.rendered_lines.push(rendered_line.clone());
         self.append_child(
@@ -4299,6 +4319,7 @@ impl Element for RenderedLineElement {
         cx: &mut App,
     ) {
         self.line.paint_code_chips(window);
+        self.line.paint_run_backgrounds(window);
         self.line.paint_highlights(window);
         self.text.paint(window, cx);
     }
@@ -4323,6 +4344,10 @@ struct RenderedLine {
     highlights: SmallVec<[(Range<usize>, Hsla); 1]>,
     /// Inline code chip ranges intersecting this line, in rendered indices
     code_chips: SmallVec<[(Range<usize>, Hsla); 1]>,
+    /// Text run backgrounds, in rendered indices. They are taken out of the
+    /// runs so they can be painted below the highlights, which themselves
+    /// must stay below the glyphs.
+    run_backgrounds: SmallVec<[(Range<usize>, Hsla); 1]>,
 }
 
 impl RenderedLine {
@@ -4368,6 +4393,24 @@ impl RenderedLine {
                         BorderStyle::default(),
                     ));
                 },
+            );
+        }
+    }
+
+    fn paint_run_backgrounds(&self, window: &mut Window) {
+        if self.run_backgrounds.is_empty() {
+            return;
+        }
+        let wrapped_line_segments = self.wrapped_line_segments();
+        if wrapped_line_segments.is_empty() {
+            return;
+        }
+
+        for (rendered_range, color) in &self.run_backgrounds {
+            self.for_each_bounds_in_rendered_range(
+                &wrapped_line_segments,
+                rendered_range.clone(),
+                |bounds| window.paint_quad(fill(bounds, *color)),
             );
         }
     }
@@ -7739,13 +7782,16 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_search_highlights_are_painted_below_text(cx: &mut TestAppContext) {
+    fn test_search_highlights_are_painted_between_text_backgrounds_and_glyphs(
+        cx: &mut TestAppContext,
+    ) {
         ensure_theme_initialized(cx);
-        let source = "~~struck through~~";
+        let source = "~~[struck](https://zed.dev) through~~";
         let highlight_start = source
             .find("struck")
             .expect("highlighted text should be present");
         let highlight_range = highlight_start..highlight_start + "struck".len();
+        let run_background_color = gpui::red();
 
         let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
         markdown.update(cx, |markdown, cx| {
@@ -7753,7 +7799,13 @@ mod tests {
         });
         let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
             markdown,
-            style: MarkdownStyle::default(),
+            style: MarkdownStyle {
+                link: TextStyleRefinement {
+                    background_color: Some(run_background_color),
+                    ..Default::default()
+                },
+                ..MarkdownStyle::default()
+            },
             code_span_link: None,
             rendered_text: Rc::new(RefCell::new(None)),
         });
@@ -7761,18 +7813,28 @@ mod tests {
 
         let highlight_color = cx.update(|_, cx| cx.theme().colors().search_match_background);
         cx.update(|window, _| {
-            let highlight_order = window
-                .painted_quads()
-                .into_iter()
-                .find(|quad| quad.background == highlight_color.into())
-                .expect("search highlight should be painted")
-                .order;
+            let quads = window.painted_quads();
+            let order_of_quad_with = |color: Hsla| {
+                quads
+                    .iter()
+                    .find(|quad| quad.background == color.into())
+                    .map(|quad| quad.order)
+            };
+            let run_background_order =
+                order_of_quad_with(run_background_color).expect("link background should be painted");
+            let highlight_order =
+                order_of_quad_with(highlight_color).expect("search highlight should be painted");
             // Strikethroughs are painted in the same layer as the glyphs
             let text_order = window
                 .painted_underlines()
-                .first()
-                .expect("strikethrough should be painted")
-                .order;
+                .iter()
+                .map(|underline| underline.order)
+                .min()
+                .expect("strikethrough should be painted");
+            assert!(
+                run_background_order < highlight_order,
+                "text run backgrounds must not cover search highlights"
+            );
             assert!(
                 highlight_order < text_order,
                 "search highlight must be drawn below the text, otherwise opaque theme colors hide it"
