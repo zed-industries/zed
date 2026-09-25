@@ -7756,6 +7756,115 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_keyed_updates_preserve_unchanged_thought_scroll_position(
+        cx: &mut TestAppContext,
+    ) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(vec!["answer".into()]),
+                    cx,
+                )
+                .expect("answer");
+            thread
+                .upsert_thought(
+                    acp_v2::AgentThought::new("thought").content(vec!["thought".into()]),
+                    cx,
+                )
+                .expect("thought");
+        });
+        cx.run_until_parked();
+        let handle = thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state
+                .read(cx)
+                .entry(0)
+                .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(1))
+                .expect("thought scroll handle")
+        });
+        struct ThoughtScrollView(gpui::ScrollHandle);
+        impl Render for ThoughtScrollView {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                div()
+                    .id("thought-scroll-test")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.0)
+                    .child(div().h(px(300.)).w_full())
+            }
+        }
+        let draw = |cx: &mut VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+                cx.new(|_| ThoughtScrollView(handle.clone()))
+                    .into_any_element()
+            });
+        };
+        draw(cx);
+        assert_eq!(handle.offset().y, px(-200.));
+        handle.set_offset(point(px(0.), px(-40.)));
+        draw(cx);
+        assert_eq!(handle.offset().y, px(-40.));
+
+        for update_other_message in [false, true] {
+            thread
+                .update(cx, |thread, cx| {
+                    if update_other_message {
+                        thread.upsert_assistant_message(
+                            acp_v2::AgentMessage::new("answer").content(vec!["new answer".into()]),
+                            cx,
+                        )
+                    } else {
+                        thread.upsert_thought(
+                            acp_v2::AgentThought::new("thought").meta(acp_v2::Meta::from_iter([(
+                                "label".into(),
+                                serde_json::json!("new"),
+                            )])),
+                            cx,
+                        )
+                    }
+                })
+                .expect("update without changing thought content");
+            cx.run_until_parked();
+            draw(cx);
+            assert_eq!(handle.offset().y, px(-40.));
+        }
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_thought(
+                    acp_v2::AgentThought::new("thought").content(vec!["thought".into()]),
+                    cx,
+                )
+            })
+            .expect("identical thought snapshot");
+        cx.run_until_parked();
+        draw(cx);
+        assert_eq!(handle.offset().y, px(-40.));
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_thought(
+                    acp_v2::AgentThought::new("thought").content(vec!["new thought".into()]),
+                    cx,
+                )
+            })
+            .expect("changed thought content still follows the bottom");
+        cx.run_until_parked();
+        draw(cx);
+        assert_eq!(handle.offset().y, px(-200.));
+    }
+
+    #[gpui::test]
     async fn test_keyed_thought_snapshot_keeps_expansion_on_original_chunk(
         cx: &mut TestAppContext,
     ) {
